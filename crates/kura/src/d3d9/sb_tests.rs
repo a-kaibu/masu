@@ -11,17 +11,12 @@
 //! `MASU_TRACE_DIR=dir` writes `dir/d3d9sb-<seed>/`; `MASU_TRACE_SEEDS=n` (default 20).
 
 use super::trace_tests::{alloc, seeds, write_module, Rng, CALLS, SERIAL};
+use super::draw_tests::call;
 use super::*;
 use std::fmt::Write as _;
 
 pub(crate) const KEYS: [&str; 15] = ["rsP", "rsV", "rsB", "tssP", "tssB", "ssP", "ssV", "tex", "vs", "ps", "vsf", "psf", "xf", "vp", "light"];
 
-fn call(iface: u32, m: u32, args: &[u32]) -> u32 {
-    // (padded like the guest stack: the Direct3D 8 forwards read 10 words)
-    let mut a = args.to_vec();
-    a.resize(a.len().max(16), 0);
-    unsafe { vnhost_d3d9_call(iface << 8 | m, a.as_ptr(), &CALLS) }
-}
 fn mem(n: u32) -> u32 {
     unsafe { alloc(4 * n) as u32 }
 }

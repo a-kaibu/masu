@@ -5,12 +5,7 @@
 #![no_main]
 
 use libfuzzer_sys::fuzz_target;
-use sake::picture::{from_bgra, to_bgra, Fmt};
-
-const FMTS: [Fmt; 23] = [
-    Fmt::Idx1, Fmt::Idx2, Fmt::Idx4, Fmt::Idx8, Fmt::BlackWhite, Fmt::Gray2, Fmt::Gray4, Fmt::Gray8, Fmt::Gray16, Fmt::Bgr555, Fmt::Bgr565,
-    Fmt::Bgr24, Fmt::Rgb24, Fmt::Bgr32, Fmt::Bgra, Fmt::Pbgra, Fmt::Rgb32, Fmt::Rgba, Fmt::Prgba, Fmt::Rgb48, Fmt::Rgba64, Fmt::Cmyk, Fmt::Alpha8,
-];
+use sake::picture::{from_bgra, to_bgra, Fmt, ALL as FMTS};
 
 fuzz_target!(|data: &[u8]| {
     if data.len() < 5 {

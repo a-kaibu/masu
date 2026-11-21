@@ -141,10 +141,12 @@ fn fixture(r: Rule) -> Fixture {
             mutate: ("crates/sake/src/k32.rs", |t| Some(t + "\nconst E_FAIL: u32 = 0x8000_4005;\n")),
         },
         Rule::KomeCopy => Fixture {
-            bad: &[("crates/kura/src/x.rs", "fn lo16(x: u32) -> u16 {\n    x as u16\n}\npub trait Lock<T> {}\n"), ("crates/sake/src/y.rs", "const fn guid(d1: u32, d2: u16, d3: u16, d4: [u8; 8]) -> [u8; 16] { [0; 16] }\nfn read_guid(p: u32) -> [u8; 16] { mem::array::<16>(p) }\nfn be32(d: &[u8], o: usize) -> Option<u32> {\n    Some(u32::from_be_bytes(d.get(o..o + 4)?.try_into().ok()?))\n}\n")],
+            bad: &[("crates/kura/src/x.rs", "fn lo16(x: u32) -> u16 {\n    x as u16\n}\npub trait Lock<T> {}\n"), ("crates/sake/src/y.rs", "const fn guid(d1: u32, d2: u16, d3: u16, d4: [u8; 8]) -> [u8; 16] { [0; 16] }\nfn read_guid(p: u32) -> [u8; 16] { mem::array::<16>(p) }\nfn be32(d: &[u8], o: usize) -> Option<u32> {\n    Some(u32::from_be_bytes(d.get(o..o + 4)?.try_into().ok()?))\n}\n"), ("crates/sake/src/z_tests.rs", "fn h(b: &[u8]) -> u64 {\n    b.iter().fold(0xcbf29ce484222325, |h, &x| (h ^ u64::from(x)).wrapping_mul(0x100000001b3))\n}\n")],
             good: &[
                 ("crates/kura/src/x.rs", "use kome::num::lo16;\nimpl R {\n    fn u32_at(&self, o: usize) -> u32 { 0 }\n}\nfn word(b: &[u8], o: usize, k: usize) -> u32 { u32::from_le_bytes([0; 4]) }\nfn len(b: &[u8], o: usize) -> usize { b.len() - o }\n"),
                 ("crates/kome/src/num.rs", "pub fn lo16(x: u32) -> u16 { 0 }\n"),
+                ("crates/kome/src/golden.rs", "pub const PRIME: u64 = 0x100_0000_01b3;\n"),
+                ("crates/sake/src/z_tests.rs", "// (FNV-1a: 0x100_0000_01b3, kome's)\nfn h(b: &[u8]) -> u64 { kome::golden::Fnv::of(b) }\n"),
                 (MEM, "pub fn guid_at(p: u32) -> Option<[u8; 16]> { None }\n"),
             ],
             mutate: ("crates/kura/src/audio.rs", |t| Some(t + "\nfn lo32(x: u64) -> u32 {\n    x as u32\n}\n")),
@@ -154,11 +156,14 @@ fn fixture(r: Rule) -> Fixture {
                 ("crates/sake/src/x.rs", "fn f() { if std::env::var_os(\"SAKE_UPDATE_GOLDEN\").is_some() {} }\n"),
                 ("crates/kura/src/y.rs", "fn f() { std::env::var(\"MASU_UPDATE_GOLDEN\"); }\n"),
                 ("tools/x.sh", "BLESS=1 cargo test\n"),
+                ("crates/asf/tests/pin.rs", "fn f() { if std::env::var_os(\"PIN_RECORD\").is_some() {} }\n"),
+                ("crates/masu/src/pack.rs", "fn f() { std::env::var_os(\"MASU_REGEN\"); }\n"),
             ],
             good: &[
                 (GOLDEN_HOME, "pub const UPDATE: &str = \"MASU_UPDATE_GOLDEN\";\n"),
                 ("crates/sake/src/x.rs", "fn f() { if kome::golden::updating() {} }\n// MASU_UPDATE_GOLDEN=1 rewrites it\n"),
                 ("tests/x.sh", "MASU_UPDATE_GOLDEN=1 cargo test\n"),
+                ("crates/masu/src/update.rs", "fn f() { std::env::var(\"MASU_UPDATE_URL\"); std::env::var(\"MASU_GOLDEN_GROUP\"); }\n"),
             ],
             mutate: ("crates/sake/src/gl.rs", |t| Some(t + "\nfn regen() -> bool { std::env::var_os(\"SAKE_UPDATE_GOLDEN\").is_some() }\n")),
         },
@@ -210,7 +215,7 @@ fn fixture(r: Rule) -> Fixture {
             good: &[
                 ("tests/host-tests.sh", "export MASU_OUTS_STRICT=1\n"),
                 ("crates/sake/src/lib.rs", "#[cfg(test)]\nmod outptr_audit;\n"),
-                (".github/workflows/ci.yml", "cargo run -q --release -p masu-lint -- arch\ncargo test --workspace --release\ncargo run -q --release -p masu-lint -- ratchet\n"),
+                (".github/workflows/ci.yml", "cargo run -q --release -p masu-lint -- arch\ncargo run -q --release -p masu-lint -- dup\ncargo test --workspace --release\ncargo run -q --release -p masu-lint -- ratchet\n"),
             ],
             mutate: ("tests/host-tests.sh", |t| Some(t.replace("export MASU_OUTS_STRICT=1", ""))),
         },
@@ -380,7 +385,7 @@ fn a_known_site_covers_as_many_as_it_is_listed() {
 
 #[test]
 fn every_regex_compiles() {
-    for r in [&BUILD_EXT, &BUILD_OK, &TARGET_DIR, &GOLDEN_ANY, &GOLDEN_FILES, &JOB, &CHECKS, &DISALLOWED, &REG_BY_NUMBER, &REG_UNTYPED] {
+    for r in [&BUILD_EXT, &BUILD_OK, &TARGET_DIR, &GOLDEN_ANY, &GOLDEN_READ, &FNV_PRIME, &GOLDEN_FILES, &JOB, &CHECKS, &DISALLOWED, &REG_BY_NUMBER, &REG_UNTYPED] {
         assert!(r.is_some());
     }
     for r in regress::regexes() {
@@ -402,9 +407,9 @@ fn the_new_rules_find_each_spelling_alone() {
     // names the method, not Windows' answer)
     assert_eq!(Rule::ConstantMethod.check(&Tree::made_up(fixture(Rule::ConstantMethod).bad)).len(), 2);
     // (and every site in the bad files, not only the first: w8(ga(key)) is two)
-    // (a copy of a number conversion, a lock trait, a GUID builder, a guest GUID reader and a
-    // big-endian byte reader)
-    assert_eq!(Rule::KomeCopy.check(&Tree::made_up(fixture(Rule::KomeCopy).bad)).len(), 5);
+    // (a copy of a number conversion, a lock trait, a GUID builder, a guest GUID reader, a
+    // big-endian byte reader and an FNV-1a loop)
+    assert_eq!(Rule::KomeCopy.check(&Tree::made_up(fixture(Rule::KomeCopy).bad)).len(), 6);
     assert_eq!(Rule::SafeRawPointerAbi.check(&Tree::made_up(fixture(Rule::SafeRawPointerAbi).bad)).len(), 3);
     assert_eq!(Rule::OutEscape.check(&Tree::made_up(fixture(Rule::OutEscape).bad)).len(), 6);
 }

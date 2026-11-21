@@ -1046,20 +1046,11 @@ mod tests {
     #[test]
     fn check_takes_translated_modules_only_with_their_types() {
         let code: alloc::vec::Vec<u8> = [0x40, 0x01, 0xc8, 0xc3].to_vec();
-        struct Mem(alloc::vec::Vec<u8>);
-        impl crate::Memory for Mem {
-            fn read8(&mut self, a: u32) -> Result<u8, crate::Fault> {
-                a.checked_sub(0x10_0000).and_then(|i| self.0.get(i as usize).copied()).ok_or(crate::Fault { addr: a, write: false })
-            }
-            fn write8(&mut self, a: u32, _: u8) -> Result<(), crate::Fault> {
-                Err(crate::Fault { addr: a, write: true })
-            }
-        }
         let made = |tweak: &dyn Fn(&mut Module)| {
             let mut m = Module::default();
             super::super::module_head(&mut m, false);
             tweak(&mut m);
-            super::super::translate_region(&mut m, &mut Mem(code.clone()), &[0x10_0000], 16, |_| true).unwrap();
+            super::super::translate_region(&mut m, &mut crate::Rom::<0x10_0000>(code.clone()), &[0x10_0000], 16, |_| true).unwrap();
             (m.finish(), m.funcs.len())
         };
         let (a, n) = made(&|_| {});

@@ -4,24 +4,9 @@
 //! forever, and its scheduler never ran the title).
 
 use core::sync::atomic::{AtomicU64, Ordering::Relaxed};
-use koji::{step, Cpu, Exit, Fault, Memory};
+use koji::{step, Cpu, Exit};
 use proptest::prelude::*;
-
-struct Flat(Vec<u8>);
-impl Memory for Flat {
-    fn read8(&mut self, a: u32) -> Result<u8, Fault> {
-        self.0.get(a as usize).copied().ok_or(Fault { addr: a, write: false })
-    }
-    fn write8(&mut self, a: u32, v: u8) -> Result<(), Fault> {
-        match self.0.get_mut(a as usize) {
-            Some(b) => {
-                *b = v;
-                Ok(())
-            }
-            None => Err(Fault { addr: a, write: true }),
-        }
-    }
-}
+use koji::Flat;
 
 const CODE: u32 = 0x1000;
 

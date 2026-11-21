@@ -18,7 +18,7 @@ use crate::api::{implement, Ctx};
 use crate::mem::{self, cstr, put32, r16, r32, r8, w16, w32, w8, wstr};
 use crate::text::{a2s, a2w, mb2w};
 use crate::gdi_geom;
-use crate::user::{self, Rect};
+use crate::user::{self, GuestRect, Rect};
 
 macro_rules! reg {
     ($dll:literal; $($f:ident),* $(,)?) => { $( implement($dll, stringify!($f), $f); )* };

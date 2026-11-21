@@ -13,7 +13,7 @@ use std::sync::{Mutex, OnceLock};
 
 use crate::api::{implement, Ctx, Handler};
 use crate::mem::{self, put32, r32, w32};
-use crate::user::Rect;
+use crate::user::{GuestRect, Rect};
 
 #[path = "d3d7.rs"]
 mod d3d7;

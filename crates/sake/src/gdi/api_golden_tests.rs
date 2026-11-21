@@ -52,9 +52,7 @@ impl Rng {
 }
 
 fn fnv(h: &mut u64, b: &[u8]) {
-    for &x in b {
-        *h = (*h ^ u64::from(x)).wrapping_mul(0x100_0000_01b3);
-    }
+    *h = kome::golden::Fnv(*h).bytes(b).get();
 }
 
 const W: i32 = 23;

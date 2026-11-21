@@ -60,6 +60,18 @@ pub fn wait<'a, T>(cv: &Condvar, g: MutexGuard<'a, T>) -> MutexGuard<'a, T> {
     cv.wait(g).unwrap_or_else(|_| poisoned::<T>())
 }
 
+/// `f` on the map a lazily made `static M: Mutex<Option<HashMap<..>>>` holds (made on first
+/// use, with any default hasher; the lock poisoned or not, as [`Lock::locked_anyway`]: for maps
+/// every change leaves whole).
+pub fn with_map<K, V, S: Default, R>(m: &Mutex<Option<std::collections::HashMap<K, V, S>>>, f: impl FnOnce(&mut std::collections::HashMap<K, V, S>) -> R) -> R {
+    f(m.locked_anyway().get_or_insert_with(std::collections::HashMap::default))
+}
+
+/// `f` on `key`'s value in such a map, if it has one ([`with_map`]).
+pub fn with_entry<K: Eq + std::hash::Hash, V, S: Default + std::hash::BuildHasher, R>(m: &Mutex<Option<std::collections::HashMap<K, V, S>>>, key: &K, f: impl FnOnce(&mut V) -> R) -> Option<R> {
+    with_map(m, |m| m.get_mut(key).map(f))
+}
+
 #[cfg(test)]
 #[path = "locks_tests.rs"]
 mod tests;

@@ -1,12 +1,6 @@
 use super::*;
 
-fn valid(w: &str) -> naga::Module {
-    let m = naga::front::wgsl::parse_str(w).unwrap_or_else(|e| panic!("{}\n{w}", e.emit_to_string(w)));
-    naga::valid::Validator::new(naga::valid::ValidationFlags::all(), naga::valid::Capabilities::all())
-        .validate(&m)
-        .unwrap_or_else(|e| panic!("{e:?}\n{w}"));
-    m
-}
+use crate::valid_wgsl as valid;
 
 /// The dimension `tex<n>` is declared with.
 fn dim_of(m: &naga::Module, n: u32) -> Option<naga::ImageDimension> {

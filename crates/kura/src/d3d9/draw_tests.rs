@@ -12,11 +12,34 @@ use super::trace_tests::{alloc, attach_page, Rng, CALLS, SERIAL};
 use super::*;
 use crate::render::model;
 
+/// Method `m` of interface `iface` with `args`. (The guest's arguments are on its stack, with
+/// the caller's frame after them: the Direct3D 8 methods that forward to Direct3D 9 read 10
+/// words whatever the method takes, so the words are padded to 16.)
 pub(super) fn call(iface: u32, m: u32, args: &[u32]) -> u32 {
-    // (padded like the guest stack: the Direct3D 8 forwards read 10 words)
     let mut a = args.to_vec();
     a.resize(a.len().max(16), 0);
     unsafe { vnhost_d3d9_call(iface << 8 | m, a.as_ptr(), &CALLS) }
+}
+/// A device of IDirect3D9::CreateDevice (software vertex processing) with these 14
+/// D3DPRESENT_PARAMETERS words.
+pub(super) fn device_with(params: [u32; 14]) -> u32 {
+    attach_page();
+    let o = out();
+    unsafe { vnhost_d3d9_create(0x20, o as *mut u32, &CALLS) };
+    let d3d = rd(o);
+    let pp = unsafe { alloc(56) as u32 };
+    for (i, x) in params.into_iter().enumerate() {
+        unsafe { *((pp + 4 * i as u32) as *mut u32) = x };
+    }
+    let o = out();
+    assert_eq!(call(IF_D3D9, 16, &[d3d, 0, 1, 1, 0x20, pp, o]), 0);
+    rd(o)
+}
+/// `w` in fresh guest memory
+pub(super) fn words(w: &[u32]) -> u32 {
+    let p = unsafe { alloc(4 * w.len() as u32) as u32 };
+    put_bytes(p, &w.iter().flat_map(|v| v.to_le_bytes()).collect::<Vec<_>>());
+    p
 }
 pub(super) fn out() -> u32 {
     unsafe { alloc(16) as u32 }

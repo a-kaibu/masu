@@ -5,25 +5,15 @@
 //! grows past the declared array. And glBindAttribLocation with an index past
 //! GL_MAX_VERTEX_ATTRIBS is GL_INVALID_VALUE and changes nothing.
 
+use super::draw_tests::guest;
 use super::*;
-use crate::d3d9::trace_tests::{alloc, SERIAL};
+use crate::d3d9::trace_tests::SERIAL;
 use proptest::prelude::*;
 use crate::d3d9::gpu;
 
 const VS: &str = "uniform vec4 a[3];\nuniform mat4 m[2];\nuniform float s;\nattribute vec4 extra;\n\
 void main() { gl_Position = gl_Vertex + a[0] + a[1] + a[2] + m[0][0] + m[1][1] + vec4(s) + extra; }";
 const FS: &str = "void main() { gl_FragColor = vec4(1.0); }";
-
-fn guest(text: &str) -> *const *const c_char {
-    unsafe {
-        let p = alloc(text.len() as u32 + 1);
-        std::ptr::copy_nonoverlapping(text.as_ptr(), p, text.len());
-        *p.add(text.len()) = 0;
-        let a = alloc(8) as *mut u32;
-        *a = p as usize as u32;
-        a as *const *const c_char
-    }
-}
 
 fn program() -> u32 {
     *GL.lock().unwrap_or_else(|e| e.into_inner()) = Gl::new();

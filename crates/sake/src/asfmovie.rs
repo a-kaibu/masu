@@ -84,8 +84,7 @@ thread_local!(static DECODED: std::cell::Cell<u32> = const { std::cell::Cell::ne
 static VIDEOS: Mutex<Option<HashMap<u32, Video>>> = Mutex::new(None);
 
 fn videos<R>(f: impl FnOnce(&mut HashMap<u32, Video>) -> R) -> R {
-    let mut g = VIDEOS.lock().unwrap_or_else(|e| e.into_inner());
-    f(g.get_or_insert_with(HashMap::new))
+    kome::locks::with_map(&VIDEOS, f)
 }
 
 /// Whether `id` is a movie's pictures from here (not kura's).

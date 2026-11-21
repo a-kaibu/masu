@@ -3,23 +3,8 @@
 //! operands and results that may be tiny to the interpreter; without it no SSE is translated
 //! in those modes. One test: the mode is the process's.
 
-use koji::{jit, step, Cpu, Exit, Fault, Memory};
-
-struct Flat(Vec<u8>);
-impl Memory for Flat {
-    fn read8(&mut self, a: u32) -> Result<u8, Fault> {
-        self.0.get(a as usize).copied().ok_or(Fault { addr: a, write: false })
-    }
-    fn write8(&mut self, a: u32, v: u8) -> Result<(), Fault> {
-        match self.0.get_mut(a as usize) {
-            Some(b) => {
-                *b = v;
-                Ok(())
-            }
-            None => Err(Fault { addr: a, write: true }),
-        }
-    }
-}
+use koji::{jit, step, Cpu, Exit};
+use koji::Flat;
 
 const CODE: u32 = 0x10000;
 const LDMXCSR: &[u8] = &[0x0f, 0xae, 0x15, 0x00, 0x20, 0x00, 0x00]; // ldmxcsr [0x2000]

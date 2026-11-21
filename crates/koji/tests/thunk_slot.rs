@@ -4,17 +4,7 @@
 //! read sake's heap (review b02). Otherwise the call goes to the thunk.
 
 use koji::jit::{self, wasm};
-use koji::{Fault, Memory};
 
-struct Code(Vec<u8>);
-impl Memory for Code {
-    fn read8(&mut self, a: u32) -> Result<u8, Fault> {
-        a.checked_sub(0x10_0000).and_then(|i| self.0.get(i as usize).copied()).ok_or(Fault { addr: a, write: false })
-    }
-    fn write8(&mut self, a: u32, _: u8) -> Result<(), Fault> {
-        Err(Fault { addr: a, write: true })
-    }
-}
 
 fn module_for(slot: u32) -> Vec<u8> {
     // call thunk; ret ... thunk (+0x10): jmp [slot]
@@ -23,7 +13,7 @@ fn module_for(slot: u32) -> Vec<u8> {
     v.extend_from_slice(&[0xff, 0x25]);
     v.extend_from_slice(&slot.to_le_bytes());
     let mut m = wasm::Module::default();
-    jit::translate_function(&mut m, &mut Code(v), 0x10_0000, jit::MAX_BLOCKS, 100, (0, 0), &|_| None, &|_| true, |a| a == 0x10_0000).unwrap();
+    jit::translate_function(&mut m, &mut koji::Rom::<0x10_0000>(v), 0x10_0000, jit::MAX_BLOCKS, 100, (0, 0), &|_| None, &|_| true, |a| a == 0x10_0000).unwrap();
     m.finish()
 }
 

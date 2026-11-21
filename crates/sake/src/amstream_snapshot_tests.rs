@@ -26,7 +26,7 @@ fn amstream_pure_snapshot() {
         let dst = (c(&mut r), c(&mut r), c(&mut r), c(&mut r));
         let mut o = vec![0xccu8; len];
         draw(&px, w, h, &mut o, pitch, bpp, masks, dst, (sw, sh));
-        let hsh = o.iter().fold(0xcbf2_9ce4_8422_2325u64, |h, &b| (h ^ u64::from(b)).wrapping_mul(0x100_0000_01b3));
+        let hsh = kome::golden::Fnv::of(&o);
         writeln!(out, "draw#{i} {w}x{h} into {sw}x{sh} pitch={pitch} len={len} bpp={bpp} {masks:x?} dst={dst:?}: {hsh:#x}").unwrap();
     }
     for i in 0..1500 {

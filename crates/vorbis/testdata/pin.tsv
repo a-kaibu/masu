@@ -1,4 +1,4 @@
-# behaviour pins: name, FNV-1a of every output (PIN_RECORD=1 writes it)
+# behaviour pins: name, FNV-1a of every output (MASU_UPDATE_GOLDEN=1 writes it)
 any bytes	88a15b954de9d47c
 mono-q0	5248e85c6dd82870
 mono-q0 headers damaged x40	3f93b6d7ac1d86a5

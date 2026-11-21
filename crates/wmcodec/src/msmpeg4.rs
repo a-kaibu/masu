@@ -409,17 +409,22 @@ impl Decoder {
     }
 
     fn init_block_index(&mut self) {
-        let (b8, mbs, mb_h) = (self.b8, self.mbs, self.mb_h);
-        let (x, y) = (self.mb_x, self.mb_y);
-        self.bi = [
-            b8 * (2 * y) + 2 * x,
-            b8 * (2 * y) + 1 + 2 * x,
-            b8 * (2 * y + 1) + 2 * x,
-            b8 * (2 * y + 1) + 1 + 2 * x,
-            mbs * (y + 1) + b8 * mb_h * 2 + x,
-            mbs * (y + mb_h + 2) + b8 * mb_h * 2 + x,
-        ];
+        self.bi = block_index(self.b8, self.mbs, self.mb_h, self.mb_x, self.mb_y);
     }
+}
+
+/// ff_init_block_index: where the 4 luma blocks and 2 chroma blocks of macroblock (x, y) sit in
+/// the motion/DC arrays (`b8` luma blocks a row, `mbs` macroblocks a row, `mb_h` rows); WMV1/2
+/// and VC-1 lay them out the same way.
+pub(crate) fn block_index(b8: usize, mbs: usize, mb_h: usize, x: usize, y: usize) -> [usize; 6] {
+    [
+        b8 * (2 * y) + 2 * x,
+        b8 * (2 * y) + 1 + 2 * x,
+        b8 * (2 * y + 1) + 2 * x,
+        b8 * (2 * y + 1) + 1 + 2 * x,
+        mbs * (y + 1) + b8 * mb_h * 2 + x,
+        mbs * (y + mb_h + 2) + b8 * mb_h * 2 + x,
+    ]
 }
 
 enum Header {

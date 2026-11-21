@@ -109,8 +109,7 @@ static DOORBELL: AtomicI32 = AtomicI32::new(0);
 static PAGE: AtomicBool = AtomicBool::new(false);
 
 fn with<R>(f: impl FnOnce(&mut HashMap<u32, Stream>) -> R) -> R {
-    let mut g = STREAMS.lock().unwrap_or_else(|e| e.into_inner());
-    f(g.get_or_insert_with(HashMap::new))
+    kome::locks::with_map(&STREAMS, f)
 }
 
 /// Whether a page decodes (no page under node: the guest keeps its own decoder).
@@ -204,7 +203,7 @@ pub fn put(id: u32, n: u32, bytes: Vec<u8>) {
             chunks.insert(n, bytes);
         }
     });
-    ring();
+    crate::bell::ring(&DOORBELL);
 }
 /// Whether frame `n` (decode order) of such a stream was handed in (and not dropped).
 pub fn has_chunk(id: u32, n: u32) -> bool {
@@ -231,7 +230,7 @@ pub fn frame_exact(id: u32, n: i32, timeout: Duration, f: impl FnOnce(&[[u32; 7]
         let Some(s) = g.get_or_insert_with(HashMap::new).get_mut(&id).filter(|s| !s.closed && !s.failed) else { return false };
         if s.want != n {
             s.want = n;
-            ring();
+            crate::bell::ring(&DOORBELL);
         }
         if let Some(k) = (0..s.slots.len()).find(|&k| !s.slots[k].writing && s.slots[k].frame == n) {
             if s.slots[k].rows < s.h {
@@ -428,17 +427,6 @@ fn release(m: &mut HashMap<u32, Stream>, id: u32) {
 /// Streams dropped since the page last listed them (`release`).
 static GRAVE: Mutex<Vec<Stream>> = Mutex::new(Vec::new());
 
-fn ring() {
-    DOORBELL.fetch_add(1, Ordering::SeqCst);
-    #[cfg(target_os = "emscripten")]
-    unsafe {
-        unsafe extern "C" {
-            fn emscripten_futex_wake(addr: *const std::ffi::c_void, count: i32) -> i32;
-        }
-        emscripten_futex_wake(DOORBELL.as_ptr() as *const std::ffi::c_void, i32::MAX);
-    }
-}
-
 /// How `frame` lays out the guest's pixels (B, G, R, A bytes per pixel).
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub enum Out {
@@ -503,7 +491,7 @@ unsafe fn frame_now(id: u32, n: i32, dst: *mut u8, pitch: usize, w: u32, h: u32,
         let Some(s) = g.get_or_insert_with(HashMap::new).get_mut(&id).filter(|s| !s.closed && !s.failed) else { return false };
         if s.want != n {
             s.want = n;
-            ring();
+            crate::bell::ring(&DOORBELL);
         }
         let late = start.elapsed() > WAIT && (s.shown >= 0 || s.opened.elapsed() > FIRST);
         let ready = |sl: &Slot| !sl.writing && sl.frame >= 0 && if late { sl.frame <= n && sl.frame > s.shown } else { sl.frame == n };

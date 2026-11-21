@@ -1,4 +1,4 @@
-# behaviour pins: name, FNV-1a of every output (PIN_RECORD=1 writes it)
+# behaviour pins: name, FNV-1a of every output (MASU_UPDATE_GOLDEN=1 writes it)
 SMM0005.rcv	556eaf38e872ba37
 SMM0005.rcv damaged x4	91bbab6b5a7af31a
 SMM0015.rcv	948a210acf615c8a

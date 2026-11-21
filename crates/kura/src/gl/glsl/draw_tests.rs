@@ -16,7 +16,8 @@ void main() { gl_Position = gl_Vertex + extra;\n\
    + gl_TextureMatrix[3] * gl_MultiTexCoord3 + vec4(gl_NormalMatrix * gl_Normal, 0.0); }";
 const FS: &str = "varying vec4 v;\nvoid main() { gl_FragColor = v; }";
 
-fn guest(text: &str) -> *const *const c_char {
+/// `text` as glShaderSource takes it: one NUL-terminated string, by a pointer in guest memory.
+pub(super) fn guest(text: &str) -> *const *const c_char {
     unsafe {
         let p = alloc(text.len() as u32 + 1);
         std::ptr::copy_nonoverlapping(text.as_ptr(), p, text.len());

@@ -72,3 +72,19 @@ proptest! {
         prop_assert_eq!(*b.r(), want);
     }
 }
+
+#[test]
+fn with_map_makes_the_map_once_and_survives_a_poisoned_lock() {
+    static M: Mutex<Option<std::collections::HashMap<u32, u32>>> = Mutex::new(None);
+    super::with_map(&M, |m| m.insert(1, 10));
+    let _ = std::thread::spawn(|| {
+        let _g = M.lock();
+        panic!("poison it");
+    })
+    .join();
+    assert!(M.is_poisoned());
+    assert_eq!(super::with_map(&M, |m| m.get(&1).copied()), Some(10));
+    assert_eq!(super::with_entry(&M, &1, |v| std::mem::replace(v, 11)), Some(10));
+    assert_eq!(super::with_entry(&M, &2, |v| *v), None);
+    assert_eq!(super::with_map(&M, |m| m.len()), 1);
+}

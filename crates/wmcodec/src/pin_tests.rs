@@ -2,7 +2,7 @@
 //! encodes of each codec, the hand-made VC-1 pictures, WMV_DIR's real files when set) and over
 //! seeded damaged copies of it (bits flipped, packets cut, dropped, swapped), hashed and compared
 //! with testdata/pin.tsv. A refactor that changes one sample, one pixel or one error anywhere
-//! fails here; `PIN_RECORD=1 cargo test -p wmcodec --release pin` writes the table again (only
+//! fails here; `MASU_UPDATE_GOLDEN=1 cargo test -p wmcodec --release pin` writes the table again (only
 //! for a change of behaviour that is meant, say why in the commit).
 
 use crate::msmpeg4::{Decoder, Error, Picture, Version};
@@ -10,102 +10,10 @@ use crate::vc1::synth;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-/// FNV-1a, 64 bits.
-pub struct H(u64);
-impl H {
-    pub fn new() -> H {
-        H(0xcbf2_9ce4_8422_2325)
-    }
-    pub fn bytes(&mut self, b: &[u8]) {
-        for &x in b {
-            self.0 ^= u64::from(x);
-            self.0 = self.0.wrapping_mul(0x100_0000_01b3);
-        }
-    }
-    pub fn u64(&mut self, v: u64) {
-        self.bytes(&v.to_le_bytes());
-    }
-    pub fn usize(&mut self, v: usize) {
-        self.u64(u64::try_from(v).unwrap());
-    }
-}
-
-/// xorshift64*: the damage is the same on every run.
-pub struct Rng(u64);
-impl Rng {
-    pub fn next(&mut self) -> u64 {
-        self.0 ^= self.0 >> 12;
-        self.0 ^= self.0 << 25;
-        self.0 ^= self.0 >> 27;
-        self.0.wrapping_mul(0x2545_f491_4f6c_dd1d)
-    }
-    pub fn below(&mut self, n: usize) -> usize {
-        usize::try_from(self.next() % u64::try_from(n.max(1)).unwrap()).unwrap()
-    }
-}
-
-/// `pkts` damaged by seed `seed`: a few bits flipped in a few packets, and now and then a packet
-/// cut short, dropped, repeated, or two swapped.
-pub fn damage(pkts: &[Vec<u8>], seed: u64) -> Vec<Vec<u8>> {
-    let mut r = Rng(seed.wrapping_mul(0x9e37_79b9_7f4a_7c15) | 1);
-    let mut p = pkts.to_vec();
-    if p.is_empty() {
-        return p;
-    }
-    for _ in 0..1 + r.below(6) {
-        let i = r.below(p.len());
-        if !p[i].is_empty() {
-            let k = r.below(p[i].len());
-            p[i][k] ^= 1 << r.below(8);
-        }
-    }
-    match r.below(6) {
-        0 => {
-            let i = r.below(p.len());
-            let n = r.below(p[i].len());
-            p[i].truncate(n);
-        }
-        1 => {
-            p.remove(r.below(p.len()));
-        }
-        2 => {
-            let i = r.below(p.len());
-            p.insert(i, p[i].clone());
-        }
-        3 => {
-            let (i, j) = (r.below(p.len()), r.below(p.len()));
-            p.swap(i, j);
-        }
-        _ => {}
-    }
-    p
-}
+use kome::golden::{Fnv as H, Rng, damage, pins};
 
 pub fn testdata() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("testdata")
-}
-
-/// The table: name -> hash; PIN_RECORD=1 writes the ones computed (keeping rows of files not
-/// here this run, WMV_DIR's), otherwise each computed one must be the table's.
-pub fn check(table: &Path, got: &BTreeMap<String, u64>) {
-    let mut want: BTreeMap<String, u64> = BTreeMap::new();
-    if let Ok(s) = std::fs::read_to_string(table) {
-        for l in s.lines().filter(|l| !l.starts_with('#') && !l.is_empty()) {
-            let (k, v) = l.split_once('\t').unwrap();
-            want.insert(k.to_string(), u64::from_str_radix(v, 16).unwrap());
-        }
-    }
-    if std::env::var_os("PIN_RECORD").is_some() {
-        want.extend(got.iter().map(|(k, v)| (k.clone(), *v)));
-        let mut s = String::from("# behaviour pins: name, FNV-1a of every output (PIN_RECORD=1 writes it)\n");
-        for (k, v) in &want {
-            s += &format!("{k}\t{v:016x}\n");
-        }
-        std::fs::write(table, s).unwrap();
-        return;
-    }
-    let bad: Vec<_> = got.iter().filter(|(k, v)| want.get(*k) != Some(v)).map(|(k, v)| format!("{k}: {v:016x}, pinned {:?}", want.get(k).map(|w| format!("{w:016x}")))).collect();
-    assert!(bad.is_empty(), "behaviour changed (or new, PIN_RECORD=1):\n{}", bad.join("\n"));
 }
 
 fn picture(h: &mut H, p: &Picture) {
@@ -145,7 +53,7 @@ fn video(h: &mut H, ver: Option<Version>, w: usize, hgt: usize, extra: &[u8], pk
             V::C(d) => d.decode(p),
         };
         match got {
-            Ok(None) => h.bytes(b"-"),
+            Ok(None) => { h.bytes(b"-"); }
             Ok(Some(p)) => picture(h, &p),
             Err(e) => error(h, &e),
         }
@@ -156,7 +64,7 @@ fn video(h: &mut H, ver: Option<Version>, w: usize, hgt: usize, extra: &[u8], pk
     if let V::C(d) = &mut d {
         match d.flush() {
             Some(p) => picture(h, &p),
-            None => h.bytes(b"."),
+            None => { h.bytes(b"."); }
         }
     }
 }
@@ -169,7 +77,7 @@ fn audio(h: &mut H, fmt: &[u8], pkts: &[Vec<u8>]) {
     let mk = || crate::wma::Decoder::new(rd16(0), rd16(2), rd32(4), rd32(8) * 8, rd16(12), &fmt[18..18 + cb]);
     let (mut a, mut b) = match (mk(), mk()) {
         (Ok(a), Ok(b)) => (a, b),
-        (Err(e), _) | (_, Err(e)) => return h.bytes(format!("{e:?}").as_bytes()),
+        (Err(e), _) | (_, Err(e)) => { h.bytes(format!("{e:?}").as_bytes()); return; }
     };
     let align = usize::from(rd16(12));
     for (i, p) in pkts.iter().flat_map(|p| p.chunks(align)).enumerate() {
@@ -177,21 +85,21 @@ fn audio(h: &mut H, fmt: &[u8], pkts: &[Vec<u8>]) {
             Ok(planes) => {
                 for c in &planes {
                     h.usize(c.len());
-                    c.iter().for_each(|v| h.bytes(&v.to_bits().to_le_bytes()));
+                    c.iter().for_each(|v| { h.bytes(&v.to_bits().to_le_bytes()); });
                 }
             }
-            Err(e) => h.bytes(format!("{e:?}").as_bytes()),
+            Err(e) => { h.bytes(format!("{e:?}").as_bytes()); }
         }
         match b.decode(p) {
-            Ok(s) => s.iter().for_each(|v| h.bytes(&v.to_le_bytes())),
-            Err(e) => h.bytes(format!("{e:?}").as_bytes()),
+            Ok(s) => s.iter().for_each(|v| { h.bytes(&v.to_le_bytes()); }),
+            Err(e) => { h.bytes(format!("{e:?}").as_bytes()); }
         }
         if i % 7 == 6 {
             // (a seek now and then)
             b.flush();
         }
     }
-    b.drain().iter().for_each(|v| h.bytes(&v.to_le_bytes()));
+    b.drain().iter().for_each(|v| { h.bytes(&v.to_le_bytes()); });
 }
 
 /// The streams of an ASF file: (format, video?, packets) each.
@@ -313,8 +221,8 @@ fn pin() {
     let mut h = H::new();
     let mut r = Rng(7);
     for _ in 0..48 {
-        let body: Vec<u8> = (0..r.below(600)).map(|_| r.next().to_le_bytes()[0]).collect();
-        let (w, hg) = (1 + r.below(70), 1 + r.below(70));
+        let body: Vec<u8> = (0..r.index(600)).map(|_| r.next().to_le_bytes()[0]).collect();
+        let (w, hg) = (1 + r.index(70), 1 + r.index(70));
         video(&mut h, None, w, hg, &synth::extra_x8(), &[synth::x8_picture(&body), synth::picture('P', false, hg.div_ceil(16))]);
     }
     rows.insert("vc1 synth x8".into(), h.0);
@@ -324,8 +232,8 @@ fn pin() {
     for i in 0..400 {
         let ver = [Some(Version::V3), Some(Version::Wmv1), Some(Version::Wmv2), None][i % 4];
         let extra: [u8; 4] = r.next().to_le_bytes()[..4].try_into().unwrap();
-        let (w, hg) = (1 + r.below(90), 1 + r.below(90));
-        let pkts: Vec<Vec<u8>> = (0..1 + r.below(5)).map(|_| (0..r.below(400)).map(|_| r.next().to_le_bytes()[0]).collect()).collect();
+        let (w, hg) = (1 + r.index(90), 1 + r.index(90));
+        let pkts: Vec<Vec<u8>> = (0..1 + r.index(5)).map(|_| (0..r.index(400)).map(|_| r.next().to_le_bytes()[0]).collect()).collect();
         video(&mut h, ver, w, hg, &extra, &pkts);
     }
     rows.insert("any bytes".into(), h.0);
@@ -336,5 +244,5 @@ fn pin() {
             file_rows(&mut rows, f, 4);
         }
     }
-    check(&testdata().join("pin.tsv"), &rows);
+    pins(&testdata().join("pin.tsv"), &rows);
 }

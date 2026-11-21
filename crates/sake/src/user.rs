@@ -21,19 +21,20 @@ macro_rules! reg {
     ($dll:literal; $($f:ident),* $(,)?) => { $( implement($dll, stringify!($f), $f); )* };
 }
 
-#[derive(Clone, Copy, Default, Debug, PartialEq)]
-pub struct Rect {
-    pub l: i32,
-    pub t: i32,
-    pub r: i32,
-    pub b: i32,
+pub use kome::rect::Rect;
+
+/// A RECT in guest memory.
+pub trait GuestRect {
+    fn read(p: u32) -> Rect;
+    /// (nothing for a null `p`)
+    fn write(&self, p: u32);
 }
 
-impl Rect {
-    pub fn read(p: u32) -> Rect {
+impl GuestRect for Rect {
+    fn read(p: u32) -> Rect {
         Rect { l: r32(p) as i32, t: r32(p + 4) as i32, r: r32(p + 8) as i32, b: r32(p + 12) as i32 }
     }
-    pub fn write(&self, p: u32) {
+    fn write(&self, p: u32) {
         if p == 0 {
             return;
         }
@@ -41,54 +42,6 @@ impl Rect {
         w32(p + 4, self.t as u32);
         w32(p + 8, self.r as u32);
         w32(p + 12, self.b as u32);
-    }
-    pub fn w(&self) -> i32 {
-        self.r - self.l
-    }
-    pub fn h(&self) -> i32 {
-        self.b - self.t
-    }
-    pub fn empty(&self) -> bool {
-        self.l >= self.r || self.t >= self.b
-    }
-    pub fn and(&self, o: &Rect) -> Rect {
-        Rect { l: self.l.max(o.l), t: self.t.max(o.t), r: self.r.min(o.r), b: self.b.min(o.b) }
-    }
-    pub fn or(&self, o: &Rect) -> Rect {
-        if self.empty() {
-            return *o;
-        }
-        if o.empty() {
-            return *self;
-        }
-        Rect { l: self.l.min(o.l), t: self.t.min(o.t), r: self.r.max(o.r), b: self.b.max(o.b) }
-    }
-    pub fn off(&self, x: i32, y: i32) -> Rect {
-        Rect { l: self.l + x, t: self.t + y, r: self.r + x, b: self.b + y }
-    }
-    pub fn has(&self, x: i32, y: i32) -> bool {
-        x >= self.l && x < self.r && y >= self.t && y < self.b
-    }
-    /// The bounding box of what is left of self once o is taken away
-    pub fn minus(&self, o: &Rect) -> Rect {
-        let mut r = *self;
-        if r.empty() || o.l <= r.l && o.t <= r.t && o.r >= r.r && o.b >= r.b {
-            return Rect::default();
-        }
-        if o.l <= r.l && o.r >= r.r {
-            if o.t <= r.t && o.b > r.t {
-                r.t = o.b;
-            } else if o.b >= r.b && o.t < r.b {
-                r.b = o.t;
-            }
-        } else if o.t <= r.t && o.b >= r.b {
-            if o.l <= r.l && o.r > r.l {
-                r.l = o.r;
-            } else if o.r >= r.r && o.l < r.r {
-                r.r = o.l;
-            }
-        }
-        r
     }
 }
 

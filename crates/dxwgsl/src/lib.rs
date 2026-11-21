@@ -74,5 +74,16 @@ pub fn point_sprite_gs(code: &[u8]) -> Option<f32> {
     Some(f32::from_le_bytes(rest.get(..4)?.try_into().ok()?))
 }
 
+/// WGSL a translator wrote, parsed and validated by naga (as the page's WebGPU will); a panic
+/// shows the error and the code.
+#[cfg(test)]
+pub(crate) fn valid_wgsl(w: &str) -> naga::Module {
+    let m = naga::front::wgsl::parse_str(w).unwrap_or_else(|e| panic!("{}\n{w}", e.emit_to_string(w)));
+    naga::valid::Validator::new(naga::valid::ValidationFlags::all(), naga::valid::Capabilities::all())
+        .validate(&m)
+        .unwrap_or_else(|e| panic!("{e:?}\n{w}"));
+    m
+}
+
 #[cfg(test)]
 mod f32_text_tests;

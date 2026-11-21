@@ -9,6 +9,7 @@ and the crates' own tests, all in CI's `test` job:
 | tool | what it sees | time |
 | --- | --- | --- |
 | `masu-lint arch` (src/arch.rs) | rules about the repository: Rust parsed with syn (items, impls, paths, macro bodies' tokens; #[cfg(test)] modules left out), other files as text | seconds, before the build |
+| `masu-lint dup` (src/dup.rs) | functions (free, methods, trait defaults, nested) and const/static tables, as tokens: the same body under another name or in another file (exact: 60+ tokens, doc comments left out), the same with its locals renamed (90+), the same table (8+ elements); the copies kept on purpose are tools/ci/dup-sites.tsv lines (kind, each copy as file#name, why); the same dup.rs is shirusu-lint's and kikizake-lint's | seconds, before the build |
 | `masu-lint ratchet` (src/ratchet.rs) | clippy's lints and the masu-* lints per file and per unsafe site, only ever down; clippy runs with `--force-warn`, so an `#[allow]`, `#![allow(clippy::all)]` or a Cargo.toml `[lints]` allow does not hide a counted lint, and each `allow`/`expect` naming one is counted itself (read as tokens: over several lines, in `cfg_attr`, in macro bodies) | one clippy run |
 | tests (`outptr_audit`, compile_fail doctests, trybuild-style goldens) | what needs the crate's own tables | `cargo test` |
 
@@ -31,8 +32,9 @@ clippy.toml path stops resolving, a regex stops matching) fails there instead of
 | one wire-format parser for "vnvm-tree" | masu-wire_tree |
 | no build output in git | arch `build-output` |
 | HRESULTs live in sake::hresult only | arch `hresult-copy` |
-| conversions, le readers, lock traits live in kome only | arch `kome-copy` |
-| one golden switch, MASU_UPDATE_GOLDEN, read by kome::golden only | arch `golden-env` |
+| conversions, le readers, GUIDs, FNV-1a, lock traits live in kome only | arch `kome-copy` (FNV-1a: its prime written anywhere under crates/, tests too) |
+| no copied function or table: one copy, called from the others (2026-11-21: 55 groups merged into kome (guid, rect, golden pins/damage, locks::with_map), koji::{Flat, Rom, Guarded}, fuzz/src/x86.rs and each crate's own test helpers) | `masu-lint dup` + tools/ci/dup-sites.tsv |
+| one golden switch, MASU_UPDATE_GOLDEN, read by kome::golden only (also no env read named *_UPDATE / *_RECORD / *_REGEN: PIN_RECORD, SST_UPDATE, TF_UPDATE, MASU_REGEN were second switches) | arch `golden-env` |
 | sake mem's safe borrows and api's untyped out-parameter paths stay removed | arch `dead-api` |
 | Ga is a value (no r32/w32 methods), Args has no Deref | arch `untyped-way-back` |
 | view_unchecked, guest atomics, locked_anyway only in their homes | arch `home-only` |

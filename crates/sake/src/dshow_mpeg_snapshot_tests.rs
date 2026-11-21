@@ -11,7 +11,7 @@ use crate::test_guest::{call_stacked, enter, guest_thread, snapshot, Rng};
 use std::fmt::Write;
 
 fn fnv(b: &[u8]) -> u64 {
-    b.iter().fold(0xcbf2_9ce4_8422_2325u64, |h, &x| (h ^ u64::from(x)).wrapping_mul(0x100_0000_01b3))
+    kome::golden::Fnv::of(b)
 }
 
 #[test]

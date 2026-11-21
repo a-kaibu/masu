@@ -28,11 +28,11 @@ fn main() -> Res<()> {
         }
     }
     let mut spent = std::time::Duration::ZERO;
-    let (mut n, mut hash) = (0u32, 0xcbf29ce484222325u64);
+    let (mut n, mut hash) = (0u32, kome::golden::Fnv::new());
     let mut see = |p: &wmcodec::msmpeg4::Picture| {
         n += 1;
-        for b in p.planes.iter().flatten() {
-            hash = (hash ^ u64::from(*b)).wrapping_mul(0x100000001b3);
+        for plane in &p.planes {
+            hash.bytes(plane);
         }
     };
     if fourcc == b"WMV3" {
@@ -65,6 +65,6 @@ fn main() -> Res<()> {
         }
     }
     let ms = spent.as_secs_f64() * 1000.0;
-    println!("{file}: {w}x{h}, {n} pictures, {:.2} ms per picture, hash {hash:016x}", ms / f64::from(n.max(1)));
+    println!("{file}: {w}x{h}, {n} pictures, {:.2} ms per picture, hash {:016x}", ms / f64::from(n.max(1)), hash.get());
     Ok(())
 }

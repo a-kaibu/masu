@@ -66,19 +66,7 @@ pub const MAX_QUEUED: usize = 16 << 20;
 pub const MAX_PCM: usize = 16 << 20;
 
 fn with<R>(f: impl FnOnce(&mut HashMap<u32, Stream>) -> R) -> R {
-    let mut g = STREAMS.lock().unwrap_or_else(|e| e.into_inner());
-    f(g.get_or_insert_with(HashMap::new))
-}
-
-fn ring() {
-    DOORBELL.fetch_add(1, Ordering::SeqCst);
-    #[cfg(target_os = "emscripten")]
-    unsafe {
-        unsafe extern "C" {
-            fn emscripten_futex_wake(addr: *const std::ffi::c_void, count: i32) -> i32;
-        }
-        emscripten_futex_wake(DOORBELL.as_ptr() as *const std::ffi::c_void, i32::MAX);
-    }
+    kome::locks::with_map(&STREAMS, f)
 }
 
 /// Whether a page decodes (none under node: sake says it has no such codec, as before). The page
@@ -110,7 +98,7 @@ pub fn open(codec: &str, rate: u32, channels: u32, desc: &[u8]) -> Option<u32> {
         closed: false,
     };
     with(|m| m.insert(id, s));
-    ring();
+    crate::bell::ring(&DOORBELL);
     Some(id)
 }
 
@@ -128,7 +116,7 @@ pub fn close(id: u32) {
         }
     });
     WAKE.notify_all();
-    ring();
+    crate::bell::ring(&DOORBELL);
 }
 
 /// Starts stream `id` again: nothing of what was pushed before comes out.
@@ -144,7 +132,7 @@ pub fn reset(id: u32) {
             s.done = 0;
         }
     });
-    ring();
+    crate::bell::ring(&DOORBELL);
 }
 
 /// Whether the page gave up on stream `id` (no decoder for its codec, or a decoding error).
@@ -172,7 +160,7 @@ pub fn push<'a>(id: u32, chunks: impl IntoIterator<Item = &'a [u8]>) {
         s.pushed > n0 || s.failed
     });
     if any {
-        ring();
+        crate::bell::ring(&DOORBELL);
     }
 }
 

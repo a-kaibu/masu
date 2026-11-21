@@ -15,7 +15,7 @@
 //!
 //! tests/sst/fetch.sh downloads the suites (pinned commits) to target/sst/<cpu>; a suite that
 //! isn't there is skipped. `tests/sst/expected-<cpu>.tsv` holds the number of passing tests per
-//! file: a file whose count drops fails the test, one that rises prints a note (SST_UPDATE=1
+//! file: a file whose count drops fails the test, one that rises prints a note (MASU_UPDATE_GOLDEN=1
 //! rewrites the files). SST_CPU=<cpu> picks a suite, SST_FILTER=<substring> files,
 //! SST_SHOW=<n> prints the first n failures of each file, SST_ROOT=<dir> points at another copy.
 //!
@@ -254,7 +254,7 @@ fn suite(s: &Suite, filter: &str, show: usize) -> Option<(BTreeMap<String, (usiz
             if ok < want {
                 worse.push(format!("{} {name}: {ok}/{n} pass, expected-{}.tsv says {want}", s.cpu, s.cpu));
             } else if ok > want {
-                eprintln!("singlestep: {} {name} improved {want} -> {ok}/{n} (SST_UPDATE=1 records it)", s.cpu);
+                eprintln!("singlestep: {} {name} improved {want} -> {ok}/{n} (MASU_UPDATE_GOLDEN=1 records it)", s.cpu);
             }
         } else if ok < n {
             worse.push(format!("{} {name}: {ok}/{n} pass, not in expected-{}.tsv", s.cpu, s.cpu));
@@ -388,17 +388,17 @@ fn singlestep() {
         let (pass, total): (usize, usize) = now.values().fold((0, 0), |(a, b), (p, n)| (a + p, b + n));
         eprintln!("singlestep {}: {pass}/{total} tests pass in {} files; not run: {skipped:?}", s.cpu, now.len());
         worse.extend(w);
-        if std::env::var_os("SST_UPDATE").is_some() {
+        if kome::golden::updating() {
             let mut all = read_expected(s.cpu);
             all.extend(now);
-            let mut out = format!("# file\tpassing\ttests  ({} suite; crates/koji/tests/singlestep.rs; SST_UPDATE=1 rewrites)\n", s.cpu);
+            let mut out = format!("# file\tpassing\ttests  ({} suite; crates/koji/tests/singlestep.rs; MASU_UPDATE_GOLDEN=1 rewrites)\n", s.cpu);
             for (k, (a, b)) in all {
                 out += &format!("{k}\t{a}\t{b}\n");
             }
             std::fs::write(expected_path(s.cpu), out).unwrap();
         }
     }
-    if std::env::var_os("SST_UPDATE").is_none() {
+    if !kome::golden::updating() {
         assert!(worse.is_empty(), "fewer passing tests than expected:\n{}", worse.join("\n"));
     }
 }

@@ -8,33 +8,14 @@
 #![cfg(all(target_arch = "x86_64", target_os = "linux"))]
 
 use iced_x86::code_asm::*;
-use koji::{step, Cpu, Exit, Fault, Memory};
+use koji::{step, Cpu, Exit};
 
 const PAGE: usize = 4096;
 const OUT: u32 = 0x200; // output area: 8 doubles + i64 + i32 + status + eflags
 
-struct TwoRegions {
-    code: Vec<u8>,
-    data_base: u32,
-    data: Vec<u8>,
-}
-
-impl Memory for TwoRegions {
-    fn read8(&mut self, a: u32) -> Result<u8, Fault> {
-        if (0x1000..0x1000 + self.code.len() as u32).contains(&a) {
-            return Ok(self.code[(a - 0x1000) as usize]);
-        }
-        let o = a.wrapping_sub(self.data_base) as usize;
-        self.data.get(o).copied().ok_or(Fault { addr: a, write: false })
-    }
-    fn write8(&mut self, a: u32, v: u8) -> Result<(), Fault> {
-        let o = a.wrapping_sub(self.data_base) as usize;
-        match self.data.get_mut(o) {
-            Some(b) => { *b = v; Ok(()) }
-            None => Err(Fault { addr: a, write: true }),
-        }
-    }
-}
+#[path = "common/two_regions.rs"]
+mod two_regions;
+use two_regions::TwoRegions;
 
 struct Rng(u64);
 impl Rng {

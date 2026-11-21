@@ -134,7 +134,7 @@ proptest! {
         prop_assert_eq!(c.q(1), slots[0] as u64 | (slots[1] as u64) << 32);
         prop_assert_eq!(c.z(2), slots[1] as u64);
         prop_assert_eq!(c.d(2).to_bits(), slots[1] as u64 | (slots[2] as u64) << 32);
-        prop_assert_eq!(c.fl(3).to_bits(), slots[2]);
+        prop_assert_eq!(c.f(3).to_bits(), slots[2]);
         prop_assert_eq!(mem::r32(c.byval(1)), slots[0]);
         prop_assert_eq!(c.byval(2), c.byval(1) + 4);
         mem::heap_free(sp);

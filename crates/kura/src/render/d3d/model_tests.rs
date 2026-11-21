@@ -28,11 +28,9 @@ impl Rng {
     }
 }
 
+/// FNV-1a 64 folded to 32 bits
 fn fnv(b: &[u8]) -> u32 {
-    let mut h = 0xcbf2_9ce4_8422_2325u64;
-    for &x in b {
-        h = (h ^ x as u64).wrapping_mul(0x0100_0000_01b3);
-    }
+    let h = kome::golden::Fnv::of(b);
     h as u32 ^ (h >> 32) as u32
 }
 

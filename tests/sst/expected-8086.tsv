@@ -1,4 +1,4 @@
-# file	passing	tests  (8086 suite; crates/koji/tests/singlestep.rs; SST_UPDATE=1 rewrites)
+# file	passing	tests  (8086 suite; crates/koji/tests/singlestep.rs; MASU_UPDATE_GOLDEN=1 rewrites)
 00	2000	2000
 01	2000	2000
 02	2000	2000

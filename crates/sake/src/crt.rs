@@ -3521,11 +3521,7 @@ fn __std_type_info_hash(c: &mut Ctx) -> u32 {
     // FNV-1a, as the UCRT (x64: the 64-bit one)
     let name = cstr(c.a(0) + ps() + 1);
     if mem::x64() {
-        let mut h: u64 = 0xcbf29ce484222325;
-        for b in name {
-            h = (h ^ b as u64).wrapping_mul(0x100000001b3);
-        }
-        return c.ret64(h);
+        return c.ret64(kome::golden::Fnv::of(&name));
     }
     let mut h: u32 = 0x811c9dc5;
     for b in name {

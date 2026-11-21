@@ -17,7 +17,7 @@ all in real mode, on koji's interpreter in 16-bit mode with real-mode segments
     tests/sst/fetch.sh [cpu...]            # once: ~1.9 GB to target/sst/<cpu> (pinned commits)
     cargo test --release -p koji --test singlestep                     # all suites in parallel
     SST_CPU=8088 SST_FILTER=F6.7 SST_SHOW=5 cargo test --release -p koji --test singlestep -- --nocapture
-    SST_UPDATE=1 cargo test --release -p koji --test singlestep        # rewrite expected-<cpu>.tsv
+    MASU_UPDATE_GOLDEN=1 cargo test --release -p koji --test singlestep        # rewrite expected-<cpu>.tsv
     (cd tools/jit16test && SST_N=200 cargo run --release -- sst [cpu]) # the 16-bit JIT
 
 `moo.rs` reads the MOO files and decides what is run (`skip`, `not_modeled`); it is shared by

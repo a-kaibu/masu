@@ -19,11 +19,7 @@ fn singleton(name: &str, methods: &[(Handler, u32)], cell: &std::sync::OnceLock<
     })
 }
 
-fn qi(c: &mut Ctx) -> u32 {
-    let c = &mut c.args::<crate::api::outs::iface::IUnknown::QueryInterface>();
-    c.out::<2>().put(c.a::<0>());
-    0
-}
+use crate::com::qi_self as qi;
 fn one(_: &mut Ctx) -> u32 {
     1
 }

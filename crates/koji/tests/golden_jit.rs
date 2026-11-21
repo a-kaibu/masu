@@ -34,7 +34,7 @@ fn translate(t: Tr, n: usize) -> u64 {
     };
     let mut h = Fnv::new();
     match r {
-        None => h.u8(0),
+        None => { h.u8(0); }
         Some(r) => {
             h.u8(1);
             for (a, i) in &r.starts {
@@ -47,7 +47,7 @@ fn translate(t: Tr, n: usize) -> u64 {
                 h.u32(*l);
             }
             match &r.text {
-                None => h.u8(0),
+                None => { h.u8(0); }
                 Some(t) => {
                     h.u8(1);
                     h.bytes(t);

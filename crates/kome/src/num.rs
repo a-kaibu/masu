@@ -118,223 +118,36 @@ pub(crate) mod sealed {
         }
     }
 
-    impl Low for u8 {
-        #[inline(always)]
-        fn low_u8(self) -> u8 {
-            let b = self.to_le_bytes();
-            u8::from_le_bytes([b[0]])
-        }
-        #[inline(always)]
-        fn low_u16(self) -> u16 {
-            u16::from(self)
-        }
-        #[inline(always)]
-        fn low_u32(self) -> u32 {
-            u32::from(self)
-        }
-        #[inline(always)]
-        fn low_u64(self) -> u64 {
-            u64::from(self)
-        }
+    /// The low bits of each fixed-width integer: widened to `$wide` (zero- or sign-extended,
+    /// so an i8's low 16 bits are i16::from's), then its first bytes.
+    macro_rules! low_via {
+        ($wide:ty: $($t:ty),*) => {$(
+            impl Low for $t {
+                #[inline(always)]
+                fn low_u8(self) -> u8 {
+                    let [a, ..] = <$wide>::from(self).to_le_bytes();
+                    a
+                }
+                #[inline(always)]
+                fn low_u16(self) -> u16 {
+                    let [a, b, ..] = <$wide>::from(self).to_le_bytes();
+                    u16::from_le_bytes([a, b])
+                }
+                #[inline(always)]
+                fn low_u32(self) -> u32 {
+                    let [a, b, c, d, ..] = <$wide>::from(self).to_le_bytes();
+                    u32::from_le_bytes([a, b, c, d])
+                }
+                #[inline(always)]
+                fn low_u64(self) -> u64 {
+                    let [a, b, c, d, e, f, g, h, ..] = <$wide>::from(self).to_le_bytes();
+                    u64::from_le_bytes([a, b, c, d, e, f, g, h])
+                }
+            }
+        )*};
     }
-
-    impl Low for u16 {
-        #[inline(always)]
-        fn low_u8(self) -> u8 {
-            let b = self.to_le_bytes();
-            u8::from_le_bytes([b[0]])
-        }
-        #[inline(always)]
-        fn low_u16(self) -> u16 {
-            let b = self.to_le_bytes();
-            u16::from_le_bytes([b[0], b[1]])
-        }
-        #[inline(always)]
-        fn low_u32(self) -> u32 {
-            u32::from(self)
-        }
-        #[inline(always)]
-        fn low_u64(self) -> u64 {
-            u64::from(self)
-        }
-    }
-
-    impl Low for u32 {
-        #[inline(always)]
-        fn low_u8(self) -> u8 {
-            let b = self.to_le_bytes();
-            u8::from_le_bytes([b[0]])
-        }
-        #[inline(always)]
-        fn low_u16(self) -> u16 {
-            let b = self.to_le_bytes();
-            u16::from_le_bytes([b[0], b[1]])
-        }
-        #[inline(always)]
-        fn low_u32(self) -> u32 {
-            let b = self.to_le_bytes();
-            u32::from_le_bytes([b[0], b[1], b[2], b[3]])
-        }
-        #[inline(always)]
-        fn low_u64(self) -> u64 {
-            u64::from(self)
-        }
-    }
-
-    impl Low for u64 {
-        #[inline(always)]
-        fn low_u8(self) -> u8 {
-            let b = self.to_le_bytes();
-            u8::from_le_bytes([b[0]])
-        }
-        #[inline(always)]
-        fn low_u16(self) -> u16 {
-            let b = self.to_le_bytes();
-            u16::from_le_bytes([b[0], b[1]])
-        }
-        #[inline(always)]
-        fn low_u32(self) -> u32 {
-            let b = self.to_le_bytes();
-            u32::from_le_bytes([b[0], b[1], b[2], b[3]])
-        }
-        #[inline(always)]
-        fn low_u64(self) -> u64 {
-            let b = self.to_le_bytes();
-            u64::from_le_bytes([b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7]])
-        }
-    }
-
-    impl Low for u128 {
-        #[inline(always)]
-        fn low_u8(self) -> u8 {
-            let b = self.to_le_bytes();
-            u8::from_le_bytes([b[0]])
-        }
-        #[inline(always)]
-        fn low_u16(self) -> u16 {
-            let b = self.to_le_bytes();
-            u16::from_le_bytes([b[0], b[1]])
-        }
-        #[inline(always)]
-        fn low_u32(self) -> u32 {
-            let b = self.to_le_bytes();
-            u32::from_le_bytes([b[0], b[1], b[2], b[3]])
-        }
-        #[inline(always)]
-        fn low_u64(self) -> u64 {
-            let b = self.to_le_bytes();
-            u64::from_le_bytes([b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7]])
-        }
-    }
-
-    impl Low for i8 {
-        #[inline(always)]
-        fn low_u8(self) -> u8 {
-            let b = self.to_le_bytes();
-            u8::from_le_bytes([b[0]])
-        }
-        #[inline(always)]
-        fn low_u16(self) -> u16 {
-            i16::from(self).cast_unsigned()
-        }
-        #[inline(always)]
-        fn low_u32(self) -> u32 {
-            i32::from(self).cast_unsigned()
-        }
-        #[inline(always)]
-        fn low_u64(self) -> u64 {
-            i64::from(self).cast_unsigned()
-        }
-    }
-
-    impl Low for i16 {
-        #[inline(always)]
-        fn low_u8(self) -> u8 {
-            let b = self.to_le_bytes();
-            u8::from_le_bytes([b[0]])
-        }
-        #[inline(always)]
-        fn low_u16(self) -> u16 {
-            let b = self.to_le_bytes();
-            u16::from_le_bytes([b[0], b[1]])
-        }
-        #[inline(always)]
-        fn low_u32(self) -> u32 {
-            i32::from(self).cast_unsigned()
-        }
-        #[inline(always)]
-        fn low_u64(self) -> u64 {
-            i64::from(self).cast_unsigned()
-        }
-    }
-
-    impl Low for i32 {
-        #[inline(always)]
-        fn low_u8(self) -> u8 {
-            let b = self.to_le_bytes();
-            u8::from_le_bytes([b[0]])
-        }
-        #[inline(always)]
-        fn low_u16(self) -> u16 {
-            let b = self.to_le_bytes();
-            u16::from_le_bytes([b[0], b[1]])
-        }
-        #[inline(always)]
-        fn low_u32(self) -> u32 {
-            let b = self.to_le_bytes();
-            u32::from_le_bytes([b[0], b[1], b[2], b[3]])
-        }
-        #[inline(always)]
-        fn low_u64(self) -> u64 {
-            i64::from(self).cast_unsigned()
-        }
-    }
-
-    impl Low for i64 {
-        #[inline(always)]
-        fn low_u8(self) -> u8 {
-            let b = self.to_le_bytes();
-            u8::from_le_bytes([b[0]])
-        }
-        #[inline(always)]
-        fn low_u16(self) -> u16 {
-            let b = self.to_le_bytes();
-            u16::from_le_bytes([b[0], b[1]])
-        }
-        #[inline(always)]
-        fn low_u32(self) -> u32 {
-            let b = self.to_le_bytes();
-            u32::from_le_bytes([b[0], b[1], b[2], b[3]])
-        }
-        #[inline(always)]
-        fn low_u64(self) -> u64 {
-            let b = self.to_le_bytes();
-            u64::from_le_bytes([b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7]])
-        }
-    }
-
-    impl Low for i128 {
-        #[inline(always)]
-        fn low_u8(self) -> u8 {
-            let b = self.to_le_bytes();
-            u8::from_le_bytes([b[0]])
-        }
-        #[inline(always)]
-        fn low_u16(self) -> u16 {
-            let b = self.to_le_bytes();
-            u16::from_le_bytes([b[0], b[1]])
-        }
-        #[inline(always)]
-        fn low_u32(self) -> u32 {
-            let b = self.to_le_bytes();
-            u32::from_le_bytes([b[0], b[1], b[2], b[3]])
-        }
-        #[inline(always)]
-        fn low_u64(self) -> u64 {
-            let b = self.to_le_bytes();
-            u64::from_le_bytes([b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7]])
-        }
-    }
+    low_via!(u128: u8, u16, u32, u64, u128);
+    low_via!(i128: i8, i16, i32, i64, i128);
 
     impl Low for usize {
         #[inline(always)]

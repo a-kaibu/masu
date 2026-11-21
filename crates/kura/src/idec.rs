@@ -45,19 +45,7 @@ static SLOW: AtomicBool = AtomicBool::new(false);
 static NEXT: AtomicU32 = AtomicU32::new(1);
 
 fn with<R>(f: impl FnOnce(&mut HashMap<u32, Req>) -> R) -> R {
-    let mut g = REQS.lock().unwrap_or_else(|e| e.into_inner());
-    f(g.get_or_insert_with(HashMap::new))
-}
-
-fn ring() {
-    DOORBELL.fetch_add(1, Ordering::SeqCst);
-    #[cfg(target_os = "emscripten")]
-    unsafe {
-        unsafe extern "C" {
-            fn emscripten_futex_wake(addr: *const std::ffi::c_void, count: i32) -> i32;
-        }
-        emscripten_futex_wake(DOORBELL.as_ptr() as *const std::ffi::c_void, i32::MAX);
-    }
+    kome::locks::with_map(&REQS, f)
 }
 
 /// Whether a page decodes (MASU_IDEC_OFF: never).
@@ -85,7 +73,7 @@ pub fn jpeg(data: &[u8], timeout: Duration) -> Option<Picture> {
     }
     let id = NEXT.fetch_add(1, Ordering::Relaxed);
     with(|m| m.insert(id, Req { data: data.to_vec(), ..Req::default() }));
-    ring();
+    crate::bell::ring(&DOORBELL);
     let end = Instant::now() + timeout;
     let mut g = REQS.lock().unwrap_or_else(|e| e.into_inner());
     loop {

@@ -118,7 +118,7 @@ fn wasapi_render_snapshot() {
         for _ in 0..r.below(6) + 1 {
             let mut buf = vec![0f32; STEP * 2];
             let dry = render(&mut c, gain, &mut buf);
-            let h = buf.iter().flat_map(|x| x.to_bits().to_le_bytes()).fold(0xcbf2_9ce4_8422_2325u64, |h, b| (h ^ u64::from(b)).wrapping_mul(0x100_0000_01b3));
+            let h = kome::golden::Fnv::new().words(buf.iter().map(|x| x.to_bits())).get();
             write!(line, " [{dry} played={} left={} frac={:e} {h:#x}]", c.played, c.queue.len(), c.frac).unwrap();
         }
         writeln!(out, "{line}").unwrap();

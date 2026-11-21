@@ -121,7 +121,7 @@ impl Rule {
         match self {
             Rule::BuildOutput => "no build output in git (a target/ directory, a compiled or packed file outside vendor/ and testdata/): build artifacts never go to GitHub; 99c0d6d6 committed three masu stubs under crates/masu/target",
             Rule::HresultCopy => "sake's HRESULTs live in sake::hresult only (DRY rework 2026-11-15): `use crate::hresult::*` instead of a second `const E_FAIL`",
-            Rule::KomeCopy => "conversions, little-endian readers, GUIDs and lock traits live in kome only (95e48ed5, kome::guid): use kome::num / kome::le / kome::guid / kome::locks (a GUID in guest memory: mem::array::<16>, mem::write), not a copy of your own",
+            Rule::KomeCopy => "conversions, little-endian readers, GUIDs, FNV-1a and lock traits live in kome only (95e48ed5, kome::guid): use kome::num / kome::le / kome::guid / kome::golden::Fnv / kome::locks (a GUID in guest memory: mem::array::<16>, mem::write), not a copy of your own",
             Rule::GoldenEnv => "one golden switch, MASU_UPDATE_GOLDEN, read by kome::golden only: another *_UPDATE_GOLDEN/BLESS name is a golden MASU_UPDATE_GOLDEN=1 leaves stale",
             Rule::DeadApi => "removed stays removed: sake::mem's safe borrows (slice, guest_mut, view, view_mut, guest, in_guest, guest_range; mem::bytes / mem::update copy) and api's untyped out-parameter paths (to_callee, a_at, out_at, put64; api::words!, typed Args)",
             Rule::UntypedWayBack => "a guest address is a value (mem::r32(ga(a) + 4), no reader/writer methods on Ga), and api::Args has no Deref to Ctx (it let c.a(i) read an out-parameter as a word)",
@@ -284,6 +284,9 @@ pub const KOME_FNS: [&str; 18] = [
     "guid", "guid_string", "fmt_guid", "guid_at", "read_guid", "put_guid",
 ];
 
+/// FNV-1a 64's prime written out: a hand-rolled copy of kome::golden::Fnv (25 of them, 2026-11-20)
+static FNV_PRIME: LazyLock<Option<Regex>> = LazyLock::new(|| rx(r"(?i)\b0x0*100_?0000_?01b3\b|\b1099511628211\b"));
+
 fn kome_copy(tree: &Tree) -> Hits {
     let files: Vec<Rel> = tree.rs(&["crates/"]).into_iter().filter(|f| !f.as_str().starts_with("crates/kome/")).collect();
     let mut out = Hits::new();
@@ -294,10 +297,21 @@ fn kome_copy(tree: &Tree) -> Hits {
         out.extend(it.byte_readers.iter().map(|(n, l)| (f.clone(), *l, format!("fn {n}: a number from bytes at an offset (kome::le::u32_at, u16_be_at...)"))));
         out.extend(it.traits.iter().filter(|(n, _)| n == "Lock" || n == "Rw").map(|(n, l)| (f.clone(), *l, format!("trait {n}"))));
     }
+    if let Some(prime) = FNV_PRIME.as_ref() {
+        // (tests too: most of the copies were in golden and snapshot tests)
+        let all: Vec<Rel> = tree.paths().iter().filter(|p| p.is_rust() && p.as_str().starts_with("crates/") && !p.as_str().starts_with("crates/kome/") && !p.as_str().starts_with("crates/masu-lint/")).cloned().collect();
+        for f in &all {
+            let src = tree.code(f, true);
+            out.extend(prime.find_iter(&src).map(|m| (f.clone(), line_of(&src, m.start()), "FNV-1a's prime: kome::golden::Fnv (bytes, words, u64...)".to_owned())));
+        }
+    }
     out
 }
 
 static GOLDEN_ANY: LazyLock<Option<Regex>> = LazyLock::new(|| rx(r"\b[A-Z0-9_]*(?:UPDATE_GOLDEN|BLESS|UPDATE_SNAPSHOTS?|REGEN(?:ERATE)?_GOLDEN|UPDATE_EXPECT)[A-Z0-9_]*\b"));
+/// an env read whose name says "rewrite the expected file" (PIN_RECORD, SST_UPDATE, MASU_REGEN):
+/// a second golden switch under another word
+static GOLDEN_READ: LazyLock<Option<Regex>> = LazyLock::new(|| rx(r#"var(?:_os)?\(\s*"([A-Z0-9_]*(?:_|\b)(?:UPDATE|RECORD|REGEN|REWRITE|BLESS|RERECORD))""#));
 static GOLDEN_FILES: LazyLock<Option<Regex>> = LazyLock::new(|| rx(r"\.(rs|py|sh|mjs|js|ts|yml|yaml|toml)$"));
 pub const GOLDEN_HOME: &str = "crates/kome/src/golden.rs";
 
@@ -314,6 +328,15 @@ fn golden_env(tree: &Tree) -> Hits {
         for m in any.find_iter(&src) {
             if m.as_str() != "MASU_UPDATE_GOLDEN" {
                 out.push((p.clone(), line_of(&src, m.start()), m.as_str().to_owned()));
+            }
+        }
+        if p.is_rust()
+            && let Some(read) = GOLDEN_READ.as_ref()
+        {
+            for c in read.captures_iter(&src) {
+                if let Some(m) = c.get(1) {
+                    out.push((p.clone(), line_of(&src, m.start()), format!("{} switches a golden rewrite: kome::golden::updating() (MASU_UPDATE_GOLDEN)", m.as_str())));
+                }
             }
         }
         if p.is_rust() && s != GOLDEN_HOME {
@@ -471,7 +494,7 @@ fn release_build_only(tree: &Tree) -> Hits {
 }
 
 /// what must stay in place: (file, text, why)
-pub const REQUIRED: [(&str, &str, &str); 9] = [
+pub const REQUIRED: [(&str, &str, &str); 10] = [
     ("crates/kura/src/d3d9/device.rs", "    pub sub: Sub,", "a Direct3D 9 surface names its part of the page texture as a Sub (level and cube face together): a bare level drew every face of a render target cube on layer 0 (2026-11-20)"),
     ("tests/host-tests.sh", "export MASU_OUTS_STRICT=1", "release-build host tests fail on a 32-bit write into a pointer-sized out-parameter (2026-11-16)"),
     ("crates/sake/src/lib.rs", "mod outptr_audit;", "every handler of a function with pointer-sized out-parameters takes its typed Args"),
@@ -480,6 +503,7 @@ pub const REQUIRED: [(&str, &str, &str); 9] = [
     (API, "```compile_fail", "an out-parameter is not a word"),
     (".github/workflows/ci.yml", "cargo run -q --release -p masu-lint -- arch", "this lint runs on every push, before the build"),
     (".github/workflows/ci.yml", "cargo run -q --release -p masu-lint -- ratchet", "the lint ratchet runs on every push"),
+    (".github/workflows/ci.yml", "cargo run -q --release -p masu-lint -- dup", "copied functions and tables are found on every push (2026-11-21)"),
     (".github/workflows/ci.yml", "cargo test --workspace --release", "masu-lint's own tests (each rule and each ratchet lint fires on its regression) run on every push"),
 ];
 

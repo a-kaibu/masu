@@ -15,8 +15,9 @@
 #![no_main]
 
 use koji::jit::{self, wasm::Module as JitModule};
-use koji::{Cpu, Exit, Fault, Memory};
+use koji::{Cpu, Exit, Memory};
 use libfuzzer_sys::fuzz_target;
+use masu_fuzz::x86::{engine, Window, HI, LO};
 use std::cell::UnsafeCell;
 use std::sync::OnceLock;
 use wasmtime::*;
@@ -27,42 +28,14 @@ const HASH_N: u32 = 64;
 const RING_AT: u32 = 0x8000;
 const CALLS_AT: u32 = 0x10000;
 const PAGES_AT: u32 = 0x20000;
-const LO: u32 = 0x10_0000;
-const HI: u32 = 0x14_0000;
 const ESP0: u32 = 0x13_0000;
 /// where the function returns to (a HLT: not translated, the JIT leaves there)
 const RET_TO: u32 = LO + 0x3_f000;
 const SHA256: &[u8] = include_bytes!("../../crates/koji/testdata/ltc_sha256_compress_od.bin");
 
-struct Window(Vec<u8>);
-impl Memory for Window {
-    fn read8(&mut self, a: u32) -> Result<u8, Fault> {
-        if (LO..HI).contains(&a) { Ok(self.0[(a - LO) as usize]) } else { Err(Fault { addr: a, write: false }) }
-    }
-    fn write8(&mut self, a: u32, v: u8) -> Result<(), Fault> {
-        if (LO..HI).contains(&a) {
-            self.0[(a - LO) as usize] = v;
-            Ok(())
-        } else {
-            Err(Fault { addr: a, write: true })
-        }
-    }
-}
-
 fn cpu_in(mem: &[UnsafeCell<u8>], at: u32) -> &mut Cpu {
     // SAFETY: Cpu is plain data (repr(C), any bits valid) and CPU_AT is 16-byte aligned; one thread
     unsafe { &mut *(mem[at as usize].get() as *mut Cpu) }
-}
-
-fn engine() -> &'static (Engine, Module) {
-    static E: OnceLock<(Engine, Module)> = OnceLock::new();
-    E.get_or_init(|| {
-        let mut c = Config::new();
-        c.wasm_threads(true).shared_memory(true).wasm_simd(true).wasm_tail_call(true).cranelift_opt_level(OptLevel::None);
-        let e = Engine::new(&c).unwrap();
-        let d = Module::new(&e, jit::dispatch::module()).unwrap();
-        (e, d)
-    })
 }
 
 /// Runs the JIT's translation of the function at LO from `cpu` over `window`: the state and

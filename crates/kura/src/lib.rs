@@ -30,6 +30,7 @@ pub fn nopace() -> bool {
     true
 }
 
+mod bell;
 pub mod adec;
 pub mod idec;
 pub mod audio;

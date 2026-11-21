@@ -1858,7 +1858,7 @@ fn os_bool<const W: bool>(c: &mut Ctx) -> u32 {
     })
 }
 fn os_float<const W: bool>(c: &mut Ctx) -> u32 {
-    let (this, v) = (c.a(0), c.fl(1) as f64);
+    let (this, v) = (c.a(0), c.f(1) as f64);
     insert::<W>(c, this, |ios, fl| float_field(fl, r64(ios + PREC()) as i64, v))
 }
 fn os_double<const W: bool>(c: &mut Ctx) -> u32 {

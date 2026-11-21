@@ -1739,7 +1739,7 @@ fn dx_container(path: &str) -> u32 {
     static V: std::sync::OnceLock<u32> = std::sync::OnceLock::new();
     let vt = *V.get_or_init(|| {
         let m: &[(crate::api::Handler, u32)] = &[
-            (dx_qi, 12),
+            (crate::com::qi_self, 12),
             (dx_addref, 4),
             (dx_addref, 4),
             (dxc_num_children, 8),
@@ -1762,11 +1762,6 @@ fn dx_container(path: &str) -> u32 {
 }
 fn dx_path(o: u32) -> String {
     DX_NODES.lock().unwrap().get_or_insert_with(HashMap::default).get(&o).cloned().unwrap_or_default()
-}
-fn dx_qi(c: &mut Ctx) -> u32 {
-    let c = &mut c.args::<crate::api::outs::iface::IUnknown::QueryInterface>();
-    c.out::<2>().put(c.a::<0>());
-    0
 }
 fn dx_addref(_: &mut Ctx) -> u32 {
     1
@@ -1854,7 +1849,7 @@ fn dxc_get_prop(c: &mut Ctx) -> u32 {
 fn dxdiag_provider() -> u32 {
     static V: std::sync::OnceLock<u32> = std::sync::OnceLock::new();
     let vt = *V.get_or_init(|| {
-        let m: &[(crate::api::Handler, u32)] = &[(dx_qi, 12), (dx_addref, 4), (dx_addref, 4), (dxp_initialize, 8), (dxp_root, 8)];
+        let m: &[(crate::api::Handler, u32)] = &[(crate::com::qi_self, 12), (dx_addref, 4), (dx_addref, 4), (dxp_initialize, 8), (dxp_root, 8)];
         let v = mem::heap_alloc(mem::ps() * m.len() as u32, true);
         for (i, (f, b)) in m.iter().enumerate() {
             mem::wp(v + mem::ps() * i as u32, crate::api::host_fn(&format!("IDxDiagProvider::{i}"), *f, *b));
@@ -2079,11 +2074,7 @@ fn CoTaskMemFree(c: &mut Ctx) -> u32 {
 fn malloc_obj() -> u32 {
     static O: std::sync::OnceLock<u32> = std::sync::OnceLock::new();
     *O.get_or_init(|| {
-        fn qi(c: &mut Ctx) -> u32 {
-            let c = &mut c.args::<crate::api::outs::iface::IUnknown::QueryInterface>();
-            c.out::<2>().put(c.a::<0>());
-            0
-        }
+        use crate::com::qi_self as qi;
         fn one(_: &mut Ctx) -> u32 {
             1
         }

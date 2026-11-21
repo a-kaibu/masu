@@ -1,0 +1,6 @@
+# masu-lint dup (crates/masu-lint/src/dup.rs): copies kept on purpose. kind, then file#name of each copy, then why.
+# A copy not listed fails CI; `masu-lint dup --list` shows them all, `--update` drops the gone lines.
+exact	crates/sake/src/dds.rs#Dds::level_rows	crates/sake/src/dds_faces_tests.rs#Old::level_rows	# the test's oracle: the code as it was before faces, kept to compare the new code with
+exact	crates/sake/src/dds.rs#Dds::level_size	crates/sake/src/dds_faces_tests.rs#Old::level_size	# the test's oracle (as level_rows)
+exact	tools/jit32test/src/main.rs#interp	tools/jit64test/src/main.rs#interp	# two standalone tools, each over its own Mem (32-bit: a fixed window; 64-bit: a movable limit and code-write marks): the same words, other types
+table	crates/koji/src/jit/mod.rs#SHA256_K	fuzz/fuzz_targets/x86_jit_hle.rs#K	# the fuzz target's own SHA-256 is the reference the JIT's HLE is compared with: sharing the table would share a wrong constant

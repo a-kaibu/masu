@@ -481,3 +481,6 @@ constant-method	crates/kura/src/d3d9/device.rs	9 => 0,	escape: implement Windows
 constant-method	crates/kura/src/d3d9/device.rs	9 => 0,	escape: implement Windows' behavior (this thread)
 constant-method	crates/kura/src/d3d9/device.rs	9 => 0,	escape: implement Windows' behavior (this thread)
 constant-method	crates/sake/src/d3d9.rs	Method { iface: 2, index: 0x77 | 0x78 } => 0,	escape: implement Windows' behavior (this thread)
+# (FNV-1a prime outside kome::golden::Fnv, 2026-11-21: neither is a byte hash kome has)
+kome-copy	crates/kura/src/render/d3d.rs	let add = |h: u64, w: u64| (h ^ w).wrapping_mul(0x0100_0000_01b3);	FNV over whole u64 words (not bytes): the pipeline-key hash, a different function from Fnv's
+kome-copy	crates/kura/src/d3d9/format.rs	let mut xs = 0x9e37_79b9_7f4a_7c15u64 ^ f.wrapping_mul(0x0100_0000_01b3);	the Windows probe's own xorshift seed for format f (winref d3d9 DXT probe), copied from the probe to make the same bytes

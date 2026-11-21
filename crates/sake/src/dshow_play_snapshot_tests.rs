@@ -7,7 +7,7 @@ use crate::test_guest::{snapshot, Rng};
 use std::fmt::Write;
 
 fn fnv(v: impl IntoIterator<Item = u32>) -> u64 {
-    v.into_iter().fold(0xcbf2_9ce4_8422_2325u64, |h, x| x.to_le_bytes().iter().fold(h, |h, &b| (h ^ u64::from(b)).wrapping_mul(0x100_0000_01b3)))
+    kome::golden::Fnv::new().words(v).get()
 }
 
 #[test]

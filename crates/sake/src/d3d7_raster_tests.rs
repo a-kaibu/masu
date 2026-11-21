@@ -34,14 +34,9 @@ impl Rng {
 
 const MASKS: [[u32; 4]; 4] = [[0xff_0000, 0xff00, 0xff, 0], [0xff_0000, 0xff00, 0xff, 0xff00_0000], [0xf800, 0x7e0, 0x1f, 0], [0x7c00, 0x3e0, 0x1f, 0x8000]];
 
-fn fmt_of(m: [u32; 4]) -> Fmt {
-    Fmt { ch: m.map(|m| if m == 0 { (0, 0) } else { (m.trailing_zeros(), m >> m.trailing_zeros()) }) }
-}
 
 fn fnv(h: &mut u64, b: &[u8]) {
-    for &x in b {
-        *h = (*h ^ x as u64).wrapping_mul(0x100_0000_01b3);
-    }
+    *h = kome::golden::Fnv(*h).bytes(b).get();
 }
 
 const W: i32 = 19;
@@ -72,7 +67,7 @@ fn draw(rng: &mut Rng, out: &mut Vec<String>) {
             let k = rng.next() & rng.pick(&[0x8181_8181, 0xffff, 0]);
             (k, if rng.below(2) == 0 { k } else { k | rng.below(256) })
         });
-        texes.push((px, tw, th, b, fmt_of(m), key));
+        texes.push((px, tw, th, b, Fmt::masks(m), key));
     }
     let stages: Vec<Stage> = texes
         .iter()
@@ -94,7 +89,7 @@ fn draw(rng: &mut Rng, out: &mut Vec<String>) {
         rt: rt.as_mut_ptr(),
         pitch: W as usize * rbytes,
         bpp: rbytes,
-        fmt: fmt_of(rm),
+        fmt: Fmt::masks(rm),
         z: use_z.then(|| (zb.as_mut_ptr(), W as usize * zbytes, zbytes, zmax as f32)),
         clip: [rng.below(4) as i32, rng.below(4) as i32, W - rng.below(4) as i32, H - rng.below(4) as i32],
         ztest: use_z.then(|| Cmp::of(rng.state(10))),
