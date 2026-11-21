@@ -1,0 +1,22 @@
+  CreateUnorderedAccessView flags 6: 0x80070057
+counters of new views, then as set
+  new APPEND (at 0): 0 cdcdcdcd cdcdcdcd cdcdcdcd
+  new COUNTER (at 4): cdcdcdcd 0 cdcdcdcd cdcdcdcd
+  no counter (at 0): cdcdcdcd cdcdcdcd cdcdcdcd cdcdcdcd
+  APPEND set 5 (CS) (at 0): 5 cdcdcdcd cdcdcdcd cdcdcdcd
+  APPEND set -1 (CS) (at 0): 5 cdcdcdcd cdcdcdcd cdcdcdcd
+  COUNTER set 0x12345678 (at 8): cdcdcdcd cdcdcdcd 12345678 cdcdcdcd
+  no counter set 9 (at 0): cdcdcdcd cdcdcdcd cdcdcdcd cdcdcdcd
+  APPEND at 2 (at 2): cdcdcdcd cdcdcdcd cdcdcdcd cdcdcdcd
+  APPEND at 16 (at 16): cdcdcdcd cdcdcdcd cdcdcdcd cdcdcdcd
+  APPEND at 14 (at 14): cdcdcdcd cdcdcdcd cdcdcdcd cdcdcdcd
+  COUNTER set 3 (OM) (at 0): 3 cdcdcdcd cdcdcdcd cdcdcdcd
+  COUNTER unbound (at 0): 3 cdcdcdcd cdcdcdcd cdcdcdcd
+compute shaders
+  after 8 Appends from 2 (at 0): a cdcdcdcd cdcdcdcd cdcdcdcd
+  buffer sorted: 64 65 66 67 68 69 6a 6b cdcdcdcd cdcdcdcd cdcdcdcd cdcdcdcd cdcdcdcd cdcdcdcd cdcdcdcd cdcdcdcd
+  after 4 IncrementCounter (at 0): 4 cdcdcdcd cdcdcdcd cdcdcdcd
+  after 2 DecrementCounter (at 0): 2 cdcdcdcd cdcdcdcd cdcdcdcd
+  buffer sorted: c8 c9 ca cb
+  Consume from 5: e
+  after Consume (at 0): 4 cdcdcdcd cdcdcdcd cdcdcdcd

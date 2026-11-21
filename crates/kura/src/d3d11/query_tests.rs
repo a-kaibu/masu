@@ -197,9 +197,10 @@ proptest! {
         prop_assert_eq!(wait(ctx, pred, 4), u32::from(samples != 0).to_le_bytes().to_vec());
         let s = u64s(&wait(ctx, stats, 88));
         prop_assert_eq!(&s[..3], &[verts, prims, verts][..]);
-        // (CInvocations and CPrimitives: the page's clipper counters, which the model does not
-        // run shaders for; winref d3d11gs and d3d11query measure them in the browser)
-        prop_assert_eq!((s[7], s[10]), (samples, 0));
+        // (CInvocations, CPrimitives and PSInvocations: the page's clipper counters, which the
+        // model does not run shaders for; dxwgsl's ps tests and winref d3d11gs and d3d11query
+        // in the browser measure them; PSInvocations is whole quads)
+        prop_assert_eq!((s[7] % 4, s[10]), (0, 0));
         // predicated: the draws go when the answer is not the value
         for value in [0u32, 1] {
             cc(ctx, 30, &[pred, value]);

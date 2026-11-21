@@ -114,11 +114,11 @@ pub struct Query {
 }
 
 /// The words of the page's counters (dxwgsl::expand::counter) a query reads: PIPELINE_STATISTICS
-/// GSPrimitives, CInvocations, CPrimitives; SO_STATISTICS and SO_OVERFLOW_PREDICATE a stream's
+/// GSPrimitives, CInvocations, CPrimitives, PS_QUADS; SO_STATISTICS and SO_OVERFLOW_PREDICATE a stream's
 /// primitives written and needed (2 s, 2 s + 1), all four streams' without one.
 pub fn counter_words(kind: Kind) -> &'static [u32] {
     use dxwgsl::expand::counter as c;
-    const STATS: [u32; 3] = [c::GS_PRIMITIVES, c::C_INVOCATIONS, c::C_PRIMITIVES];
+    const STATS: [u32; 4] = [c::GS_PRIMITIVES, c::C_INVOCATIONS, c::C_PRIMITIVES, c::PS_QUADS];
     const SO: [u32; 8] = [0, 1, 2, 3, 4, 5, 6, 7];
     match kind {
         Kind::PipelineStatistics => &STATS,
@@ -143,8 +143,8 @@ fn overflowed(v: &[u64]) -> bool {
 
 /// D3D11_QUERY_DATA_PIPELINE_STATISTICS's counts as the device keeps them from what it sends
 /// the page (`count_draw`, `count_dispatch`): IAVertices, IAPrimitives, VSInvocations,
-/// GSInvocations, GSPrimitives, CInvocations, CPrimitives, PSInvocations (the samples the page
-/// measures: an occlusion ticket's), HSInvocations, DSInvocations, CSInvocations.
+/// GSInvocations, GSPrimitives, CInvocations, CPrimitives, PSInvocations (the page's counters:
+/// dxwgsl expand::ps), HSInvocations, DSInvocations, CSInvocations.
 pub type Stats = [u64; 11];
 
 /// The primitives `n` vertices of D3D11_PRIMITIVE_TOPOLOGY `topology` make.
@@ -268,9 +268,7 @@ impl Query {
         let ticket = match self.kind.end() {
             _ if self.kind == Kind::PipelineStatistics => {
                 self.stats = *now;
-                let t = gpu::query_ticket();
-                gpu::record(|b| b.cmd(&[gpu::QUERY_BEGIN, t]));
-                t
+                0
             }
             Some(QueryEnd::Occlusion) => {
                 let t = gpu::query_ticket();
@@ -311,7 +309,7 @@ impl Query {
             self.stats = d;
         }
         let e = match self.kind {
-            Kind::PipelineStatistics => QueryEnd::Occlusion,
+            Kind::PipelineStatistics => QueryEnd::Event,
             Kind::Event | Kind::Occlusion | Kind::Timestamp | Kind::TimestampDisjoint | Kind::OcclusionPredicate | Kind::SoStatistics(_) | Kind::SoOverflowPredicate(_) => self.kind.end().unwrap_or(QueryEnd::Event),
         };
         gpu::record(|b| b.cmd(&[gpu::QUERY_END, t, e.word()]));
@@ -389,10 +387,10 @@ impl Query {
             }
             Kind::PipelineStatistics => {
                 let mut st = self.stats;
-                st[7] = v;
-                for (i, c) in [4usize, 5, 6].into_iter().zip(&counts) {
+                // (PSInvocations: the clip pass's quads, 4 invocations each)
+                for (i, c) in [4usize, 5, 6, 7].into_iter().zip(counts.iter().enumerate().map(|(k, &c)| if k == 3 { c.saturating_mul(4) } else { c })) {
                     if let Some(s) = st.get_mut(i) {
-                        *s = *c;
+                        *s = c;
                     }
                 }
                 for (o, b) in out.iter_mut().zip(st.iter().flat_map(|x| x.to_le_bytes())) {

@@ -62,4 +62,56 @@ fn passes_name_the_words_they_read() {
     words.dedup();
     assert_eq!(words.len(), xd::NAMED.len(), "two names for one word");
     assert!(words.iter().all(|&w| w < kome::num::us(XD_VECS).saturating_mul(4)));
+    assert_eq!(xd::WORDS, kome::num::us(XD_VECS).saturating_mul(4), "xd::WORDS is the uniform's");
+}
+
+/// PSInvocations of the probe's draws (winref d3d11gs, viewport 64x64, CULL_BACK): Windows'
+/// answers, but for the three tests/winref/known.txt names (across two edges, the lines).
+#[test]
+fn ps_invocations_as_windows() {
+    use ps::{invocations, Cull, Raster};
+    let r = Raster { viewport: [0.0, 0.0, 64.0, 64.0], cull: Cull::Back, front_ccw: false, depth_clip: true, rect: [0, 0, 64, 64] };
+    let h = 0.5;
+    let t = |a: [f32; 4], b: [f32; 4], c: [f32; 4]| invocations(&[a, b, c], &r);
+    assert_eq!(t([-h, -h, h, 1.0], [-h, h, h, 1.0], [h, -h, h, 1.0]), 544, "inside");
+    assert_eq!(t([-h, -h, h, 1.0], [h, -h, h, 1.0], [-h, h, h, 1.0]), 0, "counterclockwise");
+    assert_eq!(t([2.0, -h, h, 1.0], [2.0, h, h, 1.0], [3.0, -h, h, 1.0]), 0, "outside right");
+    assert_eq!(t([-h, -h, h, 1.0], [-h, h, h, 1.0], [1.5, -h, h, 1.0]), 1072, "across the right edge");
+    assert_eq!(t([-2.0, -h, h, 1.0], [-h, 2.0, h, 1.0], [2.0, -2.0, h, 1.0]), 3764, "across two edges (Windows 3772: known.txt)");
+    assert_eq!(t([-h, -h, h, 1.0], [-h, h, h, 1.0], [100_000.0, -h, h, 1.0]), 1600, "far outside the guard band");
+    assert_eq!(t([-h, -h, -h, 1.0], [-h, h, h, 1.0], [h, -h, h, 1.0]), 496, "across the near plane");
+    assert_eq!(t([-h, -h, 1.5, 1.0], [-h, h, h, 1.0], [h, -h, h, 1.0]), 496, "across the far plane");
+    assert_eq!(t([-h, -h, -h, 1.0], [-h, h, -h, 1.0], [h, -h, -h, 1.0]), 0, "behind the near plane");
+    assert_eq!(t([-h, -h, h, -1.0], [-h, h, h, 1.0], [h, -h, h, 1.0]), 784, "one w negative");
+    assert_eq!(t([h, h, -h, -1.0], [h, -h, -h, -1.0], [-h, h, -h, -1.0]), 0, "all w negative");
+    assert_eq!(t([-h, -h, h, 1.0], [-h, -h, h, 1.0], [h, -h, h, 1.0]), 0, "two vertices equal");
+    assert_eq!(t([-h, -h, h, 1.0], [0.0, 0.0, h, 1.0], [h, h, h, 1.0]), 0, "on a line");
+    assert_eq!(t([0.001, 0.001, h, 1.0], [0.001, 0.002, h, 1.0], [0.002, 0.001, h, 1.0]), 0, "smaller than a pixel");
+    assert_eq!(t([-h, -h, h, 0.0], [-h, h, h, 1.0], [h, -h, h, 1.0]), 1184, "w zero");
+    let q = [[-h, -h, h, 1.0], [-h, h, h, 1.0], [h, -h, h, 1.0], [h, h, h, 1.0], [2.0, 2.0, h, 1.0], [3.0, 2.0, h, 1.0]];
+    let at = |i: usize| q.get(i).copied().unwrap_or_default();
+    let tris = |ix: &[[usize; 3]]| -> u64 { ix.iter().map(|c| invocations(&c.map(at), &r)).sum() };
+    assert_eq!(tris(&[[0, 1, 2], [2, 1, 3]]), 1088, "indexed 0 1 2 2 1 3");
+    assert_eq!(tris(&[[0, 1, 2], [1, 3, 2]]), 1088, "strip of 4");
+    assert_eq!(tris(&[[0, 1, 2], [1, 3, 2], [2, 3, 4], [3, 5, 4]]), 1612, "strip of 6 (2 outside)");
+    assert_eq!(tris(&[[3, 3, 3]]), 0, "indexed 3 3 3 (degenerate)");
+    let points: u64 = (0..6).map(|i| invocations(&[at(i)], &r)).sum();
+    assert_eq!(points, 16, "point list of 6");
+    let lines: u64 = [[0, 1], [2, 3], [4, 5]].iter().map(|l| invocations(&l.map(at), &r)).sum();
+    assert_eq!(lines, 128, "line list of 6 (Windows 228: known.txt)");
+    let lstrip: u64 = (0..5).map(|i| invocations(&[at(i), at(i + 1)], &r)).sum();
+    assert_eq!(lstrip, 224, "line strip of 6 (Windows 438: known.txt)");
+}
+
+/// The clip pass (with ps_quads) of points, lines and triangles is WGSL naga takes.
+#[test]
+fn clip_pass_validates() {
+    let pos = crate::dxbc::SigElement { name: "SV_Position".into(), index: 0, sysval: 1, component_type: 3, reg: 0, mask: 15, stream: 0 };
+    for corners in 1..=3 {
+        let w = clip_pass(&Store::Vertex { regs: 1, corners }, std::slice::from_ref(&pos)).unwrap_or_else(|e| panic!("{e}"));
+        let m = naga::front::wgsl::parse_str(&w.code).unwrap_or_else(|e| panic!("{}\n{}", e.emit_to_string(&w.code), w.code));
+        if let Err(e) = naga::valid::Validator::new(naga::valid::ValidationFlags::all(), naga::valid::Capabilities::all()).validate(&m) {
+            panic!("{}", e.emit_to_string(&w.code));
+        }
+    }
 }
