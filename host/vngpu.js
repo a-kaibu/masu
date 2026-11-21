@@ -16,7 +16,7 @@ addToLibrary({
       return i;
     },
     // JSON keys whose numbers are objects of the table
-    REFS: { module: 1, layout: 1, view: 1, buffer: 1, texture: 1, sampler: 1, resolveTarget: 1 },
+    REFS: { module: 1, layout: 1, view: 1, buffer: 1, texture: 1, sampler: 1, resolveTarget: 1, occlusionQuerySet: 1 },
     json(ptr, len) {
       const s = UTF8ToString(ptr >>> 0, len);
       return JSON.parse(s, function (k, v) {
@@ -58,6 +58,7 @@ addToLibrary({
       // for new objects, so the ones made again are made as before; WebGPU says which fail)
       VG.device = device;
       VG.ts = null;
+      VG.stampTarget = null;
       if (device.features.has('timestamp-query')) {
         const PASSES = 256;
         VG.ts = {
@@ -310,6 +311,26 @@ addToLibrary({
   vngpu_end_pass: () => {
     VG.pass.end();
     VG.pass = null;
+  },
+  // queries (Direct3D's occlusion and timestamp queries, render/d3d/query.rs): kind 0 an
+  // occlusion query set, 1 a timestamp one
+  vngpu_query_set: (kind, count) => VG.put(VG.device.createQuerySet({ type: kind ? 'timestamp' : 'occlusion', count })),
+  vngpu_begin_occlusion: (i) => VG.pass.beginOcclusionQuery(i),
+  vngpu_end_occlusion: () => VG.pass.endOcclusionQuery(),
+  vngpu_resolve_queries: (set, first, count, buf, off) => {
+    VG.enc ??= VG.device.createCommandEncoder();
+    VG.enc.resolveQuerySet(VG.objs[set], first, count, VG.objs[buf], off);
+  },
+  // the GPU's time when it gets here: an empty pass (on a 1x1 target of its own) writes it at
+  // its beginning into timestamp query `i` of `set`
+  vngpu_timestamp: (set, i) => {
+    VG.enc ??= VG.device.createCommandEncoder();
+    VG.stampTarget ??= VG.device.createTexture({ size: [1, 1], format: 'r8unorm', usage: GPUTextureUsage.RENDER_ATTACHMENT });
+    const p = VG.enc.beginRenderPass({
+      colorAttachments: [{ view: VG.stampTarget.createView(), loadOp: 'load', storeOp: 'discard' }],
+      timestampWrites: { querySet: VG.objs[set], beginningOfPassWriteIndex: i },
+    });
+    p.end();
   },
   vngpu_set_pipeline: (p) => VG.pass.setPipeline(VG.objs[p]),
   vngpu_set_bind_group: (i, g, ptr, n) => {

@@ -54,6 +54,11 @@ mod ffi {
         pub fn vngpu_set_stencil_ref(v: u32);
         pub fn vngpu_draw(n: u32, inst: u32, first: u32, first_inst: u32);
         pub fn vngpu_draw_indexed(n: u32, inst: u32, first: u32, base: i32, first_inst: u32);
+        pub fn vngpu_query_set(kind: u32, count: u32) -> Id;
+        pub fn vngpu_begin_occlusion(i: u32);
+        pub fn vngpu_end_occlusion();
+        pub fn vngpu_resolve_queries(set: Id, first: u32, count: u32, buf: Id, off: u32);
+        pub fn vngpu_timestamp(set: Id, i: u32);
     }
 }
 
@@ -64,6 +69,7 @@ pub mod usage {
     pub const INDEX: u32 = 0x10;
     pub const VERTEX: u32 = 0x20;
     pub const UNIFORM: u32 = 0x40;
+    pub const QUERY_RESOLVE: u32 = 0x200;
     // textures
     pub const T_COPY_SRC: u32 = 0x1;
     pub const T_COPY_DST: u32 = 0x2;
@@ -431,6 +437,47 @@ pub fn begin_pass(json: &str) {
 pub fn end_pass() {
     forget_set();
     unsafe { ffi::vngpu_end_pass() }
+}
+
+/// What a query set holds.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum QueryKind {
+    /// samples that passed every test (beginOcclusionQuery .. endOcclusionQuery in a render
+    /// pass whose descriptor names the set as its occlusionQuerySet)
+    Occlusion,
+    /// the GPU's time in nanoseconds (needs the "timestamp-query" feature)
+    Timestamp,
+}
+
+/// createQuerySet of `count` queries (destroyed with `destroy`).
+pub fn query_set(kind: QueryKind, count: u32) -> Id {
+    let k = match kind {
+        QueryKind::Occlusion => 0,
+        QueryKind::Timestamp => 1,
+    };
+    // SAFETY: a call into host/vngpu.js with plain numbers (no memory of ours)
+    unsafe { ffi::vngpu_query_set(k, count) }
+}
+/// beginOcclusionQuery(i) in the render pass.
+pub fn begin_occlusion(i: u32) {
+    // SAFETY: a call into host/vngpu.js with plain numbers (no memory of ours)
+    unsafe { ffi::vngpu_begin_occlusion(i) }
+}
+/// endOcclusionQuery() in the render pass.
+pub fn end_occlusion() {
+    // SAFETY: a call into host/vngpu.js with plain numbers (no memory of ours)
+    unsafe { ffi::vngpu_end_occlusion() }
+}
+/// resolveQuerySet: queries [first, first + count) of `set` as u64s into `buf` (QUERY_RESOLVE)
+/// at `off` (a multiple of 256).
+pub fn resolve_queries(set: Id, first: u32, count: u32, buf: Id, off: u32) {
+    // SAFETY: a call into host/vngpu.js with plain numbers (no memory of ours)
+    unsafe { ffi::vngpu_resolve_queries(set, first, count, buf, off) }
+}
+/// Writes the GPU's time when it gets here (outside a render pass) into timestamp query `i`.
+pub fn timestamp(set: Id, i: u32) {
+    // SAFETY: a call into host/vngpu.js with plain numbers (no memory of ours)
+    unsafe { ffi::vngpu_timestamp(set, i) }
 }
 pub fn set_pipeline(p: Id) {
     if to_set(|s| &mut s.pipeline, p) {

@@ -13,7 +13,9 @@
 //!   was written, as on a GPU), a copy moves values, and any other draw gives every pixel it
 //!   covers (viewport ∩ scissor ∩ the box `set_bounds` gave, the pass's attachment) a hash of everything it reads: pipeline,
 //!   bound buffer bytes, sampled textures' values, vertex and index bytes, arguments, the
-//!   pixel's position and its old color and depth. storeOp "discard" leaves zeros.
+//!   pixel's position and its old color and depth. storeOp "discard" leaves zeros. An
+//!   occlusion query counts the samples of every pixel its draws cover, per instance (no depth
+//!   or stencil test is modelled); a timestamp reads `clock`, which goes up by 1000 with each one.
 //!
 //! Two runs that make the same observations (`Obs`) drew the same on any WebGPU, as far as
 //! these meanings go: the model does not run shaders, so it cannot tell two different draws
@@ -507,6 +509,15 @@ pub enum Obj {
     /// a compute pipeline: hash, bind group layouts
     Compute(u64, Vec<usize>),
     Group(usize, Vec<(u32, Entry)>),
+    QuerySet(QuerySet),
+}
+
+/// createQuerySet's: its queries' values (as resolveQuerySet writes them).
+#[derive(Clone)]
+pub struct QuerySet {
+    pub timestamp: bool,
+    pub values: Vec<u64>,
+    pub destroyed: bool,
 }
 
 /// What a shader module declares: its entry points, and per entry point the bindings it uses
@@ -555,6 +566,16 @@ struct Draw {
     args: [u32; 5],
     indexed: bool,
     bounds: Option<[u32; 4]>,
+    /// the occlusion query open when it was drawn
+    occlusion: Option<u32>,
+}
+
+/// A render pass's occlusion queries: its occlusionQuerySet, the queries it began (each starts
+/// from 0 at the pass's start)
+#[derive(Clone, Default)]
+struct Occlusion {
+    set: Option<usize>,
+    begun: Vec<u32>,
 }
 
 #[derive(Clone)]
@@ -563,7 +584,11 @@ enum Cmd {
     ToBuffer(usize, u32, [u32; 3], usize, u32, u32, u32),
     BufCopy(usize, usize, u32),
     FromBuffer(usize, u32, usize, u32, u32, u32, u32, u32, u32),
-    Pass(Vec<Attachment>, Option<Attachment>, Vec<Draw>),
+    Pass(Vec<Attachment>, Option<Attachment>, Vec<Draw>, Occlusion),
+    /// resolveQuerySet: set, first, count, buffer, offset
+    Resolve(usize, u32, u32, usize, u32),
+    /// a timestamp written into query `1` of set `0` (vngpu_timestamp's empty pass)
+    Stamp(usize, u32),
     /// a compute pass of one dispatch: pipeline hash, bind group, workgroups
     Dispatch(u64, usize, [u32; 3]),
 }
@@ -588,6 +613,15 @@ pub struct Model {
     bounds: Option<[u32; 4]>,
     /// the open pass's sample count
     pass_samples: u32,
+    /// the open pass's occlusion queries, and the one open now
+    pass_occlusion: Occlusion,
+    occlusion_open: Option<u32>,
+    /// features has_feature says the device has
+    pub features: Vec<&'static str>,
+    /// the GPU's clock (ns) a timestamp reads: each one later than the one before
+    pub clock: u64,
+    /// on_done's tokens not answered yet (the GPU is done with what was submitted before)
+    pub done_tokens: Vec<u32>,
     /// buffers to read, with where (as read_buffer gave them)
     pub pending_maps: Vec<(usize, u32, usize, u32)>,
     pub obs: Vec<Obs>,
@@ -617,7 +651,7 @@ impl Model {
         match &mut self.objs[k] {
             Obj::Texture(t) => t.texels.iter_mut().chain(t.stencil.iter_mut()).for_each(|v| v.fill(0)),
             Obj::Buffer(b) => b.data.fill(0),
-            Obj::View(_) | Obj::Sampler(_) | Obj::Shader(..) | Obj::Layout(_) | Obj::PipelineLayout(_) | Obj::Pipeline(_) | Obj::Compute(..) | Obj::Group(..) => {}
+            Obj::View(_) | Obj::Sampler(_) | Obj::Shader(..) | Obj::Layout(_) | Obj::PipelineLayout(_) | Obj::Pipeline(_) | Obj::Compute(..) | Obj::Group(..) | Obj::QuerySet(_) => {}
         }
     }
 }
@@ -666,7 +700,7 @@ impl Model {
     pub fn tex(&self, a: usize) -> &Texture {
         match &self.objs[a] {
             Obj::Texture(t) => t,
-            Obj::View(_) | Obj::Buffer(_) | Obj::Sampler(_) | Obj::Shader(..) | Obj::Layout(_) | Obj::PipelineLayout(_) | Obj::Pipeline(_) | Obj::Compute(..) | Obj::Group(..) => panic!("not a texture"),
+            Obj::View(_) | Obj::Buffer(_) | Obj::Sampler(_) | Obj::Shader(..) | Obj::Layout(_) | Obj::PipelineLayout(_) | Obj::Pipeline(_) | Obj::Compute(..) | Obj::Group(..) | Obj::QuerySet(_) => panic!("not a texture"),
         }
     }
 
@@ -678,7 +712,7 @@ impl Model {
                 None
             }
             Obj::Texture(_) => Some(a),
-            Obj::View(_) | Obj::Buffer(_) | Obj::Sampler(_) | Obj::Shader(..) | Obj::Layout(_) | Obj::PipelineLayout(_) | Obj::Pipeline(_) | Obj::Compute(..) | Obj::Group(..) => {
+            Obj::View(_) | Obj::Buffer(_) | Obj::Sampler(_) | Obj::Shader(..) | Obj::Layout(_) | Obj::PipelineLayout(_) | Obj::Pipeline(_) | Obj::Compute(..) | Obj::Group(..) | Obj::QuerySet(_) => {
                 self.err(format!("{what}: object {i} is not a texture"));
                 None
             }
@@ -693,7 +727,7 @@ impl Model {
                 None
             }
             Obj::Buffer(_) => Some(a),
-            Obj::Texture(_) | Obj::View(_) | Obj::Sampler(_) | Obj::Shader(..) | Obj::Layout(_) | Obj::PipelineLayout(_) | Obj::Pipeline(_) | Obj::Compute(..) | Obj::Group(..) => {
+            Obj::Texture(_) | Obj::View(_) | Obj::Sampler(_) | Obj::Shader(..) | Obj::Layout(_) | Obj::PipelineLayout(_) | Obj::Pipeline(_) | Obj::Compute(..) | Obj::Group(..) | Obj::QuerySet(_) => {
                 self.err(format!("{what}: object {i} is not a buffer"));
                 None
             }
@@ -713,7 +747,7 @@ impl Model {
     fn view_of(&self, a: usize) -> Option<&View> {
         match &self.objs[a] {
             Obj::View(v) => Some(v),
-            Obj::Texture(_) | Obj::Buffer(_) | Obj::Sampler(_) | Obj::Shader(..) | Obj::Layout(_) | Obj::PipelineLayout(_) | Obj::Pipeline(_) | Obj::Compute(..) | Obj::Group(..) => None,
+            Obj::Texture(_) | Obj::Buffer(_) | Obj::Sampler(_) | Obj::Shader(..) | Obj::Layout(_) | Obj::PipelineLayout(_) | Obj::Pipeline(_) | Obj::Compute(..) | Obj::Group(..) | Obj::QuerySet(_) => None,
         }
     }
 
@@ -1070,7 +1104,7 @@ impl Model {
         for u in &used {
             let e = groups.get(us(u.0)).and_then(|&g| match &self.objs[g] {
                 Obj::Layout(es) => es.iter().find(|e| e.binding == u.1).cloned(),
-                Obj::Texture(_) | Obj::View(_) | Obj::Buffer(_) | Obj::Sampler(_) | Obj::Shader(..) | Obj::PipelineLayout(_) | Obj::Pipeline(_) | Obj::Compute(..) | Obj::Group(..) => None,
+                Obj::Texture(_) | Obj::View(_) | Obj::Buffer(_) | Obj::Sampler(_) | Obj::Shader(..) | Obj::PipelineLayout(_) | Obj::Pipeline(_) | Obj::Compute(..) | Obj::Group(..) | Obj::QuerySet(_) => None,
             });
             match e {
                 None => self.err(format!("{what}: the shaders use @group({}) @binding({}), the layout has no such entry", u.0, u.1)),
@@ -1267,7 +1301,7 @@ impl Model {
         for u in &used {
             let e = groups.get(us(u.0)).and_then(|&g| match &self.objs[g] {
                 Obj::Layout(es) => es.iter().find(|e| e.binding == u.1).cloned(),
-                Obj::Texture(_) | Obj::View(_) | Obj::Buffer(_) | Obj::Sampler(_) | Obj::Shader(..) | Obj::PipelineLayout(_) | Obj::Pipeline(_) | Obj::Compute(..) | Obj::Group(..) => None,
+                Obj::Texture(_) | Obj::View(_) | Obj::Buffer(_) | Obj::Sampler(_) | Obj::Shader(..) | Obj::PipelineLayout(_) | Obj::Pipeline(_) | Obj::Compute(..) | Obj::Group(..) | Obj::QuerySet(_) => None,
             });
             match e {
                 None => self.err(format!("{what}: the shader uses @group({}) @binding({}), the layout has no such entry", u.0, u.1)),
@@ -1437,7 +1471,7 @@ impl Model {
                         }
                         entries.push((binding, Entry::Sampler(a)));
                     }
-                    Obj::Texture(_) | Obj::Buffer(_) | Obj::Shader(..) | Obj::Layout(_) | Obj::PipelineLayout(_) | Obj::Pipeline(_) | Obj::Compute(..) | Obj::Group(..) => self.err(format!("{what}: binding {binding}: not a view or sampler")),
+                    Obj::Texture(_) | Obj::Buffer(_) | Obj::Shader(..) | Obj::Layout(_) | Obj::PipelineLayout(_) | Obj::Pipeline(_) | Obj::Compute(..) | Obj::Group(..) | Obj::QuerySet(_) => self.err(format!("{what}: binding {binding}: not a view or sampler")),
                 }
             }
         }
@@ -1522,6 +1556,7 @@ impl Model {
         match &mut self.objs[a] {
             Obj::Texture(t) => t.destroyed = true,
             Obj::Buffer(b) => b.destroyed = true,
+            Obj::QuerySet(q) => q.destroyed = true,
             Obj::View(_) | Obj::Sampler(_) | Obj::Shader(..) | Obj::Layout(_) | Obj::PipelineLayout(_) | Obj::Pipeline(_) | Obj::Compute(..) | Obj::Group(..) => {}
         }
     }
@@ -1542,7 +1577,7 @@ impl Model {
     pub fn buffer_bytes(&self, i: u32) -> Option<Vec<u8>> {
         match &self.objs[*self.table.get(us(i))?.as_ref()?] {
             Obj::Buffer(b) => Some(b.data.clone()),
-            Obj::Texture(_) | Obj::View(_) | Obj::Sampler(_) | Obj::Shader(..) | Obj::Layout(_) | Obj::PipelineLayout(_) | Obj::Pipeline(_) | Obj::Compute(..) | Obj::Group(..) => None,
+            Obj::Texture(_) | Obj::View(_) | Obj::Sampler(_) | Obj::Shader(..) | Obj::Layout(_) | Obj::PipelineLayout(_) | Obj::Pipeline(_) | Obj::Compute(..) | Obj::Group(..) | Obj::QuerySet(_) => None,
         }
     }
 
@@ -1842,15 +1877,119 @@ impl Model {
             return;
         };
         let st = DrawState { viewport: [0.0, 0.0, to_f32(sz.0), to_f32(sz.1), 0.0, 1.0], scissor: [0, 0, sz.0, sz.1], ..Default::default() };
+        let set = match j.u("occlusionQuerySet") {
+            Some(q) => match self.query_set_of(q, what) {
+                Some((k, false)) => Some(k),
+                Some((_, true)) => {
+                    self.err(format!("{what}: occlusionQuerySet {q} is a timestamp set"));
+                    None
+                }
+                None => None,
+            },
+            None => None,
+        };
         self.pass = Some((colors, depth, Vec::new(), st, sz));
         self.pass_samples = pass_samples.unwrap_or(1);
+        self.pass_occlusion = Occlusion { set, begun: Vec::new() };
+        self.occlusion_open = None;
     }
 
     pub fn end_pass(&mut self) {
+        if self.occlusion_open.take().is_some() {
+            self.err("end(): an occlusion query is still open".into());
+        }
+        let occ = std::mem::take(&mut self.pass_occlusion);
         match self.pass.take() {
-            Some((c, d, draws, _, _)) => self.enc.push(Cmd::Pass(c, d, draws)),
+            Some((c, d, draws, _, _)) => self.enc.push(Cmd::Pass(c, d, draws, occ)),
             None => self.err("end(): no render pass".into()),
         }
+    }
+
+    /// The query set behind table index `i` (and whether it holds timestamps).
+    fn query_set_of(&mut self, i: u32, what: &str) -> Option<(usize, bool)> {
+        let a = self.at(i, what)?;
+        match &self.objs[a] {
+            Obj::QuerySet(q) if q.destroyed => {
+                self.err(format!("{what}: query set {i} is destroyed"));
+                None
+            }
+            Obj::QuerySet(q) => Some((a, q.timestamp)),
+            Obj::Texture(_) | Obj::View(_) | Obj::Buffer(_) | Obj::Sampler(_) | Obj::Shader(..) | Obj::Layout(_) | Obj::PipelineLayout(_) | Obj::Pipeline(_) | Obj::Compute(..) | Obj::Group(..) => {
+                self.err(format!("{what}: object {i} is not a query set"));
+                None
+            }
+        }
+    }
+
+    /// The sample count of a pass's attachments.
+    fn pass_samples_of(&self, colors: &[Attachment], depth: &Option<Attachment>) -> u32 {
+        colors.iter().chain(depth.iter()).next().and_then(|a| self.view_of(a.view)).map_or(1, |v| self.tex(v.tex).samples)
+    }
+
+    fn query_count(&self, k: usize) -> u32 {
+        match &self.objs[k] {
+            Obj::QuerySet(q) => lo32(q.values.len()),
+            Obj::Texture(_) | Obj::View(_) | Obj::Buffer(_) | Obj::Sampler(_) | Obj::Shader(..) | Obj::Layout(_) | Obj::PipelineLayout(_) | Obj::Pipeline(_) | Obj::Compute(..) | Obj::Group(..) => 0,
+        }
+    }
+
+    pub fn query_set(&mut self, timestamp: bool, count: u32) -> u32 {
+        // (WebGPU: at most 4096 queries in a set; timestamps need the feature)
+        if count > 4096 || timestamp && !self.features.contains(&"timestamp-query") {
+            self.err(format!("createQuerySet: {count} {}", if timestamp { "timestamp" } else { "occlusion" }));
+        }
+        self.put(Obj::QuerySet(QuerySet { timestamp, values: vec![0; us(count.min(4096))], destroyed: false }))
+    }
+
+    pub fn begin_occlusion(&mut self, i: u32) {
+        let what = "beginOcclusionQuery";
+        if !self.in_pass(what) {
+            return;
+        }
+        let Some(set) = self.pass_occlusion.set else {
+            self.err(format!("{what}: the pass has no occlusionQuerySet"));
+            return;
+        };
+        if self.occlusion_open.is_some() || i >= self.query_count(set) || self.pass_occlusion.begun.contains(&i) {
+            self.err(format!("{what}({i}): one open already, out of the set, or begun before in this pass"));
+            return;
+        }
+        self.pass_occlusion.begun.push(i);
+        self.occlusion_open = Some(i);
+    }
+
+    pub fn end_occlusion(&mut self) {
+        if !self.in_pass("endOcclusionQuery") {
+            return;
+        }
+        if self.occlusion_open.take().is_none() {
+            self.err("endOcclusionQuery: none open".into());
+        }
+    }
+
+    pub fn resolve_queries(&mut self, set: u32, first: u32, count: u32, buf: u32, off: u32) {
+        let what = "resolveQuerySet";
+        self.no_pass(what);
+        let (Some((k, _)), Some(b)) = (self.query_set_of(set, what), self.buffer_of(buf, what)) else { return };
+        let Obj::Buffer(bf) = &self.objs[b] else { return };
+        let (usage, size) = (bf.usage, bf.size);
+        let end = u64::from(first) + u64::from(count);
+        if usage & 0x200 == 0 || off % 256 != 0 || end > u64::from(self.query_count(k)) || u64::from(off) + 8 * u64::from(count) > u64::from(size) {
+            self.err(format!("{what}: [{first}, {end}) of {} into {size} bytes at {off} (usage {usage:#x})", self.query_count(k)));
+            return;
+        }
+        self.enc.push(Cmd::Resolve(k, first, count, b, off));
+    }
+
+    pub fn timestamp(&mut self, set: u32, i: u32) {
+        let what = "timestampWrites";
+        self.no_pass(what);
+        let Some((k, ts)) = self.query_set_of(set, what) else { return };
+        if !ts || i >= self.query_count(k) {
+            self.err(format!("{what}: query {i} of a set of {} ({})", self.query_count(k), if ts { "timestamps" } else { "occlusion" }));
+            return;
+        }
+        self.enc.push(Cmd::Stamp(k, i));
     }
 
     fn in_pass(&mut self, what: &str) -> bool {
@@ -2056,7 +2195,8 @@ impl Model {
             }
         }
         let bounds = self.bounds;
-        self.pass.as_mut().unwrap().2.push(Draw { st, args, indexed, bounds });
+        let occlusion = self.occlusion_open;
+        self.pass.as_mut().unwrap().2.push(Draw { st, args, indexed, bounds, occlusion });
     }
 
     /// The values of a texture's subresources a view sees, hashed.
@@ -2106,7 +2246,7 @@ impl Model {
                 let v = if p.per_instance[k] { instance as i64 } else { v };
                 let src = d.st.vbufs.get(k).copied().flatten().and_then(|(b, off)| match &self.objs[b] {
                     Obj::Buffer(bf) => Some((bf, off)),
-                    Obj::Texture(_) | Obj::View(_) | Obj::Sampler(_) | Obj::Shader(..) | Obj::Layout(_) | Obj::PipelineLayout(_) | Obj::Pipeline(_) | Obj::Compute(..) | Obj::Group(..) => None,
+                    Obj::Texture(_) | Obj::View(_) | Obj::Sampler(_) | Obj::Shader(..) | Obj::Layout(_) | Obj::PipelineLayout(_) | Obj::Pipeline(_) | Obj::Compute(..) | Obj::Group(..) | Obj::QuerySet(_) => None,
                 });
                 for &(aoff, size, loc) in list {
                     let bytes = src
@@ -2253,7 +2393,7 @@ impl Model {
     fn draw_sig(&mut self, d: &Draw) -> (u64, Option<([f32; 4], f32)>) {
         let p = match &self.objs[d.st.pipeline.unwrap()] {
             Obj::Pipeline(p) => p.clone(),
-            Obj::Texture(_) | Obj::View(_) | Obj::Buffer(_) | Obj::Sampler(_) | Obj::Shader(..) | Obj::Layout(_) | Obj::PipelineLayout(_) | Obj::Compute(..) | Obj::Group(..) => unreachable!(),
+            Obj::Texture(_) | Obj::View(_) | Obj::Buffer(_) | Obj::Sampler(_) | Obj::Shader(..) | Obj::Layout(_) | Obj::PipelineLayout(_) | Obj::Compute(..) | Obj::Group(..) | Obj::QuerySet(_) => unreachable!(),
         };
         let (mut h, clear) = self.groups_sig(d, &p, p.hash);
         // vertices and indices: the bytes it reads
@@ -2295,7 +2435,12 @@ impl Model {
         (h, clear)
     }
 
-    fn run_pass(&mut self, colors: &[Attachment], depth: &Option<Attachment>, draws: &[Draw]) {
+    fn run_pass(&mut self, colors: &[Attachment], depth: &Option<Attachment>, draws: &[Draw], occ: &Occlusion) {
+        if let Some(k) = occ.set && let Obj::QuerySet(q) = &mut self.objs[k] {
+            for &i in &occ.begun {
+                q.values[us(i)] = 0;
+            }
+        }
         // loads
         let sub = |m: &Model, a: &Attachment| {
             let v = m.view_of(a.view).unwrap().clone();
@@ -2336,6 +2481,18 @@ impl Model {
             let (mut x0, mut y0, mut x1, mut y1) = (cx0.max(s[0]), cy0.max(s[1]), cx1.min(s[0] + s[2]), cy1.min(s[1] + s[3]));
             if let Some(b) = d.bounds {
                 (x0, y0, x1, y1) = (x0.max(b[0]), y0.max(b[1]), x1.min(b[2]), y1.min(b[3]));
+            }
+            // (an occlusion query counts the samples of every pixel the draw covers: the model
+            // has no depth or stencil test)
+            if let (Some(i), Some(k)) = (d.occlusion, occ.set) {
+                let (w, h) = colors.iter().chain(depth.iter()).next().map_or((0, 0), |a| {
+                    let (_, _, (w, h, _)) = sub(self, a);
+                    (w, h)
+                });
+                let n = u64::from(x1.min(w).saturating_sub(x0)) * u64::from(y1.min(h).saturating_sub(y0)) * u64::from(self.pass_samples_of(colors, depth)) * u64::from(d.args[1]);
+                if let Obj::QuerySet(q) = &mut self.objs[k] {
+                    q.values[us(i)] = q.values[us(i)].saturating_add(n);
+                }
             }
             let zatt = depth.as_ref().map(|a| sub(self, a));
             // (a sample copy: the texels of the view bound at 0/0, one value per pixel as the
@@ -2450,7 +2607,9 @@ impl Model {
                         }
                     }
                 }
-                Cmd::Pass(cs, d, draws) => {
+                Cmd::Resolve(_, _, _, b, _) => bufs.push(*b),
+                Cmd::Stamp(..) => {}
+                Cmd::Pass(cs, d, draws, _) => {
                     for a in cs.iter().chain(d.iter()) {
                         texs.push(self.view_of(a.view).unwrap().tex);
                         texs.extend(a.resolve.map(|r| self.view_of(r).unwrap().tex));
@@ -2539,7 +2698,19 @@ impl Model {
                         }
                     }
                 }
-                Cmd::Pass(cs, d, draws) => self.run_pass(&cs, &d, &draws),
+                Cmd::Pass(cs, d, draws, occ) => self.run_pass(&cs, &d, &draws, &occ),
+                Cmd::Resolve(k, first, count, b, off) => {
+                    let Obj::QuerySet(q) = &self.objs[k] else { continue };
+                    let vals: Vec<u8> = q.values[us(first)..us(first + count)].iter().flat_map(|v| v.to_le_bytes()).collect();
+                    let Obj::Buffer(bf) = &mut self.objs[b] else { continue };
+                    bf.data[us(off)..us(off) + vals.len()].copy_from_slice(&vals);
+                }
+                Cmd::Stamp(k, i) => {
+                    self.clock = self.clock.saturating_add(1000);
+                    let now = self.clock;
+                    let Obj::QuerySet(q) = &mut self.objs[k] else { continue };
+                    q.values[us(i)] = now;
+                }
                 Cmd::Dispatch(h, g, n) => self.run_dispatch(h, g, n),
             }
         }
@@ -2748,8 +2919,9 @@ pub extern "C" fn vngpu_canvas_view() -> u32 {
     })
 }
 #[unsafe(no_mangle)]
-pub extern "C" fn vngpu_has_feature(_p: *const u8, _n: usize) -> i32 {
-    0
+pub extern "C" fn vngpu_has_feature(p: *const u8, n: usize) -> i32 {
+    let f = s(p, n);
+    i32::from(with(|m| m.features.contains(&f)))
 }
 #[unsafe(no_mangle)]
 pub extern "C" fn vngpu_drop(i: u32) {
@@ -2839,7 +3011,9 @@ pub extern "C" fn vngpu_submit() {
     with(|m| m.submit())
 }
 #[unsafe(no_mangle)]
-pub extern "C" fn vngpu_on_done(_token: u32) {}
+pub extern "C" fn vngpu_on_done(token: u32) {
+    with(|m| m.done_tokens.push(token))
+}
 #[unsafe(no_mangle)]
 pub extern "C" fn vngpu_read_buffer(buf: u32, size: u32, dst: *mut u8, token: u32) {
     count("read_buffer");
@@ -2918,6 +3092,29 @@ pub extern "C" fn vngpu_draw(n: u32, inst: u32, first: u32, first_inst: u32) {
 pub extern "C" fn vngpu_draw_indexed(n: u32, inst: u32, first: u32, base: i32, first_inst: u32) {
     count("draw_indexed");
     with(|m| m.draw([n, inst, first, lo32(base), first_inst], true))
+}
+#[unsafe(no_mangle)]
+pub extern "C" fn vngpu_query_set(kind: u32, n: u32) -> u32 {
+    count("query_set");
+    with(|m| m.query_set(kind != 0, n))
+}
+#[unsafe(no_mangle)]
+pub extern "C" fn vngpu_begin_occlusion(i: u32) {
+    with(|m| m.begin_occlusion(i))
+}
+#[unsafe(no_mangle)]
+pub extern "C" fn vngpu_end_occlusion() {
+    with(|m| m.end_occlusion())
+}
+#[unsafe(no_mangle)]
+pub extern "C" fn vngpu_resolve_queries(set: u32, first: u32, n: u32, buf: u32, off: u32) {
+    count("resolve_queries");
+    with(|m| m.resolve_queries(set, first, n, buf, off))
+}
+#[unsafe(no_mangle)]
+pub extern "C" fn vngpu_timestamp(set: u32, i: u32) {
+    count("timestamp");
+    with(|m| m.timestamp(set, i))
 }
 #[unsafe(no_mangle)]
 pub extern "C" fn emscripten_get_now() -> f64 {
@@ -3060,5 +3257,121 @@ mod ms_tests {
             m.end_pass();
             assert_eq!(!errs(&mut m).is_empty(), bad, "pipeline {p} into {color}");
         }
+    }
+}
+
+/// The model's query rules (W3C WebGPU: createQuerySet, a render pass's occlusionQuerySet and
+/// begin/endOcclusionQuery, resolveQuerySet's usage and offsets, timestampWrites needing the
+/// feature) and their meaning (a pass's query counts the samples of its draws, a resolve
+/// copies the values).
+#[cfg(test)]
+mod query_tests {
+    use super::*;
+
+    fn errs(m: &mut Model) -> Vec<String> {
+        std::mem::take(&mut m.errors)
+    }
+
+    fn target(m: &mut Model) -> u32 {
+        let t = m.texture(r#"{"size":[8,8,1],"format":"rgba8unorm","usage":16}"#);
+        m.view(t, "")
+    }
+
+    #[test]
+    fn occlusion_rules() {
+        let mut m = Model { table: vec![None], ..Default::default() };
+        let v = target(&mut m);
+        let set = m.query_set(false, 4);
+        assert!(errs(&mut m).is_empty());
+        // a pass without a set: no query begins
+        m.begin_pass(&format!(r#"{{"colorAttachments":[{{"view":{v},"loadOp":"load","storeOp":"store"}}]}}"#));
+        m.begin_occlusion(0);
+        assert_eq!(errs(&mut m).len(), 1);
+        m.end_pass();
+        let pass = format!(r#"{{"colorAttachments":[{{"view":{v},"loadOp":"load","storeOp":"store"}}],"occlusionQuerySet":{set}}}"#);
+        // two open at once, one out of the set, one begun twice in a pass, one left open
+        m.begin_pass(&pass);
+        m.begin_occlusion(0);
+        m.begin_occlusion(1);
+        assert_eq!(errs(&mut m).len(), 1);
+        m.end_occlusion();
+        m.begin_occlusion(4);
+        m.begin_occlusion(0);
+        assert_eq!(errs(&mut m).len(), 2);
+        m.end_occlusion();
+        assert_eq!(errs(&mut m).len(), 1);
+        m.begin_occlusion(2);
+        m.end_pass();
+        assert_eq!(errs(&mut m).len(), 1);
+        // a timestamp set as occlusionQuerySet; timestamps without the feature
+        let ts = m.query_set(true, 2);
+        assert_eq!(errs(&mut m).len(), 1);
+        m.begin_pass(&format!(r#"{{"colorAttachments":[{{"view":{v},"loadOp":"load","storeOp":"store"}}],"occlusionQuerySet":{ts}}}"#));
+        m.end_pass();
+        assert_eq!(errs(&mut m).len(), 1);
+        m.submit();
+        errs(&mut m);
+        // resolves: QUERY_RESOLVE, a 256-byte offset, inside both
+        let b = m.buffer(1024, 0x200 | 4);
+        let plain = m.buffer(1024, 4 | 8);
+        m.resolve_queries(set, 0, 4, plain, 0);
+        m.resolve_queries(set, 0, 4, b, 8);
+        m.resolve_queries(set, 2, 4, b, 0);
+        m.resolve_queries(set, 0, 4, b, 1024 - 16);
+        assert_eq!(errs(&mut m).len(), 4);
+        m.resolve_queries(set, 0, 4, b, 256);
+        assert!(errs(&mut m).is_empty());
+    }
+
+    #[test]
+    fn occlusion_counts_and_resolves() {
+        let mut m = Model { table: vec![None], ..Default::default() };
+        let v = target(&mut m);
+        let set = m.query_set(false, 2);
+        let shader = m.shader("@vertex fn vs() -> @builtin(position) vec4f { return vec4f(0.0); } @fragment fn fs() -> @location(0) vec4f { return vec4f(1.0); }");
+        let p = m.render_pipeline(&format!(r#"{{"layout":"auto","vertex":{{"module":{shader},"entryPoint":"vs"}},"fragment":{{"module":{shader},"entryPoint":"fs","targets":[{{"format":"rgba8unorm"}}]}},"primitive":{{"topology":"triangle-list"}}}}"#));
+        m.begin_pass(&format!(r#"{{"colorAttachments":[{{"view":{v},"loadOp":"load","storeOp":"store"}}],"occlusionQuerySet":{set}}}"#));
+        m.set_pipeline(p);
+        m.draw([3, 1, 0, 0, 0], false);
+        m.begin_occlusion(1);
+        set_bounds_in(&mut m, Some([1, 1, 4, 3]));
+        m.draw([3, 1, 0, 0, 0], false);
+        m.set_scissor([0, 0, 2, 8]);
+        m.draw([3, 1, 0, 0, 0], false);
+        m.end_occlusion();
+        m.end_pass();
+        let b = m.buffer(256, 0x200 | 4);
+        let r = m.buffer(256, 1 | 8);
+        m.resolve_queries(set, 0, 2, b, 0);
+        m.copy_buffer(b, r, 16);
+        m.submit();
+        assert!(errs(&mut m).is_empty());
+        let bytes = m.buffer_bytes(r).unwrap();
+        // (query 0 never begun: 0; query 1: 3x2 and then 1x2 of the box inside the scissor)
+        assert_eq!(u64::from_le_bytes(bytes[0..8].try_into().unwrap()), 0);
+        assert_eq!(u64::from_le_bytes(bytes[8..16].try_into().unwrap()), 6 + 2);
+    }
+
+    fn set_bounds_in(m: &mut Model, b: Option<[u32; 4]>) {
+        m.bounds = b;
+    }
+
+    #[test]
+    fn timestamps_go_up() {
+        let mut m = Model { table: vec![None], features: vec!["timestamp-query"], ..Default::default() };
+        let set = m.query_set(true, 3);
+        let occ = m.query_set(false, 1);
+        m.timestamp(set, 0);
+        m.timestamp(set, 2);
+        m.timestamp(occ, 0);
+        m.timestamp(set, 3);
+        assert_eq!(errs(&mut m).len(), 2);
+        let b = m.buffer(256, 0x200 | 4);
+        let r = m.buffer(256, 1 | 8);
+        m.resolve_queries(set, 0, 3, b, 0);
+        m.copy_buffer(b, r, 24);
+        m.submit();
+        let v: Vec<u64> = m.buffer_bytes(r).unwrap()[..24].chunks(8).map(|c| u64::from_le_bytes(c.try_into().unwrap())).collect();
+        assert!(v[0] > 0 && v[2] > v[0] && v[1] == 0, "{v:?}");
     }
 }

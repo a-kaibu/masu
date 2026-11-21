@@ -61,7 +61,7 @@ pub fn translate(code: &[u8], pixel: bool, ps: Option<&[u8]>) -> Result<Wgsl, St
     crate::wgsl::translate(code, pixel, ps)
 }
 
-pub use crate::wgsl::{translate_addr, translate_compute, translate_point_sprite, uav_slots};
+pub use crate::wgsl::{translate_addr, translate_compute, translate_point_sprite, thread_group, uav_slots};
 
 /// The "geometry shader" sake's D3DCompile makes of ANGLE's point sprite geometry shader: this
 /// tag, then the largest point size (f32). The D3D11 device draws points with it as sprites

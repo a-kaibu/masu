@@ -12,6 +12,7 @@ pub mod d3d8;
 pub mod device;
 pub mod format;
 pub mod gpu;
+pub mod query;
 pub mod stateblock;
 #[cfg(test)]
 pub(crate) mod trace_tests;
@@ -53,6 +54,8 @@ mod ex_tests;
 mod tex_tests;
 #[cfg(test)]
 mod dev_tests;
+#[cfg(test)]
+mod query_tests;
 #[cfg(test)]
 mod caps8_tests;
 #[cfg(test)]
@@ -132,7 +135,7 @@ pub enum Data {
     Decl(device::Decl),
     Shader(device::ShaderObj),
     StateBlock(Box<stateblock::Block>),
-    Query(u32),
+    Query(query::Query),
     Other,
 }
 
@@ -333,6 +336,7 @@ impl D3d {
                 }
             }
             Data::StateBlock(sb) => device::unbind_all(self, &device::state_binds(&sb.st)),
+            Data::Query(q) => q.forget(),
             _ => {}
         }
     }

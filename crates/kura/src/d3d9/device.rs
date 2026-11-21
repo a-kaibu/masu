@@ -960,50 +960,37 @@ pub unsafe fn call(d: &mut D3d, iface: u32, m: u32, this: u32, args: *const u32,
             }
             _ => E_NOTIMPL,
         },
-        IF_QUERY => match m {
-            3 => device_out(d, a(1)),
-            4 => match d.objs.get(&this).map(|o| &o.data) {
-                Some(Data::Query(t)) => *t,
-                _ => 0,
-            },
-            5 => query_size(match d.objs.get(&this).map(|o| &o.data) {
-                Some(Data::Query(t)) => *t,
-                _ => 0,
-            }),
-            6 => S_OK,
-            7 => {
-                let t = match d.objs.get(&this).map(|o| &o.data) {
-                    Some(Data::Query(t)) => *t,
-                    _ => 0,
-                };
-                let n = query_size(t).min(a(2));
-                if a(1) != 0 && n > 0 {
-                    std::ptr::write_bytes(gp::<u8>(a(1)), 0, us(n));
-                    if t == 8 || t == 9 {
-                        // event: done; occlusion: something drawn
-                        wr(a(1), 0, 1);
+        IF_QUERY => {
+            let q = match d.objs.get(&this).map(|o| &o.data) {
+                Some(Data::Query(q)) => *q,
+                _ => return D3DERR_INVALIDCALL,
+            };
+            match m {
+                3 => device_out(d, a(1)),
+                4 => q.kind.type_id(),
+                5 => q.kind.data_size(),
+                6 => {
+                    let mut q = q;
+                    let hr = q.issue(a(1));
+                    if let Some(Data::Query(x)) = d.objs.get_mut(&this).map(|o| &mut o.data) {
+                        *x = q;
                     }
-                    if t == 9 {
-                        wr(a(1), 0, 1000);
-                    }
+                    hr
                 }
-                S_OK
+                // GetData(data, size, flags)
+                7 => {
+                    let (hr, bytes) = q.get_data(if a(1) == 0 { 0 } else { a(2) }, a(3));
+                    if a(1) != 0 && !bytes.is_empty() {
+                        // SAFETY: the guest's buffer of a(2) bytes; bytes.len() <= a(2)
+                        unsafe { std::ptr::copy_nonoverlapping(bytes.as_ptr(), gp::<u8>(a(1)), bytes.len()) };
+                    }
+                    hr
+                }
+                _ => E_NOTIMPL,
             }
-            _ => E_NOTIMPL,
-        },
+        }
         IF_VOLUME => volume_call(d, m, this, &a),
         _ => E_NOTIMPL,
-    }
-}
-
-fn query_size(t: u32) -> u32 {
-    match t {
-        8 => 4,     // EVENT: BOOL
-        9 => 4,     // OCCLUSION: DWORD
-        10 => 8,    // TIMESTAMP
-        11 => 4,    // TIMESTAMPDISJOINT
-        12 => 8,    // TIMESTAMPFREQ
-        _ => 4,
     }
 }
 
@@ -2436,14 +2423,11 @@ unsafe fn device_method(d: &mut D3d, m: u32, a: &dyn Fn(usize) -> u32, after: &m
         115..=117 => E_NOTIMPL,
         118 => {
             // CreateQuery(type, out): out NULL asks whether it's supported
-            let t = a(1);
-            if !matches!(t, 8 | 9 | 10 | 11 | 12) {
-                return D3DERR_NOTAVAILABLE;
-            }
+            let Some(kind) = super::query::Kind::of_type(a(1)) else { return D3DERR_NOTAVAILABLE };
             if a(2) == 0 {
                 return S_OK;
             }
-            let o = d.new_obj(IF_QUERY, 0, Data::Query(t));
+            let o = d.new_obj(IF_QUERY, 0, Data::Query(super::query::Query::new(kind)));
             wrp(a(2), 0, o);
             S_OK
         }

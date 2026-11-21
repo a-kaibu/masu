@@ -343,7 +343,7 @@ file	crates/kura/src/d3d11/format.rs	masu-from_raw_parts	3
 file	crates/kura/src/d3d11/format.rs	ptr_as_ptr	6
 file	crates/kura/src/d3d11/format.rs	unsafe_op_in_unsafe_fn	18
 file	crates/kura/src/d3d11/hazards.rs	indexing_slicing	6
-file	crates/kura/src/d3d11/mod.rs	arithmetic_side_effects	238
+file	crates/kura/src/d3d11/mod.rs	arithmetic_side_effects	236
 file	crates/kura/src/d3d11/mod.rs	as_conversions	3
 file	crates/kura/src/d3d11/mod.rs	borrow_as_ptr	2
 file	crates/kura/src/d3d11/mod.rs	cast_precision_loss	2
@@ -354,7 +354,7 @@ file	crates/kura/src/d3d11/mod.rs	masu-unsafe_send_sync	1
 file	crates/kura/src/d3d11/mod.rs	missing_safety_doc	4
 file	crates/kura/src/d3d11/mod.rs	multiple_unsafe_ops_per_block	1
 file	crates/kura/src/d3d11/mod.rs	undocumented_unsafe_blocks	13
-file	crates/kura/src/d3d11/mod.rs	unsafe_op_in_unsafe_fn	480
+file	crates/kura/src/d3d11/mod.rs	unsafe_op_in_unsafe_fn	473
 file	crates/kura/src/d3d9/d3d8.rs	arithmetic_side_effects	46
 file	crates/kura/src/d3d9/d3d8.rs	as_conversions	1
 file	crates/kura/src/d3d9/d3d8.rs	indexing_slicing	15
@@ -374,7 +374,7 @@ file	crates/kura/src/d3d9/device.rs	masu-from_raw_parts	14
 file	crates/kura/src/d3d9/device.rs	missing_safety_doc	1
 file	crates/kura/src/d3d9/device.rs	undocumented_unsafe_blocks	5
 file	crates/kura/src/d3d9/device.rs	unreachable	3
-file	crates/kura/src/d3d9/device.rs	unsafe_op_in_unsafe_fn	318
+file	crates/kura/src/d3d9/device.rs	unsafe_op_in_unsafe_fn	315
 file	crates/kura/src/d3d9/device.rs	wildcard_enum_match_arm	5
 file	crates/kura/src/d3d9/format.rs	arithmetic_side_effects	68
 file	crates/kura/src/d3d9/format.rs	as_conversions	81
@@ -1846,11 +1846,11 @@ file	crates/sake/src/tctx.rs	unwrap_used	5
 file	crates/sake/src/test_guest.rs	as_conversions	6
 file	crates/sake/src/test_guest.rs	cast_possible_truncation	2
 file	crates/sake/src/test_guest.rs	expect_used	1
-file	crates/sake/src/text.rs	arithmetic_side_effects	42
+file	crates/sake/src/text.rs	arithmetic_side_effects	40
 file	crates/sake/src/text.rs	as_conversions	30
 file	crates/sake/src/text.rs	cast_possible_truncation	8
 file	crates/sake/src/text.rs	cast_sign_loss	1
-file	crates/sake/src/text.rs	indexing_slicing	26
+file	crates/sake/src/text.rs	indexing_slicing	25
 file	crates/sake/src/text.rs	unwrap_used	1
 file	crates/sake/src/timerq.rs	arithmetic_side_effects	4
 file	crates/sake/src/timerq.rs	as_conversions	5

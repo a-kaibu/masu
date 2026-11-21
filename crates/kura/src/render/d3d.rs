@@ -918,6 +918,8 @@ pub struct D3d {
     pub gamma_gen: u64,
     inflight: u32,
     next_token: u32,
+    /// Direct3D's queries (d3d/query.rs)
+    queries: query::Queries,
     pub gpu_ms: Cell<(f64, f64)>,
     pub submits: Cell<u32>,
     pub created: Cell<u32>,
@@ -1055,6 +1057,7 @@ impl D3d {
             gamma: None,
             gamma_gen: 0,
             inflight: 0,
+            queries: query::Queries::default(),
             next_token: 1,
             gpu_ms: Cell::new((0.0, 0.0)),
             submits: Cell::new(0),
@@ -1135,14 +1138,17 @@ impl D3d {
         }
     }
 
-    pub fn gpu_done(&mut self, _token: u32, ms: f64) {
+    pub fn gpu_done(&mut self, token: u32, ms: f64) {
+        if self.queries.gpu_done(token) {
+            return;
+        }
         self.inflight = self.inflight.saturating_sub(1);
         let (sum, max) = self.gpu_ms.get();
         self.gpu_ms.set((sum + ms, max.max(ms)));
     }
 
     pub fn mapped(&mut self, token: u32, ok: bool) {
-        if self.snap_mapped(token, ok) {
+        if self.snap_mapped(token, ok) || self.queries.mapped(token, ok) {
             return;
         }
         if let Some((pair, buf, px)) = self.checks.remove(&token) {
@@ -1582,6 +1588,14 @@ impl D3d {
                 RESOLVE => {
                     self.resolve(a(1), a(2), a(3), a(4), a(5));
                     i += 6;
+                }
+                QUERY_BEGIN => {
+                    self.query_begin(a(1));
+                    i = i.saturating_add(2);
+                }
+                QUERY_END => {
+                    self.query_end(a(1), QueryEnd::of_word(a(2)));
+                    i = i.saturating_add(3);
                 }
                 _ => {
                     eprintln!("d3d9: unknown command {op} at {i}");
@@ -2192,12 +2206,27 @@ impl D3d {
     }
 
     fn submit(&mut self) {
+        // (the queries the passes wrote: resolved at the end of the commands, read once done)
+        let resolved = if self.open { self.queries.resolve() } else { None };
         if self.open {
             self.submits.set(self.submits.get() + 1);
             gpu::submit();
             self.open = false;
             self.used.clear();
             self.bused.clear();
+        }
+        if let Some((src, size, read)) = resolved {
+            gpu::destroy(src);
+            let token = self.next_token;
+            self.next_token = self.next_token.wrapping_add(1).max(1);
+            self.queries.reading(token, size, read);
+        }
+        let events = self.queries.take_events();
+        if !events.is_empty() {
+            let token = self.next_token;
+            self.next_token = self.next_token.wrapping_add(1).max(1);
+            gpu::on_done(token);
+            self.queries.wait(token, events);
         }
         // (after the commands that use them are submitted)
         for x in self.doomed.drain(..) {
@@ -2354,6 +2383,7 @@ impl D3d {
 
     fn end_pass(&mut self) {
         if self.pass {
+            self.queries.pass_ending();
             gpu::end_pass();
             self.pass = false;
         }
@@ -2362,6 +2392,10 @@ impl D3d {
     fn begin_pass(&mut self) -> bool {
         if self.pass {
             return true;
+        }
+        // (a set's queries all used by this submit's passes)
+        if self.queries.full() {
+            self.submit();
         }
         if let Some(t) = self.targets2.clone() {
             return self.begin_pass2(&t);
@@ -2409,7 +2443,9 @@ impl D3d {
             None => String::new(),
         };
         self.open = true;
-        gpu::begin_pass(&format!(r#"{{"colorAttachments":[{color}]{depth}}}"#));
+        let occlusion = self.queries.pass_json();
+        gpu::begin_pass(&format!(r#"{{"colorAttachments":[{color}]{depth}{occlusion}}}"#));
+        self.queries.pass_begun();
         gpu::drop(view);
         self.pass = true;
         STATS[2].fetch_add(1, Relaxed);
@@ -2433,11 +2469,7 @@ impl D3d {
         let view = gpu::view(tex, "");
         self.textures.get_mut(&id)?.fits.insert((w, h), (tex, view));
         // starts as the depth buffer was last cleared (not 0, which fails every LESS test)
-        let was = self.pass;
-        if was {
-            gpu::end_pass();
-            self.pass = false;
-        }
+        self.end_pass();
         self.open = true;
         gpu::begin_pass(&format!(
             r#"{{"colorAttachments":[],"depthStencilAttachment":{{"view":{view},"depthLoadOp":"clear","depthClearValue":{},"depthStoreOp":"store"{}}}}}"#,
@@ -2484,7 +2516,16 @@ impl D3d {
         if flags & 4 != 0 {
             self.keep_stencil(ds);
         }
-        if !self.begin_pass() {
+        // (a clear is no draw: occlusion queries do not count its quad, drawn in a pass of its
+        // own while one is open)
+        if self.queries.counting {
+            self.end_pass();
+        }
+        let held = self.queries.wants_pass();
+        self.queries.hold = held;
+        let began = self.begin_pass();
+        self.queries.hold = false;
+        if !began {
             return;
         }
         // (the pass may have begun before a segment ended: see `seg_close`)
@@ -2537,6 +2578,9 @@ impl D3d {
         gpu::set_viewport(0.0, 0.0, tw as f32, th as f32, 0.0, 1.0);
         gpu::set_scissor(x0, y0, x1 - x0, y1 - y0);
         gpu::draw(3, 1, 0, 0);
+        if held {
+            self.end_pass();
+        }
         // (the clear uniform slots are written now, at queue time: no more than 64 per batch)
         if slot == 63 {
             self.end_pass();
@@ -3506,7 +3550,9 @@ impl D3d {
             self.traffic(zid, tg[zi + 1], load, store);
         }
         self.open = true;
-        gpu::begin_pass(&format!(r#"{{"colorAttachments":[{}]{depth}}}"#, colors.join(",")));
+        let occlusion = self.queries.pass_json();
+        gpu::begin_pass(&format!(r#"{{"colorAttachments":[{}]{depth}{occlusion}}}"#, colors.join(",")));
+        self.queries.pass_begun();
         self.pass = true;
         STATS[2].fetch_add(1, Relaxed);
         true
@@ -4442,6 +4488,7 @@ mod padded_tests {
 
 mod snap;
 pub use snap::Saved;
+mod query;
 
 /// The bytes of `h` rows of `bpr` bytes at `off` of a blob of `blob` bytes: None when they are
 /// not all in it (the products of two u32 wrapped a 32-bit usize and passed the test).

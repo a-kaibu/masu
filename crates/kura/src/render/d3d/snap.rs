@@ -298,6 +298,7 @@ impl D3d {
     /// does, empty: textures as zeros, depth as last cleared, multisampled ones as zeros. The
     /// guest uploads again what it still has (d3d9, d3d11: `render::lost_gen`).
     pub fn lose(&mut self) -> Saved {
+        self.queries.lose();
         let mut reqs: Vec<u32> = self.readbacks.drain().map(|(_, r)| r.req).collect();
         reqs.sort_unstable();
         for req in reqs {

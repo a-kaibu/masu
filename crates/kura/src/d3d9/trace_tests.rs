@@ -263,6 +263,9 @@ pub(crate) fn attach_page() {
             for t in crate::render::model::with(|m| m.finish_maps()) {
                 d.mapped(t, true);
             }
+            for t in crate::render::model::with(|m| std::mem::take(&mut m.done_tokens)) {
+                d.gpu_done(t, 0.0);
+            }
         }) {}
     })));
 }
