@@ -586,9 +586,11 @@ fn release_build_only(tree: &Tree) -> Hits {
 }
 
 /// what must stay in place: (file, text, why)
-pub const REQUIRED: [(&str, &str, &str); 27] = [
+pub const REQUIRED: [(&str, &str, &str); 29] = [
     (".github/workflows/ci.yml", "pack::tests::adding_a_small_game_takes_the_store_lock_file", "masu add runs on Windows itself: the store's lock opened a directory there and failed (review e18bf44)"),
     ("crates/sake/src/api.rs", "if is_crt(dll) { &[\"msvcrt\"] }", "a CRT's exports fall back to msvcrt's only: ucrtbase!strtol resolved to ntdll's own CRT, which takes no 0x prefix alone (review e18bf44)"),
+    ("crates/sake/src/files.rs", "        let found = kura::fs::name_nocase(&at, comp).or_else(|| crate::shortname::long_of(&at, comp))?;", "a path component may be an entry's 8.3 short name (PROGRA~1), as on NTFS (opening by short name failed; 2026-11-21)"),
+    ("crates/sake/src/k32.rs", "                let short = f.shorts.get(n).map_or_default(|s| s.encode_utf16().collect());", "GetShortPathName answers the entry's 8.3 short name (it gave the long name back; 2026-11-21)"),
     ("crates/sake/src/k32.rs", "    let f = crate::fullpath::process_env_full(&w, count.wrapping_mul(2));", "GetFullPathNameW is RtlGetFullPathName_UEx's answer: one full-path rule for ntdll and kernel32 (files::full_path gave other answers; 2026-11-21)"),
     ("crates/sake/src/nt.rs", "    crate::ntname::check(&w, mem::rp(oa.saturating_add(mem::ps())) != 0)?;", "an NT name passes the object manager's and file system's syntax before a file is looked up (\\??\\C:\\x\\..\\y opened y; 2026-11-21)"),
     ("crates/kura/src/d3d9/device.rs", "                send_gamma(Some(&r));", "a full-screen Direct3D 9 device's SetGammaRamp reaches the display (it was answered S_OK and dropped; 2026-11-21)"),

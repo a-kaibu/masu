@@ -7778,8 +7778,16 @@ fn SetHandleInformation(c: &mut Ctx) -> u32 {
     1
 }
 
-fn write_find_data(p: u32, name: &str, m: &kura::fs::Metadata, wide: bool) {
+fn write_find_data(p: u32, name: &str, m: &kura::fs::Metadata, short: Option<&String>, wide: bool) {
     write_find_raw(p, name, files::attrs(m), m.modified().map_or(0, files::filetime), m.len(), wide);
+    // cAlternateFileName[14]: the 8.3 name, when the entry has one
+    if let Some(sh) = short {
+        if wide {
+            put_wstr((mem::ga(p) + 564).get(), 14, &sh.encode_utf16().collect::<Vec<_>>());
+        } else {
+            put_cstr((mem::ga(p) + 304).get(), 14, &crate::text::s2a(sh));
+        }
+    }
 }
 /// WIN32_FIND_DATA(A/W) at `p`: attributes, the three times, size, name (no short name)
 fn write_find_raw(p: u32, name: &str, attrs: u32, t: u64, len: u64, wide: bool) {
@@ -7813,7 +7821,7 @@ fn find_first_at(pat: u32, data: u32, wide: bool) -> u32 {
     match files::find(&pat).filter(|f| !f.entries.is_empty()) {
         Some(f) => {
             if let Some((n, m)) = f.entries.first() {
-                write_find_data(data, n, m, wide);
+                write_find_data(data, n, m, f.shorts.get(n), wide);
             }
             let mut f = f;
             f.at = 1;
@@ -7824,7 +7832,7 @@ fn find_first_at(pat: u32, data: u32, wide: bool) -> u32 {
         None if !pat.contains(['*', '?']) && is_system_dll_path(&pat) => {
             let name = pat.rsplit(['\\', '/']).next().unwrap_or("").to_ascii_lowercase();
             write_find_raw(data, &name, 0x20, SYSTEM_DLL_TIME, 0, wide);
-            obj::add(Obj::Find(std::sync::Arc::new(Mutex::new(files::Find { entries: Vec::new(), at: 0 }))))
+            obj::add(Obj::Find(std::sync::Arc::new(Mutex::new(files::Find::default()))))
         }
         None => {
             // ("dir\": ERROR_INVALID_PARAMETER; "" and a missing directory: ERROR_PATH_NOT_FOUND)
@@ -7848,7 +7856,7 @@ fn find_next(c: &mut Ctx, wide: bool) -> u32 {
         last_error(18);
         return 0;
     };
-    write_find_data(c.a(1), n, m, wide);
+    write_find_data(c.a(1), n, m, f.shorts.get(n), wide);
     f.at = f.at.saturating_add(1);
     1
 }
@@ -8360,10 +8368,17 @@ fn long_short(src: &[u16], short: bool) -> Option<Vec<u16>> {
     let is_short = |x: &[u16]| crate::longshort::is_short_name(x, &crate::text::w2a(x), &lead);
     let find = |q: &[u16]| {
         let qs = String::from_utf16_lossy(q);
-        let hit = files::find(&qs).and_then(|f| f.entries.first().map(|(n, _)| n.encode_utf16().collect::<Vec<u16>>()));
-        let hit = hit.or_else(|| is_system_dll_path(&qs).then(|| qs.rsplit(['\\', '/']).next().unwrap_or("").to_ascii_lowercase().encode_utf16().collect()));
+        let hit = files::find(&qs).and_then(|f| {
+            f.entries.first().map(|(n, _)| {
+                let short = f.shorts.get(n).map_or_default(|s| s.encode_utf16().collect());
+                crate::longshort::Found { long: n.encode_utf16().collect(), short }
+            })
+        });
+        let hit = hit.or_else(|| {
+            is_system_dll_path(&qs).then(|| crate::longshort::Found { long: qs.rsplit(['\\', '/']).next().unwrap_or("").to_ascii_lowercase().encode_utf16().collect(), short: Vec::new() })
+        });
         match hit {
-            Some(long) => Some(crate::longshort::Found { long, short: Vec::new() }),
+            Some(f) => Some(f),
             None => {
                 last_error(2);
                 None

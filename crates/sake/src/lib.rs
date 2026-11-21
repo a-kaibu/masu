@@ -109,6 +109,7 @@ pub mod fullpath;
 pub mod ntname;
 pub mod tmpname;
 pub mod longshort;
+pub mod shortname;
 pub mod gdi;
 pub mod gdi_geom;
 pub mod k32;
