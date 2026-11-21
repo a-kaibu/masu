@@ -7,11 +7,12 @@
 //   cargo run -q -p shaderconf -- --compute > cases.json && node tests/compute.mjs cases.json [out.json]
 //   (PLAYWRIGHT=path to playwright)
 //
-// cases.json: [{ name, dispatch: [x, y, z], out: binding, tol?, want?: [bytes], variants: [{ name, wgsl, entry? }],
+// cases.json: [{ name, dispatch: [x, y, z], out: binding | [bindings], tol?, want?: [bytes], variants: [{ name, wgsl, entry? }],
 //   bindings: [{ binding, uniform: [u32...] } | { binding, texture: { format, w, h, bytes: [..]
 //   | f32: [..] } } | { binding, sampler: { filter, address } } | { binding, storage: { format, w,
-//   h } }] }]
-// out.json: [{ name, variants: [{ name, error?, bytes: [..] }] }] (the storage texture `out`)
+//   h } } | { binding, buffer: { words: [u32...] } }] }]
+// out.json: [{ name, variants: [{ name, error?, bytes: [..] }] }] (the storage textures and
+// buffers `out`, one after another; a buffer starts each variant from its words again)
 import { createServer } from "node:http";
 import { readFileSync, writeFileSync } from "node:fs";
 
@@ -72,6 +73,10 @@ for (const c of cases) {
         const fill = new Uint8Array(t.w * t.h * bpp(t.format)).map((_, i) => (i * 7 + 3) & 0xff);
         device.queue.writeTexture({ texture: tex }, fill, { bytesPerRow: t.w * bpp(t.format) }, [t.w, t.h]);
         res[b.binding] = { tex, view: tex.createView(), t };
+      } else if (b.buffer) {
+        const words = new Uint32Array(b.buffer.words.length ? b.buffer.words : [0]);
+        const buf = device.createBuffer({ size: words.byteLength, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST });
+        res[b.binding] = { buf, words };
       }
     }
     const out = [];
@@ -94,7 +99,7 @@ for (const c of cases) {
         for (const b of c.bindings) {
           if (!new RegExp(`@binding\\(${b.binding}\\)\\s*@group\\(0\\)|@group\\(0\\)\\s*@binding\\(${b.binding}\\)`).test(v.wgsl)) continue;
           const x = res[b.binding];
-          entries.push({ binding: b.binding, resource: b.storage ? x.view : x });
+          entries.push({ binding: b.binding, resource: b.storage ? x.view : b.buffer ? { buffer: x.buf } : x });
         }
         let why = "";
         const tryGroup = async (es) => {
@@ -112,25 +117,39 @@ for (const c of cases) {
           if (g) { group = g; entries.splice(k, 1); }
         }
         if (!group) throw new Error("no bind group fits the layout: " + why);
-        const st = res[c.out];
-        const fill = new Uint8Array(st.t.w * st.t.h * bpp(st.t.format)).map((_, i) => (i * 7 + 3) & 0xff);
-        device.queue.writeTexture({ texture: st.tex }, fill, { bytesPerRow: st.t.w * bpp(st.t.format) }, [st.t.w, st.t.h]);
+        const outs = (Array.isArray(c.out) ? c.out : [c.out]).map((n) => res[n]);
+        for (const st of outs.filter((x) => x.t)) {
+          const fill = new Uint8Array(st.t.w * st.t.h * bpp(st.t.format)).map((_, i) => (i * 7 + 3) & 0xff);
+          device.queue.writeTexture({ texture: st.tex }, fill, { bytesPerRow: st.t.w * bpp(st.t.format) }, [st.t.w, st.t.h]);
+        }
+        for (const x of Object.values(res).filter((x) => x.buf)) device.queue.writeBuffer(x.buf, 0, x.words);
         const enc = device.createCommandEncoder();
         const pass = enc.beginComputePass();
         pass.setPipeline(pipe);
         pass.setBindGroup(0, group);
         pass.dispatchWorkgroups(...c.dispatch);
         pass.end();
-        const row = Math.ceil(st.t.w * bpp(st.t.format) / 256) * 256;
-        const rb = device.createBuffer({ size: row * st.t.h, usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ });
-        enc.copyTextureToBuffer({ texture: st.tex }, { buffer: rb, bytesPerRow: row }, [st.t.w, st.t.h]);
+        const reads = [];
+        for (const st of outs) {
+          if (st.buf) {
+            const rb = device.createBuffer({ size: st.words.byteLength, usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ });
+            enc.copyBufferToBuffer(st.buf, 0, rb, 0, st.words.byteLength);
+            reads.push({ rb, rows: 1, row: st.words.byteLength, w: st.words.byteLength });
+            continue;
+          }
+          const row = Math.ceil(st.t.w * bpp(st.t.format) / 256) * 256;
+          const rb = device.createBuffer({ size: row * st.t.h, usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ });
+          enc.copyTextureToBuffer({ texture: st.tex }, { buffer: rb, bytesPerRow: row }, [st.t.w, st.t.h]);
+          reads.push({ rb, rows: st.t.h, row, w: st.t.w * bpp(st.t.format) });
+        }
         device.queue.submit([enc.finish()]);
-        await rb.mapAsync(GPUMapMode.READ);
-        const all = new Uint8Array(rb.getMappedRange());
-        const w = st.t.w * bpp(st.t.format);
         const bytes = [];
-        for (let y = 0; y < st.t.h; y++) for (let x = 0; x < w; x++) bytes.push(all[y * row + x]);
-        rb.unmap();
+        for (const { rb, rows, row, w } of reads) {
+          await rb.mapAsync(GPUMapMode.READ);
+          const all = new Uint8Array(rb.getMappedRange());
+          for (let y = 0; y < rows; y++) for (let x = 0; x < w; x++) bytes.push(all[y * row + x]);
+          rb.unmap();
+        }
         o.bytes = bytes;
         const e = await device.popErrorScope();
         if (e) o.error = "validation: " + e.message;

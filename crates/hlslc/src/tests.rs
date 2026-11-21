@@ -1280,3 +1280,67 @@ fn geometry_shader_errors() {
     assert!(err(&format!("{v}[maxvertexcount(2)] void main(point V v[1], inout PointStream<V> s, inout LineStream<V> t) {{ s.Append(v[0]); }}"), "gs_5_0").contains("PointStreams"));
     assert!(err(&format!("{v}[maxvertexcount(2)] V main(point V v[1], inout PointStream<V> s) {{ return v[0]; }}"), "gs_4_0").contains("void"));
 }
+
+/// Structured and raw buffers (StructuredBuffer, RWStructuredBuffer, Append/Consume,
+/// ByteAddressBuffer, RWByteAddressBuffer): reads, partial writes, counters, GetDimensions,
+/// every Interlocked* on raw buffers, structured elements and groupshared memory; the WGSL
+/// dxwgsl makes of them validates (naga), and each declares what it binds.
+#[test]
+fn structured_and_raw_buffers() {
+    let cases: &[(&str, &[&str])] = &[
+        (
+            "struct P { float3 p; uint n; float2x2 m; };\n\
+             StructuredBuffer<P> sb : register(t0); RWStructuredBuffer<P> rw : register(u0);\n\
+             [numthreads(8,1,1)] void main(uint3 t : SV_DispatchThreadID) {\n\
+               P a = sb[t.x]; rw[t.x].p.y = a.p.x + a.m._12; rw[t.x + 1].n += a.n; rw[t.x].m[1] = a.m[0];\n\
+               uint n, s; sb.GetDimensions(n, s); rw[0].n = n * 100 + s; }",
+            &["var<storage, read> tb0: array<u32>", "var<storage, read_write> ub0: array<u32>", "struct BV { t0: vec4<u32>, u0: vec4<u32> }"],
+        ),
+        (
+            "AppendStructuredBuffer<uint2> a : register(u1); ConsumeStructuredBuffer<uint2> c : register(u2);\n\
+             RWStructuredBuffer<uint> o : register(u3);\n\
+             [numthreads(4,1,1)] void main(uint3 t : SV_DispatchThreadID) { uint2 v = c.Consume(); a.Append(v + t.x); o[o.IncrementCounter()] = o.DecrementCounter(); }",
+            &["atomicAdd(&uc1, 1u)", "atomicSub(&uc2, 1u)", "uc3: atomic<u32>"],
+        ),
+        (
+            "ByteAddressBuffer b : register(t3); RWByteAddressBuffer w : register(u0);\n\
+             [numthreads(1,1,1)] void main(uint3 t : SV_DispatchThreadID) {\n\
+               uint4 v = b.Load4(t.x * 16); w.Store3(t.x * 12, v.xyz + b.Load(0) + b.Load2(4).y + b.Load3(8).z);\n\
+               uint d; b.GetDimensions(d); w.Store(0, d); uint o;\n\
+               w.InterlockedAdd(4, 1); w.InterlockedAdd(8, 2, o); w.InterlockedMin(12, (int)o); w.InterlockedMax(16, 5u);\n\
+               w.InterlockedAnd(20, 6); w.InterlockedOr(24, 7); w.InterlockedXor(28, 8); w.InterlockedExchange(32, 9, o);\n\
+               w.InterlockedCompareExchange(36, 1, 2, o); w.InterlockedCompareStore(40, o, 3); }",
+            &["ub0: array<atomic<u32>>", "atomicCompareExchangeWeak", "atomicExchange", "bitcast<i32>"],
+        ),
+        (
+            "groupshared uint g[64]; groupshared int m; RWStructuredBuffer<int> o : register(u0);\n\
+             [numthreads(64,1,1)] void main(uint i : SV_GroupIndex) { uint was; InterlockedAdd(g[i & 7], i, was); InterlockedMax(m, (int)was - 10);\n\
+               InterlockedCompareExchange(g[0], 0, 1, was); InterlockedAdd(o[i].x, m); GroupMemoryBarrierWithGroupSync(); o[i] = g[i] + was; }",
+            &["var<workgroup> g0: array<atomic<u32>, 64>", "atomicLoad(&g0"],
+        ),
+    ];
+    for (src, wants) in cases {
+        let w = cs(src, &[], "cs_5_0", &[]);
+        for want in *wants {
+            assert!(w.contains(want), "{src}\nno {want}\n{w}");
+        }
+    }
+    // (pixel and vertex shaders read buffers too)
+    let ps = "struct L { float4 c; float k; }; StructuredBuffer<L> ls : register(t2); ByteAddressBuffer raw : register(t4);\n\
+              float4 ps(float4 p : SV_Position) : SV_Target { return ls[(uint)p.x].c * ls[1].k + asfloat(raw.Load((uint)p.y * 4)); }";
+    let code = super::compile(ps, &[], &mut |_, _| None, "ps", "ps_5_0", 0).unwrap();
+    let w = dxwgsl::translate(&code, true, None).unwrap();
+    valid(&w.code);
+    assert!(w.bindings.iter().any(|b| b.0 == 502) && w.bindings.iter().any(|b| b.0 == 504) && w.bindings.iter().any(|b| b.0 == dxwgsl::BUFFER_RANGES), "{:?}", w.bindings);
+    // (and what is no buffer access is an error, not a shader)
+    for (src, want) in [
+        ("StructuredBuffer<uint> s : register(t0); RWStructuredBuffer<uint> o : register(u0); [numthreads(1,1,1)] void main() { s[0] = 1; o[0] = s[0]; }", "read-only"),
+        ("ByteAddressBuffer s : register(t0); RWStructuredBuffer<uint> o : register(u0); [numthreads(1,1,1)] void main() { o[0] = s[0]; }", "buffer"),
+        ("AppendStructuredBuffer<uint> a : register(u0); [numthreads(1,1,1)] void main() { a[0] = 1; }", "buffer"),
+        ("StructuredBuffer<uint> s : register(t0); RWStructuredBuffer<uint> o : register(u0); [numthreads(1,1,1)] void main() { InterlockedAdd(s[0], 1); o[0] = 0; }", "read-only"),
+        ("StructuredBuffer<uint> s : register(u0); [numthreads(1,1,1)] void main() { }", ""),
+    ] {
+        let e = cs_err(src, "cs_5_0");
+        assert!(e.contains(want), "{src}: {e}");
+    }
+}

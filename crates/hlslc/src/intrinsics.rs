@@ -160,14 +160,14 @@ impl L<'_> {
         match v.obj {
             Obj::Tex(t) | Obj::Legacy(t, _) => Ok(t),
             Obj::None | Obj::Samp(_) | Obj::TexArr(_) | Obj::SampArr(_) | Obj::LegacyArr(..) | Obj::Uav(_)
-            | Obj::Shared(..) | Obj::Stream(_) => Err("a texture is needed".into()),
+            | Obj::Mem(_) | Obj::Buf(_) | Obj::Stream(_) => Err("a texture is needed".into()),
         }
     }
     fn sampler_of(&self, v: &Val) -> R<u32> {
         match v.obj {
             Obj::Samp(s) | Obj::Legacy(_, s) => Ok(s),
             Obj::None | Obj::Tex(_) | Obj::TexArr(_) | Obj::SampArr(_) | Obj::LegacyArr(..) | Obj::Uav(_)
-            | Obj::Shared(..) | Obj::Stream(_) => Err("a sampler is needed".into()),
+            | Obj::Mem(_) | Obj::Buf(_) | Obj::Stream(_) => Err("a sampler is needed".into()),
         }
     }
 
@@ -346,11 +346,17 @@ pub fn call(l: &mut L, name: &str, args: &[Expr], line: u32) -> R<Val> {
     if let Some(v) = l.legacy(name, args)? {
         return Ok(v);
     }
+    if name.starts_with("Interlocked") {
+        return l.x_interlocked(name, args);
+    }
     Ok(match name {
         "GroupMemoryBarrier" | "GroupMemoryBarrierWithGroupSync" | "DeviceMemoryBarrier" | "DeviceMemoryBarrierWithGroupSync" | "AllMemoryBarrier"
         | "AllMemoryBarrierWithGroupSync" => {
             need(0)?;
-            if !l.o.compute {
+            // (a pixel shader has no thread group: only the UAV fences, DeviceMemoryBarrier and
+            // AllMemoryBarrier, of shader model 5)
+            let fence = matches!(name, "DeviceMemoryBarrier" | "AllMemoryBarrier");
+            if !l.o.compute && !(fence && l.o.pixel && l.x_major() >= 5) {
                 return Err(format!("line {line}: {name} outside a compute shader"));
             }
             // sync flags: 1 threads in the group, 2 groupshared memory, 8 UAV memory
@@ -359,6 +365,7 @@ pub fn call(l: &mut L, name: &str, args: &[Expr], line: u32) -> R<Val> {
                 "DeviceMemoryBarrier" => 8,
                 _ => 10,
             };
+            let mem = if l.o.compute { mem } else { 8 };
             let ctl = mem | u32::from(name.ends_with("WithGroupSync"));
             l.x_emit(SYNC, vec![], vec![]).ctl = ctl;
             Val::num(Ty::Void, vec![])

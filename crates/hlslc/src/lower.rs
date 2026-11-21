@@ -29,10 +29,67 @@ pub enum Obj {
     LegacyArr(u32, u32),
     /// a typed unordered access view (RWTexture*)
     Uav(u32),
-    /// groupshared memory g<n> at a dword offset (the value's type: what is there)
-    Shared(u32, C),
+    /// a place in memory (the value's type: what is there)
+    Mem(Mem),
+    /// a structured or raw buffer (StructuredBuffer, ByteAddressBuffer and kin)
+    Buf(Res),
     /// a geometry shader's output stream (its index in `L::streams`)
     Stream(u32),
+}
+
+/// A structured or raw buffer's register: t (read-only) or u (a UAV), by symbol.
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub enum Res {
+    T(u32),
+    U(u32),
+}
+
+/// A place in memory, addressed by dwords.
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub enum Mem {
+    /// groupshared g<n> at a dword offset
+    G(u32, C),
+    /// element (`.1`) of a structured buffer at a dword offset in it; matrices row_major (`.3`)
+    /// or column_major
+    S(Res, C, C, bool),
+}
+
+impl Mem {
+    fn off(self) -> C {
+        match self {
+            Mem::G(_, o) | Mem::S(_, _, o, _) => o,
+        }
+    }
+    fn at(self, off: C) -> Mem {
+        match self {
+            Mem::G(g, _) => Mem::G(g, off),
+            Mem::S(r, i, _, rm) => Mem::S(r, i, off, rm),
+        }
+    }
+}
+
+/// Where an atomic operates: groupshared memory at a byte address, or a UAV at an address (a
+/// raw buffer's byte, a structured buffer's element and byte, a typed UAV's coordinates).
+#[derive(Clone, PartialEq, Debug)]
+enum Atom {
+    G(u32, C),
+    U(u32, Vec<C>),
+}
+
+/// Memory a shader may write: groupshared, or an element of a UAV's structured buffer.
+#[derive(Clone, Copy, PartialEq, Debug)]
+enum WMem {
+    G(u32, C),
+    U(u32, C, C, bool),
+}
+
+impl WMem {
+    fn mem(self) -> Mem {
+        match self {
+            WMem::G(g, o) => Mem::G(g, o),
+            WMem::U(u, i, o, rm) => Mem::S(Res::U(u), i, o, rm),
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -63,6 +120,7 @@ pub struct Opts {
 
 struct TexD {
     name: String,
+    view: sm4::View,
     dim: Dim,
     el: Ty,
     reg: Option<u32>,
@@ -71,6 +129,8 @@ struct TexD {
 
 struct UavD {
     name: String,
+    view: sm4::View,
+    coherent: bool,
     dim: Dim,
     el: Ty,
     reg: Option<u32>,
@@ -81,8 +141,9 @@ struct UavD {
 enum Wb {
     /// picked by a run-time index from a select chain: (the elements, the index, the copy)
     Sel(Vec<Vec<C>>, C, Vec<C>, B),
-    /// groupshared g<n> at a dword offset
-    Shared(u32, C, Vec<C>),
+    /// memory of a value of this type, through a copy: what the code from this instruction on
+    /// writes of the copy is stored (only that: other threads may write the rest)
+    Mem(WMem, Ty, Vec<C>, usize),
     /// a typed UAV at coordinates
     Uav(u32, Vec<C>, Vec<C>),
 }
@@ -212,7 +273,7 @@ pub fn ncomp(prog: &Program, t: &Ty) -> usize {
         Ty::Array(e, n) => ncomp(prog, e) * kome::num::us(*n),
         Ty::Struct(i) => prog.structs[*i].fields.iter().map(|f| ncomp(prog, &f.ty)).sum(),
         t @ (Ty::Void | Ty::Scalar(_) | Ty::Vec(..) | Ty::Mat(..) | Ty::Tex(..) | Ty::Sampler(_)
-             | Ty::RwTex(..) | Ty::Legacy(_) | Ty::Str | Ty::Stream(..)) => t.comps(),
+             | Ty::RwTex(..) | Ty::Buf(..) | Ty::Legacy(_) | Ty::Str | Ty::Stream(..)) => t.comps(),
     }
 }
 
@@ -230,7 +291,7 @@ fn leaf_bases(prog: &Program, t: &Ty, out: &mut Vec<B>) {
             }
         }
         t @ (Ty::Void | Ty::Scalar(_) | Ty::Vec(..) | Ty::Mat(..) | Ty::Tex(..) | Ty::Sampler(_)
-             | Ty::RwTex(..) | Ty::Legacy(_) | Ty::Str | Ty::Stream(..)) => {
+             | Ty::RwTex(..) | Ty::Buf(..) | Ty::Legacy(_) | Ty::Str | Ty::Stream(..)) => {
             for _ in 0..t.comps() {
                 out.push(t.base());
             }
@@ -257,7 +318,7 @@ fn units(prog: &Program, t: &Ty, out: &mut Vec<usize>) {
             }
         }
         t if t.comps() > 0 => out.push(t.comps()),
-        Ty::Void | Ty::Scalar(_) | Ty::Vec(..) | Ty::Tex(..) | Ty::Sampler(_) | Ty::RwTex(..)
+        Ty::Void | Ty::Scalar(_) | Ty::Vec(..) | Ty::Tex(..) | Ty::Sampler(_) | Ty::RwTex(..) | Ty::Buf(..)
              | Ty::Legacy(_) | Ty::Str | Ty::Stream(..) => {}
     }
 }
@@ -270,6 +331,16 @@ fn split_sem(s: &str) -> (String, u32) {
 
 fn pixel_out(pixel: bool, output: bool) -> bool {
     pixel && output
+}
+
+/// Argument `k` of a call.
+fn arg(args: &[Expr], k: usize) -> R<&Expr> {
+    args.get(k).ok_or_else(|| format!("no argument {k}"))
+}
+
+/// The first component of a value (an error for one of none).
+fn c0(c: &[C]) -> R<C> {
+    c.first().copied().ok_or_else(|| "a value without components".to_owned())
 }
 
 fn temp(t: u32) -> Reg {
@@ -1023,7 +1094,7 @@ impl<'a> L<'a> {
                 }
                 out
             }
-            t @ (Ty::Void | Ty::Scalar(_) | Ty::Vec(..) | Ty::Tex(..) | Ty::Sampler(_) | Ty::RwTex(..)
+            t @ (Ty::Void | Ty::Scalar(_) | Ty::Vec(..) | Ty::Tex(..) | Ty::Sampler(_) | Ty::RwTex(..) | Ty::Buf(..)
                  | Ty::Legacy(_) | Ty::Str | Ty::Stream(..)) => {
                 let n = t.comps();
                 if n == 0 {
@@ -1055,9 +1126,10 @@ impl<'a> L<'a> {
                         self.texs[kome::num::us(t)].used = true;
                         self.samps[kome::num::us(s)].used = true;
                     }
-                    Obj::Uav(u) => self.uavs[kome::num::us(u)].used = true,
+                    Obj::Uav(u) | Obj::Buf(Res::U(u)) => self.uavs.get_mut(kome::num::us(u)).into_iter().for_each(|x| x.used = true),
+                    Obj::Buf(Res::T(t)) => self.texs.get_mut(kome::num::us(t)).into_iter().for_each(|x| x.used = true),
                     // (arrays: the elements indexed are marked)
-                    Obj::None | Obj::TexArr(_) | Obj::SampArr(_) | Obj::LegacyArr(..) | Obj::Shared(..) | Obj::Stream(_) => {}
+                    Obj::None | Obj::TexArr(_) | Obj::SampArr(_) | Obj::LegacyArr(..) | Obj::Mem(_) | Obj::Stream(_) => {}
                 }
                 // (bools of constant buffers are 0/1: canonical masks)
                 if self.cbvar.contains_key(name) && v.ty.base() == B::Bool && v.ty.numeric() {
@@ -1122,7 +1194,7 @@ impl<'a> L<'a> {
                 }
                 at
             }
-            Ty::Void | Ty::Tex(..) | Ty::Sampler(_) | Ty::RwTex(..) | Ty::Legacy(_) | Ty::Str | Ty::Stream(..) => at,
+            Ty::Void | Ty::Tex(..) | Ty::Sampler(_) | Ty::RwTex(..) | Ty::Buf(..) | Ty::Legacy(_) | Ty::Str | Ty::Stream(..) => at,
         }
     }
 
@@ -1156,6 +1228,29 @@ impl<'a> L<'a> {
         v
     }
 
+    /// The bytes of `t` packed tight (4 a component), as structured buffers hold it.
+    fn tight_bytes(&self, t: &Ty) -> u32 {
+        kome::num::u32_of(ncomp(self.prog, t)).saturating_mul(4)
+    }
+
+    /// A structured buffer element's RDEF variable: members packed tight (4 bytes a component),
+    /// at byte `off`.
+    fn rdef_tight(&self, name: &str, t: &Ty, row_major: bool, off: u32) -> sm4::CbVar {
+        let el = if let Ty::Array(e, _) = t { &**e } else { t };
+        let mut members = Vec::new();
+        if let Ty::Struct(i) = el {
+            let mut at = 0u32;
+            for f in self.prog.structs.get(*i).map_or(&[][..], |s| &s.fields[..]) {
+                members.push(self.rdef_tight(&f.name, &f.ty, f.row_major.unwrap_or(row_major), at));
+                at = at.saturating_add(self.tight_bytes(&f.ty));
+            }
+        }
+        let mut v = self.rdef_var0(name, t, row_major, off, off.saturating_add(self.tight_bytes(t)));
+        v.members = members;
+        v.used = true;
+        v
+    }
+
     /// The components of `t`, arrays and struct members counted in.
     fn scalars(&self, t: &Ty) -> u32 {
         match t {
@@ -1164,7 +1259,7 @@ impl<'a> L<'a> {
             Ty::Scalar(_) => 1,
             Ty::Vec(_, n) => u32::from(*n),
             Ty::Mat(_, r, c) => u32::from(*r) * u32::from(*c),
-            Ty::Void | Ty::Tex(..) | Ty::Sampler(_) | Ty::RwTex(..) | Ty::Legacy(_) | Ty::Str | Ty::Stream(..) => 0,
+            Ty::Void | Ty::Tex(..) | Ty::Sampler(_) | Ty::RwTex(..) | Ty::Buf(..) | Ty::Legacy(_) | Ty::Str | Ty::Stream(..) => 0,
         }
     }
 
@@ -1172,7 +1267,7 @@ impl<'a> L<'a> {
         let (el, elems) = match t {
             Ty::Array(e, n) => (&**e, crate::sat16(*n)),
             t @ (Ty::Void | Ty::Scalar(_) | Ty::Vec(..) | Ty::Mat(..) | Ty::Struct(_) | Ty::Tex(..)
-                 | Ty::Sampler(_) | Ty::RwTex(..) | Ty::Legacy(_) | Ty::Str | Ty::Stream(..)) => (t, 0),
+                 | Ty::Sampler(_) | Ty::RwTex(..) | Ty::Buf(..) | Ty::Legacy(_) | Ty::Str | Ty::Stream(..)) => (t, 0),
         };
         let ty = match el.base() {
             B::Bool => 1,
@@ -1185,7 +1280,7 @@ impl<'a> L<'a> {
             Ty::Vec(_, n) => (1, 1, u16::from(*n)),
             Ty::Mat(_, r, c) => (if row_major { 2 } else { 3 }, u16::from(*r), u16::from(*c)),
             // (a struct: one row of all its members' components)
-            Ty::Void | Ty::Array(..) | Ty::Struct(_) | Ty::Tex(..) | Ty::Sampler(_) | Ty::RwTex(..)
+            Ty::Void | Ty::Array(..) | Ty::Struct(_) | Ty::Tex(..) | Ty::Sampler(_) | Ty::RwTex(..) | Ty::Buf(..)
             | Ty::Legacy(_) | Ty::Str | Ty::Stream(..) => (5, 1, crate::sat16(self.scalars(el))),
         };
         sm4::CbVar {
@@ -1242,11 +1337,34 @@ impl<'a> L<'a> {
                 if v.reg.is_some_and(|r| r.0 != 'u') {
                     return Err(format!("line {}: a RWTexture's register is a u register", v.line));
                 }
-                self.uavs.push(UavD { name: v.name.clone(), dim: *d, el: (**el).clone(), reg, used: false });
+                self.uavs.push(UavD { name: v.name.clone(), view: sm4::View::Typed, coherent: v.coherent, dim: *d, el: (**el).clone(), reg, used: false });
                 Obj::Uav(kome::num::u32_of(self.uavs.len()) - 1)
             }
+            Ty::Buf(k, el) => {
+                let stride = if k.raw() { 0 } else { self.tight_bytes(el) };
+                if stride > 2048 {
+                    return Err(format!("line {}: a structured buffer's element is more than 2048 bytes", v.line));
+                }
+                if !k.raw() && stride == 0 {
+                    return Err(format!("line {}: a structured buffer of an element without components", v.line));
+                }
+                let view = sm4::View::Buf { kind: *k, stride, counter: matches!(k, BufKind::Append | BufKind::Consume) };
+                if k.uav() {
+                    if v.reg.is_some_and(|r| r.0 != 'u') {
+                        return Err(format!("line {}: a read-write buffer's register is a u register", v.line));
+                    }
+                    self.uavs.push(UavD { name: v.name.clone(), view, coherent: v.coherent, dim: Dim::Buffer, el: (**el).clone(), reg, used: false });
+                    Obj::Buf(Res::U(kome::num::u32_of(self.uavs.len()).saturating_sub(1)))
+                } else {
+                    if v.reg.is_some_and(|r| r.0 != 't') {
+                        return Err(format!("line {}: a buffer's register is a t register", v.line));
+                    }
+                    self.texs.push(TexD { name: v.name.clone(), view, dim: Dim::Buffer, el: (**el).clone(), reg, used: false });
+                    Obj::Buf(Res::T(kome::num::u32_of(self.texs.len()).saturating_sub(1)))
+                }
+            }
             Ty::Tex(d, el) => {
-                self.texs.push(TexD { name: v.name.clone(), dim: *d, el: (**el).clone(), reg, used: false });
+                self.texs.push(TexD { name: v.name.clone(), view: sm4::View::Typed, dim: *d, el: (**el).clone(), reg, used: false });
                 Obj::Tex(kome::num::u32_of(self.texs.len()) - 1)
             }
             Ty::Sampler(cmp) => {
@@ -1254,7 +1372,7 @@ impl<'a> L<'a> {
                 Obj::Samp(kome::num::u32_of(self.samps.len()) - 1)
             }
             Ty::Legacy(d) => {
-                self.texs.push(TexD { name: v.name.clone(), dim: *d, el: Ty::Vec(B::Float, Width::W4), reg, used: false });
+                self.texs.push(TexD { name: v.name.clone(), view: sm4::View::Typed, dim: *d, el: Ty::Vec(B::Float, Width::W4), reg, used: false });
                 self.samps.push(SampD { name: v.name.clone(), cmp: false, reg, used: false });
                 Obj::Legacy(kome::num::u32_of(self.texs.len()) - 1, kome::num::u32_of(self.samps.len()) - 1)
             }
@@ -1265,21 +1383,21 @@ impl<'a> L<'a> {
                     let name = format!("{}[{i}]", v.name);
                     let reg = reg.map(|r| r + i);
                     match &**e {
-                        Ty::Tex(d, el) => self.texs.push(TexD { name, dim: *d, el: (**el).clone(), reg, used: false }),
+                        Ty::Tex(d, el) => self.texs.push(TexD { name, view: sm4::View::Typed, dim: *d, el: (**el).clone(), reg, used: false }),
                         Ty::Sampler(cmp) => self.samps.push(SampD { name, cmp: *cmp, reg, used: false }),
                         Ty::Legacy(d) => {
-                            self.texs.push(TexD { name: name.clone(), dim: *d, el: Ty::Vec(B::Float, Width::W4), reg, used: false });
+                            self.texs.push(TexD { name: name.clone(), view: sm4::View::Typed, dim: *d, el: Ty::Vec(B::Float, Width::W4), reg, used: false });
                             self.samps.push(SampD { name, cmp: false, reg, used: false });
                         }
                         Ty::Void | Ty::Scalar(_) | Ty::Vec(..) | Ty::Mat(..) | Ty::Array(..) | Ty::Struct(_)
-                        | Ty::RwTex(..) | Ty::Str | Ty::Stream(..) => return Err(format!("line {}: arrays of arrays of textures or samplers are not supported", v.line)),
+                        | Ty::RwTex(..) | Ty::Buf(..) | Ty::Str | Ty::Stream(..) => return Err(format!("line {}: arrays of arrays of textures or samplers are not supported", v.line)),
                     }
                 }
                 match &**e {
                     Ty::Tex(..) => Obj::TexArr(t0),
                     Ty::Sampler(_) => Obj::SampArr(s0),
                     Ty::Void | Ty::Scalar(_) | Ty::Vec(..) | Ty::Mat(..) | Ty::Array(..) | Ty::Struct(_)
-                    | Ty::RwTex(..) | Ty::Legacy(_) | Ty::Str | Ty::Stream(..) => Obj::LegacyArr(t0, s0),
+                    | Ty::RwTex(..) | Ty::Buf(..) | Ty::Legacy(_) | Ty::Str | Ty::Stream(..) => Obj::LegacyArr(t0, s0),
                 }
             }
             Ty::Void | Ty::Scalar(_) | Ty::Vec(..) | Ty::Mat(..) | Ty::Struct(_) | Ty::Str | Ty::Stream(..) => return Ok(()),
@@ -1307,7 +1425,7 @@ impl<'a> L<'a> {
                     &sized
                 }
                 t @ (Ty::Void | Ty::Scalar(_) | Ty::Vec(..) | Ty::Mat(..) | Ty::Array(..) | Ty::Struct(_)
-                     | Ty::Tex(..) | Ty::Sampler(_) | Ty::RwTex(..) | Ty::Legacy(_) | Ty::Str | Ty::Stream(..)) => t,
+                     | Ty::Tex(..) | Ty::Sampler(_) | Ty::RwTex(..) | Ty::Buf(..) | Ty::Legacy(_) | Ty::Str | Ty::Stream(..)) => t,
             };
             let mut tb = Vec::new();
             leaf_bases(self.prog, t, &mut tb);
@@ -1367,7 +1485,7 @@ impl<'a> L<'a> {
                 }
                 self.tgsm.push(bytes);
                 let g = kome::num::u32_of(self.tgsm.len()) - 1;
-                self.globals.insert(v.name.clone(), Val { ty: v.ty().clone(), c: Vec::new(), obj: Obj::Shared(g, C::I(0)) });
+                self.globals.insert(v.name.clone(), Val { ty: v.ty().clone(), c: Vec::new(), obj: Obj::Mem(Mem::G(g, C::I(0))) });
             } else if matches!(v.ty(), Ty::Str) {
             } else if v.is_static {
                 statics.push(v.clone());
@@ -1801,6 +1919,15 @@ impl<'a> L<'a> {
     }
 
     fn finish(self) -> R<sm4::Shader> {
+        // (each structured buffer's element type: RDEF's resource bind info buffers)
+        let mut elements = Vec::new();
+        let bufs = self.texs.iter().filter(|t| t.used).map(|t| (&t.name, t.view, &t.el)).chain(self.uavs.iter().filter(|u| u.used).map(|u| (&u.name, u.view, &u.el)));
+        for (name, view, el) in bufs {
+            if let sm4::View::Buf { kind, stride, .. } = view && !kind.raw() {
+                let var = self.rdef_tight("$Element", el, self.o.row_major, 0);
+                elements.push(sm4::Cb { name: name.clone(), slot: 0, size: stride, dynamic: false, vars: vec![var], explicit: false });
+            }
+        }
         // resource slots: explicit registers first, then the lowest free in declaration order
         let mut taken: Vec<u32> = self.texs.iter().filter(|t| t.used).filter_map(|t| t.reg).collect();
         let mut tex_map = vec![None; self.texs.len()];
@@ -1837,7 +1964,7 @@ impl<'a> L<'a> {
                 B::Float => 5,
             };
             tex_map[n] = Some(texs.len());
-            texs.push(sm4::Tex { name: t.name.clone(), dim, ret, comps: kome::num::u32_of(t.el.comps().max(1)), slot, explicit: t.reg.is_some() });
+            texs.push(sm4::Tex { name: t.name.clone(), view: t.view, dim, ret, comps: kome::num::u32_of(t.el.comps().max(1)), slot, explicit: t.reg.is_some() });
         }
         let mut staken: Vec<u32> = self.samps.iter().filter(|t| t.used).filter_map(|t| t.reg).collect();
         let mut samp_map = vec![None; self.samps.len()];
@@ -1850,7 +1977,7 @@ impl<'a> L<'a> {
             let legacy = self.globals.values().find_map(|v| match v.obj {
                 Obj::Legacy(t, sm) if kome::num::us(sm) == n => legacy_slot.get(&kome::num::us(t)).copied(),
                 Obj::None | Obj::Tex(_) | Obj::Samp(_) | Obj::Legacy(..) | Obj::TexArr(_) | Obj::SampArr(_)
-                | Obj::LegacyArr(..) | Obj::Uav(_) | Obj::Shared(..) | Obj::Stream(_) => None,
+                | Obj::LegacyArr(..) | Obj::Uav(_) | Obj::Mem(_) | Obj::Buf(_) | Obj::Stream(_) => None,
             });
             let slot = s.reg.or(legacy).unwrap_or_else(|| {
                 let mut k = 0;
@@ -1910,9 +2037,10 @@ impl<'a> L<'a> {
                 B::Float => 5,
             };
             uav_map[n] = Some(uavs.len());
-            uavs.push(sm4::Uav { name: u.name.clone(), dim, ret, comps: kome::num::u32_of(u.el.comps().max(1)), slot, explicit: u.reg.is_some() });
+            uavs.push(sm4::Uav { name: u.name.clone(), view: u.view, coherent: u.coherent, dim, ret, comps: kome::num::u32_of(u.el.comps().max(1)), slot, explicit: u.reg.is_some() });
         }
         Ok(sm4::Shader {
+            elements,
             threads: self.threads,
             sys_inputs: self.sys_inputs,
             uavs,
@@ -1944,6 +2072,13 @@ impl<'a> L<'a> {
     /// The function being lowered (statements are lowered only inside one)
     fn fctx(&mut self) -> R<&mut FnCtx> {
         self.fns.last_mut().ok_or_else(|| "a statement outside a function".to_string())
+    }
+
+    /// Into a loop or switch (`enter`) or out of one.
+    fn loop_depth(&mut self, enter: bool) -> R<()> {
+        let f = self.fctx()?;
+        f.loops = if enter { f.loops.saturating_add(1) } else { f.loops.saturating_sub(1) };
+        Ok(())
     }
 
     fn stmts(&mut self, ss: &[Stmt]) -> R<()> {
@@ -1988,223 +2123,259 @@ impl<'a> L<'a> {
         Ok(())
     }
 
+    /// One statement; each kind's work in a function of its own, so that nesting costs only
+    /// this frame and the kind's (MAX_NEST levels fit the guest's 1 MiB stack).
     fn stmt(&mut self, s: &Stmt) -> R<()> {
         use sm4::*;
         match s {
             Stmt::Expr(e) => {
                 self.expr(e)?;
             }
-            Stmt::Decl(vs) => {
-                for v in vs {
-                    let t = v.ty().clone();
-                    if t.is_object() {
-                        let val = match &v.init {
-                            Some(e) => self.expr(e)?,
-                            None => return Err(format!("line {}: local texture or sampler without a value", v.line)),
-                        };
-                        self.scopes.declare(v.name.clone(), val);
-                        continue;
-                    }
-                    if v.is_static {
-                        return Err(format!("line {}: static locals are not supported", v.line));
-                    }
-                    let init = match &v.init {
-                        Some(e) => Some(self.init_value(&t, e)?),
-                        None => None,
-                    };
-                    let t = init.as_ref().map_or(t, |i| i.ty.clone());
-                    // (`T a[];` takes its size from an initializer list; without one it has none)
-                    if no_size(&t) {
-                        return Err(format!("line {}: array {} without a size or an initializer", v.line, v.name));
-                    }
-                    // (a constant: no storage)
-                    if v.is_const && !matches!(t, Ty::Array(..)) && let Some(i) = &init && i.c.iter().all(|c| matches!(c, C::I(_))) {
-                        self.scopes.declare(v.name.clone(), i.clone());
-                        continue;
-                    }
-                    let st = self.storage(&t);
-                    if let Some(i) = init {
-                        self.assign(&st, &i.c);
-                    }
-                    self.scopes.declare(v.name.clone(), Val::num(t, st));
-                }
-            }
+            Stmt::Decl(vs) => self.stmt_decl(vs)?,
             Stmt::Block(v) => {
                 self.scopes.open();
                 let r = self.stmts(v);
                 self.scopes.close();
                 r?;
             }
-            Stmt::If(c, a, b) => {
-                let cv = self.expr(c)?;
-                let t = self.truth(cv)?;
-                if let C::I(v) = t {
-                    // a constant condition
-                    if v != 0 {
-                        self.scoped(a)?;
-                    } else if let Some(b) = b {
-                        self.scoped(b)?;
-                    }
-                    return Ok(());
-                }
-                self.cond_op(IF, t, true);
-                self.scoped(a)?;
-                if let Some(b) = b {
-                    self.flow(ELSE);
-                    self.scoped(b)?;
-                }
-                self.flow(ENDIF);
-            }
-            Stmt::For(init, cond, step, body) => {
-                self.scopes.open();
-                if let Some(i) = init {
-                    self.stmt(i)?;
-                }
-                let cont = has_continue(body);
-                let first = if cont && step.is_some() {
-                    let f = self.tmp();
-                    self.marks.push((f, self.code.len()));
-                    self.assign(&[C::R(temp(f), Lane::X)], &[C::I(self.tru())]);
-                    Some(f)
-                } else {
-                    None
-                };
-                self.flow(LOOP);
-                self.fctx()?.loops += 1;
-                if let (Some(f), Some(st)) = (first, step) {
-                    self.cond_op(IF, C::R(temp(f), Lane::X), false);
-                    self.expr(st)?;
-                    self.flow(ENDIF);
-                    self.assign(&[C::R(temp(f), Lane::X)], &[C::I(0)]);
-                }
-                if let Some(c) = cond {
-                    let cv = self.expr(c)?;
-                    let t = self.truth(cv)?;
-                    self.cond_op(BREAKC, t, false);
-                }
-                self.scoped(body)?;
-                if let (None, Some(st)) = (first, step) {
-                    self.expr(st)?;
-                }
-                self.fctx()?.loops -= 1;
-                self.flow(ENDLOOP);
-                self.scopes.close();
-                self.after_breakable(has_return(body))?;
-            }
-            Stmt::While(c, body) => {
-                self.flow(LOOP);
-                self.fctx()?.loops += 1;
-                let cv = self.expr(c)?;
-                let t = self.truth(cv)?;
-                self.cond_op(BREAKC, t, false);
-                self.scoped(body)?;
-                self.fctx()?.loops -= 1;
-                self.flow(ENDLOOP);
-                self.after_breakable(has_return(body))?;
-            }
-            Stmt::Do(body, c) => {
-                let cont = has_continue(body);
-                let first = if cont {
-                    let f = self.tmp();
-                    self.marks.push((f, self.code.len()));
-                    self.assign(&[C::R(temp(f), Lane::X)], &[C::I(self.tru())]);
-                    Some(f)
-                } else {
-                    None
-                };
-                self.flow(LOOP);
-                self.fctx()?.loops += 1;
-                if let Some(f) = first {
-                    self.cond_op(IF, C::R(temp(f), Lane::X), false);
-                    let cv = self.expr(c)?;
-                    let t = self.truth(cv)?;
-                    self.cond_op(BREAKC, t, false);
-                    self.flow(ENDIF);
-                    self.assign(&[C::R(temp(f), Lane::X)], &[C::I(0)]);
-                }
-                self.scoped(body)?;
-                if first.is_none() {
-                    let cv = self.expr(c)?;
-                    let t = self.truth(cv)?;
-                    self.cond_op(BREAKC, t, false);
-                }
-                self.fctx()?.loops -= 1;
-                self.flow(ENDLOOP);
-                self.after_breakable(has_return(body))?;
-            }
-            Stmt::Switch(v, cases) => {
-                let val = self.expr(v)?;
-                let val = self.cast(val, &Ty::Scalar(B::Int))?;
-                let s = self.scalar_src(val.c[0]);
-                let s = match s {
-                    Src::Imm(..) => {
-                        let c = self.copy(&val.c);
-                        self.scalar_src(c[0])
-                    }
-                    s @ (Src::R { .. } | Src::Tex(..) | Src::Samp(_) | Src::SampC(..) | Src::Uav(..) | Src::G(..) | Src::Stream(_)) => s,
-                };
-                self.emit(SWITCH, vec![], vec![s]);
-                self.fctx()?.loops += 1;
-                let mut returns = false;
-                for (labels, body) in cases {
-                    for l in labels {
-                        match l {
-                            Some(e) => {
-                                let k = super::parse::const_int(e).ok_or("case label is not a constant")?;
-                                self.emit(CASE, vec![], vec![Src::Imm([kome::num::lo32(k); 4], true)]);
-                            }
-                            None => self.flow(DEFAULT),
-                        }
-                    }
-                    self.scopes.open();
-                    self.stmts(body)?;
-                    self.scopes.close();
-                    returns |= body.iter().any(has_return);
-                    // (a case falling through to the end of the switch)
-                    if !matches!(self.code.last().map(|i| i.op), Some(BREAK | RET | CONTINUE)) {
-                        self.flow(BREAK);
-                    }
-                }
-                self.fctx()?.loops -= 1;
-                self.flow(ENDSWITCH);
-                self.after_breakable(returns)?;
-            }
+            Stmt::If(c, a, b) => self.stmt_if(c, a, b)?,
+            Stmt::For(init, cond, step, body) => self.stmt_for(init, cond, step, body)?,
+            Stmt::While(c, body) => self.stmt_while(c, body)?,
+            Stmt::Do(body, c) => self.stmt_do(body, c)?,
+            Stmt::Switch(v, cases) => self.stmt_switch(v, cases)?,
             Stmt::Break => self.flow(BREAK),
             Stmt::Continue => self.flow(CONTINUE),
             Stmt::Discard => {
                 self.emit(DISCARD, vec![], vec![Src::Imm([TRUE; 4], true)]).nz = true;
             }
-            Stmt::Return(e, line) => {
-                let rt = self.fctx()?.ret_ty.clone();
-                let val = match e {
-                    Some(e) if rt != Ty::Void => {
-                        let v = self.expr(e)?;
-                        Some(self.cast(v, &rt).map_err(|m| format!("line {line}: return value: {m}"))?)
-                    }
-                    Some(e) => {
-                        self.expr(e)?;
-                        None
-                    }
-                    None => None,
+            Stmt::Return(e, line) => self.stmt_return(e, line)?,
+        }
+        Ok(())
+    }
+
+    #[inline(never)]
+    fn stmt_decl(&mut self, vs: &[Var]) -> R<()> {
+        for v in vs {
+            let t = v.ty().clone();
+            if t.is_object() {
+                let val = match &v.init {
+                    Some(e) => self.expr(e)?,
+                    None => return Err(format!("line {}: local texture or sampler without a value", v.line)),
                 };
-                if let (Some((_, ret_regs)), false) = (self.fctx()?.entry.clone(), self.sm3()) {
-                    if let Some(v) = val {
-                        self.assign(&ret_regs, &v.c);
+                self.scopes.declare(v.name.clone(), val);
+                continue;
+            }
+            if v.is_static {
+                return Err(format!("line {}: static locals are not supported", v.line));
+            }
+            let init = match &v.init {
+                Some(e) => Some(self.init_value(&t, e)?),
+                None => None,
+            };
+            let t = init.as_ref().map_or(t, |i| i.ty.clone());
+            // (`T a[];` takes its size from an initializer list; without one it has none)
+            if no_size(&t) {
+                return Err(format!("line {}: array {} without a size or an initializer", v.line, v.name));
+            }
+            // (a constant: no storage)
+            if v.is_const && !matches!(t, Ty::Array(..)) && let Some(i) = &init && i.c.iter().all(|c| matches!(c, C::I(_))) {
+                self.scopes.declare(v.name.clone(), i.clone());
+                continue;
+            }
+            let st = self.storage(&t);
+            if let Some(i) = init {
+                self.assign(&st, &i.c);
+            }
+            self.scopes.declare(v.name.clone(), Val::num(t, st));
+        }
+        Ok(())
+    }
+
+    #[inline(never)]
+    fn stmt_if(&mut self, c: &Expr, a: &Stmt, b: &Option<Box<Stmt>>) -> R<()> {
+        use sm4::*;
+        let cv = self.expr(c)?;
+        let t = self.truth(cv)?;
+        if let C::I(v) = t {
+            // a constant condition
+            if v != 0 {
+                self.scoped(a)?;
+            } else if let Some(b) = b {
+                self.scoped(b)?;
+            }
+            return Ok(());
+        }
+        self.cond_op(IF, t, true);
+        self.scoped(a)?;
+        if let Some(b) = b {
+            self.flow(ELSE);
+            self.scoped(b)?;
+        }
+        self.flow(ENDIF);
+        Ok(())
+    }
+
+    #[inline(never)]
+    fn stmt_for(&mut self, init: &Option<Box<Stmt>>, cond: &Option<Expr>, step: &Option<Expr>, body: &Stmt) -> R<()> {
+        use sm4::*;
+        self.scopes.open();
+        if let Some(i) = init {
+            self.stmt(i)?;
+        }
+        let cont = has_continue(body);
+        let first = if cont && step.is_some() {
+            let f = self.tmp();
+            self.marks.push((f, self.code.len()));
+            self.assign(&[C::R(temp(f), Lane::X)], &[C::I(self.tru())]);
+            Some(f)
+        } else {
+            None
+        };
+        self.flow(LOOP);
+        self.loop_depth(true)?;
+        if let (Some(f), Some(st)) = (first, step) {
+            self.cond_op(IF, C::R(temp(f), Lane::X), false);
+            self.expr(st)?;
+            self.flow(ENDIF);
+            self.assign(&[C::R(temp(f), Lane::X)], &[C::I(0)]);
+        }
+        if let Some(c) = cond {
+            let cv = self.expr(c)?;
+            let t = self.truth(cv)?;
+            self.cond_op(BREAKC, t, false);
+        }
+        self.scoped(body)?;
+        if let (None, Some(st)) = (first, step) {
+            self.expr(st)?;
+        }
+        self.loop_depth(false)?;
+        self.flow(ENDLOOP);
+        self.scopes.close();
+        self.after_breakable(has_return(body))?;
+        Ok(())
+    }
+
+    #[inline(never)]
+    fn stmt_while(&mut self, c: &Expr, body: &Stmt) -> R<()> {
+        use sm4::*;
+        self.flow(LOOP);
+        self.loop_depth(true)?;
+        let cv = self.expr(c)?;
+        let t = self.truth(cv)?;
+        self.cond_op(BREAKC, t, false);
+        self.scoped(body)?;
+        self.loop_depth(false)?;
+        self.flow(ENDLOOP);
+        self.after_breakable(has_return(body))?;
+        Ok(())
+    }
+
+    #[inline(never)]
+    fn stmt_do(&mut self, body: &Stmt, c: &Expr) -> R<()> {
+        use sm4::*;
+        let cont = has_continue(body);
+        let first = if cont {
+            let f = self.tmp();
+            self.marks.push((f, self.code.len()));
+            self.assign(&[C::R(temp(f), Lane::X)], &[C::I(self.tru())]);
+            Some(f)
+        } else {
+            None
+        };
+        self.flow(LOOP);
+        self.loop_depth(true)?;
+        if let Some(f) = first {
+            self.cond_op(IF, C::R(temp(f), Lane::X), false);
+            let cv = self.expr(c)?;
+            let t = self.truth(cv)?;
+            self.cond_op(BREAKC, t, false);
+            self.flow(ENDIF);
+            self.assign(&[C::R(temp(f), Lane::X)], &[C::I(0)]);
+        }
+        self.scoped(body)?;
+        if first.is_none() {
+            let cv = self.expr(c)?;
+            let t = self.truth(cv)?;
+            self.cond_op(BREAKC, t, false);
+        }
+        self.loop_depth(false)?;
+        self.flow(ENDLOOP);
+        self.after_breakable(has_return(body))?;
+        Ok(())
+    }
+
+    #[inline(never)]
+    fn stmt_switch(&mut self, v: &Expr, cases: &[(Vec<Option<Expr>>, Vec<Stmt>)]) -> R<()> {
+        use sm4::*;
+        let val = self.expr(v)?;
+        let val = self.cast(val, &Ty::Scalar(B::Int))?;
+        let s = self.scalar_src(c0(&val.c)?);
+        let s = match s {
+            Src::Imm(..) => {
+                let c = self.copy(&val.c);
+                self.scalar_src(c0(&c)?)
+            }
+            s @ (Src::R { .. } | Src::Tex(..) | Src::Samp(_) | Src::SampC(..) | Src::Uav(..) | Src::G(..) | Src::Stream(_)) => s,
+        };
+        self.emit(SWITCH, vec![], vec![s]);
+        self.loop_depth(true)?;
+        let mut returns = false;
+        for (labels, body) in cases {
+            for l in labels {
+                match l {
+                    Some(e) => {
+                        let k = super::parse::const_int(e).ok_or("case label is not a constant")?;
+                        self.emit(CASE, vec![], vec![Src::Imm([kome::num::lo32(k); 4], true)]);
                     }
-                    self.write_outputs()?;
-                    self.flow(RET);
-                    return Ok(());
+                    None => self.flow(DEFAULT),
                 }
-                if let Some(v) = val {
-                    let r = self.fctx()?.ret.clone();
-                    self.assign(&r, &v.c);
-                }
-                if let Some(f) = self.fctx()?.flag {
-                    self.assign(&[C::R(temp(f), Lane::X)], &[C::I(self.tru())]);
-                    if self.fctx()?.loops > 0 {
-                        self.flow(BREAK);
-                    }
-                }
+            }
+            self.scopes.open();
+            self.stmts(body)?;
+            self.scopes.close();
+            returns |= body.iter().any(has_return);
+            // (a case falling through to the end of the switch)
+            if !matches!(self.code.last().map(|i| i.op), Some(BREAK | RET | CONTINUE)) {
+                self.flow(BREAK);
+            }
+        }
+        self.loop_depth(false)?;
+        self.flow(ENDSWITCH);
+        self.after_breakable(returns)?;
+        Ok(())
+    }
+
+    #[inline(never)]
+    fn stmt_return(&mut self, e: &Option<Expr>, line: &u32) -> R<()> {
+        use sm4::*;
+        let rt = self.fctx()?.ret_ty.clone();
+        let val = match e {
+            Some(e) if rt != Ty::Void => {
+                let v = self.expr(e)?;
+                Some(self.cast(v, &rt).map_err(|m| format!("line {line}: return value: {m}"))?)
+            }
+            Some(e) => {
+                self.expr(e)?;
+                None
+            }
+            None => None,
+        };
+        if let (Some((_, ret_regs)), false) = (self.fctx()?.entry.clone(), self.sm3()) {
+            if let Some(v) = val {
+                self.assign(&ret_regs, &v.c);
+            }
+            self.write_outputs()?;
+            self.flow(RET);
+            return Ok(());
+        }
+        if let Some(v) = val {
+            let r = self.fctx()?.ret.clone();
+            self.assign(&r, &v.c);
+        }
+        if let Some(f) = self.fctx()?.flag {
+            self.assign(&[C::R(temp(f), Lane::X)], &[C::I(self.tru())]);
+            if self.fctx()?.loops > 0 {
+                self.flow(BREAK);
             }
         }
         Ok(())
@@ -2221,21 +2392,12 @@ impl<'a> L<'a> {
             Expr::Int(v, u) => self.lit_int(*v, *u),
             Expr::Float(f) => Val::num(Ty::Scalar(B::Float), vec![C::I(fbits(kome::num::to_f32(*f)))]),
             Expr::Bool(b) => Val::num(Ty::Scalar(B::Bool), vec![C::I(if *b { self.tru() } else { 0 })]),
-            Expr::Var(n, line) => {
-                let v = self.lookup(n, *line)?;
-                self.shared_value(v)
-            }
-            Expr::Comma(a, b) => {
-                self.expr(a)?;
-                self.expr(b)?
-            }
+            Expr::Var(n, line) => self.expr_var(n, *line)?,
+            Expr::Comma(a, b) => self.expr_comma(a, b)?,
             Expr::List(_) => return Err("initializer list in an expression".into()),
             Expr::Str(_) => return Err("a string in an expression".into()),
             Expr::Construct(t, args) => self.expr_construct(t, args)?,
-            Expr::Cast(t, a) => {
-                let v = self.expr(a)?;
-                self.cast(v, t)?
-            }
+            Expr::Cast(t, a) => self.expr_cast(t, a)?,
             Expr::Un(op, a) => self.expr_un(op, a)?,
             Expr::Bin(op, a, b) => self.expr_bin(op, a, b)?,
             Expr::Assign(op, a, b) => self.expr_assign(op, a, b)?,
@@ -2245,6 +2407,26 @@ impl<'a> L<'a> {
             Expr::Call(name, args, line) => self.call(name, args, *line)?,
             Expr::Method(o, name, args) => self.method(o, name, args)?,
         })
+    }
+
+    // (each kind of expression in a function of its own: `expr` recurses through them, so its
+    // frame is what one level of nesting costs; MAX_NEST levels fit the guest's 1 MiB stack)
+    #[inline(never)]
+    fn expr_var(&mut self, n: &str, line: u32) -> R<Val> {
+        let v = self.lookup(n, line)?;
+        Ok(self.shared_value(v))
+    }
+
+    #[inline(never)]
+    fn expr_comma(&mut self, a: &Expr, b: &Expr) -> R<Val> {
+        self.expr(a)?;
+        self.expr(b)
+    }
+
+    #[inline(never)]
+    fn expr_cast(&mut self, t: &Ty, a: &Expr) -> R<Val> {
+        let v = self.expr(a)?;
+        self.cast(v, t)
     }
 
     #[inline(never)]
@@ -2277,6 +2459,36 @@ impl<'a> L<'a> {
         })
     }
 
+    /// ++ and -- (before or after)
+    #[inline(never)]
+    fn expr_incdec(&mut self, op: &Un, a: &Expr) -> R<Val> {
+        use sm4::*;
+        Ok({
+            let mark = self.wbs.len();
+            self.place_reads = true;
+            let p = self.place(a);
+            self.place_reads = false;
+            let p = p?;
+            let old = self.copy(&p.c);
+            let fl = p.ty.base() == B::Float || self.sm3();
+            let one = if fl { fbits(1.0) } else { 1 };
+            let dec = matches!(op, Un::PreDec | Un::PostDec);
+            let c = if fl {
+                self.alu_m(ADD, B::Float, &[(&old, 0), (&Self::imm(one, old.len()), u8::from(dec))])
+            } else {
+                let v = if dec { one.wrapping_neg() } else { one };
+                self.alu(IADD, p.ty.base(), &[&old, &Self::imm(v, old.len())])
+            };
+            self.assign(&p.c, &c);
+            self.write_back(mark);
+            if matches!(op, Un::PostInc | Un::PostDec) {
+                Val::num(p.ty, old)
+            } else {
+                Val::num(p.ty, c)
+            }
+        })
+    }
+
     #[inline(never)]
     fn expr_un(&mut self, op: &Un, a: &Expr) -> R<Val> {
         use sm4::*;
@@ -2306,30 +2518,7 @@ impl<'a> L<'a> {
             let c = self.alu(NOT, v.ty.base(), &[&v.c]);
             Val::num(v.ty, c)
         }
-        Un::PreInc | Un::PreDec | Un::PostInc | Un::PostDec => {
-            let mark = self.wbs.len();
-            self.place_reads = true;
-            let p = self.place(a);
-            self.place_reads = false;
-            let p = p?;
-            let old = self.copy(&p.c);
-            let fl = p.ty.base() == B::Float || self.sm3();
-            let one = if fl { fbits(1.0) } else { 1 };
-            let dec = matches!(op, Un::PreDec | Un::PostDec);
-            let c = if fl {
-                self.alu_m(ADD, B::Float, &[(&old, 0), (&Self::imm(one, old.len()), u8::from(dec))])
-            } else {
-                let v = if dec { one.wrapping_neg() } else { one };
-                self.alu(IADD, p.ty.base(), &[&old, &Self::imm(v, old.len())])
-            };
-            self.assign(&p.c, &c);
-            self.write_back(mark);
-            if matches!(op, Un::PostInc | Un::PostDec) {
-                Val::num(p.ty, old)
-            } else {
-                Val::num(p.ty, c)
-            }
-        }
+        Un::PreInc | Un::PreDec | Un::PostInc | Un::PostDec => self.expr_incdec(op, a)?,
         })
     }
 
@@ -2379,7 +2568,7 @@ impl<'a> L<'a> {
             let t = match t {
                 Ty::Vec(b, n) if cv.ty.comps() > 1 && kome::num::u32_of(cv.ty.comps()) < u32::from(n) => Ty::vec_of(b, cv.ty.comps()).ok_or("a condition of more than 4 components")?,
                 t @ (Ty::Void | Ty::Scalar(_) | Ty::Vec(..) | Ty::Mat(..) | Ty::Array(..) | Ty::Struct(_)
-                     | Ty::Tex(..) | Ty::Sampler(_) | Ty::RwTex(..) | Ty::Legacy(_) | Ty::Str | Ty::Stream(..)) => t,
+                     | Ty::Tex(..) | Ty::Sampler(_) | Ty::RwTex(..) | Ty::Buf(..) | Ty::Legacy(_) | Ty::Str | Ty::Stream(..)) => t,
             };
             let x = self.cast(x, &t)?;
             let y = self.cast(y, &t)?;
@@ -2439,11 +2628,13 @@ impl<'a> L<'a> {
     }
 
     /// An lvalue: storage comps.
+    #[inline(never)]
     fn place(&mut self, e: &Expr) -> R<Val> {
         let v = self.place_in(e)?;
         let v = match v.obj {
-            // (groupshared memory: through a copy, stored back)
-            Obj::Shared(..) => self.shared_place(v)?,
+            // (memory: through a copy, stored back)
+            Obj::Mem(_) => self.mem_place(v)?,
+            Obj::Buf(_) => return Err("assignment to a buffer object".into()),
             Obj::Stream(_) => v,
             Obj::None | Obj::Tex(_) | Obj::Samp(_) | Obj::Legacy(..) | Obj::TexArr(_) | Obj::SampArr(_)
             | Obj::LegacyArr(..) | Obj::Uav(_) => v,
@@ -2456,27 +2647,28 @@ impl<'a> L<'a> {
 
     /// `place` without the last step: groupshared memory is still the memory (arrays and
     /// structs there are indexed and picked from without reading them).
+    #[inline(never)]
     fn place_in(&mut self, e: &Expr) -> R<Val> {
         Ok(match e {
             Expr::Var(n, line) => self.lookup(n, *line)?,
             Expr::Member(a, n) => {
                 let v = self.place_in(a)?;
                 match v.obj {
-                    Obj::Shared(..) if matches!(v.ty, Ty::Struct(_)) => self.shared_member(v, n)?,
-                    Obj::Shared(..) => {
-                        let p = self.shared_place(v)?;
+                    Obj::Mem(_) if matches!(v.ty, Ty::Struct(_)) => self.mem_member(v, n)?,
+                    Obj::Mem(_) => {
+                        let p = self.mem_place(v)?;
                         self.member(p, n)?
                     }
                     Obj::None | Obj::Tex(_) | Obj::Samp(_) | Obj::Legacy(..) | Obj::TexArr(_) | Obj::SampArr(_)
-                    | Obj::LegacyArr(..) | Obj::Uav(_) | Obj::Stream(_) => self.member(v, n)?,
+                    | Obj::LegacyArr(..) | Obj::Uav(_) | Obj::Buf(_) | Obj::Stream(_) => self.member(v, n)?,
                 }
             }
             Expr::Index(a, i) => {
                 let v = self.place_in(a)?;
                 let v = match v.obj {
-                    Obj::Shared(..) if !matches!(v.ty, Ty::Array(..)) => self.shared_place(v)?,
+                    Obj::Mem(_) if !matches!(v.ty, Ty::Array(..)) => self.mem_place(v)?,
                     Obj::None | Obj::Tex(_) | Obj::Samp(_) | Obj::Legacy(..) | Obj::TexArr(_) | Obj::SampArr(_)
-                    | Obj::LegacyArr(..) | Obj::Uav(_) | Obj::Shared(..) | Obj::Stream(_) => v,
+                    | Obj::LegacyArr(..) | Obj::Uav(_) | Obj::Mem(_) | Obj::Buf(_) | Obj::Stream(_) => v,
                 };
                 let mut iv = self.expr(i)?;
                 if let (Ty::RwTex(_, el), Obj::Uav(u)) = (&v.ty, v.obj) {
@@ -2492,7 +2684,7 @@ impl<'a> L<'a> {
                     self.wbs.push(Wb::Uav(u, coord, cp.clone()));
                     return Ok(Val::num(el, cp));
                 }
-                if let Obj::Shared(..) = v.obj {
+                if let Obj::Mem(_) | Obj::Buf(_) = v.obj {
                     return self.index(v, iv);
                 }
                 if matches!(iv.c.first(), Some(C::I(_))) || !matches!(v.ty, Ty::Array(..) | Ty::Vec(..) | Ty::Mat(..)) {
@@ -2510,7 +2702,7 @@ impl<'a> L<'a> {
                             Ty::Array(e, _) => ncomp(self.prog, e),
                             Ty::Mat(_, _, c) => usize::from(*c),
                             Ty::Void | Ty::Scalar(_) | Ty::Vec(..) | Ty::Struct(_) | Ty::Tex(..) | Ty::Sampler(_)
-                            | Ty::RwTex(..) | Ty::Legacy(_) | Ty::Str | Ty::Stream(..) => 1,
+                            | Ty::RwTex(..) | Ty::Buf(..) | Ty::Legacy(_) | Ty::Str | Ty::Stream(..) => 1,
                         };
                         // (the elements are written back: a constant buffer's or an input's are not
                         // places)
@@ -2535,6 +2727,7 @@ impl<'a> L<'a> {
 
     /// Stores the places picked by a run-time index since `mark` back (innermost first):
     /// element k = index == k ? the copy : element k.
+    #[inline(never)]
     fn write_back(&mut self, mark: usize) {
         while let Some(wb) = (self.wbs.len() > mark).then(|| self.wbs.pop()).flatten() {
             match wb {
@@ -2546,7 +2739,17 @@ impl<'a> L<'a> {
                         self.assign(e, &v);
                     }
                 }
-                Wb::Shared(g, off, cp) => self.shared_store(g, off, &cp),
+                Wb::Mem(m, ty, cp, from) => {
+                    // (the copy's components the code since `from` wrote)
+                    let written: Vec<bool> = cp
+                        .iter()
+                        .map(|c| match c {
+                            C::R(r, k) => self.code.get(from..).unwrap_or_default().iter().any(|i| i.dst.iter().any(|d| d.r == *r && d.mask & (1 << u8::from(*k)) != 0)),
+                            C::I(_) => false,
+                        })
+                        .collect();
+                    self.mem_store(m, &ty, &cp, &written);
+                }
                 Wb::Uav(u, coord, cp) => {
                     let a = self.opnd(&coord);
                     let mut v = cp.clone();
@@ -2563,27 +2766,69 @@ impl<'a> L<'a> {
 
     // ---- compute shader memory ----
 
-    /// A groupshared value (not an array) through a copy that is stored back.
-    fn shared_place(&mut self, v: Val) -> R<Val> {
-        let Obj::Shared(g, off) = v.obj else { unreachable!() };
+    /// A value in memory (not an array) through a copy that is stored back.
+    #[inline(never)]
+    fn mem_place(&mut self, v: Val) -> R<Val> {
+        let Obj::Mem(m) = v.obj else { return Err("not memory".into()) };
         if matches!(v.ty, Ty::Array(..)) {
-            return Err("a whole groupshared array as a value".into());
+            return Err(match m {
+                Mem::G(..) => "a whole groupshared array as a value",
+                Mem::S(..) => "a whole array in a buffer as a value",
+            }
+            .into());
         }
-        let cur = self.shared_load(g, off, ncomp(self.prog, &v.ty));
+        let w = match m {
+            Mem::G(g, o) => WMem::G(g, o),
+            Mem::S(Res::U(u), i, o, rm) => WMem::U(u, i, o, rm),
+            Mem::S(Res::T(_), ..) => return Err("assignment to a read-only buffer".into()),
+        };
+        let cur = self.mem_load(m, &v.ty);
         let cp = self.copy(&cur);
-        self.wbs.push(Wb::Shared(g, off, cp.clone()));
+        self.wbs.push(Wb::Mem(w, v.ty.clone(), cp.clone(), self.code.len()));
         Ok(Val::num(v.ty, cp))
     }
 
-    /// A groupshared value read now (arrays stay places).
+    /// A value in memory read now (arrays stay places).
+    #[inline(never)]
     fn shared_value(&mut self, v: Val) -> Val {
         match v.obj {
-            Obj::Shared(g, off) if !matches!(v.ty, Ty::Array(..)) => {
-                let c = self.shared_load(g, off, ncomp(self.prog, &v.ty));
+            Obj::Mem(m) if !matches!(v.ty, Ty::Array(..)) => {
+                let c = self.mem_load(m, &v.ty);
                 Val::num(v.ty, c)
             }
             Obj::None | Obj::Tex(_) | Obj::Samp(_) | Obj::Legacy(..) | Obj::TexArr(_) | Obj::SampArr(_)
-            | Obj::LegacyArr(..) | Obj::Uav(_) | Obj::Shared(..) | Obj::Stream(_) => v,
+            | Obj::LegacyArr(..) | Obj::Uav(_) | Obj::Mem(_) | Obj::Buf(_) | Obj::Stream(_) => v,
+        }
+    }
+
+    /// The dword (from the value's start) of each of a value's components in memory: packed
+    /// tight, struct members in order, matrices by rows (`rm`) or by columns.
+    fn mem_layout(&self, t: &Ty, rm: bool, at: u32, out: &mut Vec<u32>) {
+        match t {
+            Ty::Mat(_, r, c) => {
+                let (r, c) = (u32::from(*r), u32::from(*c));
+                for i in 0..r {
+                    for j in 0..c {
+                        let k = if rm { i.saturating_mul(c).saturating_add(j) } else { j.saturating_mul(r).saturating_add(i) };
+                        out.push(at.saturating_add(k));
+                    }
+                }
+            }
+            Ty::Array(e, n) => {
+                let k = kome::num::u32_of(ncomp(self.prog, e));
+                for i in 0..*n {
+                    self.mem_layout(e, rm, at.saturating_add(i.saturating_mul(k)), out);
+                }
+            }
+            Ty::Struct(i) => {
+                let mut a = at;
+                for f in self.prog.structs.get(*i).map_or(&[][..], |s| &s.fields[..]) {
+                    self.mem_layout(&f.ty, f.row_major.unwrap_or(rm), a, out);
+                    a = a.saturating_add(kome::num::u32_of(ncomp(self.prog, &f.ty)));
+                }
+            }
+            t @ (Ty::Void | Ty::Scalar(_) | Ty::Vec(..) | Ty::Tex(..) | Ty::Sampler(_) | Ty::RwTex(..) | Ty::Buf(..)
+                 | Ty::Legacy(_) | Ty::Str | Ty::Stream(..)) => out.extend(at..at.saturating_add(kome::num::u32_of(t.comps()))),
         }
     }
 
@@ -2593,39 +2838,117 @@ impl<'a> L<'a> {
         if k == 0 { b } else { self.alu(sm4::IADD, B::Int, &[&[b], &[C::I(4 * k)]])[0] }
     }
 
-    fn shared_load(&mut self, g: u32, off: C, n: usize) -> Vec<C> {
-        let mut out = Vec::new();
+    /// Reads `n` (1 to 4) dwords of memory from `k` dwords past the place into a temp.
+    #[inline(never)]
+    fn mem_read4(&mut self, m: Mem, k: u32, n: usize) -> Vec<C> {
+        let a = self.shared_addr(m.off(), k);
+        let a = self.scalar_src(a);
+        let t = self.tmp();
+        let d = vec![Dst { r: temp(t), mask: Lane::mask(n) }];
+        match m {
+            Mem::G(g, _) => {
+                self.emit(sm4::LD_RAW, d, vec![a, Src::G(g, [0, 1, 2, 3])]);
+            }
+            Mem::S(r, i, _, _) => {
+                let i = self.scalar_src(i);
+                let res = match r {
+                    Res::T(t) => Src::Tex(t, [0, 1, 2, 3]),
+                    Res::U(u) => Src::Uav(u, [0, 1, 2, 3]),
+                };
+                self.emit(sm4::LD_STRUCTURED, d, vec![i, a, res]);
+            }
+        }
+        Lane::first(n).map(|c| C::R(temp(t), c)).collect()
+    }
+
+    /// A value of type `t` read from memory. Bools of buffers are canonical masks (what the
+    /// CPU wrote there may be 1).
+    #[inline(never)]
+    fn mem_load(&mut self, m: Mem, t: &Ty) -> Vec<C> {
+        let rm = match m {
+            Mem::G(..) => true,
+            Mem::S(_, _, _, rm) => rm,
+        };
+        let mut lay = Vec::new();
+        self.mem_layout(t, rm, 0, &mut lay);
+        let n = lay.iter().max().map_or(0, |&m| m.saturating_add(1));
+        let mut words = Vec::new();
         for k in (0..n).step_by(4) {
-            let m = (n - k).min(4);
-            let a = self.shared_addr(off, kome::num::u32_of(k));
-            let a = self.scalar_src(a);
-            let t = self.tmp();
-            self.emit(sm4::LD_RAW, vec![Dst { r: temp(t), mask: Lane::mask(m) }], vec![a, Src::G(g, [0, 1, 2, 3])]);
-            out.extend(Lane::first(m).map(|c| C::R(temp(t), c)));
+            let w = self.mem_read4(m, k, kome::num::us(n.saturating_sub(k).min(4)));
+            words.extend(w);
+        }
+        let mut out: Vec<C> = lay.iter().filter_map(|&d| words.get(kome::num::us(d)).copied()).collect();
+        if let Mem::S(..) = m {
+            let mut bases = Vec::new();
+            leaf_bases(self.prog, t, &mut bases);
+            for (c, b) in out.iter_mut().zip(bases) {
+                if b == B::Bool && let Some(&x) = self.alu(sm4::INE, B::Bool, &[&[*c], &[C::I(0)]]).first() {
+                    *c = x;
+                }
+            }
         }
         out
     }
 
-    fn shared_store(&mut self, g: u32, off: C, v: &[C]) {
-        for (k, ch) in v.chunks(4).enumerate() {
-            let a = self.shared_addr(off, 4 * kome::num::u32_of(k));
+    /// Stores the components of `v` (a value of type `t`) that `written` names, in runs of up
+    /// to 4 dwords next to each other.
+    #[inline(never)]
+    fn mem_store(&mut self, m: WMem, t: &Ty, v: &[C], written: &[bool]) {
+        let rm = match m {
+            WMem::G(..) => true,
+            WMem::U(_, _, _, rm) => rm,
+        };
+        let mut lay = Vec::new();
+        self.mem_layout(t, rm, 0, &mut lay);
+        let mut at: Vec<(u32, C)> = lay.iter().zip(v).zip(written).filter(|(_, w)| **w).map(|((&d, &c), _)| (d, c)).collect();
+        at.sort_by_key(|x| x.0);
+        // (runs of up to 4 dwords next to each other)
+        let mut runs: Vec<(u32, Vec<C>)> = Vec::new();
+        for (d, c) in at {
+            match runs.last_mut() {
+                Some((first, run)) if run.len() < 4 && first.checked_add(kome::num::u32_of(run.len())) == Some(d) => run.push(c),
+                _ => runs.push((d, vec![c])),
+            }
+        }
+        for (first, run) in runs {
+            let a = self.shared_addr(m.mem().off(), first);
             let a = self.scalar_src(a);
-            let s = self.opnd(ch);
-            self.emit(sm4::STORE_RAW, vec![Dst { r: Reg { f: RegF::G(g), rel: None }, mask: Lane::mask(ch.len()) }], vec![a, s]);
+            let s = self.opnd(&run);
+            let mask = Lane::mask(run.len());
+            match m {
+                WMem::G(g, _) => {
+                    self.emit(sm4::STORE_RAW, vec![Dst { r: Reg { f: RegF::G(g), rel: None }, mask }], vec![a, s]);
+                }
+                WMem::U(u, i, _, _) => {
+                    let i = self.scalar_src(i);
+                    self.emit(sm4::STORE_STRUCTURED, vec![Dst { r: Reg { f: RegF::Uav(u), rel: None }, mask }], vec![i, a, s]);
+                }
+            }
         }
     }
 
-    /// A member of a groupshared struct, as a place.
-    fn shared_member(&mut self, v: Val, name: &str) -> R<Val> {
-        let (Obj::Shared(g, off), Ty::Struct(i)) = (v.obj, &v.ty) else { unreachable!() };
-        let mut at = 0;
-        for f in &self.prog.structs[*i].fields {
+    /// Stores a whole value of type `t` to memory.
+    fn mem_store_all(&mut self, m: WMem, t: &Ty, v: &[C]) {
+        let all = vec![true; v.len()];
+        self.mem_store(m, t, v, &all);
+    }
+
+    /// A member of a struct in memory, as a place.
+    #[inline(never)]
+    fn mem_member(&mut self, v: Val, name: &str) -> R<Val> {
+        let (Obj::Mem(m), Ty::Struct(i)) = (v.obj, &v.ty) else { return Err(format!(".{name} of memory that is no struct")) };
+        let mut at = 0usize;
+        for f in self.prog.structs.get(*i).map_or(&[][..], |s| &s.fields[..]) {
             let n = ncomp(self.prog, &f.ty);
             if f.name == name {
-                let off = self.alu(sm4::IADD, B::Int, &[&[off], &[C::I(kome::num::u32_of(at))]])[0];
-                return Ok(Val { ty: f.ty.clone(), c: Vec::new(), obj: Obj::Shared(g, off) });
+                let off = c0(&self.alu(sm4::IADD, B::Int, &[&[m.off()], &[C::I(kome::num::u32_of(at))]]))?;
+                let m = match m.at(off) {
+                    Mem::S(r, i, o, rm) => Mem::S(r, i, o, f.row_major.unwrap_or(rm)),
+                    g @ Mem::G(..) => g,
+                };
+                return Ok(Val { ty: f.ty.clone(), c: Vec::new(), obj: Obj::Mem(m) });
             }
-            at += n;
+            at = at.saturating_add(n);
         }
         Err(format!("no member '{name}'"))
     }
@@ -2651,9 +2974,9 @@ impl<'a> L<'a> {
     }
 
     fn member(&mut self, v: Val, name: &str) -> R<Val> {
-        if let Obj::Shared(..) = v.obj {
+        if let Obj::Mem(_) = v.obj {
             if matches!(v.ty, Ty::Struct(_)) {
-                return self.shared_member(v, name);
+                return self.mem_member(v, name);
             }
             // (an array stays a place in shared_value: .x of it is no member)
             if matches!(v.ty, Ty::Array(..)) {
@@ -2685,7 +3008,7 @@ impl<'a> L<'a> {
                 }
                 Err(format!("no member '{name}'"))
             }
-            t @ (Ty::Void | Ty::Array(..) | Ty::Tex(..) | Ty::Sampler(_) | Ty::RwTex(..) | Ty::Legacy(_) | Ty::Str | Ty::Stream(..)) => Err(format!("member .{name} of {t:?}")),
+            t @ (Ty::Void | Ty::Array(..) | Ty::Tex(..) | Ty::Sampler(_) | Ty::RwTex(..) | Ty::Buf(..) | Ty::Legacy(_) | Ty::Str | Ty::Stream(..)) => Err(format!("member .{name} of {t:?}")),
         }
     }
 
@@ -2765,8 +3088,26 @@ impl<'a> L<'a> {
         Ok(Val::num(ty, cur))
     }
 
+    /// An element of a structured buffer, as a place.
+    #[inline(never)]
+    fn buf_index(&mut self, r: Res, t: &Ty, iv: Val) -> R<Val> {
+        let Ty::Buf(k, el) = t else { return Err("[] of a buffer object of no buffer type".into()) };
+        if !matches!(k, BufKind::Structured | BufKind::RwStructured) {
+            return Err(format!("[] of a {k:?} buffer"));
+        }
+        if iv.ty.comps() != 1 {
+            return Err("a structured buffer's index is one uint".into());
+        }
+        let iv = self.cast(iv, &Ty::Scalar(B::Uint))?;
+        Ok(Val { ty: (**el).clone(), c: Vec::new(), obj: Obj::Mem(Mem::S(r, c0(&iv.c)?, C::I(0), self.o.row_major)) })
+    }
+
     fn index(&mut self, v: Val, iv: Val) -> R<Val> {
-        if let Obj::Shared(g, off) = v.obj {
+        if let Obj::Buf(r) = v.obj {
+            return self.buf_index(r, &v.ty, iv);
+        }
+        if let Obj::Mem(m) = v.obj {
+            let off = m.off();
             let Ty::Array(e, n) = &v.ty else {
                 // (a vector or matrix in groupshared memory: read, then indexed)
                 let v = self.shared_value(v);
@@ -2774,14 +3115,14 @@ impl<'a> L<'a> {
             };
             let k = kome::num::u32_of(ncomp(self.prog, e));
             let iv = self.cast(iv, &Ty::Scalar(B::Int))?;
-            if let C::I(i) = iv.c[0] {
+            if let C::I(i) = c0(&iv.c)? {
                 let i = i.cast_signed();
                 if i64::from(i) >= i64::from(*n) || i < 0 {
                     return Err(format!("index {i} out of range"));
                 }
             }
             let off = self.alu(sm4::IMAD, B::Int, &[&iv.c, &[C::I(k)], &[off]])[0];
-            return Ok(Val { ty: (**e).clone(), c: Vec::new(), obj: Obj::Shared(g, off) });
+            return Ok(Val { ty: (**e).clone(), c: Vec::new(), obj: Obj::Mem(m.at(off)) });
         }
         if let (Ty::RwTex(..), Obj::Uav(u)) = (&v.ty, v.obj) {
             let coord = self.uav_coord(u, iv)?;
@@ -2808,7 +3149,7 @@ impl<'a> L<'a> {
                     self.samps[kome::num::us(s + i)].used = true;
                     Obj::Legacy(t + i, s + i)
                 }
-                Obj::None | Obj::Tex(_) | Obj::Samp(_) | Obj::Legacy(..) | Obj::Uav(_) | Obj::Shared(..) | Obj::Stream(_) => unreachable!(),
+                Obj::None | Obj::Tex(_) | Obj::Samp(_) | Obj::Legacy(..) | Obj::Uav(_) | Obj::Mem(_) | Obj::Buf(_) | Obj::Stream(_) => unreachable!(),
             };
             return Ok(Val { ty: (**e).clone(), c: Vec::new(), obj });
         }
@@ -2841,11 +3182,11 @@ impl<'a> L<'a> {
                 let t = match v.obj {
                     Obj::Tex(t) => t,
                     Obj::None | Obj::Samp(_) | Obj::Legacy(..) | Obj::TexArr(_) | Obj::SampArr(_) | Obj::LegacyArr(..)
-                    | Obj::Uav(_) | Obj::Shared(..) | Obj::Stream(_) => return Err("texture[] of a non-texture".into()),
+                    | Obj::Uav(_) | Obj::Mem(_) | Obj::Buf(_) | Obj::Stream(_) => return Err("texture[] of a non-texture".into()),
                 };
                 self.load(t, iv, [0; 3], false)
             }
-            t @ (Ty::Void | Ty::Scalar(_) | Ty::Struct(_) | Ty::Sampler(_) | Ty::RwTex(..) | Ty::Legacy(_) | Ty::Str | Ty::Stream(..)) => Err(format!("index of {t:?}")),
+            t @ (Ty::Void | Ty::Scalar(_) | Ty::Struct(_) | Ty::Sampler(_) | Ty::RwTex(..) | Ty::Buf(..) | Ty::Legacy(_) | Ty::Str | Ty::Stream(..)) => Err(format!("index of {t:?}")),
         }
     }
 
@@ -2971,6 +3312,7 @@ impl<'a> L<'a> {
         pre.funcs.iter().find(|f| f.name == name && f.params.len() == args.len() && f.params.first().is_some_and(|p| p.ty().comps() == n))
     }
 
+    #[inline(never)]
     fn call(&mut self, name: &str, args: &[Expr], line: u32) -> R<Val> {
         // (out arguments picked by a run-time index are stored back after the call)
         let mark = self.wbs.len();
@@ -3061,12 +3403,271 @@ impl<'a> L<'a> {
         Ok(Val::num(f.ret.clone(), ret))
     }
 
+    #[inline(never)]
     fn method(&mut self, o: &Expr, name: &str, args: &[Expr]) -> R<Val> {
         let ov = self.expr(o)?;
         if let Obj::Stream(k) = ov.obj {
             return self.stream_method(k, name, args);
         }
+        if let (Ty::Buf(k, el), Obj::Buf(r)) = (&ov.ty, ov.obj) {
+            return self.buf_method(r, *k, (**el).clone(), name, args);
+        }
         super::intrinsics::method(self, ov, name, args)
+    }
+
+    // ---- structured and raw buffers, atomics ----
+
+    /// A buffer's resource operand (all four dwords).
+    fn res_src(r: Res) -> Src {
+        match r {
+            Res::T(t) => Src::Tex(t, [0, 1, 2, 3]),
+            Res::U(u) => Src::Uav(u, [0, 1, 2, 3]),
+        }
+    }
+
+    /// A uint argument (one component).
+    fn uint_arg(&mut self, e: Option<&Expr>, what: &str) -> R<C> {
+        let e = e.ok_or_else(|| format!("{what} is missing"))?;
+        let v = self.expr(e)?;
+        if v.ty.comps() != 1 {
+            return Err(format!("{what} is one uint"));
+        }
+        c0(&self.cast(v, &Ty::Scalar(B::Uint))?.c)
+    }
+
+    /// Writes `v` to the out argument `e`.
+    fn out_arg(&mut self, e: &Expr, v: Val) -> R<()> {
+        let mark = self.wbs.len();
+        let p = self.place(e)?;
+        let v = self.cast(v, &p.ty)?;
+        self.assign(&p.c, &v.c);
+        self.write_back(mark);
+        Ok(())
+    }
+
+    /// The methods of StructuredBuffer, ByteAddressBuffer and kin.
+    #[inline(never)]
+    fn buf_method(&mut self, r: Res, k: BufKind, el: Ty, name: &str, args: &[Expr]) -> R<Val> {
+        use sm4::*;
+        let n_args = |n: usize| -> R<()> { (args.len() == n).ok_or_else(|| format!("{name} of a buffer takes {n} arguments")) };
+        let uav = |what: &str| -> R<u32> {
+            match r {
+                Res::U(u) => Ok(u),
+                Res::T(_) => Err(format!("{what} of a read-only buffer")),
+            }
+        };
+        let rm = self.o.row_major;
+        Ok(match (name, k.raw()) {
+            ("GetDimensions", raw) => {
+                n_args(if raw { 1 } else { 2 })?;
+                let t = self.tmp();
+                self.emit(BUFINFO, vec![Dst { r: temp(t), mask: 1 }], vec![Self::res_src(r)]);
+                self.out_arg(arg(args, 0)?, Val::num(Ty::Scalar(B::Uint), vec![C::R(temp(t), Lane::X)]))?;
+                if !raw {
+                    let stride = self.tight_bytes(&el);
+                    self.out_arg(arg(args, 1)?, Val::num(Ty::Scalar(B::Uint), vec![C::I(stride)]))?;
+                }
+                Val::num(Ty::Void, vec![])
+            }
+            ("Load" | "Load2" | "Load3" | "Load4", true) => {
+                if args.len() == 2 {
+                    return Err(format!("{name} with a status (tiled resources) is not compiled"));
+                }
+                n_args(1)?;
+                let n = match name {
+                    "Load" => 1,
+                    "Load2" => 2,
+                    "Load3" => 3,
+                    _ => 4,
+                };
+                let a = self.uint_arg(args.first(), "the byte address")?;
+                let a = self.scalar_src(a);
+                let t = self.tmp();
+                self.emit(LD_RAW, vec![Dst { r: temp(t), mask: Lane::mask(n) }], vec![a, Self::res_src(r)]);
+                let ty = Ty::vec_of(B::Uint, n).ok_or("a load of more than 4 dwords")?;
+                Val::num(ty, Lane::first(n).map(|c| C::R(temp(t), c)).collect())
+            }
+            ("Store" | "Store2" | "Store3" | "Store4", true) => {
+                n_args(2)?;
+                let u = uav(name)?;
+                let n = match name {
+                    "Store" => 1,
+                    "Store2" => 2,
+                    "Store3" => 3,
+                    _ => 4,
+                };
+                let a = self.uint_arg(args.first(), "the byte address")?;
+                let v = self.expr(arg(args, 1)?)?;
+                let v = self.cast(v, &Ty::vec_of(B::Uint, n).ok_or("a store of more than 4 dwords")?)?;
+                let a = self.scalar_src(a);
+                let s = self.opnd(&v.c);
+                self.emit(STORE_RAW, vec![Dst { r: Reg { f: RegF::Uav(u), rel: None }, mask: Lane::mask(n) }], vec![a, s]);
+                Val::num(Ty::Void, vec![])
+            }
+            (n, true) if n.starts_with("Interlocked") => {
+                let u = uav(name)?;
+                let a = self.uint_arg(args.first(), "the byte address")?;
+                // (RWByteAddressBuffer's Interlocked* have int and uint forms: the value's picks)
+                self.atomic(name, Atom::U(u, vec![a]), None, args.get(1..).unwrap_or_default())?
+            }
+            ("Load", false) => {
+                if args.len() == 2 {
+                    return Err("Load with a status (tiled resources) is not compiled".into());
+                }
+                n_args(1)?;
+                let i = self.uint_arg(args.first(), "the element index")?;
+                let c = self.mem_load(Mem::S(r, i, C::I(0), rm), &el);
+                Val::num(el, c)
+            }
+            ("IncrementCounter" | "DecrementCounter", false) if k == BufKind::RwStructured => {
+                n_args(0)?;
+                let u = uav(name)?;
+                let c = self.counter(u, name == "IncrementCounter");
+                Val::num(Ty::Scalar(B::Uint), vec![c])
+            }
+            ("Append", false) if k == BufKind::Append => {
+                n_args(1)?;
+                let u = uav(name)?;
+                let v = self.expr(arg(args, 0)?)?;
+                let v = self.cast(v, &el)?;
+                let i = self.counter(u, true);
+                self.mem_store_all(WMem::U(u, i, C::I(0), rm), &el, &v.c);
+                Val::num(Ty::Void, vec![])
+            }
+            ("Consume", false) if k == BufKind::Consume => {
+                n_args(0)?;
+                let u = uav(name)?;
+                let i = self.counter(u, false);
+                let c = self.mem_load(Mem::S(r, i, C::I(0), rm), &el);
+                Val::num(el, c)
+            }
+            _ => return Err(format!("unknown method {name} of a {k:?} buffer")),
+        })
+    }
+
+    /// The hidden counter of UAV `u`: incremented (imm_atomic_alloc: the count before) or
+    /// decremented (imm_atomic_consume: the count after).
+    fn counter(&mut self, u: u32, inc: bool) -> C {
+        if let Some(sm4::View::Buf { counter, .. }) = self.uavs.get_mut(kome::num::us(u)).map(|d| &mut d.view) {
+            *counter = true;
+        }
+        let t = self.tmp();
+        let op = if inc { sm4::IMM_ATOMIC_ALLOC } else { sm4::IMM_ATOMIC_CONSUME };
+        self.emit(op, vec![Dst { r: temp(t), mask: 1 }, Dst { r: Reg { f: RegF::Uav(u), rel: None }, mask: 1 }], vec![]);
+        C::R(temp(t), Lane::X)
+    }
+
+    /// Where an Interlocked* intrinsic's destination is: memory, or a typed UAV's texel, and
+    /// the integer type there.
+    #[inline(never)]
+    fn atomic_dest(&mut self, e: &Expr) -> R<(Atom, B)> {
+        if let Expr::Index(a, i) = e {
+            let v = self.place_in(a)?;
+            if let (Ty::RwTex(_, el), Obj::Uav(u)) = (&v.ty, v.obj) {
+                let b = el.base();
+                if el.comps() != 1 || !matches!(b, B::Int | B::Uint) {
+                    return Err("an atomic on a texel that is not one int or uint".into());
+                }
+                let iv = self.expr(i)?;
+                let coord = self.uav_coord(u, iv)?;
+                return Ok((Atom::U(u, coord), b));
+            }
+        }
+        // (`.x` of an int in memory: that int)
+        let scalar_x = match e {
+            Expr::Member(a, n) if matches!(n.as_str(), "x" | "r") => {
+                let inner = self.place_in(a)?;
+                (matches!(inner.ty, Ty::Scalar(_)) && matches!(inner.obj, Obj::Mem(_))).then_some(inner)
+            }
+            Expr::Int(..) | Expr::Float(_) | Expr::Bool(_) | Expr::Var(..) | Expr::Bin(..) | Expr::Un(..) | Expr::Assign(..) | Expr::Cond(..)
+            | Expr::Call(..) | Expr::Construct(..) | Expr::Cast(..) | Expr::Method(..) | Expr::List(_) | Expr::Comma(..) | Expr::Str(_)
+            | Expr::Index(..) | Expr::Member(..) => None,
+        };
+        let v = match scalar_x {
+            Some(v) => v,
+            None => self.place_in(e)?,
+        };
+        let b = v.ty.base();
+        if !matches!(v.ty, Ty::Scalar(B::Int | B::Uint)) {
+            return Err("an atomic's destination is one int or uint".into());
+        }
+        match v.obj {
+            Obj::Mem(Mem::G(g, off)) => {
+                let a = self.shared_addr(off, 0);
+                Ok((Atom::G(g, a), b))
+            }
+            Obj::Mem(Mem::S(Res::U(u), i, off, _)) => {
+                let a = self.shared_addr(off, 0);
+                Ok((Atom::U(u, vec![i, a]), b))
+            }
+            Obj::Mem(Mem::S(Res::T(_), ..)) => Err("an atomic on a read-only buffer".into()),
+            Obj::None | Obj::Tex(_) | Obj::Samp(_) | Obj::Legacy(..) | Obj::TexArr(_) | Obj::SampArr(_) | Obj::LegacyArr(..)
+            | Obj::Uav(_) | Obj::Buf(_) | Obj::Stream(_) => Err("an atomic's destination is groupshared memory or a UAV".into()),
+        }
+    }
+
+    /// InterlockedAdd .. InterlockedCompareStore on `at` (of integers `b`): `args` the value(s)
+    /// then the out argument with what was there before.
+    #[inline(never)]
+    fn atomic(&mut self, name: &str, at: Atom, b: Option<B>, args: &[Expr]) -> R<Val> {
+        use sm4::Opcode as O;
+        let mut vals = Vec::new();
+        for e in args.iter().take(2) {
+            vals.push(self.expr(e)?);
+        }
+        let b = b.unwrap_or(if vals.last().is_some_and(|v| v.ty.base() == B::Int) { B::Int } else { B::Uint });
+        let signed = b == B::Int;
+        // (plain op, the op returning what was there, the values it takes)
+        let (plain, imm, nv): (Option<sm4::Opcode>, sm4::Opcode, usize) = match name {
+            "InterlockedAdd" => (Some(O::AtomicIadd), O::ImmAtomicIadd, 1),
+            "InterlockedAnd" => (Some(O::AtomicAnd), O::ImmAtomicAnd, 1),
+            "InterlockedOr" => (Some(O::AtomicOr), O::ImmAtomicOr, 1),
+            "InterlockedXor" => (Some(O::AtomicXor), O::ImmAtomicXor, 1),
+            "InterlockedMin" if signed => (Some(O::AtomicImin), O::ImmAtomicImin, 1),
+            "InterlockedMin" => (Some(O::AtomicUmin), O::ImmAtomicUmin, 1),
+            "InterlockedMax" if signed => (Some(O::AtomicImax), O::ImmAtomicImax, 1),
+            "InterlockedMax" => (Some(O::AtomicUmax), O::ImmAtomicUmax, 1),
+            "InterlockedExchange" => (None, O::ImmAtomicExch, 1),
+            "InterlockedCompareExchange" => (None, O::ImmAtomicCmpExch, 2),
+            "InterlockedCompareStore" => (Some(O::AtomicCmpStore), O::AtomicCmpStore, 2),
+            _ => return Err(format!("unknown intrinsic {name}")),
+        };
+        let with_out = args.len() == nv.saturating_add(1) && name != "InterlockedCompareStore";
+        if args.len() != nv.saturating_add(usize::from(with_out)) || (plain.is_none() && !with_out) {
+            return Err(format!("{name}: wrong number of arguments"));
+        }
+        let mut src = Vec::new();
+        let (res, addr) = match &at {
+            Atom::G(g, a) => (Reg { f: RegF::G(*g), rel: None }, vec![*a]),
+            Atom::U(u, a) => (Reg { f: RegF::Uav(*u), rel: None }, a.clone()),
+        };
+        src.push(self.opnd(&addr));
+        for v in vals.into_iter().take(nv) {
+            if v.ty.comps() != 1 {
+                return Err(format!("{name}'s values are one int or uint"));
+            }
+            let v = self.cast(v, &Ty::Scalar(b))?;
+            src.push(self.scalar_src(c0(&v.c)?));
+        }
+        let rd = Dst { r: res, mask: 1 };
+        match (plain, with_out) {
+            (Some(op), false) => {
+                self.emit(op, vec![rd], src);
+            }
+            (None | Some(_), true) => {
+                let t = self.tmp();
+                self.emit(imm, vec![Dst { r: temp(t), mask: 1 }, rd], src);
+                self.out_arg(arg(args, nv)?, Val::num(Ty::Scalar(b), vec![C::R(temp(t), Lane::X)]))?;
+            }
+            (None, false) => return Err(format!("{name} takes an out argument")),
+        }
+        Ok(Val::num(Ty::Void, vec![]))
+    }
+
+    pub(super) fn x_interlocked(&mut self, name: &str, args: &[Expr]) -> R<Val> {
+        let dest = args.first().ok_or_else(|| format!("{name} takes a destination"))?;
+        let (at, b) = self.atomic_dest(dest)?;
+        self.atomic(name, at, Some(b), args.get(1..).unwrap_or_default())
     }
 
     // ---- for intrinsics.rs ----

@@ -3,6 +3,7 @@
 
 pub use dxwgsl::tpf::{OpType, Opcode};
 use dxwgsl::tpf;
+use super::ast::BufKind;
 
 /// A register file and index. Temps are virtual until `finish`.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Hash)]
@@ -225,6 +226,11 @@ pub const LD_UAV_TYPED: Opcode = Opcode::LdUavTyped;
 pub const STORE_UAV_TYPED: Opcode = Opcode::StoreUavTyped;
 pub const LD_RAW: Opcode = Opcode::LdRaw;
 pub const STORE_RAW: Opcode = Opcode::StoreRaw;
+pub const LD_STRUCTURED: Opcode = Opcode::LdStructured;
+pub const STORE_STRUCTURED: Opcode = Opcode::StoreStructured;
+pub const BUFINFO: Opcode = Opcode::BufInfo;
+pub const IMM_ATOMIC_ALLOC: Opcode = Opcode::ImmAtomicAlloc;
+pub const IMM_ATOMIC_CONSUME: Opcode = Opcode::ImmAtomicConsume;
 /// sync: ctl 1 threads in the group, 2 shared memory, 4 UAVs (group), 8 UAVs (global)
 pub const SYNC: Opcode = Opcode::Sync;
 
@@ -345,8 +351,19 @@ pub struct Gs {
     pub streams: Vec<u32>,
 }
 
+/// What a t or u register is a view of.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum View {
+    /// a typed view: a texture, Buffer<T>, RWTexture*
+    Typed,
+    /// a structured or raw buffer: its kind, the bytes of an element (0 for raw buffers), and
+    /// whether the shader uses its hidden counter (Append, Consume, Increment/DecrementCounter)
+    Buf { kind: super::ast::BufKind, stride: u32, counter: bool },
+}
+
 pub struct Tex {
     pub name: String,
+    pub view: View,
     /// resource dimension (1 buffer, 2 1d, 3 2d, 4 2dms, 5 3d, 6 cube, 7 1darray, 8 2darray, 9
     /// 2dmsarray, 10 cubearray)
     pub dim: u32,
@@ -361,6 +378,9 @@ pub struct Tex {
 /// A typed unordered access view (RWTexture*)
 pub struct Uav {
     pub name: String,
+    pub view: View,
+    /// globallycoherent
+    pub coherent: bool,
     /// resource dimension as `Tex::dim`
     pub dim: u32,
     /// 3 sint, 4 uint, 5 float (1 unorm, 2 snorm)
@@ -399,7 +419,7 @@ pub struct CbVar {
 pub struct Cb {
     pub name: String,
     pub slot: u32,
-    /// in registers
+    /// in registers (16 bytes); in bytes for the element buffers (`Shader::elements`)
     pub size: u32,
     pub dynamic: bool,
     pub vars: Vec<CbVar>,
@@ -432,6 +452,9 @@ pub struct Shader {
     pub sys_inputs: Vec<(OpType, u8)>,
     pub uavs: Vec<Uav>,
     pub uav_map: Vec<Option<usize>>,
+    /// the element types of the structured buffers bound (RDEF's D3D_CT_RESOURCE_BIND_INFO
+    /// buffers: one variable, $Element, of the element's type), in binding order
+    pub elements: Vec<Cb>,
     /// thread group shared memory: bytes of each g register
     pub tgsm: Vec<u32>,
     /// the blob D3D10CompileShader (d3d10.dll's own compiler) writes: elements 1 for what is
@@ -754,12 +777,27 @@ fn program(s: &mut Shader) -> Result<Vec<u32>, String> {
     for t in &s.texs {
         let r = t.ret;
         let ret = r | (r << 4) | (r << 8) | (r << 12);
-        decl(&mut w, Opcode::DclResource, t.dim, &[ty_bits(tpf::RESOURCE) | (1 << 20), t.slot, ret]);
+        let reg = ty_bits(tpf::RESOURCE) | (1 << 20);
+        match t.view {
+            View::Typed => decl(&mut w, Opcode::DclResource, t.dim, &[reg, t.slot, ret]),
+            View::Buf { kind, stride, .. } if !kind.raw() => decl(&mut w, Opcode::DclResourceStructured, 0, &[reg, t.slot, stride]),
+            View::Buf { .. } => decl(&mut w, Opcode::DclResourceRaw, 0, &[reg, t.slot]),
+        }
     }
     for u in &s.uavs {
         let r = u.ret;
         let ret = r | (r << 4) | (r << 8) | (r << 12);
-        decl(&mut w, Opcode::DclUavTyped, u.dim, &[ty_bits(tpf::UAV) | (1 << 20), u.slot, ret]);
+        let reg = ty_bits(tpf::UAV) | (1 << 20);
+        // (D3D11_SB_GLOBALLY_COHERENT_ACCESS: bit 16; D3D11_SB_UAV_HAS_ORDER_PRESERVING_COUNTER:
+        // bit 23, of the opcode token)
+        let coherent = u32::from(u.coherent) << 5;
+        match u.view {
+            View::Typed => decl(&mut w, Opcode::DclUavTyped, u.dim | coherent, &[reg, u.slot, ret]),
+            View::Buf { kind, stride, counter } if !kind.raw() => {
+                decl(&mut w, Opcode::DclUavStructured, coherent | u32::from(counter) << 12, &[reg, u.slot, stride])
+            }
+            View::Buf { .. } => decl(&mut w, Opcode::DclUavRaw, coherent, &[reg, u.slot]),
+        }
     }
     for (g, &bytes) in s.tgsm.iter().enumerate() {
         decl(&mut w, Opcode::DclTgsmRaw, 0, &[ty_bits(tpf::TGSM) | (1 << 20), kome::num::u32_of(g), bytes]);
@@ -942,7 +980,21 @@ fn rdef(s: &Shader) -> Vec<u8> {
     let sm5 = s.major >= 5;
     let header = if sm5 { 60 } else { 28 };
     let mut b = vec![0u8; header];
-    let ncb = kome::num::u32_of(s.cbs.len());
+    let ncb = kome::num::u32_of(s.cbs.len()).saturating_add(kome::num::u32_of(s.elements.len()));
+    // (bind type, slot) -> the element bytes of a structured buffer
+    let mut strides = std::collections::HashMap::new();
+    for (view, slot, uav) in s.texs.iter().map(|t| (t.view, t.slot, false)).chain(s.uavs.iter().map(|u| (u.view, u.slot, true))) {
+        if let View::Buf { kind, stride, counter } = view && !kind.raw() {
+            let ty = match kind {
+                BufKind::RwStructured if counter => 11,
+                BufKind::RwStructured => 6,
+                BufKind::Append => 9,
+                BufKind::Consume => 10,
+                BufKind::Structured | BufKind::Raw | BufKind::RwRaw => if uav { 6 } else { 5 },
+            };
+            strides.insert((ty, slot), stride);
+        }
+    }
     // bound resources: samplers, textures, cbuffers
     let mut binds: Vec<(String, u32, u32, u32, u32, u32)> = Vec::new(); // name, type, ret, dim, slot, flags
     for sm in &s.samps {
@@ -962,7 +1014,11 @@ fn rdef(s: &Shader) -> Vec<u8> {
             _ => 10,
         };
         let comps = if s.d3d10 { 0 } else { (t.comps - 1) << 2 };
-        binds.push((t.name.clone(), 2, t.ret, dim, t.slot, comps | u32::from(t.explicit)));
+        match t.view {
+            View::Typed => binds.push((t.name.clone(), 2, t.ret, dim, t.slot, comps | u32::from(t.explicit))),
+            // (D3D_SIT_STRUCTURED 5, D3D_SIT_BYTEADDRESS 7; D3D_RETURN_TYPE_MIXED, a buffer)
+            View::Buf { kind, .. } => binds.push((t.name.clone(), if kind.raw() { 7 } else { 5 }, 6, 1, t.slot, u32::from(t.explicit))),
+        }
     }
     for u in &s.uavs {
         let dim = match u.dim {
@@ -973,14 +1029,29 @@ fn rdef(s: &Shader) -> Vec<u8> {
             7 => 3,
             _ => 5,
         };
-        binds.push((u.name.clone(), 4, u.ret, dim, u.slot, (u.comps - 1) << 2 | u32::from(u.explicit)));
+        match u.view {
+            View::Typed => binds.push((u.name.clone(), 4, u.ret, dim, u.slot, u.comps.saturating_sub(1) << 2 | u32::from(u.explicit))),
+            // (D3D_SIT_UAV_RWSTRUCTURED 6, RWBYTEADDRESS 8, APPEND_STRUCTURED 9,
+            // CONSUME_STRUCTURED 10, RWSTRUCTURED_WITH_COUNTER 11)
+            View::Buf { kind, counter, .. } => {
+                let ty = match kind {
+                    BufKind::RwStructured if counter => 11,
+                    BufKind::RwStructured => 6,
+                    BufKind::RwRaw => 8,
+                    BufKind::Append => 9,
+                    BufKind::Consume => 10,
+                    BufKind::Structured | BufKind::Raw => 4,
+                };
+                binds.push((u.name.clone(), ty, 6, 1, u.slot, u32::from(u.explicit)));
+            }
+        }
     }
     for cb in &s.cbs {
         binds.push((cb.name.clone(), 0, 0, 0, cb.slot, u32::from(cb.explicit)));
     }
     let cb_at = b.len();
     // constant buffer descriptions: name, vars, var offset, size, flags, type
-    b.resize(cb_at + 24 * s.cbs.len(), 0);
+    b.resize(cb_at.saturating_add(s.cbs.len().saturating_add(s.elements.len()).saturating_mul(24)), 0);
     let bind_at = b.len();
     b.resize(bind_at + 32 * binds.len(), 0);
     let mut fix_names: Vec<(usize, String)> = Vec::new();
@@ -991,18 +1062,26 @@ fn rdef(s: &Shader) -> Vec<u8> {
         set32(&mut b, at + 8, bd.2);
         set32(&mut b, at + 12, bd.3);
         set32(&mut b, at + 16, if (bd.1 == 2 || bd.1 == 4) && !s.d3d10 { u32::MAX } else { 0 });
+        // (a structured buffer's NumSamples: the bytes of an element)
+        if let Some(&stride) = strides.get(&(bd.1, bd.4)) {
+            set32(&mut b, at.saturating_add(16), stride);
+        }
         set32(&mut b, at + 20, bd.4);
         set32(&mut b, at + 24, 1);
         set32(&mut b, at + 28, bd.5);
     }
     let var_size = if sm5 { 40 } else { 24 };
-    for (n, cb) in s.cbs.iter().enumerate() {
+    for (n, (cb, info)) in s.cbs.iter().map(|c| (c, false)).chain(s.elements.iter().map(|c| (c, true))).enumerate() {
         let at = cb_at + 24 * n;
         fix_names.push((at, cb.name.clone()));
+        // (D3D_CT_RESOURCE_BIND_INFO: a structured buffer's element, its size in bytes)
+        if info {
+            set32(&mut b, at.saturating_add(20), 3);
+        }
         set32(&mut b, at + 4, kome::num::u32_of(cb.vars.len()));
         let vars_at = b.len();
         set32(&mut b, at + 8, kome::num::u32_of(vars_at));
-        set32(&mut b, at + 12, cb.size * 16);
+        set32(&mut b, at + 12, if info { cb.size } else { cb.size.saturating_mul(16) });
         b.resize(vars_at + var_size * cb.vars.len(), 0);
         for (k, v) in cb.vars.iter().enumerate() {
             let va = vars_at + var_size * k;

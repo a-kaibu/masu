@@ -80,6 +80,7 @@ fn tex_dim(s: &str) -> Option<Dim> {
 const MODIFIERS: &[&str] = &[
     "static", "const", "uniform", "extern", "shared", "groupshared", "volatile", "row_major", "column_major", "inline", "precise",
     "linear", "centroid", "nointerpolation", "noperspective", "sample", "in", "out", "inout", "snorm", "unorm", "export",
+    "globallycoherent",
 ];
 
 impl Parser {
@@ -221,6 +222,17 @@ impl Parser {
         }
         if let Some(i) = self.prog.structs.iter().position(|x| x.name == name) {
             return Ok(Ty::Struct(i));
+        }
+        if let Some(k) = BufKind::of_name(&name) {
+            let el = if k.raw() {
+                Ty::Scalar(B::Uint)
+            } else {
+                self.expect("<")?;
+                let el = self.ty()?;
+                self.expect(">")?;
+                el
+            };
+            return Ok(Ty::Buf(k, Box::new(el)));
         }
         if let Some(d) = name.strip_prefix("RW").and_then(tex_dim).filter(|d| !matches!(d, Dim::T2DMS | Dim::T2DMSArray | Dim::Cube | Dim::CubeArray)) {
             let mut el = Ty::Vec(B::Float, Width::W4);
@@ -370,7 +382,7 @@ impl Parser {
             Ty::Array(e, n) => self.comps(e).saturating_mul(u64::from((*n).max(1))),
             Ty::Struct(i) => self.prog.structs.get(*i).map_or(0, |s| s.fields.iter().fold(0u64, |a, f| a.saturating_add(self.comps(&f.ty)))),
             t @ (Ty::Void | Ty::Scalar(_) | Ty::Vec(..) | Ty::Mat(..) | Ty::Tex(..) | Ty::Sampler(_)
-                 | Ty::RwTex(..) | Ty::Legacy(_) | Ty::Str | Ty::Stream(..)) => u64::try_from(t.comps()).unwrap_or(u64::MAX),
+                 | Ty::RwTex(..) | Ty::Buf(..) | Ty::Legacy(_) | Ty::Str | Ty::Stream(..)) => u64::try_from(t.comps()).unwrap_or(u64::MAX),
         }
     }
 
@@ -385,6 +397,7 @@ impl Parser {
             match s.as_str() {
                 "static" => v.is_static = true,
                 "groupshared" => v.shared = true,
+                "globallycoherent" => v.coherent = true,
                 "const" => v.is_const = true,
                 "uniform" => v.uniform = true,
                 "row_major" => v.row_major = Some(true),

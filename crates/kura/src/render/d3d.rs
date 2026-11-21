@@ -985,6 +985,8 @@ pub struct D3d {
     targets2: Option<Vec<u32>>,
     dummies: HashMap<(u32, u32), Id>,
     zero_buf: Id,
+    /// (see `scratch`)
+    scratch_buf: Id,
     samplers2: HashMap<(u32, u32, u32), Id>,
     no_ps: Id,
     clear_module: Id,
@@ -1099,6 +1101,7 @@ impl D3d {
             targets2: None,
             dummies: HashMap::new(),
             zero_buf: 0,
+            scratch_buf: 0,
             samplers2: HashMap::new(),
             no_ps: 0,
             clear_module: 0,
@@ -3769,6 +3772,14 @@ impl D3d {
         v
     }
 
+    /// A storage buffer bound read-write where nothing is (its bytes never read).
+    fn scratch(&mut self) -> Id {
+        if self.scratch_buf == 0 {
+            self.scratch_buf = gpu::buffer(256, usage::STORAGE);
+        }
+        self.scratch_buf
+    }
+
     fn zero(&mut self) -> Id {
         if self.zero_buf == 0 {
             self.zero_buf = gpu::buffer(65536, usage::UNIFORM | usage::VERTEX | usage::INDEX | usage::STORAGE);
@@ -3801,6 +3812,8 @@ impl D3d {
                     0 => format!(r#"{{"binding":{binding},"visibility":{visibility},"buffer":{{"type":"uniform"}}}}"#),
                     // (a store an expanded draw's vertex shader reads: d3d11/expand.rs)
                     9 => format!(r#"{{"binding":{binding},"visibility":{visibility},"buffer":{{"type":"read-only-storage"}}}}"#),
+                    // (a pixel shader's raw or structured UAV, or its hidden counter)
+                    10 => format!(r#"{{"binding":{binding},"visibility":{visibility},"buffer":{{"type":"storage"}}}}"#),
                     2 => format!(r#"{{"binding":{binding},"visibility":{visibility},"sampler":{{"type":"filtering"}}}}"#),
                     3 => format!(r#"{{"binding":{binding},"visibility":{visibility},"sampler":{{"type":"comparison"}}}}"#),
                     _ => {
@@ -4278,8 +4291,8 @@ impl D3d {
             // (the same resources as an earlier draw: its bind group; not when it binds the
             // batch's data block, whose offsets change every draw)
             for e in g.chunks(8) {
-                if matches!(e.get(1), Some(0 | 9)) && e[2] != DATA && !self.bused.contains(&e[2]) {
-                    self.bused.push(e[2]);
+                if matches!(e.get(1), Some(0 | 9 | 10)) && let Some(&b) = e.get(2) && b != DATA && !self.bused.contains(&b) {
+                    self.bused.push(b);
                 }
             }
             let has_data = g.chunks(8).any(|e| matches!(e.get(1), Some(0 | 9)) && e.get(2) == Some(&DATA));
@@ -4323,6 +4336,17 @@ impl D3d {
                             key.clear();
                             let z = self.zero();
                             entries.push((binding, Res::Buffer(z, 0, 65536)));
+                        }
+                    }
+                } else if kind == 10 {
+                    // (bytes from `b` to its end; none: a buffer of its own, whose writes go
+                    // nowhere, never the zero buffer others read)
+                    match self.buffers.get(&a).copied() {
+                        Some((buf, size)) if b % 256 == 0 && size > b => entries.push((binding, Res::Buffer(buf, b, size.saturating_sub(b) & !3))),
+                        _ => {
+                            key.clear();
+                            let s = self.scratch();
+                            entries.push((binding, Res::Buffer(s, 0, 256)));
                         }
                     }
                 } else if kind == 0 {

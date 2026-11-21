@@ -49,6 +49,16 @@ pub enum Binding {
     Storage(u32, String),
     /// a storage buffer (the expanded draws' stores, wgsl/expand.rs): read-write or not
     StorageBuffer(bool),
+    /// a raw or structured buffer view: t<n> at 500 + n (read-only), u<n> at 600 + n
+    /// (read-write); the whole buffer from a 256-byte aligned offset at or before the view's
+    /// first byte, the view's range in BufferRanges
+    BufferView(bool),
+    /// a structured UAV's hidden counter (700 + n): one u32
+    Counter,
+    /// the ranges of the views bound at these bindings (BUFFER_RANGES, a uniform): a
+    /// vec4<u32> each, in order: the view's first dword in what is bound, its bytes, its
+    /// elements (raw views: its bytes), 0
+    BufferRanges(Vec<u32>),
 }
 
 pub struct Wgsl {
@@ -63,7 +73,7 @@ pub fn translate(code: &[u8], pixel: bool, ps: Option<&[u8]>) -> Result<Wgsl, St
     crate::wgsl::translate(code, pixel, ps)
 }
 
-pub use crate::wgsl::{translate_addr, translate_compute, translate_point_sprite, thread_group, uav_slots, GsDecl};
+pub use crate::wgsl::{BUFFER_RANGES, translate_addr, translate_compute, translate_point_sprite, thread_group, uav_slots, GsDecl};
 /// Geometry shaders, stream output and clipper counts as compute passes (wgsl/expand.rs).
 pub use crate::wgsl::expand;
 

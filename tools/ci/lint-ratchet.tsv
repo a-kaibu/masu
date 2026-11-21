@@ -76,9 +76,9 @@ file	crates/dxwgsl/src/dxbc.rs	arithmetic_side_effects	11
 file	crates/dxwgsl/src/dxbc.rs	indexing_slicing	5
 file	crates/dxwgsl/src/tpf.rs	arithmetic_side_effects	13
 file	crates/dxwgsl/src/tpf.rs	indexing_slicing	11
-file	crates/dxwgsl/src/wgsl.rs	arithmetic_side_effects	23
-file	crates/dxwgsl/src/wgsl.rs	indexing_slicing	230
-file	crates/dxwgsl/src/wgsl.rs	let_underscore_must_use	26
+file	crates/dxwgsl/src/wgsl.rs	arithmetic_side_effects	19
+file	crates/dxwgsl/src/wgsl.rs	indexing_slicing	214
+file	crates/dxwgsl/src/wgsl.rs	let_underscore_must_use	25
 file	crates/foresee/src/lib.rs	arithmetic_side_effects	27
 file	crates/foresee/src/lib.rs	as_conversions	58
 file	crates/foresee/src/lib.rs	cast_possible_truncation	29
@@ -104,11 +104,11 @@ file	crates/hlslc/src/intrinsics.rs	string_slice	1
 file	crates/hlslc/src/intrinsics.rs	unreachable	2
 file	crates/hlslc/src/lib.rs	indexing_slicing	5
 file	crates/hlslc/src/lib.rs	map_err_ignore	1
-file	crates/hlslc/src/lower.rs	arithmetic_side_effects	86
+file	crates/hlslc/src/lower.rs	arithmetic_side_effects	75
 file	crates/hlslc/src/lower.rs	float_cmp	2
-file	crates/hlslc/src/lower.rs	indexing_slicing	124
+file	crates/hlslc/src/lower.rs	indexing_slicing	118
 file	crates/hlslc/src/lower.rs	string_slice	2
-file	crates/hlslc/src/lower.rs	unreachable	6
+file	crates/hlslc/src/lower.rs	unreachable	4
 file	crates/hlslc/src/parse.rs	arithmetic_side_effects	67
 file	crates/hlslc/src/parse.rs	indexing_slicing	4
 file	crates/hlslc/src/parse.rs	manual_ignore_case_cmp	1
@@ -123,7 +123,7 @@ file	crates/hlslc/src/pp.rs	string_slice	14
 file	crates/hlslc/src/sm3.rs	arithmetic_side_effects	27
 file	crates/hlslc/src/sm3.rs	indexing_slicing	15
 file	crates/hlslc/src/sm3.rs	string_slice	1
-file	crates/hlslc/src/sm4.rs	arithmetic_side_effects	56
+file	crates/hlslc/src/sm4.rs	arithmetic_side_effects	53
 file	crates/hlslc/src/sm4.rs	indexing_slicing	22
 file	crates/hlslc/src/sm4.rs	iter_over_hash_type	1
 file	crates/koji/examples/corpus.rs	as_conversions	9
@@ -320,7 +320,7 @@ file	crates/kura/src/d3d11/format.rs	masu-from_raw_parts	3
 file	crates/kura/src/d3d11/format.rs	ptr_as_ptr	6
 file	crates/kura/src/d3d11/format.rs	unsafe_op_in_unsafe_fn	18
 file	crates/kura/src/d3d11/hazards.rs	indexing_slicing	6
-file	crates/kura/src/d3d11/mod.rs	arithmetic_side_effects	231
+file	crates/kura/src/d3d11/mod.rs	arithmetic_side_effects	230
 file	crates/kura/src/d3d11/mod.rs	as_conversions	3
 file	crates/kura/src/d3d11/mod.rs	borrow_as_ptr	2
 file	crates/kura/src/d3d11/mod.rs	cast_precision_loss	2
@@ -474,7 +474,7 @@ file	crates/kura/src/render/d3d.rs	as_conversions	73
 file	crates/kura/src/render/d3d.rs	cast_possible_truncation	13
 file	crates/kura/src/render/d3d.rs	cast_precision_loss	34
 file	crates/kura/src/render/d3d.rs	cast_sign_loss	7
-file	crates/kura/src/render/d3d.rs	indexing_slicing	408
+file	crates/kura/src/render/d3d.rs	indexing_slicing	405
 file	crates/kura/src/render/d3d.rs	iter_over_hash_type	6
 file	crates/kura/src/render/d3d.rs	masu-from_raw_parts	4
 file	crates/kura/src/render/d3d.rs	multiple_unsafe_ops_per_block	1
