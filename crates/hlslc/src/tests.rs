@@ -1180,3 +1180,103 @@ fn d3d9_token_fields_do_not_overflow() {
     src += "; }\n";
     let _ = try_compile(src, "ps_3_0");
 }
+
+/// The HLSL of a winref probe (its `SRC` string literal), so that what Windows compiles there
+/// is what sake's D3DCompile compiles here.
+fn probe_hlsl(c: &str) -> String {
+    let start = c.find("static const char *SRC =").expect("SRC");
+    let mut out = String::new();
+    for line in c[start..].lines().skip(1) {
+        let t = line.trim();
+        let Some(body) = t.strip_prefix('"') else { break };
+        let end = body.rfind('"').expect("closing quote");
+        out.push_str(&body[..end].replace("\\n", "\n").replace("\\\"", "\""));
+        if t.ends_with(';') {
+            break;
+        }
+    }
+    out
+}
+
+fn valid(w: &str) {
+    let m = match naga::front::wgsl::parse_str(w) {
+        Ok(m) => m,
+        Err(e) => panic!("{}\n{w}", e.emit_to_string(w)),
+    };
+    if let Err(e) = naga::valid::Validator::new(naga::valid::ValidationFlags::all(), naga::valid::Capabilities::all()).validate(&m) {
+        panic!("invalid: {e:?}\n{w}");
+    }
+}
+
+#[test]
+fn geometry_shaders_of_the_d3d11gs_probe() {
+    use dxwgsl::expand::{self, Store};
+    let src = probe_hlsl(include_str!("../../../tests/winref/probes/d3d11gs.c"));
+    let vs = compile(&src, "vs_id", "vs_4_0");
+    let ps = compile(&src, "ps_flat", "ps_4_0");
+    let vs_osgn = dxwgsl::signature(&vs, true);
+    let vs_regs = expand::store_regs(&vs_osgn, 0);
+    valid(&expand::vertex_pass(&vs, &[]).unwrap().code);
+    let pos_vs = compile(&src, "vs_so", "vs_4_0");
+    let attrs = [expand::Attr { reg: 0, fmt: 2, offset: 0, slot: 0, buf: 0, step: 0 }];
+    valid(&expand::vertex_pass(&pos_vs, &attrs).unwrap().code);
+    for (entry, target, verts, streams) in [
+        ("gs_point", "gs_4_0", 1, vec![1]),
+        ("gs_line", "gs_4_0", 2, vec![1]),
+        ("gs_tri", "gs_4_0", 3, vec![1]),
+        ("gs_lineadj", "gs_4_0", 4, vec![1]),
+        ("gs_triadj", "gs_4_0", 6, vec![1]),
+        ("gs_inst", "gs_5_0", 3, vec![1]),
+        ("gs_strip", "gs_4_0", 1, vec![5]),
+        ("gs_lstrip", "gs_4_0", 1, vec![3]),
+        ("gs_few", "gs_4_0", 1, vec![5]),
+        ("gs_quad", "gs_4_0", 1, vec![5]),
+        ("gs_two", "gs_5_0", 1, vec![1, 1]),
+    ] {
+        let gs = compile(&src, entry, target);
+        let d = expand::gs_decl(&gs).unwrap_or_else(|e| panic!("{entry}: {e}"));
+        assert_eq!((d.verts, &d.streams), (verts, &streams), "{entry}");
+        assert_eq!(d.instances, if entry == "gs_inst" { 3 } else { 1 }, "{entry}");
+        let w = expand::gs_pass(&gs, &vs_osgn, vs_regs).unwrap_or_else(|e| panic!("{entry}: {e}"));
+        valid(&w.code);
+        let osgn = dxwgsl::signature(&gs, true);
+        for s in 0..u32::try_from(streams.len()).unwrap() {
+            let store = Store::Geometry { decl: d.clone(), stream: s, regs: expand::gs_regs(&gs) };
+            let decls = [expand::SoEntry { stream: s, name: Some(if entry == "gs_quad" { "K" } else { "A" }.into()), index: 0, start: 0, count: 1, slot: s }];
+            let mut strides = [0; 4];
+            strides[usize::try_from(s).unwrap()] = 4;
+            valid(&expand::so_pass(&store, &osgn, &decls, &strides).unwrap_or_else(|e| panic!("{entry}: {e}")).code);
+            if entry == "gs_quad" {
+                valid(&expand::store_vertex(&store, &osgn, Some(&ps)).unwrap().code);
+                valid(&expand::clip_pass(&store, &osgn).unwrap().code);
+            }
+        }
+    }
+    // stream output of the vertex shader: gaps, start components, two slots
+    let so_osgn = dxwgsl::signature(&pos_vs, true);
+    let store = Store::Vertex { regs: expand::store_regs(&so_osgn, 0), corners: 3 };
+    let decls = [
+        expand::SoEntry { stream: 0, name: Some("COL".into()), index: 0, start: 1, count: 2, slot: 0 },
+        expand::SoEntry { stream: 0, name: None, index: 0, start: 0, count: 2, slot: 0 },
+        expand::SoEntry { stream: 0, name: Some("TEX".into()), index: 0, start: 0, count: 1, slot: 0 },
+        expand::SoEntry { stream: 0, name: Some("SV_Position".into()), index: 0, start: 0, count: 2, slot: 1 },
+    ];
+    valid(&expand::so_pass(&store, &so_osgn, &decls, &[24, 16, 0, 0]).unwrap().code);
+    valid(&expand::clip_pass(&store, &so_osgn).unwrap().code);
+    valid(&expand::store_vertex(&store, &so_osgn, None).unwrap().code);
+}
+
+#[test]
+fn geometry_shader_errors() {
+    let mut inc = |_: &str, _: bool| None;
+    let mut err = |src: &str, t: &str| super::compile(src, &[], &mut inc, "main", t, 0).unwrap_err();
+    let v = "struct V { float4 p : SV_Position; };\n";
+    assert!(err(&format!("{v}void main(triangle V v[3], inout PointStream<V> s) {{ s.Append(v[0]); }}"), "gs_4_0").contains("maxvertexcount"));
+    assert!(err(&format!("{v}[maxvertexcount(2)] void main(triangle V v[2], inout PointStream<V> s) {{ s.Append(v[0]); }}"), "gs_4_0").contains("3 vertices"));
+    assert!(err(&format!("{v}[maxvertexcount(2000)] void main(point V v[1], inout PointStream<V> s) {{ s.Append(v[0]); }}"), "gs_4_0").contains("out of range"));
+    assert!(err(&format!("{v}[maxvertexcount(300)] void main(point V v[1], inout TriangleStream<V> s) {{ s.Append(v[0]); }}"), "gs_4_0").contains("1024"));
+    assert!(err(&format!("{v}[instance(2)][maxvertexcount(2)] void main(point V v[1], inout PointStream<V> s) {{ s.Append(v[0]); }}"), "gs_4_0").contains("gs_5_0"));
+    assert!(err(&format!("{v}[maxvertexcount(2)] void main(point V v[1], inout PointStream<V> s, inout PointStream<V> t) {{ s.Append(v[0]); }}"), "gs_4_0").contains("gs_5_0"));
+    assert!(err(&format!("{v}[maxvertexcount(2)] void main(point V v[1], inout PointStream<V> s, inout LineStream<V> t) {{ s.Append(v[0]); }}"), "gs_5_0").contains("PointStreams"));
+    assert!(err(&format!("{v}[maxvertexcount(2)] V main(point V v[1], inout PointStream<V> s) {{ return v[0]; }}"), "gs_4_0").contains("void"));
+}

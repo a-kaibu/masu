@@ -13,7 +13,11 @@ use super::STATS;
 use crate::d3d9::gpu::*;
 
 /// buffer id of the batch's data block (DRAW2 vertex/index/uniform sources)
-const DATA: u32 = 0xffff_ffff;
+/// A binding's or vertex stream's buffer that is the batch's data block.
+pub(crate) const DATA: u32 = 0xffff_ffff;
+/// Direct3D 11's page buffers: vertices, indices, constants, and storage (the expanded draws'
+/// stores, stream output, d3d11/expand.rs); copies both ways.
+const BUFFER_USAGE: u32 = usage::VERTEX | usage::INDEX | usage::UNIFORM | usage::STORAGE | usage::COPY_DST | usage::COPY_SRC;
 /// (a Direct3D 9 DRAW's pair of the indices: d3d9/device.rs INDEX_PAIR)
 const D9_INDEX_PAIR: u32 = 0x8000_0000;
 
@@ -1257,7 +1261,7 @@ impl D3d {
             if self.data_buf == 0 || self.data_size < size {
                 gpu::destroy(self.data_buf);
                 self.data_size = size.max(self.data_size * 2).max(1 << 20);
-                self.data_buf = gpu::buffer(self.data_size, usage::VERTEX | usage::INDEX | usage::UNIFORM | usage::COPY_DST);
+                self.data_buf = gpu::buffer(self.data_size, usage::VERTEX | usage::INDEX | usage::UNIFORM | usage::STORAGE | usage::COPY_DST);
                 drop_all(&mut self.groups0);
                 self.clear_groups2();
             }
@@ -1596,6 +1600,34 @@ impl D3d {
                 QUERY_END => {
                     self.query_end(a(1), QueryEnd::of_word(a(2)));
                     i = i.saturating_add(3);
+                }
+                READ_BUFFER => {
+                    self.read_buffer(a(1), a(2), a(3), a(4), a(5));
+                    i = i.saturating_add(6);
+                }
+                COPY_BUFFER => {
+                    let (src, so, dst, d, n) = (a(1), a(2), a(3), a(4), a(5));
+                    let fits = |b: Option<&(Id, u32)>, o: u32| b.is_some_and(|&(_, size)| u64::from(o).saturating_add(u64::from(n)) <= u64::from(size));
+                    let (sb, db) = (self.buffers.get(&src), self.buffers.get(&dst));
+                    if n > 0 && src != dst && (so | d | n) % 4 == 0 && fits(sb, so) && fits(db, d) && let (Some(&(sg, _)), Some(&(dg, _))) = (sb, db) {
+                        self.end_pass();
+                        for id in [src, dst] {
+                            if !self.bused.contains(&id) {
+                                self.bused.push(id);
+                            }
+                        }
+                        self.open = true;
+                        gpu::copy_buffer_at(sg, so, dg, d, n);
+                    }
+                    i = i.saturating_add(6);
+                }
+                COUNT_BEGIN => {
+                    self.count_begin(a(1), a(2), a(3));
+                    i = i.saturating_add(4);
+                }
+                COUNT_END => {
+                    self.count_end(a(1));
+                    i = i.saturating_add(2);
                 }
                 _ => {
                     eprintln!("d3d9: unknown command {op} at {i}");
@@ -2039,7 +2071,7 @@ impl D3d {
                     for _ in 0..2 {
                         let m = us(c[q]);
                         for (j, e) in c[q + 1..q + 1 + m * 8].chunks(8).enumerate() {
-                            if e[1] == 1 || e[1] >= 4 {
+                            if matches!(e.get(1), Some(1 | 4..=8)) {
                                 reads.push((e[2], all_clear(&cleared, e[2])));
                             }
                             if e[1] == 0 && let Some(k) = renum(e[2], &made) {
@@ -2141,7 +2173,7 @@ impl D3d {
             CREATE_BUFFER => {
                 let (id, size) = (a(1), a(2).div_ceil(4) * 4);
                 // (ids are not used again: no cached bind group has it)
-                let b = gpu::buffer(size.max(4), usage::VERTEX | usage::INDEX | usage::UNIFORM | usage::COPY_DST | usage::COPY_SRC);
+                let b = gpu::buffer(size.max(4), BUFFER_USAGE);
                 if let Some((old, _)) = self.buffers.insert(id, (b, size.max(4))) {
                     self.doomed.push(old);
                 }
@@ -2167,7 +2199,7 @@ impl D3d {
                             if at == 0 && lo32(n) + 16 > size {
                                 // all of it (but the padding to 16): a new GPU buffer, draws before keep the old one
                                 self.doomed.push(b);
-                                b = gpu::buffer(size, usage::VERTEX | usage::INDEX | usage::UNIFORM | usage::COPY_DST | usage::COPY_SRC);
+                                b = gpu::buffer(size, BUFFER_USAGE);
                                 self.buffers.insert(id, (b, size));
                                 self.drop_groups_with(id);
                                 self.bused.retain(|&x| x != id);
@@ -2191,7 +2223,7 @@ impl D3d {
     /// Drops the cached Direct3D 11 bind groups that bind buffer `id`.
     fn drop_groups_with(&mut self, id: u32) {
         self.groups2.retain(|k, (_, g, _)| {
-            let hit = k[2..].chunks(8).any(|e| e.len() == 8 && e[1] == 0 && e[2] == id);
+            let hit = k[2..].chunks(8).any(|e| e.len() == 8 && matches!(e.get(1), Some(0 | 9 | 10)) && e.get(2) == Some(&id));
             if hit {
                 gpu::drop(*g);
             }
@@ -2215,6 +2247,7 @@ impl D3d {
             self.used.clear();
             self.bused.clear();
         }
+        self.read_counts();
         if let Some((src, size, read)) = resolved {
             gpu::destroy(src);
             let token = self.next_token;
@@ -3121,6 +3154,25 @@ impl D3d {
         }
     }
 
+    /// READ_BUFFER: `size` bytes of page buffer `id` from `off` into `dst` (as `readback`).
+    fn read_buffer(&mut self, req: u32, id: u32, off: u32, size: u32, dst: u32) {
+        let Some(&(src, _)) = self.buffers.get(&id).filter(|b| size > 0 && (off | size) % 4 == 0 && u64::from(off).saturating_add(u64::from(size)) <= u64::from(b.1)) else {
+            vnhost_d3d9_readback_done(req);
+            return;
+        };
+        self.end_pass();
+        let buf = gpu::buffer(size, usage::COPY_DST | usage::MAP_READ);
+        self.open = true;
+        gpu::copy_buffer_at(src, off, buf, 0, size);
+        self.submit();
+        let data = vec![0u8; us(size)];
+        let token = self.next_token;
+        self.next_token = self.next_token.wrapping_add(1).max(1);
+        let mut r = Readback { req, buf, data, bpr: size, row: size, h: 1, dst, pitch: size, halved: false };
+        gpu::read_buffer(buf, size, r.data.as_mut_ptr(), token);
+        self.readbacks.insert(token, r);
+    }
+
     fn readback(&mut self, a: [u32; 9]) {
         let [req, id, level, x, y, w, h, dst, pitch] = a;
         // (Direct3D 11's: level | layer (or 3D slice) << 16)
@@ -3717,7 +3769,7 @@ impl D3d {
 
     fn zero(&mut self) -> Id {
         if self.zero_buf == 0 {
-            self.zero_buf = gpu::buffer(65536, usage::UNIFORM | usage::VERTEX | usage::INDEX);
+            self.zero_buf = gpu::buffer(65536, usage::UNIFORM | usage::VERTEX | usage::INDEX | usage::STORAGE);
         }
         self.zero_buf
     }
@@ -3727,7 +3779,7 @@ impl D3d {
         let mut kinds = vec![samples];
         for g in groups {
             for e in g.chunks(8) {
-                kinds.extend_from_slice(&[e[0], e[1], if e[1] == 1 || e[1] >= 4 { e[3] } else { u32::MAX }]);
+                kinds.extend_from_slice(&[e[0], e[1], if matches!(e[1], 1 | 4..=8) { e[3] } else { u32::MAX }]);
             }
             kinds.push(u32::MAX - 1);
         }
@@ -3745,6 +3797,8 @@ impl D3d {
                 let vd = q(ViewDim::of(vdim).name());
                 entries.push(match kind {
                     0 => format!(r#"{{"binding":{binding},"visibility":{visibility},"buffer":{{"type":"uniform"}}}}"#),
+                    // (a store an expanded draw's vertex shader reads: d3d11/expand.rs)
+                    9 => format!(r#"{{"binding":{binding},"visibility":{visibility},"buffer":{{"type":"read-only-storage"}}}}"#),
                     2 => format!(r#"{{"binding":{binding},"visibility":{visibility},"sampler":{{"type":"filtering"}}}}"#),
                     3 => format!(r#"{{"binding":{binding},"visibility":{visibility},"sampler":{{"type":"comparison"}}}}"#),
                     _ => {
@@ -3958,11 +4012,15 @@ impl D3d {
                         2 => format!(r#"{{"binding":{binding},"visibility":4,"sampler":{{"type":"filtering"}}}}"#),
                         3 => format!(r#"{{"binding":{binding},"visibility":4,"sampler":{{"type":"comparison"}}}}"#),
                         7 => format!(r#"{{"binding":{binding},"visibility":4,"storageTexture":{{"access":"write-only","format":{},"viewDimension":{vd}}}}}"#, qf(tex_format(e[5]))),
+                        9 => format!(r#"{{"binding":{binding},"visibility":4,"buffer":{{"type":"read-only-storage"}}}}"#),
+                        10 => format!(r#"{{"binding":{binding},"visibility":4,"buffer":{{"type":"storage"}}}}"#),
                         _ => {
                             let ms = kind != 8 && e[3] == 6;
                             let st = match (kind, e[5]) {
                                 (4, _) | (8, 1) => "uint",
                                 (5, _) | (8, 2) => "sint",
+                                // (a depth texture an expanded draw's vertex or geometry shader reads)
+                                (6, _) => "depth",
                                 (8, _) => "unfilterable-float",
                                 _ if ms => "unfilterable-float",
                                 _ => "float",
@@ -3983,6 +4041,30 @@ impl D3d {
         for e in es.chunks(8) {
             let (binding, kind, a, b, cc, dd, ee, ff) = (e[0], e[1], e[2], e[3], e[4], e[5], e[6], e[7]);
             match kind {
+                // (the batch's data block: a uniform the guest wrote for this dispatch)
+                0 if a == DATA => entries.push((binding, Res::Buffer(self.data_buf, b, cc.max(16)))),
+                // (the batch's data block, read: what the guest made for this dispatch)
+                9 if a == DATA => {
+                    let n = if cc == 0 { self.data_size.saturating_sub(b) } else { cc };
+                    if n == 0 || b % 256 != 0 || n % 4 != 0 || u64::from(b).saturating_add(u64::from(n)) > u64::from(self.data_size) {
+                        return next;
+                    }
+                    entries.push((binding, Res::Buffer(self.data_buf, b, n)));
+                }
+                9 | 10 => {
+                    // a storage buffer: bytes from `b`, `cc` of them (0: to its end); none, or
+                    // a range outside it: nothing runs (an invalid bind group would take the
+                    // command buffer with it)
+                    let Some(&(buf, size)) = self.buffers.get(&a) else { return next };
+                    let n = if cc == 0 { size.saturating_sub(b) } else { cc };
+                    if n == 0 || b % 256 != 0 || n % 4 != 0 || u64::from(b).saturating_add(u64::from(n)) > u64::from(size) {
+                        return next;
+                    }
+                    if !self.bused.contains(&a) {
+                        self.bused.push(a);
+                    }
+                    entries.push((binding, Res::Buffer(buf, b, n)));
+                }
                 0 => {
                     let want = (dd.div_ceil(16) * 16).max(16);
                     if !self.bused.contains(&a) {
@@ -4045,7 +4127,7 @@ impl D3d {
                     // (one it writes too: a validation error in WebGPU; Direct3D unbinds such
                     // views, see d3d11::hazards)
                     let ok = self.textures.get(&a).filter(|t| {
-                        !is_depth(t.format)
+                        is_depth(t.format) == (kind == 6)
                             && !stored.contains(&a)
                             && (t.dim == Dim::D3) == (b == 5)
                             && (!matches!(b, 3 | 4) || (t.layers >= 6 && t.w == t.h))
@@ -4057,11 +4139,11 @@ impl D3d {
                     let v = match ok {
                         Some(_) if b == 6 => {
                             self.use_tex(a);
-                            self.view2(a, 1, 0, 1, 0, 1, false)
+                            self.view2(a, 1, 0, 1, 0, 1, kind == 6)
                         }
                         Some(_) => {
                             self.use_tex(a);
-                            self.view2(a, b.min(5) as u8, cc, dd, ee, ff, false)
+                            self.view2(a, u8::try_from(b.min(5)).unwrap_or(5), cc, dd, ee, ff, kind == 6)
                         }
                         None => self.dummy(b, kind),
                     };
@@ -4119,7 +4201,7 @@ impl D3d {
         if !self.clears.is_empty() {
             for g in &groups {
                 for e in g.chunks(8) {
-                    if e[1] == 1 || e[1] >= 4 {
+                    if matches!(e.get(1), Some(1 | 4..=8)) {
                         self.settle(e[2]);
                     }
                 }
@@ -4179,11 +4261,11 @@ impl D3d {
             // (the same resources as an earlier draw: its bind group; not when it binds the
             // batch's data block, whose offsets change every draw)
             for e in g.chunks(8) {
-                if e[1] == 0 && e[2] != DATA && !self.bused.contains(&e[2]) {
+                if matches!(e.get(1), Some(0 | 9)) && e[2] != DATA && !self.bused.contains(&e[2]) {
                     self.bused.push(e[2]);
                 }
             }
-            let has_data = g.chunks(8).any(|e| e[1] == 0 && e[2] == DATA);
+            let has_data = g.chunks(8).any(|e| matches!(e.get(1), Some(0 | 9)) && e.get(2) == Some(&DATA));
             // (the key in a buffer kept from draw to draw; the textures a kept group uses taken
             // out for use_tex and put back, not cloned)
             let mut key = std::mem::take(&mut self.k2);
@@ -4211,6 +4293,21 @@ impl D3d {
                 let (binding, kind, a, b, cc, dd, ee, ff) = (e[0], e[1], e[2], e[3], e[4], e[5], e[6], e[7]);
                 if kind == 0 && a == DATA {
                     entries.push((binding, Res::Buffer(self.data_buf, b, cc.max(16))));
+                } else if kind == 9 {
+                    // (bytes from `b`, `cc` of them, 0: to its end; none: the zero buffer, its
+                    // reads zeros)
+                    let buf = if a == DATA { Some((self.data_buf, self.data_size)) } else { self.buffers.get(&a).copied() };
+                    match buf {
+                        Some((buf, size)) if b % 256 == 0 && u64::from(b).saturating_add(u64::from(cc)) <= u64::from(size) && size > b => {
+                            let n = if cc == 0 { size.saturating_sub(b) } else { cc };
+                            entries.push((binding, Res::Buffer(buf, b, n & !3)));
+                        }
+                        _ => {
+                            key.clear();
+                            let z = self.zero();
+                            entries.push((binding, Res::Buffer(z, 0, 65536)));
+                        }
+                    }
                 } else if kind == 0 {
                     let want = (dd.div_ceil(16) * 16).max(16);
                     match self.buffers.get(&a).copied() {

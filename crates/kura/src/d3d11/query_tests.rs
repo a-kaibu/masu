@@ -3,7 +3,7 @@
 //! each sample of it): GetData's errors (never ended, building, a wrong size), S_FALSE until
 //! the page answers, an occlusion query's samples, an occlusion predicate's BOOL and the draws
 //! SetPredication turns off, PIPELINE_STATISTICS of the draws and dispatches between Begin and
-//! End, TIMESTAMP_DISJOINT's frequency and disjoint flag, events.
+//! End (the device's counts; the page's counters in expand_tests), TIMESTAMP_DISJOINT's frequency and disjoint flag, events.
 
 use super::*;
 use crate::d3d9::trace_tests::{alloc, attach_page, CALLS, SERIAL};
@@ -13,40 +13,40 @@ const S_FALSE: u32 = 1;
 const E_INVALIDARG: u32 = 0x8007_0057;
 const INVALID_CALL: u32 = 0x887a_0001;
 
-fn mem(n: u32) -> u32 {
+pub(super) fn mem(n: u32) -> u32 {
     unsafe { alloc(4 * n) as u32 }
 }
-fn put(p: u32, v: &[u32]) {
+pub(super) fn put(p: u32, v: &[u32]) {
     for (i, &x) in v.iter().enumerate() {
         unsafe { *((p + 4 * i as u32) as *mut u32) = x };
     }
 }
-fn rd1(p: u32) -> u32 {
+pub(super) fn rd1(p: u32) -> u32 {
     unsafe { *(p as *const u32) }
 }
-fn call1(id: u32, args: &[u32]) -> u32 {
+pub(super) fn call1(id: u32, args: &[u32]) -> u32 {
     unsafe { call(id, args.as_ptr(), &CALLS) }
 }
-fn cc(ctx: u32, m: u32, a: &[u32]) -> u32 {
+pub(super) fn cc(ctx: u32, m: u32, a: &[u32]) -> u32 {
     call1(IF_CONTEXT << 8 | m, &[&[ctx][..], a].concat())
 }
-fn dc(dev: u32, m: u32, a: &[u32]) -> u32 {
+pub(super) fn dc(dev: u32, m: u32, a: &[u32]) -> u32 {
     call1(IF_DEVICE << 8 | m, &[&[dev][..], a].concat())
 }
 thread_local! {
     /// what the test made: released at its end (the device is global to the tests that follow)
     static MADE: std::cell::RefCell<Vec<u32>> = const { std::cell::RefCell::new(Vec::new()) };
 }
-fn made(x: u32) -> u32 {
+pub(super) fn made(x: u32) -> u32 {
     MADE.with(|m| m.borrow_mut().push(x));
     x
 }
-fn release_all() {
+pub(super) fn release_all() {
     for x in MADE.with(|m| std::mem::take(&mut *m.borrow_mut())).into_iter().rev() {
         call1(IF_QUERY << 8 | 2, &[x]);
     }
 }
-fn code(c: &[u8]) -> (u32, u32) {
+pub(super) fn code(c: &[u8]) -> (u32, u32) {
     let p = unsafe { alloc(c.len() as u32) as u32 };
     unsafe { std::ptr::copy_nonoverlapping(c.as_ptr(), p as *mut u8, c.len()) };
     (p, c.len() as u32)
@@ -57,7 +57,7 @@ const PS: &str = "float4 main(float4 p : SV_Position) : SV_Target { return float
 const CS: &str = "RWTexture2D<float4> u : register(u0); [numthreads(4, 2, 3)] void main(uint3 i : SV_DispatchThreadID) { u[i.xy] = float4(1, 1, 1, 1); }";
 
 /// A device with a 64x64 target bound and the shaders set; (device, context).
-fn device() -> (u32, u32) {
+pub(super) fn device() -> (u32, u32) {
     let vt = mem(256);
     put(vt, &(1..=256).map(|i| 0x1000 * i).collect::<Vec<_>>());
     call1(INIT, &[vt, 256]);
@@ -89,13 +89,13 @@ fn device() -> (u32, u32) {
     (dev, ctx)
 }
 
-fn viewport(ctx: u32, [x, y, w, h]: [u32; 4]) {
+pub(super) fn viewport(ctx: u32, [x, y, w, h]: [u32; 4]) {
     let vp = mem(6);
     put(vp, &[(x as f32).to_bits(), (y as f32).to_bits(), (w as f32).to_bits(), (h as f32).to_bits(), 0, 1f32.to_bits()]);
     cc(ctx, 44, &[1, vp]);
 }
 
-fn query(dev: u32, t: u32) -> u32 {
+pub(super) fn query(dev: u32, t: u32) -> u32 {
     let (desc, o) = (mem(2), mem(2));
     put(desc, &[t, u32::from(t == 5 || t == 7)]);
     assert_eq!(dc(dev, if t == 5 || t == 7 { 25 } else { 24 }, &[desc, o]), 0, "CreateQuery({t})");
@@ -103,13 +103,13 @@ fn query(dev: u32, t: u32) -> u32 {
 }
 
 /// GetData into `size` bytes: the answer and the bytes.
-fn get(ctx: u32, q: u32, size: u32, flags: u32) -> (u32, Vec<u8>) {
+pub(super) fn get(ctx: u32, q: u32, size: u32, flags: u32) -> (u32, Vec<u8>) {
     let p = unsafe { alloc(size.max(1)) as u32 };
     let hr = cc(ctx, 29, &[q, if size == 0 { 0 } else { p }, size, flags]);
     (hr, (0..size).map(|i| unsafe { *((p + i) as *const u8) }).collect())
 }
 
-fn wait(ctx: u32, q: u32, size: u32) -> Vec<u8> {
+pub(super) fn wait(ctx: u32, q: u32, size: u32) -> Vec<u8> {
     for _ in 0..8 {
         let (hr, b) = get(ctx, q, size, 0);
         if hr != S_FALSE {
@@ -120,11 +120,11 @@ fn wait(ctx: u32, q: u32, size: u32) -> Vec<u8> {
     panic!("query never done");
 }
 
-fn u64s(b: &[u8]) -> Vec<u64> {
+pub(super) fn u64s(b: &[u8]) -> Vec<u64> {
     b.chunks_exact(8).map(|c| u64::from_le_bytes(c.try_into().unwrap())).collect()
 }
 
-fn no_model_errors() {
+pub(super) fn no_model_errors() {
     let e = crate::render::model::with(|m| std::mem::take(&mut m.errors));
     assert!(e.is_empty(), "WebGPU errors: {e:?}");
 }
@@ -195,7 +195,9 @@ proptest! {
         prop_assert_eq!(wait(ctx, pred, 4), u32::from(samples != 0).to_le_bytes().to_vec());
         let s = u64s(&wait(ctx, stats, 88));
         prop_assert_eq!(&s[..3], &[verts, prims, verts][..]);
-        prop_assert_eq!((s[5], s[6], s[7], s[10]), (prims, prims, samples, 0));
+        // (CInvocations and CPrimitives: the page's clipper counters, which the model does not
+        // run shaders for; winref d3d11gs and d3d11query measure them in the browser)
+        prop_assert_eq!((s[7], s[10]), (samples, 0));
         // predicated: the draws go when the answer is not the value
         for value in [0u32, 1] {
             cc(ctx, 30, &[pred, value]);

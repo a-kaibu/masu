@@ -85,8 +85,44 @@ struct InDecl {
     interp: u32,
 }
 
+/// A geometry shader's declarations (dcl_inputprimitive, dcl_stream, dcl_outputtopology,
+/// dcl_maxout, dcl_gsinstances).
+#[derive(Clone, Debug, Default)]
+pub struct GsDecl {
+    /// D3D10_SB_PRIMITIVE: 1 point, 2 line, 3 triangle, 6 line with adjacency, 7 triangle with
+    /// adjacency
+    pub input: u32,
+    /// the vertices of one input primitive
+    pub verts: u32,
+    pub maxout: u32,
+    pub instances: u32,
+    /// each stream's topology (1 point list, 3 line strip, 5 triangle strip)
+    pub streams: Vec<u32>,
+}
+
+impl GsDecl {
+    /// The vertices of each primitive an output stream's topology makes (1, 2 or 3)
+    pub fn prim_verts(topo: u32) -> u32 {
+        match topo {
+            1 => 1,
+            3 => 2,
+            _ => 3,
+        }
+    }
+    /// The most primitives one invocation can make on a stream of `topo`
+    pub fn max_prims(&self, topo: u32) -> u32 {
+        self.maxout.saturating_sub(GsDecl::prim_verts(topo).saturating_sub(1))
+    }
+}
+
 struct W {
     pixel: bool,
+    /// a geometry shader (run as a compute shader: wgsl.rs gs_pass)
+    gs: Option<GsDecl>,
+    /// the stream the declarations being read are of (dcl_stream)
+    cur_stream_decl: usize,
+    /// a geometry shader's outputs by stream << 8 | register: (mask, system value)
+    gs_outputs: BTreeMap<u32, (u32, u32)>,
     /// a compute shader: [numthreads]
     threads: Option<[u32; 3]>,
     uavs: BTreeMap<u32, UavDecl>,
@@ -173,6 +209,72 @@ fn declarations(w: &mut W, p: &Program) -> R<()> {
             Opcode::DclInput if i.ops[0].ty.is_compute_input() && p.kind == tpf::COMPUTE => {
                 w.sys_in.insert(i.ops[0].ty);
             }
+            Opcode::DclInput if matches!(i.ops.first().map(|o| o.ty), Some(tpf::INPUT_PRIMITIVEID | tpf::INPUT_GS_INSTANCE_ID)) && p.kind == tpf::GEOMETRY => {
+                if let Some(o) = i.ops.first() {
+                    w.sys_in.insert(o.ty);
+                }
+            }
+            Opcode::DclInput | Opcode::DclInputSiv | Opcode::DclInputSgv if p.kind == tpf::GEOMETRY => {
+                // (v[vertices][register])
+                let Some(o) = i.ops.first() else { return Err("a geometry shader input declaration without its register".into()) };
+                let (Some(Index::Imm(_)), Some(Index::Imm(reg))) = (o.idx.first(), o.idx.get(1)) else {
+                    return Err("a geometry shader input without [vertices][register]".into());
+                };
+                if o.ty != tpf::INPUT {
+                    return Err(format!("input register type {}", o.ty));
+                }
+                let sysval = if i.op == Opcode::DclInput { 0 } else { i.extra.first().copied().unwrap_or(0) };
+                let e = w.inputs.entry(*reg).or_insert(InDecl { mask: 0, sysval, interp: 0 });
+                e.mask |= u32::from(o.mask());
+            }
+            Opcode::DclGsInputPrimitive if p.kind == tpf::GEOMETRY => {
+                let g = w.gs.get_or_insert_with(GsDecl::default);
+                g.input = i.ctl & 0x3f;
+                g.verts = match g.input {
+                    1 => 1,
+                    2 => 2,
+                    3 => 3,
+                    6 => 4,
+                    7 => 6,
+                    n => return Err(format!("geometry shader input primitive {n}")),
+                };
+            }
+            Opcode::DclGsOutputPrimitiveTopology if p.kind == tpf::GEOMETRY => {
+                let t = i.ctl & 0x3f;
+                if !matches!(t, 1 | 3 | 5) {
+                    return Err(format!("geometry shader output topology {t}"));
+                }
+                let g = w.gs.get_or_insert_with(GsDecl::default);
+                // (shader model 5: one per dcl_stream, in their order; 4: the one stream)
+                let at = w.cur_stream_decl;
+                if g.streams.len() <= at {
+                    g.streams.resize(at.saturating_add(1), t);
+                }
+                if let Some(s) = g.streams.get_mut(at) {
+                    *s = t;
+                }
+            }
+            Opcode::DclStream if p.kind == tpf::GEOMETRY => {
+                let k = i.ops.first().map_or(0, Operand::reg);
+                if k >= 4 {
+                    return Err(format!("stream m{k}"));
+                }
+                w.cur_stream_decl = kome::num::us(k);
+            }
+            Opcode::DclMaxOutputVertexCount if p.kind == tpf::GEOMETRY => {
+                let n = i.extra.first().copied().unwrap_or(0);
+                if n == 0 || n > 1024 {
+                    return Err(format!("dcl_maxout {n}"));
+                }
+                w.gs.get_or_insert_with(GsDecl::default).maxout = n;
+            }
+            Opcode::DclGsInstanceCount if p.kind == tpf::GEOMETRY => {
+                let n = i.extra.first().copied().unwrap_or(0);
+                if n == 0 || n > 32 {
+                    return Err(format!("dcl_gsinstances {n}"));
+                }
+                w.gs.get_or_insert_with(GsDecl::default).instances = n;
+            }
             Opcode::DclInput | Opcode::DclInputSgv | Opcode::DclInputSiv | Opcode::DclInputPs | Opcode::DclInputPsSgv | Opcode::DclInputPsSiv => {
                 let o = &i.ops[0];
                 if o.ty != tpf::INPUT {
@@ -193,6 +295,15 @@ fn declarations(w: &mut W, p: &Program) -> R<()> {
             Opcode::DclOutput | Opcode::DclOutputSgv | Opcode::DclOutputSiv => {
                 let o = &i.ops[0];
                 match o.ty {
+                    tpf::OUTPUT if p.kind == tpf::GEOMETRY => {
+                        // (each stream its own registers: by stream and register)
+                        let sysval = if i.op != Opcode::DclOutput { i.extra.first().copied().unwrap_or(0) } else { 0 };
+                        let key = kome::num::u32_of(w.cur_stream_decl) << 8 | o.reg();
+                        let e = w.gs_outputs.entry(key).or_insert((0, sysval));
+                        e.0 |= u32::from(o.mask());
+                        let e = w.outputs.entry(o.reg()).or_insert((0, sysval));
+                        e.0 |= u32::from(o.mask());
+                    }
                     tpf::OUTPUT => {
                         let sysval = if i.op != Opcode::DclOutput { i.extra.first().copied().unwrap_or(0) } else { 0 };
                         let e = w.outputs.entry(o.reg()).or_insert((0, sysval));
@@ -272,6 +383,16 @@ fn declarations(w: &mut W, p: &Program) -> R<()> {
             | Opcode::Drcp | Opcode::Msad | Opcode::Dtoi | Opcode::Dtou | Opcode::Itod | Opcode::Utod | Opcode::Unknown => {}
         }
     }
+    if p.kind == tpf::GEOMETRY {
+        let g = w.gs.get_or_insert_with(GsDecl::default);
+        if g.input == 0 || g.maxout == 0 {
+            return Err("a geometry shader without dcl_inputprimitive or dcl_maxout".into());
+        }
+        g.instances = g.instances.max(1);
+        if g.streams.is_empty() {
+            return Err("a geometry shader without dcl_outputtopology".into());
+        }
+    }
     if p.kind == tpf::COMPUTE {
         if w.threads.is_none() {
             return Err("a compute shader without dcl_thread_group".into());
@@ -327,11 +448,36 @@ fn check_registers(w: &W, p: &Program) -> R<()> {
                 }
                 2
             }
+            // (a geometry shader's: v[vertex][register], the vertex an index of its own)
+            tpf::INPUT if w.gs.is_some() => {
+                let Some(Index::Imm(r)) = o.idx.get(1) else { return Err("a geometry shader input without [vertex][register]".into()) };
+                if !w.inputs.contains_key(r) {
+                    return Err(format!("v[][{r}] is not declared"));
+                }
+                if let Some(Index::Imm(k)) = o.idx.first() && w.gs.as_ref().is_some_and(|g| *k >= g.verts) {
+                    return Err(format!("v[{k}] past the primitive's vertices"));
+                }
+                for i in &o.idx {
+                    if let Index::Rel(r, _) = i {
+                        if !matches!(r.ty, tpf::TEMP | tpf::INDEXABLE_TEMP | tpf::IMM32) {
+                            return Err(format!("register of type {} as an index", r.ty));
+                        }
+                        check(w, r)?;
+                    }
+                }
+                return (o.idx.len() == 2).ok_or_else(|| format!("operand of type {} with {} indices", o.ty, o.idx.len()));
+            }
             tpf::INPUT => {
                 if !w.inputs.contains_key(&o.reg()) {
                     return Err(format!("v{} is not declared", o.reg()));
                 }
                 1
+            }
+            tpf::INPUT_PRIMITIVEID | tpf::INPUT_GS_INSTANCE_ID if w.gs.is_some() => {
+                if !w.sys_in.contains(&o.ty) {
+                    return Err(format!("geometry shader input {} is not declared", o.ty));
+                }
+                0
             }
             tpf::OUTPUT => {
                 if !w.outputs.contains_key(&o.reg()) {
@@ -478,6 +624,9 @@ enum Sampling {
 impl W {
     fn new(pixel: bool, isgn: Vec<SigElement>, osgn: Vec<SigElement>) -> W {
         W {
+            gs: None,
+            cur_stream_decl: 0,
+            gs_outputs: BTreeMap::new(),
             threads: None,
             uavs: BTreeMap::new(),
             tgsm: BTreeMap::new(),
@@ -583,7 +732,13 @@ impl W {
         };
         Ok(match o.ty {
             tpf::TEMP => format!("r{}", imm(0)?),
+            tpf::INPUT if self.gs.is_some() => {
+                let k = self.index(o.idx.first().ok_or("v[] without a vertex")?)?;
+                format!("gv[min({k}, {}u)][{}]", self.gs.as_ref().map_or(0, |g| g.verts.saturating_sub(1)), imm(1)?)
+            }
             tpf::INPUT => format!("v{}", imm(0)?),
+            tpf::INPUT_PRIMITIVEID => "vprim".into(),
+            tpf::INPUT_GS_INSTANCE_ID => "vgsi".into(),
             tpf::OUTPUT => format!("o{}", imm(0)?),
             tpf::INDEXABLE_TEMP => {
                 let i = self.index(o.idx.get(1).ok_or("x register without index")?)?;
@@ -1427,12 +1582,34 @@ impl W {
                 }
             }
             // (declarations returned above; the rest: not translated)
-            Opcode::Call | Opcode::Callc | Opcode::Case | Opcode::Cut | Opcode::Default | Opcode::Emit | Opcode::EmitThenCut
+            // (a geometry shader's: gs_emit / gs_cut, wgsl.rs gs_pass)
+            Opcode::Emit | Opcode::Cut | Opcode::EmitThenCut | Opcode::EmitStream | Opcode::CutStream | Opcode::EmitThenCutStream => {
+                let Some(g) = &self.gs else { return Err(format!("opcode {:#x} outside a geometry shader", i.code)) };
+                let streamed = matches!(op, Opcode::EmitStream | Opcode::CutStream | Opcode::EmitThenCutStream);
+                let k = if streamed {
+                    match i.ops.first() {
+                        Some(o) if o.ty == tpf::STREAM => o.reg(),
+                        _ => return Err("emit_stream without a stream".into()),
+                    }
+                } else {
+                    0
+                };
+                if kome::num::us(k) >= g.streams.len() {
+                    return Err(format!("stream m{k} is not declared"));
+                }
+                if matches!(op, Opcode::Emit | Opcode::EmitThenCut | Opcode::EmitStream | Opcode::EmitThenCutStream) {
+                    self.line(&format!("gs_emit{k}();"));
+                }
+                if matches!(op, Opcode::Cut | Opcode::EmitThenCut | Opcode::CutStream | Opcode::EmitThenCutStream) {
+                    self.line(&format!("gs_cut[{k}] = 1u;"));
+                }
+            }
+            Opcode::Call | Opcode::Callc | Opcode::Case | Opcode::Default
             | Opcode::EndSwitch | Opcode::Label | Opcode::CustomData | Opcode::DclResource | Opcode::DclConstantBuffer | Opcode::DclSampler | Opcode::DclIndexRange
             | Opcode::DclGsOutputPrimitiveTopology | Opcode::DclGsInputPrimitive | Opcode::DclMaxOutputVertexCount | Opcode::DclInput | Opcode::DclInputSgv | Opcode::DclInputSiv | Opcode::DclInputPs
             | Opcode::DclInputPsSgv | Opcode::DclInputPsSiv | Opcode::DclOutput | Opcode::DclOutputSgv | Opcode::DclOutputSiv | Opcode::DclTemps | Opcode::DclIndexableTemp
             | Opcode::DclGlobalFlags | Opcode::Reserved10 | Opcode::Lod | Opcode::Reserved101 | Opcode::HsDecls | Opcode::HsControlPointPhase | Opcode::HsForkPhase
-            | Opcode::HsJoinPhase | Opcode::EmitStream | Opcode::CutStream | Opcode::EmitThenCutStream | Opcode::InterfaceCall | Opcode::Gather4Po | Opcode::Gather4PoC
+            | Opcode::HsJoinPhase | Opcode::InterfaceCall | Opcode::Gather4Po | Opcode::Gather4PoC
             | Opcode::Uaddc | Opcode::Usubb | Opcode::DclStream | Opcode::DclFunctionBody | Opcode::DclFunctionTable | Opcode::DclInterface | Opcode::DclInputControlPointCount
             | Opcode::DclOutputControlPointCount | Opcode::DclTessDomain | Opcode::DclTessPartitioning | Opcode::DclTessOutputPrimitive | Opcode::DclHsMaxTessFactor | Opcode::DclHsForkPhaseInstanceCount | Opcode::DclHsJoinPhaseInstanceCount
             | Opcode::DclThreadGroup | Opcode::DclUavTyped | Opcode::DclUavRaw | Opcode::DclUavStructured | Opcode::DclTgsmRaw | Opcode::DclTgsmStructured | Opcode::DclResourceRaw
@@ -2013,6 +2190,8 @@ fn translate_with(code: &[u8], pixel: bool, ps: Option<&[u8]>, sprite: Option<f3
     m.push_str("}\n");
     Ok(Wgsl { code: m, bindings })
 }
+
+pub mod expand;
 
 #[cfg(test)]
 mod icb_tests;

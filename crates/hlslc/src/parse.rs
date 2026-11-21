@@ -248,6 +248,18 @@ impl Parser {
             }
             return Ok(Ty::Tex(d, Box::new(el)));
         }
+        let stream = match name.as_str() {
+            "PointStream" => Some(StreamKind::Point),
+            "LineStream" => Some(StreamKind::Line),
+            "TriangleStream" => Some(StreamKind::Triangle),
+            _ => None,
+        };
+        if let Some(k) = stream {
+            self.expect("<")?;
+            let el = self.ty()?;
+            self.expect(">")?;
+            return Ok(Ty::Stream(k, Box::new(el)));
+        }
         Ok(match name.as_str() {
             "void" => Ty::Void,
             "string" => Ty::Str,
@@ -358,7 +370,7 @@ impl Parser {
             Ty::Array(e, n) => self.comps(e).saturating_mul(u64::from((*n).max(1))),
             Ty::Struct(i) => self.prog.structs.get(*i).map_or(0, |s| s.fields.iter().fold(0u64, |a, f| a.saturating_add(self.comps(&f.ty)))),
             t @ (Ty::Void | Ty::Scalar(_) | Ty::Vec(..) | Ty::Mat(..) | Ty::Tex(..) | Ty::Sampler(_)
-                 | Ty::RwTex(..) | Ty::Legacy(_) | Ty::Str) => u64::try_from(t.comps()).unwrap_or(u64::MAX),
+                 | Ty::RwTex(..) | Ty::Legacy(_) | Ty::Str | Ty::Stream(..)) => u64::try_from(t.comps()).unwrap_or(u64::MAX),
         }
     }
 
@@ -763,10 +775,16 @@ impl Parser {
                 self.p += 2;
             } else {
                 loop {
-                    let m = self.modifiers()?;
-                    // (geometry shader primitive types)
-                    if matches!(self.peek(), Some(Tok::Ident(s)) if matches!(s.as_str(), "point" | "line" | "triangle" | "lineadj" | "triangleadj")) {
-                        return self.err("geometry shaders are not supported");
+                    let mut m = self.modifiers()?;
+                    // (a geometry shader's input array: `triangle V v[3]`, before or after `in`)
+                    if let Some(Tok::Ident(s)) = self.peek()
+                        && let Some(prim) = Prim::of_name(s)
+                        && matches!(self.peek_at(1), Some(Tok::Ident(_)))
+                    {
+                        self.p = self.p.saturating_add(1);
+                        let more = self.modifiers()?;
+                        m.interp = if more.interp == Interp::Linear { m.interp } else { more.interp };
+                        m.prim = Some(prim);
                     }
                     let t = self.ty()?;
                     let name = self.ident()?;

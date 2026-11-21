@@ -71,6 +71,13 @@ pub(super) struct Queries {
     pub(super) hold: bool,
     /// whether the device has timestamp queries (asked once per device)
     has_stamps: Option<bool>,
+    /// counter tickets begun (COUNT_BEGIN): the 8-byte buffer the counter's word goes to at
+    /// the begin (bytes 0..4) and at the end (4..8), the page buffer and offset of the word
+    counts: HashMap<u32, (Id, u32, u32)>,
+    /// counter tickets ended since the last submit
+    counts_ended: Vec<(u32, Id)>,
+    /// their reads: token -> (ticket, buffer, bytes)
+    count_reads: HashMap<u32, (u32, Id, Vec<u8>)>,
 }
 
 /// performance.now() in nanoseconds.
@@ -197,6 +204,12 @@ impl Queries {
     /// The bytes of read `token` came (or not: `ok` false, a lost device's): whether it was a
     /// query read. The tickets it finished are done.
     pub(super) fn mapped(&mut self, token: u32, ok: bool) -> bool {
+        if let Some((t, buf, data)) = self.count_reads.remove(&token) {
+            gpu::destroy(buf);
+            let word = |k: usize| data.get(k..k.saturating_add(4)).map_or(0, |b| u32::from_le_bytes(b.try_into().unwrap_or([0; 4])));
+            done(t, if ok { u64::from(word(4).wrapping_sub(word(0))) } else { 0 });
+            return true;
+        }
         let Some(r) = self.reads.remove(&token) else { return false };
         gpu::destroy(r.buf);
         let value = |k: usize| if ok { r.data.get(k..k.saturating_add(8)).map_or(0, |b| u64::from_le_bytes(b.try_into().unwrap_or([0; 8]))) } else { 0 };
@@ -247,6 +260,9 @@ impl Queries {
             ts.extend(self.waits.remove(&k).into_iter().flatten().map(|e| e.0));
         }
         ts.extend(self.events.drain(..).map(|e| e.0));
+        ts.extend(self.counts.drain().map(|e| e.0));
+        ts.extend(self.counts_ended.drain(..).map(|e| e.0));
+        ts.extend(self.count_reads.drain().map(|e| e.1.0));
         ts.append(&mut self.stamps);
         ts.sort_unstable();
         ts.dedup();
@@ -258,6 +274,52 @@ impl Queries {
 }
 
 impl D3d {
+    /// COUNT_BEGIN: counter ticket `t` counts what the u32 at byte `off` of page buffer `id`
+    /// grows by from here (begun again: from here).
+    pub(super) fn count_begin(&mut self, t: u32, id: u32, off: u32) {
+        self.end_pass();
+        let buf = gpu::buffer(8, usage::COPY_DST | usage::MAP_READ);
+        if let Some((old, _, _)) = self.queries.counts.insert(t, (buf, id, off)) {
+            self.doomed.push(old);
+        }
+        self.count_copy(id, off, buf, 0);
+    }
+
+    /// COUNT_END: counter ticket `t` ends here (without a begin: 0).
+    pub(super) fn count_end(&mut self, t: u32) {
+        let Some((buf, id, off)) = self.queries.counts.remove(&t) else {
+            self.queries.events.push((t, Then::Value(0)));
+            return;
+        };
+        self.end_pass();
+        self.count_copy(id, off, buf, 4);
+        self.queries.counts_ended.push((t, buf));
+    }
+
+    /// The word at `off` of page buffer `id` into byte `at` of `buf` (none: it stays 0).
+    fn count_copy(&mut self, id: u32, off: u32, buf: Id, at: u32) {
+        let Some(&(src, size)) = self.buffers.get(&id) else { return };
+        if off % 4 != 0 || u64::from(off) + 4 > u64::from(size) {
+            return;
+        }
+        if !self.bused.contains(&id) {
+            self.bused.push(id);
+        }
+        self.open = true;
+        gpu::copy_buffer_at(src, off, buf, at, 4);
+    }
+
+    /// After a submit: the counter tickets it ended are read.
+    pub(super) fn read_counts(&mut self) {
+        for (t, buf) in std::mem::take(&mut self.queries.counts_ended) {
+            let token = self.next_token;
+            self.next_token = self.next_token.wrapping_add(1).max(1);
+            let mut data = vec![0u8; 8];
+            gpu::read_buffer(buf, 8, data.as_mut_ptr(), token);
+            self.queries.count_reads.insert(token, (t, buf, data));
+        }
+    }
+
     /// QUERY_BEGIN: occlusion query `t` counts from here (begun again: from 0).
     pub(super) fn query_begin(&mut self, t: u32) {
         self.end_pass();

@@ -446,7 +446,7 @@ pub struct Buffer {
 #[derive(Clone, Debug)]
 pub struct LayoutEntry {
     pub binding: u32,
-    /// 'b' buffer (uniform), 't' texture, 's' sampler
+    /// 'b' buffer (uniform or storage: `ty`), 't' texture, 's' sampler, 'w' storage texture
     pub kind: char,
     pub dynamic: bool,
     /// texture: sample type ("float", "unfilterable-float", "depth", "uint", "sint"); sampler: type
@@ -582,7 +582,8 @@ struct Occlusion {
 enum Cmd {
     Copy(usize, u32, [u32; 3], usize, u32, [u32; 3], [u32; 3]),
     ToBuffer(usize, u32, [u32; 3], usize, u32, u32, u32),
-    BufCopy(usize, usize, u32),
+    /// (src, its offset, dst, its offset, bytes)
+    BufCopy(usize, u32, usize, u32, u32),
     FromBuffer(usize, u32, usize, u32, u32, u32, u32, u32, u32),
     Pass(Vec<Attachment>, Option<Attachment>, Vec<Draw>, Occlusion),
     /// resolveQuerySet: set, first, count, buffer, offset
@@ -940,7 +941,34 @@ impl Model {
                                         }
                                     }
                                     naga::TypeInner::Sampler { comparison } => ('s', if *comparison { "comparison" } else { "filtering" }.to_string(), String::new()),
-                                    _ => ('b', "uniform".to_string(), String::new()),
+                                    // (a buffer: its address space, the layout's buffer type)
+                                    naga::TypeInner::Scalar(_)
+                                    | naga::TypeInner::Vector { .. }
+                                    | naga::TypeInner::Matrix { .. }
+                                    | naga::TypeInner::CooperativeMatrix { .. }
+                                    | naga::TypeInner::Atomic(_)
+                                    | naga::TypeInner::Pointer { .. }
+                                    | naga::TypeInner::ValuePointer { .. }
+                                    | naga::TypeInner::Array { .. }
+                                    | naga::TypeInner::Struct { .. }
+                                    | naga::TypeInner::AccelerationStructure { .. }
+                                    | naga::TypeInner::RayQuery { .. }
+                                    | naga::TypeInner::BindingArray { .. } => {
+                                        let ty = match g.space {
+                                            naga::AddressSpace::Storage { access } if access.contains(naga::StorageAccess::STORE) => "storage",
+                                            naga::AddressSpace::Storage { .. } => "read-only-storage",
+                                            naga::AddressSpace::Uniform
+                                            | naga::AddressSpace::Function
+                                            | naga::AddressSpace::Private
+                                            | naga::AddressSpace::WorkGroup
+                                            | naga::AddressSpace::Handle
+                                            | naga::AddressSpace::Immediate
+                                            | naga::AddressSpace::TaskPayload
+                                            | naga::AddressSpace::RayPayload
+                                            | naga::AddressSpace::IncomingRayPayload => "uniform",
+                                        };
+                                        ('b', ty.to_string(), String::new())
+                                    }
                                 };
                                 used.push((b.group, b.binding, kind, ty, vd));
                             }
@@ -959,7 +987,15 @@ impl Model {
         for e in j.arr("entries") {
             let binding = e.u("binding").unwrap_or(u32::MAX);
             let (kind, dynamic, ty, view_dim) = if let Some(b) = e.get("buffer") {
-                ('b', b.b("hasDynamicOffset").unwrap_or(false), b.s("type").unwrap_or("uniform").to_string(), String::new())
+                let ty = b.s("type").unwrap_or("uniform").to_string();
+                if !matches!(ty.as_str(), "uniform" | "storage" | "read-only-storage") {
+                    self.err(format!("createBindGroupLayout: entry {binding}: buffer type {ty}"));
+                }
+                // (a vertex shader cannot write a storage buffer)
+                if ty == "storage" && e.u("visibility").unwrap_or(0) & 1 != 0 {
+                    self.err(format!("createBindGroupLayout: entry {binding}: a writable storage buffer visible to the vertex stage"));
+                }
+                ('b', b.b("hasDynamicOffset").unwrap_or(false), ty, String::new())
             } else if let Some(t) = e.get("texture") {
                 let (ty, vd) = (t.s("sampleType").unwrap_or("float").to_string(), t.s("viewDimension").unwrap_or("2d").to_string());
                 // (multisampled: "2d" views, of any sample type but filterable float; kept as
@@ -1114,6 +1150,7 @@ impl Model {
                             't' => (e.ty == u.3 || (u.3 == "float" && e.ty == "unfilterable-float") || (u.3 == "depth" && e.ty == "depth")) && e.view_dim == u.4,
                             's' => (u.3 == "comparison") == (e.ty == "comparison"),
                             'w' => e.ty == u.3 && e.view_dim == u.4,
+                            'b' => e.ty == u.3,
                             _ => true,
                         };
                     if !ok {
@@ -1405,10 +1442,17 @@ impl Model {
                 if e.kind != 'b' {
                     self.err(format!("{what}: a buffer at binding {binding}, a {} in the layout", e.kind));
                 }
-                if bu & 0x40 == 0 {
+                // (a storage buffer: STORAGE usage, sizes of whole words, up to
+                // maxStorageBufferBindingSize: 128 MiB)
+                let storage = matches!(e.ty.as_str(), "storage" | "read-only-storage");
+                if storage && bu & 0x80 == 0 {
+                    self.err(format!("{what}: buffer without STORAGE usage at binding {binding}"));
+                }
+                if !storage && bu & 0x40 == 0 {
                     self.err(format!("{what}: buffer without UNIFORM usage at binding {binding}"));
                 }
-                if off % 256 != 0 || size == 0 || off as u64 + size as u64 > bs as u64 || size > 65536 {
+                let max = if storage { 1 << 27 } else { 65536 };
+                if off % 256 != 0 || size == 0 || (storage && size % 4 != 0) || u64::from(off).saturating_add(u64::from(size)) > u64::from(bs) || size > max {
                     self.err(format!("{what}: binding {binding}: {size} bytes at {off} of a {bs}-byte buffer"));
                 }
                 entries.push((binding, Entry::Buffer(b, off, size)));
@@ -1689,7 +1733,7 @@ impl Model {
         self.enc.push(Cmd::ToBuffer(t, mip, [x, y, z], b, bpr, w, h));
     }
 
-    pub fn copy_buffer(&mut self, src: u32, dst: u32, size: u32) {
+    pub fn copy_buffer(&mut self, src: u32, soff: u32, dst: u32, doff: u32, size: u32) {
         let what = "copyBufferToBuffer";
         self.no_pass(what);
         let (Some(s), Some(d)) = (self.buffer_of(src, what), self.buffer_of(dst, what)) else { return };
@@ -1698,11 +1742,12 @@ impl Model {
         if au & 4 == 0 || bu & 8 == 0 {
             self.err(format!("{what}: usage (COPY_SRC, COPY_DST)"));
         }
-        if size % 4 != 0 || size > asz || size > bsz || s == d {
-            self.err(format!("{what}: {size} bytes from {asz} into {bsz}"));
+        let end = |o: u32| u64::from(o) + u64::from(size);
+        if size % 4 != 0 || soff % 4 != 0 || doff % 4 != 0 || end(soff) > u64::from(asz) || end(doff) > u64::from(bsz) || s == d {
+            self.err(format!("{what}: {size} bytes at {soff} of {asz} into {doff} of {bsz}"));
             return;
         }
-        self.enc.push(Cmd::BufCopy(s, d, size));
+        self.enc.push(Cmd::BufCopy(s, soff, d, doff, size));
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -2590,7 +2635,7 @@ impl Model {
             let mut bufs = Vec::new();
             match c {
                 Cmd::Copy(s, _, _, t, ..) => texs.extend([*s, *t]),
-                Cmd::BufCopy(a, b, _) => bufs.extend([*a, *b]),
+                Cmd::BufCopy(a, _, b, _, _) => bufs.extend([*a, *b]),
                 Cmd::ToBuffer(t, _, _, b, ..) | Cmd::FromBuffer(b, _, t, ..) => {
                     texs.push(*t);
                     bufs.push(*b);
@@ -2662,11 +2707,13 @@ impl Model {
                         }
                     }
                 }
-                Cmd::BufCopy(a, b, n) => {
+                Cmd::BufCopy(a, so, b, d, n) => {
                     let Obj::Buffer(src) = &self.objs[a] else { continue };
-                    let bytes = src.data[..us(n)].to_vec();
+                    let Some(bytes) = src.data.get(us(so)..us(so.saturating_add(n))).map(<[u8]>::to_vec) else { continue };
                     let Obj::Buffer(dst) = &mut self.objs[b] else { continue };
-                    dst.data[..us(n)].copy_from_slice(&bytes);
+                    if let Some(to) = dst.data.get_mut(us(d)..us(d.saturating_add(n))) {
+                        to.copy_from_slice(&bytes);
+                    }
                 }
                 Cmd::ToBuffer(t, mip, [x, y, z], b, bpr, w, h) => {
                     let tx = self.tex(t).clone();
@@ -2715,19 +2762,23 @@ impl Model {
         }
     }
 
-    /// A dispatch's meaning: each texel of each storage view gets a hash of everything the
-    /// dispatch reads (pipeline, workgroups, bound buffer bytes, sampled views' values) with its
-    /// own old value and place.
+    /// A dispatch's meaning: each texel of each storage view and each word of each writable
+    /// storage buffer range gets a hash of everything the dispatch reads (pipeline, workgroups,
+    /// bound buffer bytes, sampled views' values) with its own old value and place.
     fn run_dispatch(&mut self, h: u64, g: usize, n: [u32; 3]) {
         let Obj::Group(la, entries) = self.objs[g].clone() else { return };
         let Obj::Layout(es) = self.objs[la].clone() else { return };
         let mut x = mix(h, (n[0] as u64) << 40 | (n[1] as u64) << 20 | n[2] as u64);
         let mut out = Vec::new();
+        let mut out_bufs = Vec::new();
         for (b, e) in &entries {
             match e {
                 Entry::Buffer(bf, off, size) => {
                     if let Obj::Buffer(buf) = &self.objs[*bf] {
                         x = hash_bytes(x, &buf.data[*off as usize..us((*off + *size).min(buf.size))]);
+                    }
+                    if es.iter().any(|l| l.binding == *b && l.kind == 'b' && l.ty == "storage") {
+                        out_bufs.push((*bf, *off, *size));
                     }
                 }
                 Entry::View(v) => {
@@ -2743,6 +2794,16 @@ impl Model {
                         x = mix(x, *k);
                     }
                 }
+            }
+        }
+        for (bf, off, size) in out_bufs {
+            let Obj::Buffer(buf) = &mut self.objs[bf] else { continue };
+            let end = us(off.saturating_add(size).min(buf.size));
+            let Some(words) = buf.data.get_mut(us(off)..end) else { continue };
+            for (k, w) in (0u64..).zip(words.chunks_exact_mut(4)) {
+                let old = w.iter().rev().fold(0u64, |a, &b| (a << 8) | u64::from(b));
+                let h = mix(mix(x, old), (u64::from(off) << 32) | k).to_le_bytes();
+                w.copy_from_slice(h.get(..4).unwrap_or(&[0; 4]));
             }
         }
         for v in out {
@@ -3029,9 +3090,9 @@ pub extern "C" fn vngpu_copy_to_buffer(tex: u32, mip: u32, x: u32, y: u32, z: u3
     with(|m| m.copy_to_buffer(tex, mip, [x, y, z], buf, bpr, w, h))
 }
 #[unsafe(no_mangle)]
-pub extern "C" fn vngpu_copy_buffer(src: u32, dst: u32, size: u32) {
+pub extern "C" fn vngpu_copy_buffer(src: u32, soff: u32, dst: u32, doff: u32, size: u32) {
     count("copy_buffer");
-    with(|m| m.copy_buffer(src, dst, size))
+    with(|m| m.copy_buffer(src, soff, dst, doff, size))
 }
 #[unsafe(no_mangle)]
 #[allow(clippy::too_many_arguments)]
@@ -3342,7 +3403,7 @@ mod query_tests {
         let b = m.buffer(256, 0x200 | 4);
         let r = m.buffer(256, 1 | 8);
         m.resolve_queries(set, 0, 2, b, 0);
-        m.copy_buffer(b, r, 16);
+        m.copy_buffer(b, 0, r, 0, 16);
         m.submit();
         assert!(errs(&mut m).is_empty());
         let bytes = m.buffer_bytes(r).unwrap();
@@ -3368,7 +3429,7 @@ mod query_tests {
         let b = m.buffer(256, 0x200 | 4);
         let r = m.buffer(256, 1 | 8);
         m.resolve_queries(set, 0, 3, b, 0);
-        m.copy_buffer(b, r, 24);
+        m.copy_buffer(b, 0, r, 0, 24);
         m.submit();
         let v: Vec<u64> = m.buffer_bytes(r).unwrap()[..24].chunks(8).map(|c| u64::from_le_bytes(c.try_into().unwrap())).collect();
         assert!(v[0] > 0 && v[2] > v[0] && v[1] == 0, "{v:?}");

@@ -160,7 +160,8 @@ fn td_of(prog: &Program, t: &Ty, row_major: bool) -> Td {
         }),
         Ty::Sampler(_) => Td::object(PType::Sampler),
         Ty::Str => Td::object(PType::String),
-        Ty::Void => Td::scalar(PType::Void),
+        // (fx_2_0 has no geometry shaders: a stream is no parameter there)
+        Ty::Void | Ty::Stream(..) => Td::scalar(PType::Void),
     };
     td.elements = 0;
     td

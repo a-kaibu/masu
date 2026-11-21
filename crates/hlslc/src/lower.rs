@@ -31,6 +31,8 @@ pub enum Obj {
     Uav(u32),
     /// groupshared memory g<n> at a dword offset (the value's type: what is there)
     Shared(u32, C),
+    /// a geometry shader's output stream (its index in `L::streams`)
+    Stream(u32),
 }
 
 #[derive(Clone, Debug)]
@@ -50,6 +52,8 @@ pub struct Opts {
     pub pixel: bool,
     /// a compute shader (cs_5_0, cs_4_x)
     pub compute: bool,
+    /// a geometry shader (gs_4_0, gs_4_1, gs_5_0)
+    pub geometry: bool,
     pub major: u32,
     pub minor: u32,
     pub row_major: bool,
@@ -138,6 +142,18 @@ pub struct L<'a> {
     threads: Option<[u32; 3]>,
     /// a place is wanted for a read too (compound assignment, ++/--): UAVs load it
     place_reads: bool,
+    /// a geometry shader's declarations
+    gs: Option<sm4::Gs>,
+    /// its output streams
+    streams: Vec<GsStream>,
+    /// the stream whose output signature is being made
+    cur_stream: u32,
+}
+
+/// A geometry shader's output stream: what Append writes and where.
+struct GsStream {
+    el: Ty,
+    regs: Vec<C>,
 }
 
 const TRUE: u32 = 0xffff_ffff;
@@ -196,7 +212,7 @@ pub fn ncomp(prog: &Program, t: &Ty) -> usize {
         Ty::Array(e, n) => ncomp(prog, e) * kome::num::us(*n),
         Ty::Struct(i) => prog.structs[*i].fields.iter().map(|f| ncomp(prog, &f.ty)).sum(),
         t @ (Ty::Void | Ty::Scalar(_) | Ty::Vec(..) | Ty::Mat(..) | Ty::Tex(..) | Ty::Sampler(_)
-             | Ty::RwTex(..) | Ty::Legacy(_) | Ty::Str) => t.comps(),
+             | Ty::RwTex(..) | Ty::Legacy(_) | Ty::Str | Ty::Stream(..)) => t.comps(),
     }
 }
 
@@ -214,7 +230,7 @@ fn leaf_bases(prog: &Program, t: &Ty, out: &mut Vec<B>) {
             }
         }
         t @ (Ty::Void | Ty::Scalar(_) | Ty::Vec(..) | Ty::Mat(..) | Ty::Tex(..) | Ty::Sampler(_)
-             | Ty::RwTex(..) | Ty::Legacy(_) | Ty::Str) => {
+             | Ty::RwTex(..) | Ty::Legacy(_) | Ty::Str | Ty::Stream(..)) => {
             for _ in 0..t.comps() {
                 out.push(t.base());
             }
@@ -242,7 +258,7 @@ fn units(prog: &Program, t: &Ty, out: &mut Vec<usize>) {
         }
         t if t.comps() > 0 => out.push(t.comps()),
         Ty::Void | Ty::Scalar(_) | Ty::Vec(..) | Ty::Tex(..) | Ty::Sampler(_) | Ty::RwTex(..)
-             | Ty::Legacy(_) | Ty::Str => {}
+             | Ty::Legacy(_) | Ty::Str | Ty::Stream(..) => {}
     }
 }
 
@@ -497,6 +513,9 @@ impl<'a> L<'a> {
             sys_inputs: Vec::new(),
             threads: None,
             place_reads: false,
+            gs: None,
+            streams: Vec::new(),
+            cur_stream: 0,
         }
     }
 
@@ -780,7 +799,7 @@ impl<'a> L<'a> {
                                 }
                             }
                         }
-                        Src::Tex(..) | Src::Samp(_) | Src::SampC(..) | Src::Uav(..) | Src::G(..) => {}
+                        Src::Tex(..) | Src::Samp(_) | Src::SampC(..) | Src::Uav(..) | Src::G(..) | Src::Stream(_) => {}
                     }
                 }
                 srcs.push(s);
@@ -1005,7 +1024,7 @@ impl<'a> L<'a> {
                 out
             }
             t @ (Ty::Void | Ty::Scalar(_) | Ty::Vec(..) | Ty::Tex(..) | Ty::Sampler(_) | Ty::RwTex(..)
-                 | Ty::Legacy(_) | Ty::Str) => {
+                 | Ty::Legacy(_) | Ty::Str | Ty::Stream(..)) => {
                 let n = t.comps();
                 if n == 0 {
                     return Vec::new();
@@ -1038,7 +1057,7 @@ impl<'a> L<'a> {
                     }
                     Obj::Uav(u) => self.uavs[kome::num::us(u)].used = true,
                     // (arrays: the elements indexed are marked)
-                    Obj::None | Obj::TexArr(_) | Obj::SampArr(_) | Obj::LegacyArr(..) | Obj::Shared(..) => {}
+                    Obj::None | Obj::TexArr(_) | Obj::SampArr(_) | Obj::LegacyArr(..) | Obj::Shared(..) | Obj::Stream(_) => {}
                 }
                 // (bools of constant buffers are 0/1: canonical masks)
                 if self.cbvar.contains_key(name) && v.ty.base() == B::Bool && v.ty.numeric() {
@@ -1103,7 +1122,7 @@ impl<'a> L<'a> {
                 }
                 at
             }
-            Ty::Void | Ty::Tex(..) | Ty::Sampler(_) | Ty::RwTex(..) | Ty::Legacy(_) | Ty::Str => at,
+            Ty::Void | Ty::Tex(..) | Ty::Sampler(_) | Ty::RwTex(..) | Ty::Legacy(_) | Ty::Str | Ty::Stream(..) => at,
         }
     }
 
@@ -1145,7 +1164,7 @@ impl<'a> L<'a> {
             Ty::Scalar(_) => 1,
             Ty::Vec(_, n) => u32::from(*n),
             Ty::Mat(_, r, c) => u32::from(*r) * u32::from(*c),
-            Ty::Void | Ty::Tex(..) | Ty::Sampler(_) | Ty::RwTex(..) | Ty::Legacy(_) | Ty::Str => 0,
+            Ty::Void | Ty::Tex(..) | Ty::Sampler(_) | Ty::RwTex(..) | Ty::Legacy(_) | Ty::Str | Ty::Stream(..) => 0,
         }
     }
 
@@ -1153,7 +1172,7 @@ impl<'a> L<'a> {
         let (el, elems) = match t {
             Ty::Array(e, n) => (&**e, crate::sat16(*n)),
             t @ (Ty::Void | Ty::Scalar(_) | Ty::Vec(..) | Ty::Mat(..) | Ty::Struct(_) | Ty::Tex(..)
-                 | Ty::Sampler(_) | Ty::RwTex(..) | Ty::Legacy(_) | Ty::Str) => (t, 0),
+                 | Ty::Sampler(_) | Ty::RwTex(..) | Ty::Legacy(_) | Ty::Str | Ty::Stream(..)) => (t, 0),
         };
         let ty = match el.base() {
             B::Bool => 1,
@@ -1167,7 +1186,7 @@ impl<'a> L<'a> {
             Ty::Mat(_, r, c) => (if row_major { 2 } else { 3 }, u16::from(*r), u16::from(*c)),
             // (a struct: one row of all its members' components)
             Ty::Void | Ty::Array(..) | Ty::Struct(_) | Ty::Tex(..) | Ty::Sampler(_) | Ty::RwTex(..)
-            | Ty::Legacy(_) | Ty::Str => (5, 1, crate::sat16(self.scalars(el))),
+            | Ty::Legacy(_) | Ty::Str | Ty::Stream(..) => (5, 1, crate::sat16(self.scalars(el))),
         };
         sm4::CbVar {
             name: name.into(),
@@ -1253,17 +1272,17 @@ impl<'a> L<'a> {
                             self.samps.push(SampD { name, cmp: false, reg, used: false });
                         }
                         Ty::Void | Ty::Scalar(_) | Ty::Vec(..) | Ty::Mat(..) | Ty::Array(..) | Ty::Struct(_)
-                        | Ty::RwTex(..) | Ty::Str => return Err(format!("line {}: arrays of arrays of textures or samplers are not supported", v.line)),
+                        | Ty::RwTex(..) | Ty::Str | Ty::Stream(..) => return Err(format!("line {}: arrays of arrays of textures or samplers are not supported", v.line)),
                     }
                 }
                 match &**e {
                     Ty::Tex(..) => Obj::TexArr(t0),
                     Ty::Sampler(_) => Obj::SampArr(s0),
                     Ty::Void | Ty::Scalar(_) | Ty::Vec(..) | Ty::Mat(..) | Ty::Array(..) | Ty::Struct(_)
-                    | Ty::RwTex(..) | Ty::Legacy(_) | Ty::Str => Obj::LegacyArr(t0, s0),
+                    | Ty::RwTex(..) | Ty::Legacy(_) | Ty::Str | Ty::Stream(..) => Obj::LegacyArr(t0, s0),
                 }
             }
-            Ty::Void | Ty::Scalar(_) | Ty::Vec(..) | Ty::Mat(..) | Ty::Struct(_) | Ty::Str => return Ok(()),
+            Ty::Void | Ty::Scalar(_) | Ty::Vec(..) | Ty::Mat(..) | Ty::Struct(_) | Ty::Str | Ty::Stream(..) => return Ok(()),
         };
         self.globals.insert(v.name.clone(), Val { ty: v.ty().clone(), c: Vec::new(), obj });
         Ok(())
@@ -1288,7 +1307,7 @@ impl<'a> L<'a> {
                     &sized
                 }
                 t @ (Ty::Void | Ty::Scalar(_) | Ty::Vec(..) | Ty::Mat(..) | Ty::Array(..) | Ty::Struct(_)
-                     | Ty::Tex(..) | Ty::Sampler(_) | Ty::RwTex(..) | Ty::Legacy(_) | Ty::Str) => t,
+                     | Ty::Tex(..) | Ty::Sampler(_) | Ty::RwTex(..) | Ty::Legacy(_) | Ty::Str | Ty::Stream(..)) => t,
             };
             let mut tb = Vec::new();
             leaf_bases(self.prog, t, &mut tb);
@@ -1422,6 +1441,22 @@ impl<'a> L<'a> {
         };
         let (name0, mut index) = split_sem(sem);
         let up = name0.to_ascii_uppercase();
+        // (a geometry shader's primitive id and instance: vPrim, vGSInstanceID)
+        let gs_sys = match up.as_str() {
+            "SV_PRIMITIVEID" if self.o.geometry && !output => Some(dxwgsl::tpf::INPUT_PRIMITIVEID),
+            "SV_GSINSTANCEID" if self.o.geometry && !output && self.o.major >= 5 => Some(dxwgsl::tpf::INPUT_GS_INSTANCE_ID),
+            _ => None,
+        };
+        if let Some(ty) = gs_sys {
+            if t.comps() != 1 || t.base() == B::Float || !t.numeric() {
+                return Err(format!("{sem} of type {t:?}"));
+            }
+            if !self.sys_inputs.iter().any(|s| s.0 == ty) {
+                self.sys_inputs.push((ty, 1));
+            }
+            out.push(C::R(Reg { f: RegF::Sys(ty), rel: None }, Lane::X));
+            return Ok(());
+        }
         if self.o.compute {
             let ty = match up.as_str() {
                 "SV_DISPATCHTHREADID" => dxwgsl::tpf::THREAD_ID,
@@ -1491,14 +1526,16 @@ impl<'a> L<'a> {
         leaf_bases(self.prog, t, &mut bases);
         let b = bases.first().copied().unwrap_or(B::Float);
         let mut k = 0;
+        // (a geometry shader's streams each number their outputs from o0)
+        let stream = if output && self.o.geometry { self.cur_stream } else { 0 };
         for n in u {
             let list = if output { &mut self.outputs } else { &mut self.inputs };
             let depth = name == "SV_Depth";
             let reg = if name == "SV_Target" {
                 index
             } else {
-                list.iter().filter(|e| !e.depth && e.name != "SV_Target").map(|e| e.reg + 1).max().unwrap_or(0).max(
-                    list.iter().filter(|e| e.name == "SV_Target").map(|e| e.reg + 1).max().unwrap_or(0),
+                list.iter().filter(|e| !e.depth && e.name != "SV_Target" && e.stream == stream).map(|e| e.reg.saturating_add(1)).max().unwrap_or(0).max(
+                    list.iter().filter(|e| e.name == "SV_Target").map(|e| e.reg.saturating_add(1)).max().unwrap_or(0),
                 )
             };
             let interp = if !pixel || output {
@@ -1518,7 +1555,7 @@ impl<'a> L<'a> {
                 }
             };
             let ct = if sysval == SysVal::IsFrontFace { sm4::CompType::Uint } else { ctype(b) };
-            list.push(SigEl { name: name.clone(), index, sysval, ctype: ct, reg, mask: Lane::mask(n), interp, depth });
+            list.push(SigEl { name: name.clone(), index, sysval, ctype: ct, reg, mask: Lane::mask(n), interp, depth, stream });
             let f = if depth {
                 RegF::Depth
             } else if output {
@@ -1564,6 +1601,28 @@ impl<'a> L<'a> {
             };
             self.threads = Some([x, y, z]);
         }
+        if self.o.geometry {
+            let int_attr = |n: &str| -> R<Option<i64>> {
+                match f.attrs.iter().find(|a| a.0.eq_ignore_ascii_case(n)) {
+                    None => Ok(None),
+                    Some((_, a)) => match a.as_slice() {
+                        [e] => super::parse::const_int(e).map(Some).ok_or(format!("{n}: not a constant")),
+                        _ => Err(format!("{n} takes one number")),
+                    },
+                }
+            };
+            let maxout = int_attr("maxvertexcount")?.ok_or(format!("{name}: a geometry shader needs [maxvertexcount(n)]"))?;
+            let maxout = u32::try_from(maxout).ok().filter(|m| (1..=1024).contains(m)).ok_or(format!("maxvertexcount({maxout}) is out of range"))?;
+            let instances = match int_attr("instance")? {
+                None => 1,
+                Some(_) if self.o.major < 5 => return Err(format!("{name}: [instance(n)] needs gs_5_0")),
+                Some(n) => u32::try_from(n).ok().filter(|n| (1..=32).contains(n)).ok_or(format!("instance({n}) is out of range"))?,
+            };
+            if f.ret != Ty::Void {
+                return Err(format!("{name}: a geometry shader returns void"));
+            }
+            self.gs = Some(sm4::Gs { input: 0, maxout, instances, streams: Vec::new() });
+        }
         self.scopes.open();
         self.setup_globals(&uniforms)?;
         for (p, a) in bound.iter().zip(args) {
@@ -1575,6 +1634,16 @@ impl<'a> L<'a> {
         let mut outs = Vec::new();
         for p in f.params.iter().filter(|p| !p.uniform && !is_bound(p)) {
             let t = p.ty().clone();
+            if let Ty::Stream(kind, el) = &t {
+                let k = self.gs_stream(*kind, el, p)?;
+                self.scopes.declare(p.name.clone(), Val { ty: t.clone(), c: Vec::new(), obj: Obj::Stream(k) });
+                continue;
+            }
+            if let Some(prim) = p.prim {
+                let v = self.gs_input(prim, &t, p)?;
+                self.scopes.declare(p.name.clone(), v);
+                continue;
+            }
             if p.is_out {
                 let mut regs = Vec::new();
                 self.sig(&t, p.sem.as_deref(), p.interp, true, &mut regs)?;
@@ -1630,6 +1699,97 @@ impl<'a> L<'a> {
             self.flow(sm4::RET);
         }
         self.finish()
+    }
+
+    /// A geometry shader's output stream parameter: its output signature (stream `k`, the
+    /// next one) and the stream's index.
+    fn gs_stream(&mut self, kind: StreamKind, el: &Ty, p: &Var) -> R<u32> {
+        let k = kome::num::u32_of(self.streams.len());
+        if !self.o.geometry {
+            return Err(format!("{}: an output stream outside a geometry shader", p.name));
+        }
+        if !p.is_out || !p.is_in {
+            return Err(format!("{}: an output stream is an inout parameter", p.name));
+        }
+        if k >= 1 && self.o.major < 5 || k >= 4 {
+            return Err(format!("{}: stream {k} (more than one stream needs gs_5_0, at most 4)", p.name));
+        }
+        self.cur_stream = k;
+        let mut regs = Vec::new();
+        self.sig(el, p.sem.as_deref(), Interp::Linear, true, &mut regs)?;
+        self.cur_stream = 0;
+        let topo = match kind {
+            StreamKind::Point => 1,
+            StreamKind::Line => 3,
+            StreamKind::Triangle => 5,
+        };
+        if let Some(g) = self.gs.as_mut() {
+            g.streams.push(topo);
+            // (several streams: point lists, as the runtime requires)
+            if g.streams.len() > 1 && g.streams.iter().any(|&t| t != 1) {
+                return Err(format!("{}: multiple streams must all be PointStreams", p.name));
+            }
+            // (1024 scalars an invocation may write: D3D11_GS_MAX_OUTPUT_VERTEX_COUNT_ACROSS_INSTANCES)
+            let scalars = kome::num::u32_of(regs.len()).saturating_mul(g.maxout);
+            if scalars > 1024 {
+                return Err(format!("maxvertexcount({}) of {} components: {scalars} scalars, over 1024", g.maxout, regs.len()));
+            }
+        }
+        self.streams.push(GsStream { el: el.clone(), regs });
+        Ok(k)
+    }
+
+    /// A geometry shader's input array (`triangle V v[3]`): its signature (one vertex's) and
+    /// the value, v[vertex][register] copied to temporaries (indexed at run time like any array).
+    fn gs_input(&mut self, prim: Prim, t: &Ty, p: &Var) -> R<Val> {
+        let Some(g) = self.gs.as_mut() else { return Err(format!("{}: a primitive input outside a geometry shader", p.name)) };
+        let Ty::Array(el, n) = t else { return Err(format!("{}: a primitive input is an array", p.name)) };
+        if *n != prim.vertices() {
+            return Err(format!("{}: {:?} takes {} vertices, not {n}", p.name, prim, prim.vertices()));
+        }
+        if g.input != 0 {
+            return Err(format!("{}: a second primitive input", p.name));
+        }
+        g.input = prim.code();
+        let mut regs = Vec::new();
+        self.sig(el, p.sem.as_deref(), p.interp, false, &mut regs)?;
+        let mut all = Vec::new();
+        for v in 0..*n {
+            for c in &regs {
+                all.push(if let C::R(Reg { f: RegF::Input(r), rel }, l) = *c { C::R(Reg { f: RegF::GsInput(v, r), rel }, l) } else { *c });
+            }
+        }
+        let st = self.storage(t);
+        self.assign(&st, &all);
+        Ok(Val::num(t.clone(), st))
+    }
+
+    /// Append(v) / RestartStrip() of output stream `k`.
+    fn stream_method(&mut self, k: u32, name: &str, args: &[Expr]) -> R<Val> {
+        let sm5 = self.o.major >= 5;
+        match (name, args) {
+            ("Append", [a]) => {
+                let v = self.expr(a)?;
+                let Some(st) = self.streams.get(kome::num::us(k)) else { return Err("an unknown stream".into()) };
+                let (el, regs) = (st.el.clone(), st.regs.clone());
+                let v = self.cast(v, &el)?;
+                self.assign(&regs, &v.c);
+                if sm5 {
+                    self.emit(sm4::EMIT_STREAM, vec![], vec![Src::Stream(k)]);
+                } else {
+                    self.emit(sm4::EMIT, vec![], vec![]);
+                }
+            }
+            ("RestartStrip", []) => {
+                if sm5 {
+                    self.emit(sm4::CUT_STREAM, vec![], vec![Src::Stream(k)]);
+                } else {
+                    self.emit(sm4::CUT, vec![], vec![]);
+                }
+            }
+            _ => return Err(format!("{name} of a stream ({} arguments)", args.len())),
+        }
+        Ok(Val::num(Ty::Void, Vec::new()))
     }
 
     fn write_outputs(&mut self) -> R<()> {
@@ -1690,7 +1850,7 @@ impl<'a> L<'a> {
             let legacy = self.globals.values().find_map(|v| match v.obj {
                 Obj::Legacy(t, sm) if kome::num::us(sm) == n => legacy_slot.get(&kome::num::us(t)).copied(),
                 Obj::None | Obj::Tex(_) | Obj::Samp(_) | Obj::Legacy(..) | Obj::TexArr(_) | Obj::SampArr(_)
-                | Obj::LegacyArr(..) | Obj::Uav(_) | Obj::Shared(..) => None,
+                | Obj::LegacyArr(..) | Obj::Uav(_) | Obj::Shared(..) | Obj::Stream(_) => None,
             });
             let slot = s.reg.or(legacy).unwrap_or_else(|| {
                 let mut k = 0;
@@ -1775,6 +1935,7 @@ impl<'a> L<'a> {
             samp_map,
             early_depth: false,
             d3d10: false,
+            gs: self.gs,
         })
     }
 
@@ -1980,7 +2141,7 @@ impl<'a> L<'a> {
                         let c = self.copy(&val.c);
                         self.scalar_src(c[0])
                     }
-                    s @ (Src::R { .. } | Src::Tex(..) | Src::Samp(_) | Src::SampC(..) | Src::Uav(..) | Src::G(..)) => s,
+                    s @ (Src::R { .. } | Src::Tex(..) | Src::Samp(_) | Src::SampC(..) | Src::Uav(..) | Src::G(..) | Src::Stream(_)) => s,
                 };
                 self.emit(SWITCH, vec![], vec![s]);
                 self.fctx()?.loops += 1;
@@ -2218,7 +2379,7 @@ impl<'a> L<'a> {
             let t = match t {
                 Ty::Vec(b, n) if cv.ty.comps() > 1 && kome::num::u32_of(cv.ty.comps()) < u32::from(n) => Ty::vec_of(b, cv.ty.comps()).ok_or("a condition of more than 4 components")?,
                 t @ (Ty::Void | Ty::Scalar(_) | Ty::Vec(..) | Ty::Mat(..) | Ty::Array(..) | Ty::Struct(_)
-                     | Ty::Tex(..) | Ty::Sampler(_) | Ty::RwTex(..) | Ty::Legacy(_) | Ty::Str) => t,
+                     | Ty::Tex(..) | Ty::Sampler(_) | Ty::RwTex(..) | Ty::Legacy(_) | Ty::Str | Ty::Stream(..)) => t,
             };
             let x = self.cast(x, &t)?;
             let y = self.cast(y, &t)?;
@@ -2283,6 +2444,7 @@ impl<'a> L<'a> {
         let v = match v.obj {
             // (groupshared memory: through a copy, stored back)
             Obj::Shared(..) => self.shared_place(v)?,
+            Obj::Stream(_) => v,
             Obj::None | Obj::Tex(_) | Obj::Samp(_) | Obj::Legacy(..) | Obj::TexArr(_) | Obj::SampArr(_)
             | Obj::LegacyArr(..) | Obj::Uav(_) => v,
         };
@@ -2306,7 +2468,7 @@ impl<'a> L<'a> {
                         self.member(p, n)?
                     }
                     Obj::None | Obj::Tex(_) | Obj::Samp(_) | Obj::Legacy(..) | Obj::TexArr(_) | Obj::SampArr(_)
-                    | Obj::LegacyArr(..) | Obj::Uav(_) => self.member(v, n)?,
+                    | Obj::LegacyArr(..) | Obj::Uav(_) | Obj::Stream(_) => self.member(v, n)?,
                 }
             }
             Expr::Index(a, i) => {
@@ -2314,7 +2476,7 @@ impl<'a> L<'a> {
                 let v = match v.obj {
                     Obj::Shared(..) if !matches!(v.ty, Ty::Array(..)) => self.shared_place(v)?,
                     Obj::None | Obj::Tex(_) | Obj::Samp(_) | Obj::Legacy(..) | Obj::TexArr(_) | Obj::SampArr(_)
-                    | Obj::LegacyArr(..) | Obj::Uav(_) | Obj::Shared(..) => v,
+                    | Obj::LegacyArr(..) | Obj::Uav(_) | Obj::Shared(..) | Obj::Stream(_) => v,
                 };
                 let mut iv = self.expr(i)?;
                 if let (Ty::RwTex(_, el), Obj::Uav(u)) = (&v.ty, v.obj) {
@@ -2348,7 +2510,7 @@ impl<'a> L<'a> {
                             Ty::Array(e, _) => ncomp(self.prog, e),
                             Ty::Mat(_, _, c) => usize::from(*c),
                             Ty::Void | Ty::Scalar(_) | Ty::Vec(..) | Ty::Struct(_) | Ty::Tex(..) | Ty::Sampler(_)
-                            | Ty::RwTex(..) | Ty::Legacy(_) | Ty::Str => 1,
+                            | Ty::RwTex(..) | Ty::Legacy(_) | Ty::Str | Ty::Stream(..) => 1,
                         };
                         // (the elements are written back: a constant buffer's or an input's are not
                         // places)
@@ -2421,7 +2583,7 @@ impl<'a> L<'a> {
                 Val::num(v.ty, c)
             }
             Obj::None | Obj::Tex(_) | Obj::Samp(_) | Obj::Legacy(..) | Obj::TexArr(_) | Obj::SampArr(_)
-            | Obj::LegacyArr(..) | Obj::Uav(_) | Obj::Shared(..) => v,
+            | Obj::LegacyArr(..) | Obj::Uav(_) | Obj::Shared(..) | Obj::Stream(_) => v,
         }
     }
 
@@ -2523,7 +2685,7 @@ impl<'a> L<'a> {
                 }
                 Err(format!("no member '{name}'"))
             }
-            t @ (Ty::Void | Ty::Array(..) | Ty::Tex(..) | Ty::Sampler(_) | Ty::RwTex(..) | Ty::Legacy(_) | Ty::Str) => Err(format!("member .{name} of {t:?}")),
+            t @ (Ty::Void | Ty::Array(..) | Ty::Tex(..) | Ty::Sampler(_) | Ty::RwTex(..) | Ty::Legacy(_) | Ty::Str | Ty::Stream(..)) => Err(format!("member .{name} of {t:?}")),
         }
     }
 
@@ -2646,7 +2808,7 @@ impl<'a> L<'a> {
                     self.samps[kome::num::us(s + i)].used = true;
                     Obj::Legacy(t + i, s + i)
                 }
-                Obj::None | Obj::Tex(_) | Obj::Samp(_) | Obj::Legacy(..) | Obj::Uav(_) | Obj::Shared(..) => unreachable!(),
+                Obj::None | Obj::Tex(_) | Obj::Samp(_) | Obj::Legacy(..) | Obj::Uav(_) | Obj::Shared(..) | Obj::Stream(_) => unreachable!(),
             };
             return Ok(Val { ty: (**e).clone(), c: Vec::new(), obj });
         }
@@ -2679,11 +2841,11 @@ impl<'a> L<'a> {
                 let t = match v.obj {
                     Obj::Tex(t) => t,
                     Obj::None | Obj::Samp(_) | Obj::Legacy(..) | Obj::TexArr(_) | Obj::SampArr(_) | Obj::LegacyArr(..)
-                    | Obj::Uav(_) | Obj::Shared(..) => return Err("texture[] of a non-texture".into()),
+                    | Obj::Uav(_) | Obj::Shared(..) | Obj::Stream(_) => return Err("texture[] of a non-texture".into()),
                 };
                 self.load(t, iv, [0; 3], false)
             }
-            t @ (Ty::Void | Ty::Scalar(_) | Ty::Struct(_) | Ty::Sampler(_) | Ty::RwTex(..) | Ty::Legacy(_) | Ty::Str) => Err(format!("index of {t:?}")),
+            t @ (Ty::Void | Ty::Scalar(_) | Ty::Struct(_) | Ty::Sampler(_) | Ty::RwTex(..) | Ty::Legacy(_) | Ty::Str | Ty::Stream(..)) => Err(format!("index of {t:?}")),
         }
     }
 
@@ -2901,6 +3063,9 @@ impl<'a> L<'a> {
 
     fn method(&mut self, o: &Expr, name: &str, args: &[Expr]) -> R<Val> {
         let ov = self.expr(o)?;
+        if let Obj::Stream(k) = ov.obj {
+            return self.stream_method(k, name, args);
+        }
         super::intrinsics::method(self, ov, name, args)
     }
 

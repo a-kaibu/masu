@@ -32,6 +32,7 @@ impl OpType {
 // program types
 pub const PIXEL: ProgramType = ProgramType(0);
 pub const VERTEX: ProgramType = ProgramType(1);
+pub const GEOMETRY: ProgramType = ProgramType(2);
 pub const COMPUTE: ProgramType = ProgramType(5);
 
 // operand types
@@ -54,7 +55,16 @@ pub const TGSM: OpType = OpType(31);
 pub const THREAD_ID: OpType = OpType(32);
 pub const THREAD_GROUP_ID: OpType = OpType(33);
 pub const THREAD_ID_IN_GROUP: OpType = OpType(34);
-pub const THREAD_ID_IN_GROUP_FLATTENED: OpType = OpType(35);
+/// (D3D11_SB_OPERAND_TYPE_INPUT_THREAD_ID_IN_GROUP_FLATTENED is 36: 35 is the coverage mask
+/// input)
+pub const THREAD_ID_IN_GROUP_FLATTENED: OpType = OpType(36);
+pub const INPUT_COVERAGE_MASK: OpType = OpType(35);
+/// vPrim (SV_PrimitiveID of geometry shaders)
+pub const INPUT_PRIMITIVEID: OpType = OpType(11);
+/// m<n>: a geometry shader's output stream
+pub const STREAM: OpType = OpType(16);
+/// vGSInstanceID
+pub const INPUT_GS_INSTANCE_ID: OpType = OpType(37);
 pub const OUTPUT_DEPTH_LE: OpType = OpType(39);
 
 #[derive(Clone, Debug, PartialEq)]
@@ -310,9 +320,9 @@ opcodes! {
     HsControlPointPhase = 0x72 => Unchecked,
     HsForkPhase = 0x73 => Unchecked,
     HsJoinPhase = 0x74 => Unchecked,
-    EmitStream = 0x75 => Unchecked,
-    CutStream = 0x76 => Unchecked,
-    EmitThenCutStream = 0x77 => Unchecked,
+    EmitStream = 0x75 => Ops(1),
+    CutStream = 0x76 => Ops(1),
+    EmitThenCutStream = 0x77 => Ops(1),
     InterfaceCall = 0x78 => Unchecked,
     BufInfo = 0x79 => Ops(2),
     DerivRtxCoarse = 0x7a => Ops(2),
@@ -336,7 +346,7 @@ opcodes! {
     Bfi = 0x8c => Ops(5),
     Bfrev = 0x8d => Ops(2),
     Swapc = 0x8e => Ops(5),
-    DclStream = 0x8f => Decl(0),
+    DclStream = 0x8f => Decl(1),
     DclFunctionBody = 0x90 => Decl(0),
     DclFunctionTable = 0x91 => Decl(0),
     DclInterface = 0x92 => Decl(0),
@@ -399,7 +409,7 @@ opcodes! {
     EvalSnapped = 0xcb => Unchecked,
     EvalSampleIndex = 0xcc => Unchecked,
     EvalCentroid = 0xcd => Unchecked,
-    DclGsInstanceCount = 0xce => Unchecked,
+    DclGsInstanceCount = 0xce => Decl(0),
     Abort = 0xcf => Unchecked,
     DebugBreak = 0xd0 => Unchecked,
     Reserved11 = 0xd1 => Unchecked,

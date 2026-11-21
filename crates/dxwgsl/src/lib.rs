@@ -47,6 +47,8 @@ pub enum Binding {
     /// compute shaders: a write-only storage texture (a typed UAV): view dimension as for
     /// textures, its WebGPU format
     Storage(u32, String),
+    /// a storage buffer (the expanded draws' stores, wgsl/expand.rs): read-write or not
+    StorageBuffer(bool),
 }
 
 pub struct Wgsl {
@@ -61,7 +63,9 @@ pub fn translate(code: &[u8], pixel: bool, ps: Option<&[u8]>) -> Result<Wgsl, St
     crate::wgsl::translate(code, pixel, ps)
 }
 
-pub use crate::wgsl::{translate_addr, translate_compute, translate_point_sprite, thread_group, uav_slots};
+pub use crate::wgsl::{translate_addr, translate_compute, translate_point_sprite, thread_group, uav_slots, GsDecl};
+/// Geometry shaders, stream output and clipper counts as compute passes (wgsl/expand.rs).
+pub use crate::wgsl::expand;
 
 /// The "geometry shader" sake's D3DCompile makes of ANGLE's point sprite geometry shader: this
 /// tag, then the largest point size (f32). The D3D11 device draws points with it as sprites

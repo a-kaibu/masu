@@ -160,14 +160,14 @@ impl L<'_> {
         match v.obj {
             Obj::Tex(t) | Obj::Legacy(t, _) => Ok(t),
             Obj::None | Obj::Samp(_) | Obj::TexArr(_) | Obj::SampArr(_) | Obj::LegacyArr(..) | Obj::Uav(_)
-            | Obj::Shared(..) => Err("a texture is needed".into()),
+            | Obj::Shared(..) | Obj::Stream(_) => Err("a texture is needed".into()),
         }
     }
     fn sampler_of(&self, v: &Val) -> R<u32> {
         match v.obj {
             Obj::Samp(s) | Obj::Legacy(_, s) => Ok(s),
             Obj::None | Obj::Tex(_) | Obj::TexArr(_) | Obj::SampArr(_) | Obj::LegacyArr(..) | Obj::Uav(_)
-            | Obj::Shared(..) => Err("a sampler is needed".into()),
+            | Obj::Shared(..) | Obj::Stream(_) => Err("a sampler is needed".into()),
         }
     }
 

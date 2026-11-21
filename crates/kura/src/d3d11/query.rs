@@ -109,6 +109,33 @@ pub struct Query {
     pub state: State,
     /// PIPELINE_STATISTICS: the device's counts (`Stats`) at Begin, then what came between
     pub stats: Stats,
+    /// the counter tickets of `counter_words` (COUNT_BEGIN / COUNT_END), 0: none
+    pub counts: [u32; 8],
+}
+
+/// The words of the page's counters (dxwgsl::expand::counter) a query reads: PIPELINE_STATISTICS
+/// GSPrimitives, CInvocations, CPrimitives; SO_STATISTICS and SO_OVERFLOW_PREDICATE a stream's
+/// primitives written and needed (2 s, 2 s + 1), all four streams' without one.
+pub fn counter_words(kind: Kind) -> &'static [u32] {
+    use dxwgsl::expand::counter as c;
+    const STATS: [u32; 3] = [c::GS_PRIMITIVES, c::C_INVOCATIONS, c::C_PRIMITIVES];
+    const SO: [u32; 8] = [0, 1, 2, 3, 4, 5, 6, 7];
+    match kind {
+        Kind::PipelineStatistics => &STATS,
+        Kind::SoStatistics(Some(s)) | Kind::SoOverflowPredicate(Some(s)) => SO.get(us(s.min(3).saturating_mul(2))..us(s.min(3).saturating_mul(2).saturating_add(2))).unwrap_or(&[]),
+        Kind::SoStatistics(None) | Kind::SoOverflowPredicate(None) => &SO,
+        Kind::Event | Kind::Occlusion | Kind::Timestamp | Kind::TimestampDisjoint | Kind::OcclusionPredicate => &[],
+    }
+}
+
+/// SO_STATISTICS of the counters' values (by `counter_words`): written, needed, the streams' summed.
+fn so_counts(v: &[u64]) -> (u64, u64) {
+    v.chunks(2).fold((0, 0), |(w, n), c| (w.wrapping_add(c.first().copied().unwrap_or(0)), n.wrapping_add(c.get(1).copied().unwrap_or(0))))
+}
+
+/// SO_OVERFLOW_PREDICATE of the counters' values: a stream needed more than it wrote.
+fn overflowed(v: &[u64]) -> bool {
+    v.chunks(2).any(|c| c.get(1).copied().unwrap_or(0) > c.first().copied().unwrap_or(0))
 }
 
 /// D3D11_QUERY_DATA_PIPELINE_STATISTICS's counts as the device keeps them from what it sends
@@ -135,10 +162,12 @@ pub fn primitives(topology: u32, n: u32) -> u64 {
     }
 }
 
-/// What a draw of `n` vertices, `instances` times, adds: the input assembler's vertices and
-/// primitives, a vertex shader run per vertex, a geometry shader (`gs`) per primitive, the
-/// rasterizer's primitives; with a hull and domain shader (`tess`), a hull shader run per patch.
-pub fn count_draw(s: &mut Stats, topology: u32, n: u32, instances: u32, gs: bool, tess: bool) {
+/// What a draw of `n` vertices, `instances` times, adds on the device's side: the input
+/// assembler's vertices and primitives, a vertex shader run per vertex, a geometry shader's
+/// (`gs`: its GS instances) per primitive and instance; with a hull and domain shader (`tess`),
+/// a hull shader run per patch. GSPrimitives, CInvocations and CPrimitives are the page's
+/// counters (expand.rs: the expanded draws a PIPELINE_STATISTICS query makes).
+pub fn count_draw(s: &mut Stats, topology: u32, n: u32, instances: u32, gs: Option<u32>, tess: bool) {
     let v = u64::from(n).saturating_mul(u64::from(instances));
     let p = primitives(topology, n).saturating_mul(u64::from(instances));
     let add = |s: &mut Stats, i: usize, x: u64| {
@@ -149,11 +178,9 @@ pub fn count_draw(s: &mut Stats, topology: u32, n: u32, instances: u32, gs: bool
     add(s, 0, v);
     add(s, 1, p);
     add(s, 2, v);
-    if gs {
-        add(s, 3, p);
+    if let Some(k) = gs {
+        add(s, 3, p.saturating_mul(u64::from(k)));
     }
-    add(s, 5, p);
-    add(s, 6, p);
     if tess {
         add(s, 8, p);
     }
@@ -170,19 +197,34 @@ fn losses() -> u32 {
 
 impl Query {
     pub fn new(kind: Kind) -> Query {
-        Query { kind, state: State::Fresh, stats: [0; 11] }
+        Query { kind, state: State::Fresh, stats: [0; 11], counts: [0; 8] }
     }
 
     pub fn forget(&self) {
         self.state.forget();
+        for &t in self.counts.iter().filter(|&&t| t != 0) {
+            gpu::query_forget(t);
+        }
     }
 
-    /// ID3D11DeviceContext::Begin (`now`: the device's counts)
-    pub fn begin(&mut self, now: &Stats) {
+    /// Whether it reads the page's counters (the draws while it is open are expanded).
+    pub fn counts_on_page(&self) -> bool {
+        !counter_words(self.kind).is_empty()
+    }
+
+    /// ID3D11DeviceContext::Begin (`now`: the device's counts; `counters`: the page buffer of
+    /// the counters, expand.rs)
+    pub fn begin(&mut self, now: &Stats, counters: u32) {
         if !self.kind.begins() {
             return;
         }
         self.forget();
+        self.counts = [0; 8];
+        for (t, &w) in self.counts.iter_mut().zip(counter_words(self.kind)) {
+            *t = gpu::query_ticket();
+            let c = [gpu::COUNT_BEGIN, *t, counters, w.saturating_mul(4)];
+            gpu::record(|b| b.cmd(&c));
+        }
         let ticket = match self.kind.end() {
             _ if self.kind == Kind::PipelineStatistics => {
                 self.stats = *now;
@@ -208,6 +250,14 @@ impl Query {
         };
         if begun == 0 {
             self.forget();
+            // (ended without a begin: tickets the page answers 0)
+            self.counts = [0; 8];
+            for (t, _) in self.counts.iter_mut().zip(counter_words(self.kind)) {
+                *t = gpu::query_ticket();
+            }
+        }
+        for &t in self.counts.iter().filter(|&&t| t != 0) {
+            gpu::record(|b| b.cmd(&[gpu::COUNT_END, t]));
         }
         let t = if begun != 0 { begun } else { gpu::query_ticket() };
         if self.kind == Kind::PipelineStatistics {
@@ -235,7 +285,17 @@ impl Query {
                 Answer::Done(v) => Some(v != 0),
                 Answer::Unrun | Answer::Pending => None,
             },
-            Kind::SoOverflowPredicate(_) => Some(false),
+            Kind::SoOverflowPredicate(_) => {
+                let mut v = Vec::new();
+                for &t in self.counts.iter().take(counter_words(self.kind).len()) {
+                    match gpu::query_wait(t) {
+                        Answer::Done(x) => v.push(x),
+                        Answer::Unrun => v.push(0),
+                        Answer::Pending => return None,
+                    }
+                }
+                Some(overflowed(&v))
+            }
             Kind::Event | Kind::Occlusion | Kind::Timestamp | Kind::TimestampDisjoint | Kind::PipelineStatistics | Kind::SoStatistics(_) => None,
         }
     }
@@ -246,15 +306,25 @@ impl Query {
         if size != 0 && (size != self.kind.data_size() || !has_data) {
             return (E_INVALIDARG, Vec::new());
         }
-        let v = match gpu::query_answer(ticket) {
-            Answer::Pending => {
-                if flags & DONOTFLUSH == 0 {
-                    gpu::flush();
-                    #[cfg(test)]
-                    gpu::pump();
-                }
-                return (S_FALSE, Vec::new());
+        let pending = || {
+            if flags & DONOTFLUSH == 0 {
+                gpu::flush();
+                #[cfg(test)]
+                gpu::pump();
             }
+            (S_FALSE, Vec::new())
+        };
+        // the counters' values (by counter_words)
+        let mut counts = Vec::new();
+        for &t in self.counts.iter().take(counter_words(self.kind).len()) {
+            match gpu::query_answer(t) {
+                Answer::Pending => return pending(),
+                Answer::Done(x) => counts.push(x),
+                Answer::Unrun => counts.push(0),
+            }
+        }
+        let v = match gpu::query_answer(ticket) {
+            Answer::Pending => return pending(),
             Answer::Done(v) => v,
             Answer::Unrun => match self.kind {
                 Kind::Timestamp => ns_now(),
@@ -278,11 +348,22 @@ impl Query {
             Kind::PipelineStatistics => {
                 let mut st = self.stats;
                 st[7] = v;
+                for (i, c) in [4usize, 5, 6].into_iter().zip(&counts) {
+                    if let Some(s) = st.get_mut(i) {
+                        *s = *c;
+                    }
+                }
                 for (o, b) in out.iter_mut().zip(st.iter().flat_map(|x| x.to_le_bytes())) {
                     *o = b;
                 }
             }
-            Kind::SoStatistics(_) | Kind::SoOverflowPredicate(_) => {}
+            Kind::SoStatistics(_) => {
+                let (w, n) = so_counts(&counts);
+                for (o, b) in out.iter_mut().zip(w.to_le_bytes().into_iter().chain(n.to_le_bytes())) {
+                    *o = b;
+                }
+            }
+            Kind::SoOverflowPredicate(_) => out.copy_from_slice(&u32::from(overflowed(&counts)).to_le_bytes()),
         }
         (0, out)
     }

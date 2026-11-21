@@ -14,6 +14,7 @@ pub mod d3d10;
 mod deferred;
 pub mod query;
 pub mod check;
+mod expand;
 mod clear;
 pub mod format;
 mod hazards;
@@ -216,6 +217,8 @@ pub struct Buffer {
     pub stream: bool,
     /// a dynamic buffer's bytes as last uploaded (what `stream` uploads are diffed against)
     pub shadow: Vec<u8>,
+    /// stream output wrote `gpu` since `mem` was its bytes (expand::pull reads it back)
+    pub gpu_written: bool,
 }
 
 pub struct Texture {
@@ -327,6 +330,8 @@ pub struct Shader {
     /// by the pixel shader a vertex shader feeds (see shader_for) and the samplers addressing
     /// as WebGPU's don't (dxwgsl::addr)
     pub wgsl: HashMap<(u32, Vec<dxwgsl::addr::Addr>), Option<(u32, Vec<(u32, dxwgsl::Binding)>)>>,
+    /// CreateGeometryShaderWithStreamOutput's (`code` a geometry or a vertex shader's)
+    pub so: Option<expand::SoDesc>,
 }
 
 pub struct Elem {
@@ -336,6 +341,8 @@ pub struct Elem {
     pub slot: u32,
     pub offset: u32,
     pub instance: bool,
+    /// InstanceDataStepRate (instance data: instances an element is used for, 0 all of them)
+    pub step: u32,
 }
 
 pub struct SwapChain {
@@ -473,6 +480,8 @@ pub struct D11 {
     next_gpu: u32,
     /// the page's lost devices seen (render::lost_gen, see `after_lost`)
     lost_seen: u32,
+    /// the expanded draws' page buffers and shaders, the queries that count on the page
+    expand: expand::Gpu,
 }
 
 unsafe impl Send for D11 {}
@@ -717,6 +726,7 @@ impl D11 {
         }
         match o.data {
             Data::Buffer(b) => {
+                expand::forget_buffer(self, id);
                 self.guest_free(b.mem);
                 if b.gpu != 0 {
                     gpu::record(|q| q.cmd(&[gpu::DESTROY_BUFFER, b.gpu]));
@@ -752,7 +762,8 @@ impl D11 {
             Data::Shader(s) => {
                 // (its translations and the pipelines made of them go from the page: kept for
                 // the session before, a game making shaders per scene piled them up)
-                let mods: Vec<u32> = s.wgsl.values().flatten().map(|r| r.0).collect();
+                let mut mods: Vec<u32> = s.wgsl.values().flatten().map(|r| r.0).collect();
+                mods.extend(expand::forget_shader(self, id));
                 if !mods.is_empty() {
                     let mut gone = Vec::new();
                     self.pipelines.retain(|k, &mut id| {
@@ -778,7 +789,10 @@ impl D11 {
                 self.release(s.device);
             }
             Data::Factory | Data::Adapter(_) | Data::Output | Data::Device | Data::Context | Data::Layout(_) | Data::State(_) | Data::CtxState(_) | Data::Other => {}
-            Data::Query(q) => q.forget(),
+            Data::Query(q) => {
+                self.expand.open.retain(|&x| x != id);
+                q.forget();
+            }
         }
     }
 }
@@ -818,6 +832,7 @@ pub unsafe fn init(vtbls: *const u32, count: u32) -> u32 {
                 targets: None,
                 next_gpu: 0,
                 lost_seen: crate::render::lost_gen(),
+                expand: expand::Gpu::default(),
             })
         }
     }
@@ -2142,7 +2157,7 @@ unsafe fn device_call(d: &mut D11, m: u32, this: u32, a: &dyn Fn(usize) -> u32) 
             if a(2) != 0 {
                 std::ptr::copy_nonoverlapping(gc::<u8>(rdp(a(2), 0)), gp::<u8>(mem), us(size));
             }
-            let o = d.new_obj(IF_BUFFER, Data::Buffer(Buffer { size, usage, bind, cpu, misc, stride, mem, gpu: 0, dirty: true, stream: false, shadow: Vec::new() }));
+            let o = d.new_obj(IF_BUFFER, Data::Buffer(Buffer { size, usage, bind, cpu, misc, stride, mem, gpu: 0, dirty: true, stream: false, shadow: Vec::new(), gpu_written: false }));
             if d.trace && size <= 256 {
                 let f: Vec<f32> = (0..size / 4).map(|i| *(gc::<f32>(mem + 4 * i))).collect();
                 eprintln!("d3d11: new buffer {o} bind {bind:#x} usage {usage} = {f:?}");
@@ -2236,7 +2251,9 @@ unsafe fn device_call(d: &mut D11, m: u32, this: u32, a: &dyn Fn(usize) -> u32) 
                 let off = if off == 0xffff_ffff { next[us(slot)] } else { off };
                 let size = format::vertex_format(fmt).map_or(4, vertex_size);
                 next[us(slot)] = off + size;
-                v.push(Elem { name, index, fmt, slot, offset: off, instance: class == 1 });
+                // SAFETY: rd's own contract: the caller's D3D11_INPUT_ELEMENT_DESC array of a(2) elements
+                let step = unsafe { rd(f, 5) };
+                v.push(Elem { name, index, fmt, slot, offset: off, instance: class == 1, step });
             }
             let code = if a(3) == 0 { &[][..] } else { std::slice::from_raw_parts(gc::<u8>(a(3)), us(a(4))) };
             let names: Vec<(&str, u32)> = v.iter().map(|e| (e.name.as_str(), e.index)).collect();
@@ -2278,23 +2295,62 @@ unsafe fn device_call(d: &mut D11, m: u32, this: u32, a: &dyn Fn(usize) -> u32) 
             if a(4) == 0 {
                 return S_FALSE;
             }
-            let o = d.new_obj(iface, Data::Shader(Shader { code, pixel: iface == IF_PS, wgsl: HashMap::new() }));
+            let o = d.new_obj(iface, Data::Shader(Shader { code, pixel: iface == IF_PS, wgsl: HashMap::new(), so: None }));
             wrp(a(4), 0, o);
             S_OK
         }
         14 => {
             // CreateGeometryShaderWithStreamOutput(code, len, decls, n, strides, nstrides, stream,
-            // linkage, out): a geometry or vertex shader's bytecode (or none: SO of the VS)
-            if a(1) != 0 {
-                let code = std::slice::from_raw_parts(gc::<u8>(a(1)), us(a(2)));
-                if check::shader(code, 13, d.level).is_err() && check::shader(code, 12, d.level).is_err() {
-                    if a(9) != 0 {
-                        wrp(a(9), 0, 0);
-                    }
-                    return E_INVALIDARG;
+            // linkage, out): a geometry or vertex shader's bytecode and what it streams out
+            let code = if a(1) == 0 {
+                Vec::new()
+            } else {
+                // SAFETY: byte i of the caller's bytecode of a(2) bytes at a(1) (gc maps the
+                // guest address)
+                (0..a(2)).map(|i| unsafe { *gc::<u8>(a(1).wrapping_add(i)) }).collect()
+            };
+            let gs = check::shader(&code, 13, d.level).is_ok();
+            let fail = |hr: u32| {
+                if a(9) != 0 {
+                    wrp(a(9), 0, 0);
                 }
+                hr
+            };
+            if a(1) != 0 && !gs && check::shader(&code, 12, d.level).is_err() {
+                return fail(E_INVALIDARG);
             }
-            let o = d.new_obj(IF_GS, Data::Other);
+            // D3D11_SO_DECLARATION_ENTRY { Stream, SemanticName, SemanticIndex, Start, Count, Slot }
+            let size = ptr().wrapping_mul(2).wrapping_add(8);
+            let entries: Vec<expand::RawEntry> = (0..a(4).min(513))
+                .map(|i| {
+                    let e = a(3).wrapping_add(i.wrapping_mul(size));
+                    // SAFETY: rd's own contract: entry i of the caller's array of a(4)
+                    // D3D11_SO_DECLARATION_ENTRY (its Stream)
+                    let stream = unsafe { rd(e, 0) };
+                    // SAFETY: rdp's own contract: the same entry's SemanticName
+                    let np = unsafe { rdp(e.wrapping_add(ptr()), 0) };
+                    // SAFETY: rd's own contract: the same entry's SemanticIndex
+                    let index = unsafe { rd(e.wrapping_add(ptr().wrapping_mul(2)), 0) };
+                    // SAFETY: the entry's SemanticName, a NUL-terminated string of the caller's
+                    let name = (np != 0).then(|| unsafe { std::ffi::CStr::from_ptr(gc::<std::ffi::c_char>(np)) }.to_string_lossy().into_owned());
+                    let b = e.wrapping_add(ptr().wrapping_mul(2)).wrapping_add(4);
+                    // SAFETY: byte k of the same entry's StartComponent, ComponentCount, OutputSlot
+                    let byte = |k: u32| u32::from(unsafe { *gc::<u8>(b.wrapping_add(k)) });
+                    let (start, count, slot) = (byte(0), byte(1), byte(2));
+                    expand::RawEntry { stream, name, index, start, count, slot }
+                })
+                .collect();
+            // SAFETY: rd's own contract: the caller's array of a(6) buffer strides
+            let strides: Vec<u32> = (0..a(6).min(5)).map(|i| unsafe { rd(a(5), us(i)) }).collect();
+            let osgn = dxwgsl::signature(&code, true);
+            let so = match expand::so_desc(&osgn, gs, &entries, &strides, a(7)) {
+                Ok(so) => so,
+                Err(hr) => return fail(hr),
+            };
+            if a(9) == 0 {
+                return S_FALSE;
+            }
+            let o = d.new_obj(IF_GS, Data::Shader(Shader { code, pixel: false, wgsl: HashMap::new(), so: Some(so) }));
             wrp(a(9), 0, o);
             S_OK
         }
@@ -2847,6 +2903,10 @@ fn buffer_view_sync(d: &mut D11, view: u32) {
     if matches!(d.objs.get(&b.buf).map(|o| &o.data), Some(Data::Texture(_))) {
         return nv12_view_sync(d, view);
     }
+    let bid = b.buf;
+    expand::pull(d, bid);
+    let Some(Data::View(v)) = d.objs.get(&view).map(|o| &o.data) else { return };
+    let Some(b) = &v.buf else { return };
     let Some(Data::Buffer(buf)) = d.objs.get(&b.buf).map(|o| &o.data) else { return };
     if buf.mem == 0 {
         return;
@@ -3138,8 +3198,18 @@ unsafe fn context_call2(d: &mut D11, st: &mut State, m: u32, a: &dyn Fn(usize) -
             // Begin, End
             let q = d.id_of(a(1));
             let now = d.stats;
+            let on_page = matches!(d.objs.get(&q).map(|o| &o.data), Some(Data::Query(x)) if x.counts_on_page());
+            let counters = if on_page { expand::counters(d) } else { 0 };
+            // (PIPELINE_STATISTICS counts the clipper's work on the page: the draws while one is
+            // open are expanded, expand.rs)
+            if matches!(d.objs.get(&q).map(|o| &o.data), Some(Data::Query(x)) if x.kind == query::Kind::PipelineStatistics) {
+                d.expand.open.retain(|&x| x != q);
+                if m == 27 {
+                    d.expand.open.push(q);
+                }
+            }
             if let Some(Data::Query(x)) = d.objs.get_mut(&q).map(|o| &mut o.data) {
-                if m == 28 { x.end(&now) } else { x.begin(&now) }
+                if m == 28 { x.end(&now) } else { x.begin(&now, counters) }
             }
         }
         29 => {
@@ -3280,11 +3350,24 @@ unsafe fn context_call2(d: &mut D11, st: &mut State, m: u32, a: &dyn Fn(usize) -
             hazards::after_outputs(d, st);
         }
         37 => {
-            // SOSetTargets(n, buffers, offsets): kept, nothing streams out
+            // SOSetTargets(n, buffers, offsets): the buffers stream output writes (expand.rs),
+            // each from its offset (-1: on from what it holds; no offsets: 0)
             let mut so = st.so;
             set_slots(d, &mut so, 0, 4, 0);
             set_slots(d, &mut so, 0, a(1).min(4), a(2));
             st.so = so;
+            for k in 0..a(1).min(4) {
+                let buf = so.get(us(k)).copied().unwrap_or(0);
+                let off = if a(3) == 0 {
+                    0
+                } else {
+                    // SAFETY: rd's own contract: the caller's array of `n` offsets
+                    unsafe { rd(a(3), us(k)) }
+                };
+                if buf != 0 && off != u32::MAX {
+                    expand::set_fill(d, buf, off);
+                }
+            }
             hazards::after_buffers(d, st);
         }
         // ClearUnorderedAccessViewUint(view, values[4]), ClearUnorderedAccessViewFloat(view,
@@ -3301,6 +3384,7 @@ unsafe fn context_call2(d: &mut D11, st: &mut State, m: u32, a: &dyn Fn(usize) -
         41 => dispatch(d, st, a(1), a(2), a(3)),
         42 => {
             // DispatchIndirect(args, offset): the group counts from the buffer
+            expand::pull(d, d.id_of(a(1)));
             if let Some(Data::Buffer(b)) = d.objs.get(&d.id_of(a(1))).map(|o| &o.data) && u64::from(a(2)) + 12 <= u64::from(b.size) {
                 let p = b.mem + a(2);
                 let (x, y, z) = (rd(p, 0), rd(p, 1), rd(p, 2));
@@ -3311,6 +3395,7 @@ unsafe fn context_call2(d: &mut D11, st: &mut State, m: u32, a: &dyn Fn(usize) -
             // DrawIndexedInstancedIndirect / DrawInstancedIndirect(args, offset): the counts
             // from the buffer
             let n: u32 = if m == 39 { 5 } else { 4 };
+            expand::pull(d, d.id_of(a(1)));
             if let Some(Data::Buffer(b)) = d.objs.get(&d.id_of(a(1))).map(|o| &o.data) && a(2).is_multiple_of(4) && u64::from(a(2)).saturating_add(u64::from(n) * 4) <= u64::from(b.size) {
                 let p = b.mem.saturating_add(a(2));
                 let [c, inst, first, base, first_inst]: [u32; 5] = std::array::from_fn(|i| {
@@ -3329,7 +3414,15 @@ unsafe fn context_call2(d: &mut D11, st: &mut State, m: u32, a: &dyn Fn(usize) -
                 }
             }
         }
-        38 => {}
+        38 => {
+            // DrawAuto: the vertices stream output wrote to the buffer in input slot 0 (its
+            // fill, from the offset it is bound at, by its stride)
+            let (buf, stride, off) = st.vbs[0];
+            if buf != 0 && let Some(fill) = expand::fill_of(d, buf) && let Some(n) = fill.saturating_sub(off).checked_div(stride) {
+                // SAFETY: draw's own contract: this context's state
+                unsafe { draw(d, st, false, n, 1, 0, 0, 0) };
+            }
+        }
         72 | 77 => get_slots(d, &st.cbs[usize::from(m == 77)], a(1), a(2), a(3)),
         73 | 84 => get_slots(d, &st.srvs[usize::from(m == 73)], a(1), a(2), a(3)),
         74 => {
@@ -3615,6 +3708,14 @@ unsafe fn map(d: &mut D11, res: u32, sub: u32, ty: u32, out: u32, dxgi: bool, af
             return E_INVALIDARG;
         }
     }
+    // (what stream output wrote, back first: but for WRITE_DISCARD, whose bytes are new)
+    if ty == 4 {
+        if let Some(Data::Buffer(b)) = d.objs.get_mut(&id).map(|o| &mut o.data) {
+            b.gpu_written = false;
+        }
+    } else {
+        expand::pull(d, id);
+    }
     let r = match d.objs.get_mut(&id).map(|o| &mut o.data) {
         Some(Data::Buffer(b)) => {
             // (D3D11_MAP_WRITE_NO_OVERWRITE: 5)
@@ -3726,8 +3827,10 @@ fn texture_written(d: &mut D11, id: u32) {
 /// hashes as before it, every format, 2D and 3D).
 unsafe fn update_subresource(d: &mut D11, res: u32, sub: u32, bx: u32, data: u32, pitch: u32, slice: u32) {
     let id = d.id_of(res);
-    // (an NV12 texture drawn into: its bytes from the page first, a box changes only itself)
+    // (an NV12 texture drawn into: its bytes from the page first, a box changes only itself;
+    // a buffer stream output wrote, too)
     nv12_pull(d, id);
+    expand::pull(d, id);
     let usage = match d.objs.get(&id).map(|o| &o.data) {
         Some(Data::Buffer(b)) => b.usage,
         Some(Data::Texture(t)) => t.usage,
@@ -3796,6 +3899,9 @@ pub unsafe fn write_texture_from(res: u32, data: *const u8, pitch: u32, bx: [u32
 unsafe fn copy_resource(d: &mut D11, dst: u32, src: u32) {
     let (di, si) = (d.id_of(dst), d.id_of(src));
     texture_written(d, di);
+    // (a buffer stream output wrote: its bytes back first; the destination's past the copy kept)
+    expand::pull(d, si);
+    expand::pull(d, di);
     match (d.objs.get(&di).map(|o| &o.data), d.objs.get(&si).map(|o| &o.data)) {
         (Some(Data::Buffer(a)), Some(Data::Buffer(b))) => {
             std::ptr::copy(gc::<u8>(b.mem), gp::<u8>(a.mem), us(a.size.min(b.size)));
@@ -3846,6 +3952,8 @@ unsafe fn resolve(d: &mut D11, dst: u32, dsub: u32, src: u32, ssub: u32, fmt: u3
 unsafe fn copy_region(d: &mut D11, dst: u32, dsub: u32, x: u32, y: u32, z: u32, src: u32, ssub: u32, bx: u32) {
     let (di, si) = (d.id_of(dst), d.id_of(src));
     texture_written(d, di);
+    expand::pull(d, si);
+    expand::pull(d, di);
     match (d.objs.get(&di).map(|o| &o.data), d.objs.get(&si).map(|o| &o.data)) {
         (Some(Data::Buffer(a)), Some(Data::Buffer(b))) => {
             let (s0, s1) = if bx != 0 { (rd(bx, 0), rd(bx, 3)) } else { (0, b.size) };
@@ -4324,15 +4432,40 @@ unsafe fn draw(d: &mut D11, st: &State, indexed: bool, count: u32, instances: u3
     if count == 0 || instances == 0 || st.vs == 0 {
         return;
     }
-    query::count_draw(&mut d.stats, st.topology, count, instances, st.shaders[0] != 0, st.shaders[1] != 0 && st.shaders[2] != 0);
+    // (a geometry shader's invocations: one per input primitive and GS instance)
+    let gs_instances = match d.objs.get(&st.shaders[0]).map(|o| &o.data) {
+        Some(Data::Shader(s)) => dxwgsl::expand::gs_decl(&s.code).ok().map(|g| g.instances.max(1)),
+        _ => None,
+    };
+    query::count_draw(&mut d.stats, st.topology, count, instances, gs_instances, st.shaders[1] != 0 && st.shaders[2] != 0);
     // GL_POINTS through ANGLE: its point sprite geometry shader, done as an instance per point
-    // (non-indexed, non-instanced point lists; see dxwgsl::translate_point_sprite)
+    // (non-indexed, non-instanced point lists; see dxwgsl::translate_point_sprite), not
+    // expanded
     let sprite = match d.objs.get(&st.shaders[0]).map(|o| &o.data) {
         Some(Data::Shader(s)) if st.topology == 1 && !indexed && instances <= 1 => dxwgsl::point_sprite_gs(&s.code),
         _ => None,
     };
+    if sprite.is_none() {
+        // SAFETY: draw's own contract (the bound buffers' guest memory is mapped)
+        match unsafe { expand::run(d, st, indexed, count, instances, start, base, first_instance) } {
+            expand::After::Done => return,
+            expand::After::Draw => {}
+        }
+    }
+    // SAFETY: draw's own contract (the bound buffers' guest memory is mapped)
+    unsafe { draw_with(d, st, indexed, count, instances, start, base, first_instance, sprite, None) };
+}
+
+/// A draw of the render pipeline: the bound vertex shader's, or (`store`) a store's of an
+/// expanded draw (expand.rs: its own vertex shader, no vertex buffers).
+#[allow(clippy::too_many_arguments)]
+unsafe fn draw_with(d: &mut D11, st: &State, indexed: bool, count: u32, instances: u32, start: u32, base: i32, first_instance: u32, sprite: Option<f32>, store: Option<&expand::StoreDraw>) {
     let (count, instances, start, first_instance) = if sprite.is_some() { (6, count, 0, start) } else { (count, instances, start, first_instance) };
-    let Some((vs, vb)) = shader_for(d, st.vs, st.ps, sprite, &[]) else { return };
+    let shaders = match store {
+        Some(sd) => Some(sd.vs.clone()),
+        None => shader_for(d, st.vs, st.ps, sprite, &[]),
+    };
+    let Some((vs, vb)) = shaders else { return };
     let ps = if st.ps != 0 { shader_for(d, st.ps, 0, None, &st.samplers[1]) } else { None };
     if trace2() {
         // the first vertices and the vertex shader's constants
@@ -4402,7 +4535,8 @@ unsafe fn draw(d: &mut D11, st: &State, indexed: bool, count: u32, instances: u3
         Some(Data::Shader(s)) => s.code.clone(),
         _ => return,
     };
-    let inputs = dxwgsl::signature(&vs_code, false);
+    // (a store's vertex shader reads no vertex buffers)
+    let inputs = if store.is_some() { Vec::new() } else { dxwgsl::signature(&vs_code, false) };
     // vertex buffers used: slot -> (attributes)
     let mut slots: Vec<(u32, u32, Vec<[u32; 3]>)> = Vec::new(); // (slot, step, attrs: format offset location)
     for inp in &inputs {
@@ -4432,6 +4566,7 @@ unsafe fn draw(d: &mut D11, st: &State, indexed: bool, count: u32, instances: u3
     let rs = state_desc(d, st.raster).cloned();
     let topo = match st.topology {
         _ if sprite.is_some() => 3,
+        _ if store.is_some() => store.map_or(3, |sd| sd.topo),
         1 => 0,
         2 => 1,
         3 => 2,
@@ -4441,7 +4576,13 @@ unsafe fn draw(d: &mut D11, st: &State, indexed: bool, count: u32, instances: u3
     };
     let r = rs.unwrap_or_else(|| vec![3, 3, 0, 0, 0, 0, 1, 0, 0, 0]);
     // FillMode WIREFRAME (2) of triangles: their edges as a line list of its own indices (#64)
-    let wire = if r[0] == 2 && matches!(topo, 3 | 4) && sprite.is_none() { wire_edges(d, st, indexed, count, start, topo == 4) } else { None };
+    let wire = if r.first() == Some(&2) && matches!(topo, 3 | 4) && sprite.is_none() && store.is_none() {
+        if indexed {
+            expand::pull(d, st.ib.0);
+        }
+        // SAFETY: draw_with's own contract (the index buffer's guest memory is mapped)
+        unsafe { wire_edges(d, st, indexed, count, start, topo == 4) }
+    } else { None };
     let topo = if wire.is_some() { 1 } else { topo };
     let strip = if wire.is_none() && indexed && matches!(topo, 2 | 4) { if st.ib.1 == 42 { 2 } else { 1 } } else { 0 };
     let mut key = vec![vs, ps.as_ref().map_or(0, |p| p.0), topo, strip];
@@ -4533,70 +4674,12 @@ unsafe fn draw(d: &mut D11, st: &State, indexed: bool, count: u32, instances: u3
     }
     // bindings: group 0 vertex, 1 pixel
     let mut cbs_read = Vec::new();
+    let mut over: Vec<[u32; 8]> = store.map_or_default(|sd| sd.over.clone());
+    if sprite.is_some() {
+        over.push(sprite_entry(d, st));
+    }
     for (stage, binds) in [(0usize, &vb), (1usize, &ps.as_ref().map_or_default(|p| p.1.clone()))] {
-        let mut entries: Vec<[u32; 8]> = Vec::new();
-        for (bi, kind) in binds.iter() {
-            match kind {
-                dxwgsl::Binding::Uniform(_) if stage == 0 && *bi == 15 && sprite.is_some() => {
-                    let half = [st.viewport[0][2] * 0.5, st.viewport[0][3] * 0.5];
-                    if d.sprite_view.0 == 0 || d.sprite_view.1 != half {
-                        let made = d.sprite_view.0;
-                        let g = if made != 0 { made } else { page_id() };
-                        d.sprite_view = (g, half);
-                        let mut bytes = Vec::new();
-                        for f in [half[0].max(1.0), half[1].max(1.0), 0.0, 0.0] {
-                            bytes.extend(f.to_le_bytes());
-                        }
-                        gpu::record(|q| {
-                            let off = q.blob(&bytes);
-                            if made == 0 {
-                                q.cmd(&[gpu::CREATE_BUFFER, g, 16]);
-                            }
-                            q.cmd(&[gpu::WRITE_BUFFER, g, 0, off, 16]);
-                        });
-                    }
-                    entries.push([*bi, 0, d.sprite_view.0, 0, 16, 16, 0, 0]);
-                }
-                dxwgsl::Binding::Uniform(size) => {
-                    let cb = st.cbs[stage].get(us(*bi)).copied().unwrap_or(0);
-                    let range = st.cb_ranges[stage].get(us(*bi)).copied().unwrap_or(CbRange::WHOLE);
-                    let (g, len) = if cb != 0 { cb_binding(d, cb, range, *size) } else { (0, 0) };
-                    cbs_read.push(cb);
-                    entries.push([*bi, 0, g, 0, len, *size, 0, 0]);
-                }
-                dxwgsl::Binding::Texture(vdim, sample) => {
-                    let t = bi - 16;
-                    let sv = st.srvs[stage].get(us(t)).copied().unwrap_or(0);
-                    buffer_view_sync(d, sv);
-                    let e = match d.objs.get(&sv).map(|o| &o.data) {
-                        Some(Data::View(v)) => match d.objs.get(&v.res).map(|o| &o.data) {
-                            Some(Data::Texture(tx)) => [*bi, 1, tx.gpu, *vdim, v.mip, v.mips.min(tx.mips - v.mip.min(tx.mips - 1)).max(1), v.layer, v.layers.max(1)],
-                            _ => [*bi, 1, 0, *vdim, 0, 1, 0, 1],
-                        },
-                        _ => [*bi, 1, 0, *vdim, 0, 1, 0, 1],
-                    };
-                    let mut e = e;
-                    if *sample != 0 {
-                        e[1] = 3 + *sample; // uint/sint/depth textures
-                    }
-                    // (a stencil view, X32_TYPELESS_G8X24_UINT or X24_TYPELESS_G8_UINT: not the
-                    // page's float copy of the depth, which depth views read: unbound)
-                    if e[1] == 1 && matches!(d.objs.get(&sv).map(|o| &o.data), Some(Data::View(v)) if matches!(v.fmt, 22 | 47)) {
-                        e[2] = 0;
-                    }
-                    entries.push(e);
-                }
-                dxwgsl::Binding::Sampler(cmp) => {
-                    let s = bi - 160;
-                    let id = st.samplers[stage].get(us(s)).copied().unwrap_or(0);
-                    let desc = state_desc(d, id).cloned().unwrap_or_else(|| vec![0x15, 3, 3, 3, 0, 1, 8, 0, 0, 0, 0, 0, 0x7f7f_ffff]);
-                    let key = sampler_key(&desc, *cmp);
-                    entries.push([*bi, if *cmp { 3 } else { 2 }, key, desc[11], desc[12], 0, 0, 0]);
-                }
-                // (compute shaders only)
-                dxwgsl::Binding::Storage(..) => {}
-            }
-        }
+        let entries = bind_entries(d, st, stage, binds, if stage == 0 { &over } else { &[] }, &mut cbs_read);
         w.push(lo32(entries.len()));
         for e in entries {
             w.extend_from_slice(&e);
@@ -4610,17 +4693,18 @@ unsafe fn draw(d: &mut D11, st: &State, indexed: bool, count: u32, instances: u3
     // What it reads from its buffers (vertices, indices, constants), hashed: the page tells a
     // frame that draws the same as the last one, though from another place in a ring buffer
     // and with other bytes written around it (0: unknown)
+    // (a buffer stream output wrote: the page's bytes are not the guest's, unknown)
     let mem = |id: u32| match d.objs.get(&id).map(|o| &o.data) {
-        Some(Data::Buffer(b)) => Some((b.mem, b.size)),
+        Some(Data::Buffer(b)) if !b.gpu_written => Some((b.mem, b.size)),
         _ => None,
     };
+    let mut known = count <= 4096 && store.is_none();
     let mut h = 0x811c_9dc5u32;
     let mut add = |p: u32, n: u32| {
         for &b in std::slice::from_raw_parts(gc::<u8>(p), us(n)) {
             h = (h ^ u32::from(b)).wrapping_mul(0x0100_0193);
         }
     };
-    let mut known = count <= 4096;
     let verts: Vec<u32> = if !known {
         Vec::new()
     } else if indexed {
@@ -4666,6 +4750,86 @@ unsafe fn draw(d: &mut D11, st: &State, indexed: bool, count: u32, instances: u3
     if let Some(g) = wire_buf {
         gpu::record(|q| q.cmd(&[gpu::DESTROY_BUFFER, g]));
     }
+}
+
+/// The entries of bindings `binds` of a shader of stage `stage` (0 VS, 1 PS, 2 GS, ...: the
+/// state's slots) for DRAW2 and DISPATCH; `over` the entries of bindings that are not the
+/// state's (expanded draws' stores and uniforms, the point sprites' viewport), the constant
+/// buffers read into `cbs_read`.
+fn bind_entries(d: &mut D11, st: &State, stage: usize, binds: &[(u32, dxwgsl::Binding)], over: &[[u32; 8]], cbs_read: &mut Vec<u32>) -> Vec<[u32; 8]> {
+    let mut entries: Vec<[u32; 8]> = Vec::new();
+    for (bi, kind) in binds.iter() {
+        if let Some(e) = over.iter().find(|e| e[0] == *bi) {
+            entries.push(*e);
+            continue;
+        }
+        match kind {
+            dxwgsl::Binding::Uniform(size) => {
+                let cb = st.cbs.get(stage).and_then(|c| c.get(us(*bi))).copied().unwrap_or(0);
+                let range = st.cb_ranges.get(stage).and_then(|c| c.get(us(*bi))).copied().unwrap_or(CbRange::WHOLE);
+                let (g, len) = if cb != 0 { cb_binding(d, cb, range, *size) } else { (0, 0) };
+                cbs_read.push(cb);
+                entries.push([*bi, 0, g, 0, len, *size, 0, 0]);
+            }
+            dxwgsl::Binding::Texture(vdim, sample) => {
+                let t = bi.wrapping_sub(16);
+                let sv = st.srvs.get(stage).and_then(|c| c.get(us(t))).copied().unwrap_or(0);
+                buffer_view_sync(d, sv);
+                let e = match d.objs.get(&sv).map(|o| &o.data) {
+                    Some(Data::View(v)) => match d.objs.get(&v.res).map(|o| &o.data) {
+                        Some(Data::Texture(tx)) => [*bi, 1, tx.gpu, *vdim, v.mip, v.mips.min(tx.mips.saturating_sub(v.mip.min(tx.mips.saturating_sub(1)))).max(1), v.layer, v.layers.max(1)],
+                        _ => [*bi, 1, 0, *vdim, 0, 1, 0, 1],
+                    },
+                    _ => [*bi, 1, 0, *vdim, 0, 1, 0, 1],
+                };
+                let mut e = e;
+                if *sample != 0 {
+                    e[1] = sample.saturating_add(3); // uint/sint/depth textures
+                }
+                // (a stencil view, X32_TYPELESS_G8X24_UINT or X24_TYPELESS_G8_UINT: not the
+                // page's float copy of the depth, which depth views read: unbound)
+                if e[1] == 1 && matches!(d.objs.get(&sv).map(|o| &o.data), Some(Data::View(v)) if matches!(v.fmt, 22 | 47)) {
+                    e[2] = 0;
+                }
+                entries.push(e);
+            }
+            dxwgsl::Binding::Sampler(cmp) => {
+                let s = bi.wrapping_sub(160);
+                let id = st.samplers.get(stage).and_then(|c| c.get(us(s))).copied().unwrap_or(0);
+                let desc = state_desc(d, id).cloned().unwrap_or_else(|| vec![0x15, 3, 3, 3, 0, 1, 8, 0, 0, 0, 0, 0, 0x7f7f_ffff]);
+                let key = sampler_key(&desc, *cmp);
+                entries.push([*bi, if *cmp { 3 } else { 2 }, key, desc.get(11).copied().unwrap_or(0), desc.get(12).copied().unwrap_or(0x7f7f_ffff), 0, 0, 0]);
+            }
+            // (compute shaders only)
+            dxwgsl::Binding::Storage(..) => {}
+            // (a store of an expanded draw that `over` does not name: nothing, the page
+            // binds zeros or runs nothing)
+            dxwgsl::Binding::StorageBuffer(rw) => entries.push([*bi, if *rw { 10 } else { 9 }, 0, 0, 0, 0, 0, 0]),
+        }
+    }
+    entries
+}
+
+/// The point sprites' viewport uniform (b15 of their vertex shader): half the viewport's size.
+fn sprite_entry(d: &mut D11, st: &State) -> [u32; 8] {
+    let half = [st.viewport[0][2] * 0.5, st.viewport[0][3] * 0.5];
+    if d.sprite_view.0 == 0 || d.sprite_view.1 != half {
+        let made = d.sprite_view.0;
+        let g = if made != 0 { made } else { page_id() };
+        d.sprite_view = (g, half);
+        let mut bytes = Vec::new();
+        for f in [half[0].max(1.0), half[1].max(1.0), 0.0, 0.0] {
+            bytes.extend(f.to_le_bytes());
+        }
+        gpu::record(|q| {
+            let off = q.blob(&bytes);
+            if made == 0 {
+                q.cmd(&[gpu::CREATE_BUFFER, g, 16]);
+            }
+            q.cmd(&[gpu::WRITE_BUFFER, g, 0, off, 16]);
+        });
+    }
+    [15, 0, d.sprite_view.0, 0, 16, 16, 0, 0]
 }
 
 /// A compute shader's page shader and bindings for UAVs of these page formats (slot, format).
@@ -4788,6 +4952,8 @@ unsafe fn dispatch(d: &mut D11, st: &State, x: u32, y: u32, z: u32) {
                 let desc = state_desc(d, id).cloned().unwrap_or_else(|| vec![0x15, 3, 3, 3, 0, 1, 8, 0, 0, 0, 0, 0, 0x7f7f_ffff]);
                 [*bi, if *cmp { 3 } else { 2 }, sampler_key(&desc, *cmp), desc[11], desc[12], 0, 0, 0]
             }
+            // (a store nothing names: none bound, nothing runs)
+            dxwgsl::Binding::StorageBuffer(rw) => [*bi, if *rw { 10 } else { 9 }, 0, 0, 0, 0, 0, 0],
         };
         w.extend_from_slice(&e);
     }

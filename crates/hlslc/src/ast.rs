@@ -117,6 +117,59 @@ pub enum Ty {
     /// sampler2D... of shader model 2/3 code: a texture and a sampler on one register
     Legacy(Dim),
     Str,
+    /// PointStream / LineStream / TriangleStream<el>: a geometry shader's output stream
+    Stream(StreamKind, Box<Ty>),
+}
+
+/// A geometry shader output stream's topology.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum StreamKind {
+    Point,
+    Line,
+    Triangle,
+}
+
+/// A geometry shader input array's primitive (`triangle V v[3]`).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Prim {
+    Point,
+    Line,
+    Triangle,
+    LineAdj,
+    TriangleAdj,
+}
+
+impl Prim {
+    pub fn of_name(s: &str) -> Option<Prim> {
+        Some(match s {
+            "point" => Prim::Point,
+            "line" => Prim::Line,
+            "triangle" => Prim::Triangle,
+            "lineadj" => Prim::LineAdj,
+            "triangleadj" => Prim::TriangleAdj,
+            _ => return None,
+        })
+    }
+    /// the vertices of one
+    pub fn vertices(self) -> u32 {
+        match self {
+            Prim::Point => 1,
+            Prim::Line => 2,
+            Prim::Triangle => 3,
+            Prim::LineAdj => 4,
+            Prim::TriangleAdj => 6,
+        }
+    }
+    /// D3D10_SB_PRIMITIVE (dcl_inputprimitive)
+    pub fn code(self) -> u32 {
+        match self {
+            Prim::Point => 1,
+            Prim::Line => 2,
+            Prim::Triangle => 3,
+            Prim::LineAdj => 6,
+            Prim::TriangleAdj => 7,
+        }
+    }
 }
 
 impl Ty {
@@ -124,7 +177,7 @@ impl Ty {
         match self {
             Ty::Scalar(b) | Ty::Vec(b, _) | Ty::Mat(b, _, _) => *b,
             Ty::Array(t, _) => t.base(),
-            Ty::Void | Ty::Struct(_) | Ty::Tex(..) | Ty::Sampler(_) | Ty::RwTex(..) | Ty::Legacy(_) | Ty::Str => B::Float,
+            Ty::Void | Ty::Struct(_) | Ty::Tex(..) | Ty::Sampler(_) | Ty::RwTex(..) | Ty::Legacy(_) | Ty::Str | Ty::Stream(..) => B::Float,
         }
     }
     pub fn numeric(&self) -> bool {
@@ -137,7 +190,7 @@ impl Ty {
             Ty::Vec(_, n) => usize::from(*n),
             Ty::Mat(_, r, c) => r.get() * c.get(),
             Ty::Void | Ty::Array(..) | Ty::Struct(_) | Ty::Tex(..) | Ty::Sampler(_) | Ty::RwTex(..)
-            | Ty::Legacy(_) | Ty::Str => 0,
+            | Ty::Legacy(_) | Ty::Str | Ty::Stream(..) => 0,
         }
     }
     pub fn with_base(&self, b: B) -> Ty {
@@ -146,13 +199,13 @@ impl Ty {
             Ty::Vec(_, n) => Ty::Vec(b, *n),
             Ty::Mat(_, r, c) => Ty::Mat(b, *r, *c),
             t @ (Ty::Void | Ty::Array(..) | Ty::Struct(_) | Ty::Tex(..) | Ty::Sampler(_) | Ty::RwTex(..)
-                 | Ty::Legacy(_) | Ty::Str) => t.clone(),
+                 | Ty::Legacy(_) | Ty::Str | Ty::Stream(..)) => t.clone(),
         }
     }
     /// a texture or sampler, or an array of them
     pub fn is_object(&self) -> bool {
         match self {
-            Ty::Tex(..) | Ty::Sampler(_) | Ty::Legacy(_) | Ty::RwTex(..) => true,
+            Ty::Tex(..) | Ty::Sampler(_) | Ty::Legacy(_) | Ty::RwTex(..) | Ty::Stream(..) => true,
             Ty::Array(e, _) => e.is_object(),
             Ty::Void | Ty::Scalar(_) | Ty::Vec(..) | Ty::Mat(..) | Ty::Struct(_) | Ty::Str => false,
         }
@@ -255,6 +308,8 @@ pub struct Var<T = Ty> {
     /// row_major (Some(true)) / column_major
     pub row_major: Option<bool>,
     pub interp: Interp,
+    /// a geometry shader's input array: its primitive
+    pub prim: Option<Prim>,
     /// parameters: in (false, true default), out, inout
     pub is_in: bool,
     pub is_out: bool,
@@ -320,8 +375,8 @@ impl Var {
 
 impl Mods {
     pub fn typed(self, ty: Ty) -> Var {
-        let Var { name, ty: (), init, sem, reg, packoffset, is_static, is_const, shared, uniform, row_major, interp, is_in, is_out, line, annos, states, fx } = self;
-        Var { name, ty, init, sem, reg, packoffset, is_static, is_const, shared, uniform, row_major, interp, is_in, is_out, line, annos, states, fx }
+        let Var { name, ty: (), init, sem, reg, packoffset, is_static, is_const, shared, uniform, row_major, interp, prim, is_in, is_out, line, annos, states, fx } = self;
+        Var { name, ty, init, sem, reg, packoffset, is_static, is_const, shared, uniform, row_major, interp, prim, is_in, is_out, line, annos, states, fx }
     }
 }
 

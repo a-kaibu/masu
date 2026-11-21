@@ -150,7 +150,7 @@ fn comp(s: &Src, k: usize) -> Src {
             Src::R { r: *r, swz: [c; 4], neg: *neg, abs: *abs, one: true }
         }
         Src::Imm(v, scalar) => Src::Imm([if *scalar { v[0] } else { v[k] }; 4], true),
-        s @ (Src::Tex(..) | Src::Samp(_) | Src::SampC(..) | Src::Uav(..) | Src::G(..)) => s.clone(),
+        s @ (Src::Tex(..) | Src::Samp(_) | Src::SampC(..) | Src::Uav(..) | Src::G(..) | Src::Stream(_)) => s.clone(),
     }
 }
 
@@ -158,7 +158,7 @@ fn neg(s: &Src) -> Src {
     match s {
         Src::R { r, swz, neg, abs, one } => Src::R { r: *r, swz: *swz, neg: !neg, abs: *abs, one: *one },
         Src::Imm(v, sc) => Src::Imm(v.map(|x| if x == 0 { 0 } else { x ^ 0x8000_0000 }), *sc),
-        s @ (Src::Tex(..) | Src::Samp(_) | Src::SampC(..) | Src::Uav(..) | Src::G(..)) => s.clone(),
+        s @ (Src::Tex(..) | Src::Samp(_) | Src::SampC(..) | Src::Uav(..) | Src::G(..) | Src::Stream(_)) => s.clone(),
     }
 }
 
@@ -166,7 +166,7 @@ fn abs(s: &Src) -> Src {
     match s {
         Src::R { r, swz, one, .. } => Src::R { r: *r, swz: *swz, neg: false, abs: true, one: *one },
         Src::Imm(v, sc) => Src::Imm(v.map(|x| x & 0x7fff_ffff), *sc),
-        s @ (Src::Tex(..) | Src::Samp(_) | Src::SampC(..) | Src::Uav(..) | Src::G(..)) => s.clone(),
+        s @ (Src::Tex(..) | Src::Samp(_) | Src::SampC(..) | Src::Uav(..) | Src::G(..) | Src::Stream(_)) => s.clone(),
     }
 }
 
@@ -257,7 +257,7 @@ impl Gen<'_> {
                 }
                 format!("c{n}")
             }
-            RegF::Icb(_) | RegF::X(..) | RegF::Null | RegF::Sys(_) | RegF::Uav(_) | RegF::G(_) => return Err("indexable temps and immediate constant buffers are not available in shader model 2/3".into()),
+            RegF::Icb(_) | RegF::X(..) | RegF::Null | RegF::Sys(_) | RegF::Uav(_) | RegF::G(_) | RegF::GsInput(..) => return Err("indexable temps and immediate constant buffers are not available in shader model 2/3".into()),
         })
     }
 
@@ -284,7 +284,7 @@ impl Gen<'_> {
                 let v = if *scalar { [v[0]; 4] } else { *v };
                 self.konst(v)
             }
-            Src::Samp(_) | Src::Tex(..) | Src::SampC(..) | Src::Uav(..) | Src::G(..) => return Err("texture operand".into()),
+            Src::Samp(_) | Src::Tex(..) | Src::SampC(..) | Src::Uav(..) | Src::G(..) | Src::Stream(_) => return Err("texture operand".into()),
         })
     }
 
@@ -333,7 +333,7 @@ impl Gen<'_> {
         let slot = self.s.samps[n].slot;
         let dim = match t {
             Src::Tex(t, _) => self.s.texs[self.s.tex_map[kome::num::us(*t)].ok_or("an unused texture")?].dim,
-            Src::R { .. } | Src::Imm(..) | Src::Samp(_) | Src::SampC(..) | Src::Uav(..) | Src::G(..) => 3,
+            Src::R { .. } | Src::Imm(..) | Src::Samp(_) | Src::SampC(..) | Src::Uav(..) | Src::G(..) | Src::Stream(_) => 3,
         };
         Ok((format!("s{slot}"), dim))
     }
@@ -770,7 +770,7 @@ impl Gen<'_> {
                         }
                         let tswz = match tex {
                             Src::Tex(_, s) => s,
-                            Src::R { .. } | Src::Imm(..) | Src::Samp(_) | Src::SampC(..) | Src::Uav(..) | Src::G(..) => [0, 1, 2, 3],
+                            Src::R { .. } | Src::Imm(..) | Src::Samp(_) | Src::SampC(..) | Src::Uav(..) | Src::G(..) | Src::Stream(_) => [0, 1, 2, 3],
                         };
                         let direct = tswz == [0, 1, 2, 3];
                         let td = if direct { d.clone() } else { self.scr_d(1, 0xf)? };

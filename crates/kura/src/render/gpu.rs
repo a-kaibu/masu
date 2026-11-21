@@ -39,7 +39,7 @@ mod ffi {
         pub fn vngpu_copy_texture(src: Id, smip: u32, sx: u32, sy: u32, sz: u32, dst: Id, dmip: u32, dx: u32, dy: u32, dz: u32, w: u32, h: u32, d: u32);
         #[allow(clippy::too_many_arguments)]
         pub fn vngpu_copy_to_buffer(tex: Id, mip: u32, x: u32, y: u32, z: u32, buf: Id, bpr: u32, w: u32, h: u32);
-        pub fn vngpu_copy_buffer(src: Id, dst: Id, size: u32);
+        pub fn vngpu_copy_buffer(src: Id, soff: u32, dst: Id, doff: u32, size: u32);
         #[allow(clippy::too_many_arguments)]
         pub fn vngpu_copy_from_buffer(buf: Id, bpr: u32, tex: Id, mip: u32, x: u32, y: u32, z: u32, w: u32, h: u32);
         pub fn vngpu_begin_pass(p: *const u8, n: usize);
@@ -69,6 +69,7 @@ pub mod usage {
     pub const INDEX: u32 = 0x10;
     pub const VERTEX: u32 = 0x20;
     pub const UNIFORM: u32 = 0x40;
+    pub const STORAGE: u32 = 0x80;
     pub const QUERY_RESOLVE: u32 = 0x200;
     // textures
     pub const T_COPY_SRC: u32 = 0x1;
@@ -348,7 +349,13 @@ pub fn copy_layer_to_buffer(tex: Id, mip: u32, o: [u32; 3], buf: Id, bpr: u32, w
 }
 /// copyBufferToBuffer of the first `size` bytes.
 pub fn copy_buffer(src: Id, dst: Id, size: u32) {
-    unsafe { ffi::vngpu_copy_buffer(src, dst, size) }
+    copy_buffer_at(src, 0, dst, 0, size)
+}
+/// copyBufferToBuffer of `size` bytes from byte `soff` of `src` to byte `doff` of `dst`
+/// (multiples of 4).
+pub fn copy_buffer_at(src: Id, soff: u32, dst: Id, doff: u32, size: u32) {
+    // SAFETY: a call into host/vngpu.js with plain numbers (no memory of ours)
+    unsafe { ffi::vngpu_copy_buffer(src, soff, dst, doff, size) }
 }
 
 /// copyBufferToTexture: rows of `bpr` bytes from the start of `buf` into a box of mip `mip`

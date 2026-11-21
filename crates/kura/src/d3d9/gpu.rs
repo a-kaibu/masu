@@ -62,6 +62,16 @@ pub const GAMMA: u32 = 35; // blob_offset
 /// page hands each ticket's value back (`vnhost_d3d9_query_done`).
 pub const QUERY_BEGIN: u32 = 36; // ticket
 pub const QUERY_END: u32 = 37; // ticket kind
+/// Direct3D 11's buffers the GPU writes (stream output, the expanded draws' stores: d3d11/expand.rs):
+/// READ_BUFFER copies `size` bytes from byte `offset` of page buffer `id` to guest memory `dst`
+/// and says readback `request` is done (as READBACK; offset and size multiples of 4).
+pub const READ_BUFFER: u32 = 38; // request id offset size dst
+/// copyBufferToBuffer between page buffers (offsets and size multiples of 4), in command order.
+pub const COPY_BUFFER: u32 = 39; // src src_offset dst dst_offset size
+/// A counter query (d3d11/query.rs): ticket's value is what the u32 at byte `offset` of page
+/// buffer `id` (counters the GPU adds to) grew by between COUNT_BEGIN and COUNT_END (mod 2^32).
+pub const COUNT_BEGIN: u32 = 40; // ticket id offset
+pub const COUNT_END: u32 = 41; // ticket
 
 /// What a QUERY_END ends.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]

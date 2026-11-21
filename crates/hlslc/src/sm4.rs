@@ -25,6 +25,8 @@ pub enum RegF {
     Uav(u32),
     /// thread group shared memory (symbol): store_raw's destination
     G(u32),
+    /// a geometry shader's input: v[vertex][register]
+    GsInput(u32, u32),
 }
 
 /// One component of a four-component register: no value outside x..w can be named.
@@ -104,6 +106,8 @@ pub enum Src {
     Uav(u32, [u8; 4]),
     /// thread group shared memory (symbol) with a swizzle: the dwords ld_raw reads
     G(u32, [u8; 4]),
+    /// a geometry shader's output stream m<n> (emit_stream, cut_stream)
+    Stream(u32),
 }
 
 #[derive(Clone, Debug)]
@@ -126,6 +130,10 @@ pub struct Ins {
 
 // opcodes
 pub const ADD: Opcode = Opcode::Add;
+pub const EMIT: Opcode = Opcode::Emit;
+pub const CUT: Opcode = Opcode::Cut;
+pub const EMIT_STREAM: Opcode = Opcode::EmitStream;
+pub const CUT_STREAM: Opcode = Opcode::CutStream;
 pub const AND: Opcode = Opcode::And;
 pub const BREAK: Opcode = Opcode::Break;
 pub const BREAKC: Opcode = Opcode::Breakc;
@@ -320,6 +328,21 @@ pub struct SigEl {
     pub interp: InterpMode,
     /// the register is oDepth
     pub depth: bool,
+    /// a geometry shader output's stream (0 elsewhere)
+    pub stream: u32,
+}
+
+/// A geometry shader's declarations.
+#[derive(Clone, Debug)]
+pub struct Gs {
+    /// D3D10_SB_PRIMITIVE of its input
+    pub input: u32,
+    /// [maxvertexcount(n)]
+    pub maxout: u32,
+    /// [instance(n)] (1 without)
+    pub instances: u32,
+    /// each stream's D3D10_SB_PRIMITIVE_TOPOLOGY (1 point list, 3 line strip, 5 triangle strip)
+    pub streams: Vec<u32>,
 }
 
 pub struct Tex {
@@ -415,6 +438,8 @@ pub struct Shader {
     /// not an array, no texture component flags nor sample count, SV_Target / SV_Depth without
     /// a system value in the signature (d3d10refl.c)
     pub d3d10: bool,
+    /// a geometry shader's declarations
+    pub gs: Option<Gs>,
 }
 
 // ---- register allocation ----
@@ -553,6 +578,7 @@ impl Enc<'_> {
             RegF::Sys(t) => (t, vec![]),
             RegF::Uav(u) => (tpf::UAV, vec![bound(&self.s.uav_map, &self.s.uavs, u, |u| u.slot, "UAV")?]),
             RegF::G(g) => (tpf::TGSM, vec![g]),
+            RegF::GsInput(v, i) => (tpf::INPUT, vec![v, i]),
         })
     }
 
@@ -624,10 +650,14 @@ impl Enc<'_> {
                 out.push(2 | (2 << 2) | (u32::from(*c) << 4) | ty_bits(tpf::SAMPLER) | (1 << 20));
                 out.push(slot);
             }
+            Src::Stream(k) => {
+                out.push(ty_bits(tpf::STREAM) | (1 << 20));
+                out.push(*k);
+            }
             Src::Uav(u, swz) | Src::G(u, swz) => {
                 let (ty, slot) = match s {
                     Src::Uav(..) => (tpf::UAV, bound(&self.s.uav_map, &self.s.uavs, *u, |u| u.slot, "UAV")?),
-                    Src::R { .. } | Src::Imm(..) | Src::Tex(..) | Src::Samp(_) | Src::SampC(..) | Src::G(..) => (tpf::TGSM, *u),
+                    Src::R { .. } | Src::Imm(..) | Src::Tex(..) | Src::Samp(_) | Src::SampC(..) | Src::G(..) | Src::Stream(_) => (tpf::TGSM, *u),
                 };
                 let b = u32::from(swz[0]) | u32::from(swz[1]) << 2 | u32::from(swz[2]) << 4 | u32::from(swz[3]) << 6;
                 out.push(2 | (1 << 2) | (b << 4) | ty_bits(ty) | (1 << 20));
@@ -645,7 +675,7 @@ impl Enc<'_> {
             }
             RegF::Depth => self.reg(out, &d.r, 1, 0, 0, 0),
             RegF::Temp(_) | RegF::Input(_) | RegF::Output(_) | RegF::Cb(..) | RegF::Icb(_) | RegF::X(..)
-            | RegF::Sys(_) | RegF::Uav(_) | RegF::G(_) => self.reg(out, &d.r, 2, 0, u32::from(d.mask), 0),
+            | RegF::Sys(_) | RegF::Uav(_) | RegF::G(_) | RegF::GsInput(..) => self.reg(out, &d.r, 2, 0, u32::from(d.mask), 0),
         }
     }
 
@@ -680,12 +710,30 @@ fn decl(out: &mut Vec<u32>, op: Opcode, ctl: u32, body: &[u32]) {
     out.extend_from_slice(body);
 }
 
+/// The vertices of a D3D10_SB_PRIMITIVE (dcl_inputprimitive): point 1, line 2, triangle 3,
+/// line with adjacency 4, triangle with adjacency 6.
+pub fn gs_vertices(prim: u32) -> u32 {
+    match prim {
+        1 => 1,
+        2 => 2,
+        6 => 4,
+        7 => 6,
+        _ => 3,
+    }
+}
+
 /// The SHDR/SHEX chunk.
 fn program(s: &mut Shader) -> Result<Vec<u32>, String> {
     let temps = alloc(&mut s.code, &s.marks.clone());
     let s = &*s;
     let e = Enc { s };
-    let kind = if s.threads.is_some() { 5 } else { u32::from(!s.pixel) };
+    let kind = if s.threads.is_some() {
+        5
+    } else if s.gs.is_some() {
+        2
+    } else {
+        u32::from(!s.pixel)
+    };
     let mut w = vec![kind << 16 | (s.major << 4) | s.minor, 0];
     // global flags: refactoring allowed (+ early depth stencil)
     decl(&mut w, Opcode::DclGlobalFlags, 1 | (u32::from(s.early_depth) << 2), &[]);
@@ -733,19 +781,54 @@ fn program(s: &mut Shader) -> Result<Vec<u32>, String> {
                     decl(&mut w, Opcode::DclInputPsSgv, 1, &[t, i.reg, v.code()]);
                 }
             }
+        } else if let Some(g) = &s.gs {
+            // (v[vertices][register])
+            let t = (t & !(3 << 20)) | (2 << 20);
+            let n = gs_vertices(g.input);
+            if i.sysval == SysVal::Undefined {
+                decl(&mut w, Opcode::DclInput, 0, &[t, n, i.reg]);
+            } else {
+                decl(&mut w, Opcode::DclInputSiv, 0, &[t, n, i.reg, i.sysval.code()]);
+            }
         } else if i.sysval != SysVal::Undefined {
             decl(&mut w, Opcode::DclInputSgv, 0, &[t, i.reg, i.sysval.code()]);
         } else {
             decl(&mut w, Opcode::DclInput, 0, &[t, i.reg]);
         }
     }
-    for o in &s.outputs {
+    if let Some(g) = &s.gs {
+        decl(&mut w, Opcode::DclGsInputPrimitive, g.input, &[]);
+    }
+    let out_decl = |w: &mut Vec<u32>, o: &SigEl| {
         if o.depth {
-            decl(&mut w, Opcode::DclOutput, 0, &[1 | ty_bits(tpf::OUTPUT_DEPTH)]);
+            decl(w, Opcode::DclOutput, 0, &[1 | ty_bits(tpf::OUTPUT_DEPTH)]);
         } else if o.sysval.declared() {
-            decl(&mut w, Opcode::DclOutputSiv, 0, &[reg_tok(tpf::OUTPUT, o.mask), o.reg, o.sysval.code()]);
+            decl(w, Opcode::DclOutputSiv, 0, &[reg_tok(tpf::OUTPUT, o.mask), o.reg, o.sysval.code()]);
         } else {
-            decl(&mut w, Opcode::DclOutput, 0, &[reg_tok(tpf::OUTPUT, o.mask), o.reg]);
+            decl(w, Opcode::DclOutput, 0, &[reg_tok(tpf::OUTPUT, o.mask), o.reg]);
+        }
+    };
+    match &s.gs {
+        // (each stream: dcl_stream m<k> (shader model 5), its topology, then its outputs)
+        Some(g) => {
+            for (k, &topo) in (0u32..).zip(&g.streams) {
+                if s.major >= 5 {
+                    decl(&mut w, Opcode::DclStream, 0, &[ty_bits(tpf::STREAM) | (1 << 20), k]);
+                }
+                decl(&mut w, Opcode::DclGsOutputPrimitiveTopology, topo, &[]);
+                for o in s.outputs.iter().filter(|o| o.stream == k) {
+                    out_decl(&mut w, o);
+                }
+            }
+            decl(&mut w, Opcode::DclMaxOutputVertexCount, 0, &[g.maxout]);
+            if g.instances > 1 {
+                decl(&mut w, Opcode::DclGsInstanceCount, 0, &[g.instances]);
+            }
+        }
+        None => {
+            for o in &s.outputs {
+                out_decl(&mut w, o);
+            }
         }
     }
     if temps > 0 {
@@ -796,6 +879,31 @@ fn signature(els: &[SigEl], used_out: bool, d3d10: bool) -> Vec<u8> {
         // mask, then the read/write mask (outputs: the complement of what is written)
         let rw = if used_out { (!e.mask) & 0xf } else { e.mask };
         w32(&mut b, u32::from(e.mask) | (u32::from(rw) << 8));
+    }
+    b.extend_from_slice(&names);
+    while b.len() % 4 != 0 {
+        b.push(0xab);
+    }
+    b
+}
+
+/// OSG5: the elements of `signature` (outputs) with each one's stream first.
+fn signature5(els: &[SigEl]) -> Vec<u8> {
+    let mut b = Vec::new();
+    w32(&mut b, kome::num::u32_of(els.len()));
+    w32(&mut b, 8);
+    let names_at = els.len().saturating_mul(28).saturating_add(8);
+    let mut names = Vec::new();
+    for e in els {
+        let off = kome::num::u32_of(names_at).saturating_add(kome::num::u32_of(names.len()));
+        put_str(&mut names, &e.name);
+        w32(&mut b, e.stream);
+        w32(&mut b, off);
+        w32(&mut b, e.index);
+        w32(&mut b, e.sysval.code());
+        w32(&mut b, e.ctype.code());
+        w32(&mut b, e.reg);
+        w32(&mut b, u32::from(e.mask) | (u32::from((!e.mask) & 0xf) << 8));
     }
     b.extend_from_slice(&names);
     while b.len() % 4 != 0 {
@@ -921,7 +1029,8 @@ fn rdef(s: &Shader) -> Vec<u8> {
     set32(&mut b, 4, kome::num::u32_of(cb_at));
     set32(&mut b, 8, kome::num::u32_of(binds.len()));
     set32(&mut b, 12, kome::num::u32_of(bind_at));
-    let kind = if s.threads.is_some() { 0x4353 } else if s.pixel { 0xffff } else { 0xfffe };
+    // (D3D11_SHVER: CS 0x4353, GS 0x4753, PS 0xffff, VS 0xfffe)
+    let kind = if s.threads.is_some() { 0x4353 } else if s.gs.is_some() { 0x4753 } else if s.pixel { 0xffff } else { 0xfffe };
     set32(&mut b, 16, (kind << 16) | (s.major << 8) | s.minor);
     set32(&mut b, 20, 0x100);
     set32(&mut b, 24, creator);
@@ -944,7 +1053,8 @@ pub fn finish(mut s: Shader) -> Result<Vec<u8>, String> {
     let chunks: Vec<([u8; 4], Vec<u8>)> = vec![
         (*b"RDEF", rdef(&s)),
         (*b"ISGN", signature(&s.inputs, false, s.d3d10)),
-        (*b"OSGN", signature(&s.outputs, true, s.d3d10)),
+        // (a shader model 5 geometry shader's outputs name their stream: OSG5)
+        if s.gs.is_some() && s.major >= 5 { (*b"OSG5", signature5(&s.outputs)) } else { (*b"OSGN", signature(&s.outputs, true, s.d3d10)) },
         (if s.major >= 5 { *b"SHEX" } else { *b"SHDR" }, shdr),
     ];
     Ok(container(&chunks))

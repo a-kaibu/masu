@@ -177,7 +177,6 @@ crates/kura/src/d3d11/mod.rs	masu-from_raw_parts	keep[at..at + us(w)].copy_from_
 crates/kura/src/d3d11/mod.rs	masu-from_raw_parts	let bytes = unsafe { std::slice::from_raw_parts(gc::<u8>(mem), us(size)) };
 crates/kura/src/d3d11/mod.rs	masu-from_raw_parts	let code = if a(3) == 0 { &[][..] } else { std::slice::from_raw_parts(gc::<u8>(a(3)), us(a(4))) };
 crates/kura/src/d3d11/mod.rs	masu-from_raw_parts	let code = std::slice::from_raw_parts(gc::<u8>(a(1)), us(a(2))).to_vec();
-crates/kura/src/d3d11/mod.rs	masu-from_raw_parts	let code = std::slice::from_raw_parts(gc::<u8>(a(1)), us(a(2)));
 crates/kura/src/d3d11/mod.rs	masu-from_raw_parts	let now = unsafe { std::slice::from_raw_parts(gc::<u8>(buf.mem + b.off), us(b.bytes)) };
 crates/kura/src/d3d11/mod.rs	masu-from_raw_parts	let page = std::slice::from_raw_parts(gc::<u8>(tmp), us(n));
 crates/kura/src/d3d11/mod.rs	masu-from_raw_parts	out.extend_from_slice(std::slice::from_raw_parts(src.add(us(y * pitch)), us(w)));
@@ -380,7 +379,6 @@ crates/kura/src/d3d11/mod.rs	unsafe_op_in_unsafe_fn	let b = if bx != 0 { Some([r
 crates/kura/src/d3d11/mod.rs	unsafe_op_in_unsafe_fn	let b = if bx != 0 { Some([rd(bx, 0), rd(bx, 1), rd(bx, 2), rd(bx, 3), rd(bx, 4), rd(bx, 5)]) } else { None };
 crates/kura/src/d3d11/mod.rs	unsafe_op_in_unsafe_fn	let code = if a(3) == 0 { &[][..] } else { std::slice::from_raw_parts(gc::<u8>(a(3)), us(a(4))) };
 crates/kura/src/d3d11/mod.rs	unsafe_op_in_unsafe_fn	let code = std::slice::from_raw_parts(gc::<u8>(a(1)), us(a(2))).to_vec();
-crates/kura/src/d3d11/mod.rs	unsafe_op_in_unsafe_fn	let code = std::slice::from_raw_parts(gc::<u8>(a(1)), us(a(2)));
 crates/kura/src/d3d11/mod.rs	unsafe_op_in_unsafe_fn	let f = if rd(want, 4) != 0 { rd(want, 4) } else { 28 };
 crates/kura/src/d3d11/mod.rs	unsafe_op_in_unsafe_fn	let f = if rd(want, 4) != 0 { rd(want, 4) } else { 28 };
 crates/kura/src/d3d11/mod.rs	unsafe_op_in_unsafe_fn	let f = rd(a(2), 0);
@@ -441,7 +439,6 @@ crates/kura/src/d3d11/mod.rs	unsafe_op_in_unsafe_fn	let tmp = lo32((((*d.calls).
 crates/kura/src/d3d11/mod.rs	unsafe_op_in_unsafe_fn	let tmp = lo32((((*d.calls).alloc)(size.max(16))).expose_provenance());
 crates/kura/src/d3d11/mod.rs	unsafe_op_in_unsafe_fn	let tmp = lo32((((*d.calls).alloc)(size.max(16))).expose_provenance());
 crates/kura/src/d3d11/mod.rs	unsafe_op_in_unsafe_fn	let v: Vec<u32> = (0..us(count)).map(|i| rdp(lo32(vtbls.expose_provenance()), i)).collect();
-crates/kura/src/d3d11/mod.rs	unsafe_op_in_unsafe_fn	let wire = if r[0] == 2 && matches!(topo, 3 | 4) && sprite.is_none() { wire_edges(d, st, indexed, count, start, topo == 4) } else { None };
 crates/kura/src/d3d11/mod.rs	unsafe_op_in_unsafe_fn	let words: Option<Vec<u32>> = (desc != 0).then(|| (0..if kind == check::RTV || kind == check::UAV { 5 } else { 6 }).map(|i| rd(desc, i)).collect());
 crates/kura/src/d3d11/mod.rs	unsafe_op_in_unsafe_fn	match (0..us(nlevels)).map(|i| rd(levels, i)).find(|&l| l <= 0xb000) {
 crates/kura/src/d3d11/mod.rs	unsafe_op_in_unsafe_fn	new_state(d, IF_BLEND, desc, a(2))
@@ -1502,7 +1499,6 @@ crates/kura/src/render/gpu.rs	undocumented_unsafe_blocks	unsafe { ffi::vngpu_bin
 crates/kura/src/render/gpu.rs	undocumented_unsafe_blocks	unsafe { ffi::vngpu_buffer(size, usage) }
 crates/kura/src/render/gpu.rs	undocumented_unsafe_blocks	unsafe { ffi::vngpu_canvas_size(w, h) }
 crates/kura/src/render/gpu.rs	undocumented_unsafe_blocks	unsafe { ffi::vngpu_canvas_view() }
-crates/kura/src/render/gpu.rs	undocumented_unsafe_blocks	unsafe { ffi::vngpu_copy_buffer(src, dst, size) }
 crates/kura/src/render/gpu.rs	undocumented_unsafe_blocks	unsafe { ffi::vngpu_copy_from_buffer(buf, bpr, tex, mip, x, y, z, w, h) }
 crates/kura/src/render/gpu.rs	undocumented_unsafe_blocks	unsafe { ffi::vngpu_copy_texture(src, smip, so[0], so[1], so[2], dst, dmip, d[0], d[1], d[2], size[0], size[1], size[2]) }
 crates/kura/src/render/gpu.rs	undocumented_unsafe_blocks	unsafe { ffi::vngpu_copy_to_buffer(tex, mip, o[0], o[1], o[2], buf, bpr, w, h) }
