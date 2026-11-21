@@ -25,6 +25,7 @@ mod dirs;
 mod envelope;
 mod library;
 mod library_api;
+mod lockfile;
 mod storage;
 mod store_api;
 mod meta;

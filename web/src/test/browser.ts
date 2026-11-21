@@ -1,6 +1,6 @@
 // A fresh origin per scenario. Model the exclusive, callback-based Web Locks operation
 // used by saves.ts; each name has its own FIFO and releases on success and failure.
-function exclusiveLocks() {
+export function exclusiveLocks() {
   const tails = new Map<string, Promise<void>>();
   return {
     request<T>(name: string, callback: (lock: { name: string; mode: "exclusive" }) => T) {

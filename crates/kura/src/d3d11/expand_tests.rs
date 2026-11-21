@@ -303,3 +303,79 @@ fn indexed_statistics_as_windows() {
     no_model_errors();
     release_all();
 }
+
+/// FillMode WIREFRAME with and without a geometry shader, of triangle lists and strips: each
+/// triangle the solid draw rasterizes is three edges of the wireframe one, a line list (the
+/// geometry shader's output skipped the wireframe before: review e18bf44), the pipeline made
+/// for it kept apart from the solid one's (PipelineKey's fill), the model's checks passed.
+#[test]
+fn wireframe_of_the_drawn_triangles_and_of_a_geometry_shaders_output() {
+    let _g = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+    let (dev, ctx) = device();
+    let o = mem(2);
+    let vs = hlslc::compile(SO_VS, &[], &mut |_, _| None, "main", "vs_4_0", 0).expect("vs");
+    let (p, n) = code(&vs);
+    assert_eq!(dc(dev, 12, &[p, n, 0, o]), 0);
+    cc(ctx, 11, &[made(rd1(o)), 0, 0]);
+    let gs = hlslc::compile(SO_GS, &[], &mut |_, _| None, "main", "gs_4_0", 0).expect("gs");
+    let (p, n) = code(&gs);
+    assert_eq!(dc(dev, 13, &[p, n, 0, o]), 0);
+    let g = made(rd1(o));
+    // rasterizer states: FillMode, CullMode NONE, the rest D3D11's defaults
+    let state = |fill: u32| {
+        let desc = mem(10);
+        put(desc, &[fill, 1, 0, 0, 0, 0, 1, 0, 0, 0]);
+        assert_eq!(dc(dev, 22, &[desc, o]), 0);
+        made(rd1(o))
+    };
+    let (solid, wire) = (state(3), state(2));
+    let drawn = |fill: u32, gs: u32, topology: u32| {
+        cc(ctx, 23, &[gs, 0, 0]);
+        cc(ctx, 43, &[fill]);
+        cc(ctx, 24, &[topology]);
+        crate::render::model::with(|m| m.prims = Some(Vec::new()));
+        cc(ctx, 13, &[6, 0]);
+        crate::d3d9::gpu::flush();
+        crate::d3d9::gpu::pump();
+        let prims = crate::render::model::with(|m| m.prims.take()).unwrap_or_default();
+        no_model_errors();
+        prims.into_iter().flatten().map(|p| p.len()).collect::<Vec<usize>>()
+    };
+    for gs in [0, g] {
+        for topology in [4, 5] {
+            let s = drawn(solid, gs, topology);
+            let w = drawn(wire, gs, topology);
+            let what = format!("geometry shader {}, topology {topology}", gs != 0);
+            assert!(!s.is_empty() && s.iter().all(|&k| k == 3), "{what}: solid {s:?}");
+            assert!(w.iter().all(|&k| k == 2), "{what}: wireframe {w:?}");
+            assert_eq!(w.len(), 3 * s.len(), "{what}: three edges a triangle");
+        }
+    }
+    let keys: Vec<(Fill, u32)> = {
+        let gd = kome::locks::Lock::locked(&D11S);
+        let d = gd.as_ref().unwrap_or_else(|| panic!("no device"));
+        d.pipelines.keys().map(|k| (k.fill, k.desc[2])).collect()
+    };
+    assert!(keys.iter().any(|&(f, t)| f == Fill::Wireframe && t == 1), "{keys:?}");
+    assert!(keys.iter().all(|&(f, t)| f == Fill::Solid || t == 1), "a wireframe pipeline of triangles: {keys:?}");
+    // (the context is the tests' shared one: its default rasterizer state and no geometry
+    // shader again for the next test)
+    cc(ctx, 43, &[0]);
+    cc(ctx, 23, &[0, 0, 0]);
+    release_all();
+}
+
+proptest! {
+    /// A store's (a geometry shader's output's) edges, as wire_edges gives a draw's: three a
+    /// triangle, each its own corners, in winding order.
+    #[test]
+    fn a_stores_edges_are_its_triangles(n in 0u32..60) {
+        let idx: Vec<u32> = (0..n).collect();
+        let e = triangle_edges(&idx, false, None);
+        prop_assert_eq!(e.len(), us(n / 3) * 6);
+        for (t, c) in e.chunks_exact(6).enumerate() {
+            let b = lo32(t) * 3;
+            prop_assert_eq!(c, &[b, b + 1, b + 1, b + 2, b + 2, b][..]);
+        }
+    }
+}

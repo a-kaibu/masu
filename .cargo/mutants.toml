@@ -1,5 +1,8 @@
 # cargo-mutants (tools/ci/mutants.sh, .github/workflows/mutants.yml)
 profile = "mutants"
+# (the copy keeps .git: masu-lint reads the tracked files with `git ls-files`, and its tests fail
+# (not pass on no files) where they cannot be listed; review e18bf44)
+copy_vcs = true
 exclude_re = [
     # Kani proofs (formal/kani.sh), not built by cargo test
     '\bproofs::',

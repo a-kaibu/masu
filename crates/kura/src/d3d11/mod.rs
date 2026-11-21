@@ -490,7 +490,7 @@ pub struct D11 {
     st: State,
     /// the ID3DDeviceContextState whose state `st` is (0: the context's own)
     st_owner: u32,
-    pipelines: HashMap<Vec<u32>, u32>,
+    pipelines: HashMap<PipelineKey, u32>,
     /// point sprites' viewport uniform (page buffer, the half size written to it)
     sprite_view: (u32, [f32; 2]),
     /// constant buffer ranges a shader reads that are not the whole buffer from its start, or
@@ -790,7 +790,7 @@ impl D11 {
                 if !mods.is_empty() {
                     let mut gone = Vec::new();
                     self.pipelines.retain(|k, &mut id| {
-                        let keep = !mods.contains(&k[0]) && !mods.contains(&k[1]);
+                        let keep = !mods.contains(&k.desc[0]) && !mods.contains(&k.desc[1]);
                         if !keep {
                             gone.push(id);
                         }
@@ -4499,6 +4499,31 @@ fn merge_vertex_buffers(vbs: &[(u32, u32, u32); 32], slots: &mut Vec<(u32, u32, 
 /// The edges of a draw's triangles (list, or strip with `strip`) as line-list indices: each
 /// triangle's a-b, b-c, c-a, of its index buffer's indices (a strip's restart index cuts it)
 /// or of the vertex numbers. None when the indices are out of the buffer.
+/// A rasterizer state's D3D11_FILL_MODE (its first word): how a draw's triangles rasterize.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub(crate) enum Fill {
+    /// D3D11_FILL_SOLID (3)
+    Solid,
+    /// D3D11_FILL_WIREFRAME (2): their edges, a line list (the draw's own, a geometry shader's
+    /// output's too: review e18bf44)
+    Wireframe,
+}
+
+impl Fill {
+    /// Of a rasterizer description's FillMode (CreateRasterizerState takes 2 and 3 only).
+    pub(crate) fn of(mode: u32) -> Fill {
+        if mode == 2 { Fill::Wireframe } else { Fill::Solid }
+    }
+}
+
+/// A render pipeline as the page makes it: CREATE_PIPELINE2's description, and the fill mode
+/// it was made for (a solid draw's pipeline never stands for a wireframe one: review e18bf44).
+#[derive(Clone, PartialEq, Eq, Hash, Debug)]
+pub(crate) struct PipelineKey {
+    pub(crate) fill: Fill,
+    pub(crate) desc: Vec<u32>,
+}
+
 unsafe fn wire_edges(d: &D11, st: &State, indexed: bool, count: u32, start: u32, strip: bool) -> Option<Vec<u32>> {
     let idx: Vec<u32> = if indexed {
         let isz = if st.ib.1 == 42 { 4u64 } else { 2 };
@@ -4696,12 +4721,15 @@ unsafe fn draw_with(d: &mut D11, st: &State, indexed: bool, count: u32, instance
         Some((_, false)) => 3,
         None => topo,
     };
-    // FillMode WIREFRAME (2) of triangles: their edges as a line list of its own indices (#64)
-    let wired = r.first() == Some(&2) && matches!(topo, 3 | 4) && sprite.is_none() && store.is_none();
+    // FillMode WIREFRAME (2) of triangles: their edges as a line list of its own indices (#64),
+    // a geometry shader's output's too (its store's vertices: a list, review e18bf44)
+    let fill = Fill::of(r.first().copied().unwrap_or(3));
+    let wired = fill == Fill::Wireframe && matches!(topo, 3 | 4) && sprite.is_none();
     // (the draw's own indices: the edges, or the adjacency topology's list)
     let wire = match adjacent {
         Some((list, _)) if wired => Some(triangle_edges(&list, false, None)),
         Some((list, _)) => Some(list),
+        None if wired && store.is_some() => Some(triangle_edges(&(0..count).collect::<Vec<u32>>(), topo == 4, None)),
         None if wired => {
             if indexed {
                 expand::pull(d, st.ib.0);
@@ -4711,7 +4739,13 @@ unsafe fn draw_with(d: &mut D11, st: &State, indexed: bool, count: u32, instance
         }
         None => None,
     };
-    let topo = if wired && wire.is_some() { 1 } else { topo };
+    // (wireframe triangles whose edges could not be read (an index buffer too short): drawn
+    // as nothing, never as filled triangles)
+    if wired && wire.is_none() {
+        return;
+    }
+    let fill = if wired { Fill::Wireframe } else { Fill::Solid };
+    let topo = if wired { 1 } else { topo };
     let strip = if wire.is_none() && indexed && matches!(topo, 2 | 4) { if st.ib.1 == 42 { 2 } else { 1 } } else { 0 };
     let mut key = vec![vs, ps.as_ref().map_or(0, |p| p.0), topo, strip];
     // rasterizer: cull, front ccw, depth bias, slope, clamp
@@ -4750,6 +4784,7 @@ unsafe fn draw_with(d: &mut D11, st: &State, indexed: bool, count: u32, instance
     }
     // multisampling: AlphaToCoverageEnable, the sample mask (render::d3d pipeline2)
     key.extend_from_slice(&[b[0], st.sample_mask]);
+    let key = PipelineKey { fill, desc: key };
     let pipe = match d.pipelines.get(&key) {
         Some(&p) => {
             crate::render::gpu::pipeline_hit();
@@ -4757,8 +4792,8 @@ unsafe fn draw_with(d: &mut D11, st: &State, indexed: bool, count: u32, instance
         }
         None => {
             let id = page_id();
-            let mut c = vec![gpu::CREATE_PIPELINE2, id, lo32(key.len())];
-            c.extend_from_slice(&key);
+            let mut c = vec![gpu::CREATE_PIPELINE2, id, lo32(key.desc.len())];
+            c.extend_from_slice(&key.desc);
             gpu::record(|q| q.cmd(&c));
             d.pipelines.insert(key, id);
             id

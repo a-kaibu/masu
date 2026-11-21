@@ -270,7 +270,7 @@ fn run(seed: u64, vs: &[u8], ps: &[u8], ten: bool) {
         let d = g.as_ref().unwrap();
         let ours = [d.id_of(vsh), d.id_of(psh)];
         let mods: Vec<u32> = ours.iter().filter_map(|id| match d.objs.get(id).map(|o| &o.data) { Some(Data::Shader(s)) => Some(s), _ => None }).flat_map(|s| s.wgsl.values().flatten().map(|r| r.0)).collect();
-        let pipes = d.pipelines.keys().filter(|k| mods.contains(&k[0]) || mods.contains(&k[1])).count();
+        let pipes = d.pipelines.keys().filter(|k| mods.contains(&k.desc[0]) || mods.contains(&k.desc[1])).count();
         (mods.len(), pipes)
     };
     gpu::flush();

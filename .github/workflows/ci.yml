@@ -193,6 +193,40 @@ jobs:
             target
           key: ${{ steps.cargo-cache.outputs.cache-primary-key }}
 
+  # (every Cargo workspace of its own, fuzz harnesses and the JIT tools: compiled, every target,
+  # in minutes, before the jobs that run them find a build error an hour later; review e18bf44)
+  own-workspaces:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - run: tools/ci/rust-key.sh
+      - run: rustup target add wasm32-unknown-unknown
+      - id: cargo-cache
+        uses: actions/cache/restore@v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target/own
+          key: own-${{ runner.os }}-${{ env.RUST_KEY }}-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            own-${{ runner.os }}-${{ env.RUST_KEY }}-
+      - name: Every workspace of its own builds (tools/ci/own-workspaces.sh)
+        env:
+          CARGO_TARGET_DIR: ${{ github.workspace }}/target/own
+        run: tools/ci/own-workspaces.sh
+      - if: ${{ !cancelled() }}
+        run: python3 tools/ci/cache-prune.py target/own
+      - if: ${{ !cancelled() && steps.cargo-cache.outputs.cache-primary-key != '' && steps.cargo-cache.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target/own
+          key: ${{ steps.cargo-cache.outputs.cache-primary-key }}
+
   test:
     runs-on: ubuntu-24.04
     # (cargo's build.warnings: the workspace's own warnings fail the build; unlike
@@ -672,7 +706,7 @@ jobs:
       - name: Fetch scheduler tests (one budget, fetch once, batch presign, hints; tests/sched.test.mjs)
         run: node --test tests/sched.test.mjs
       - name: Shared VFS, account bridge, node stdio and host JS stability tests (host/vnfs.js, host/account-bridge.js, host/node-stdio.js, host/vnjit.js, host/pre.js, host/tls-bridge.js)
-        run: node --test tests/vfs-shared.mjs tests/account-bridge.mjs tests/node-stdio.mjs tests/host-stability.mjs
+        run: node --test tests/vfs-shared.mjs tests/account-bridge.mjs tests/node-stdio.mjs tests/host-stability.mjs tests/outrecords.test.mjs
       - name: The shared kernel's lock with processes ending anywhere (host/vnkern.js; tests/kernlock.test.mjs)
         run: node --test tests/kernlock.test.mjs
       - wait: apt
@@ -947,3 +981,35 @@ jobs:
       - name: Shrink the cargo cache
         if: ${{ !cancelled() }}
         run: python3 tools/ci/cache-prune.py target
+
+  # masu on Windows itself: adding a game takes the store's lock (a lock file in the store:
+  # Windows' File::open opens no directory, `masu add` failed there; review e18bf44)
+  windows-native:
+    runs-on: windows-2025
+    timeout-minutes: 45
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - run: tools/ci/rust-key.sh
+      - id: cargo-cache
+        uses: actions/cache/restore@v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: windows-native-${{ runner.os }}-${{ env.RUST_KEY }}-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            windows-native-${{ runner.os }}-${{ env.RUST_KEY }}-
+      - name: masu adds a small game on Windows (the store's lock file, every lock a lock file)
+        run: cargo test -p masu --bin masu -- --exact pack::tests::adding_a_small_game_takes_the_store_lock_file lockfile::tests::one_holder_at_a_time_and_never_a_directory webassets::tests::keeps_copies_running_servers_use
+      - if: ${{ !cancelled() && steps.cargo-cache.outputs.cache-primary-key != '' && steps.cargo-cache.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ steps.cargo-cache.outputs.cache-primary-key }}

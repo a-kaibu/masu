@@ -341,6 +341,77 @@ pub(crate) mod gc_tests {
         let _ = std::fs::remove_dir_all(dir);
     }
 
+    /// The store as restored from a backup at `db` (the same bucket and keys as `s`).
+    fn restored(s: &Storage, db: std::path::PathBuf) -> Storage {
+        Storage { db: Library(db), bucket: s.bucket.clone(), config: Config { keys: s.config.keys.clone(), active_key: "k".into(), bucket: "test".into(), region: "us-east-1".into(), endpoint: None, prefix: "".into(), uploads: None, cache: None, cache_gib: None }, shared: Shared::new(8, None) }
+    }
+
+    /// A store restored from a backup goes on (puts, forgets, its own backups) and gcs, over
+    /// seeded random histories: the backup it came from restores whole again afterwards, and
+    /// so does each one the restored store made (review e18bf44: restore did not pin the backup
+    /// it came from, and a gc after an update deleted its objects).
+    #[tokio::test]
+    async fn a_restored_store_keeps_the_backup_it_came_from() {
+        for seed in [0x9e3779b97f4a7c15u64, 0xbf58476d1ce4e5b9, 0x94d049bb133111eb] {
+            let (f, s, dir) = serve(0).await;
+            let mut seed = seed;
+            let mut rnd = move |n: u64| {
+                seed ^= seed << 13;
+                seed ^= seed >> 7;
+                seed ^= seed << 17;
+                seed % n
+            };
+            let mut want: BTreeMap<String, Vec<u8>> = BTreeMap::new();
+            for k in 0..4 {
+                let v = format!("first {k}").into_bytes();
+                s.put(&format!("trees/t{k}"), &v).await.unwrap();
+                want.insert(format!("trees/t{k}"), v);
+            }
+            let mut backups = vec![(s.backup().await.unwrap(), want.clone())];
+            let mut store = s;
+            for round in 0..3 {
+                let (b, _) = backups[rnd(backups.len() as u64) as usize].clone();
+                let db = dir.join(format!("restored-{round}.db"));
+                store.restore(b, &db).await.unwrap();
+                let r = restored(&store, db);
+                want = backups.iter().find(|(id, _)| *id == b).unwrap().1.clone();
+                for step in 0..30 {
+                    let l = format!("trees/t{}", rnd(4));
+                    match rnd(8) {
+                        0 => {
+                            r.forget(&l).unwrap();
+                            want.remove(&l);
+                        }
+                        1 if backups.len() < 6 => backups.push((r.backup().await.unwrap(), want.clone())),
+                        _ => {
+                            let v = format!("round {round} step {step}").into_bytes();
+                            r.put(&l, &v).await.unwrap();
+                            want.insert(l, v);
+                        }
+                    }
+                }
+                age_retired(&r, 7_200_000);
+                let gc = r.gc(std::time::Duration::from_secs(3600), None).await.unwrap();
+                assert!(gc.deleted > 0 || gc.kept > 0, "{gc:?}");
+                for (l, v) in &want {
+                    assert_eq!(&*r.get(l).await.unwrap().unwrap(), &v[..], "round {round}: {l}");
+                }
+                // (every backup still restores whole, the one this store came from too)
+                for (i, (id, then)) in backups.iter().enumerate() {
+                    let out = dir.join(format!("check-{round}-{i}.db"));
+                    r.restore(*id, &out).await.unwrap_or_else(|e| panic!("round {round}: backup {i}: {e:#}"));
+                    let c = restored(&r, out);
+                    for (l, v) in then {
+                        assert_eq!(&*c.get(l).await.unwrap().unwrap(), &v[..], "round {round}: backup {i}: {l}");
+                    }
+                }
+                store = r;
+            }
+            drop(f);
+            let _ = std::fs::remove_dir_all(dir);
+        }
+    }
+
     #[tokio::test]
     async fn gc_protects_the_snapshot_during_publication() {
         let (f, mut s, dir) = serve(0).await;
@@ -2873,9 +2944,8 @@ impl Storage {
         self.record(&batch)
     }
 
-    fn backup_lock(&self) -> Result<std::fs::File> {
-        Ok(std::fs::OpenOptions::new().create(true).truncate(false).read(true).write(true)
-            .open(self.db.0.with_extension("backup.lock"))?)
+    fn backup_lock(&self) -> Result<crate::lockfile::LockFile> {
+        crate::lockfile::LockFile::open(&self.db.0.with_extension("backup.lock"))
     }
 
     pub async fn backup(&self) -> Result<Uuid> {
@@ -2948,7 +3018,13 @@ impl Storage {
             let mut c = rusqlite::Connection::open(&temp)?;
             let check: String = c.query_row("PRAGMA integrity_check", [], |r| r.get(0))?;
             ensure!(check == "ok", "invalid database snapshot");
+            c.execute_batch(crate::library::SCHEMA)?;
             let tx = c.transaction()?;
+            // The backup restored from is this database's too: its objects stay pinned here
+            // (backup_refs), so a gc after the restored store moves on never deletes what
+            // restoring it again needs. The snapshot was taken before `backup` registered it in
+            // the store it came from (review e18bf44: restore, update, gc, restore lost objects).
+            register_backup(&tx, id, b.envelope.object, b.created_ms)?;
             let rows: Vec<(String, String)> = {
                 let mut q = tx.prepare("SELECT logical,envelope FROM objects")?;
                 let rows = q.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?;
@@ -3163,5 +3239,22 @@ fn upload_timeout(len: usize, at_once: AtOnce) -> std::time::Duration {
 /// Notes that `object` is no longer named (gc deletes it later).
 fn retire(tx: &rusqlite::Transaction, object: Uuid) -> Result<()> {
     tx.execute("INSERT OR IGNORE INTO retired(object,retired_ms) VALUES(?,?)", rusqlite::params![object.to_string(), now_ms()])?;
+    Ok(())
+}
+
+/// Registers backup `id` (descriptor; `snapshot`: its database's object) in the database `tx`
+/// is on, pinning what its rows and packs name: the database restored from it is the snapshot
+/// itself, so its own rows are what the backup needs. Rewrapping keeps each envelope's object.
+fn register_backup(tx: &rusqlite::Transaction, id: Uuid, snapshot: Uuid, created_ms: u128) -> Result<()> {
+    let (id, snapshot) = (id.to_string(), snapshot.to_string());
+    tx.execute("INSERT OR IGNORE INTO backup_sets(id,snapshot) VALUES(?,?)", [&id, &snapshot])?;
+    tx.execute(
+        "INSERT OR IGNORE INTO backup_refs(id,object) SELECT ?1, json_extract(envelope,'$.object') FROM objects UNION SELECT ?1,pack FROM packs",
+        [&id],
+    )?;
+    tx.execute(
+        "INSERT OR IGNORE INTO backups(id,snapshot,created_ms) VALUES(?,?,?)",
+        rusqlite::params![id, snapshot, i64::try_from(created_ms)?],
+    )?;
     Ok(())
 }

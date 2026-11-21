@@ -9,16 +9,55 @@ use koji::jit::{self, wasm};
 
 
 /// The JIT code of `bytes` then RET, as a region: how many smc exits (stores of an address
-/// into Cpu::jit_smc) it has, or None if nothing was translated.
+/// into Cpu::jit_smc) it has, or None if nothing was translated. Each exit stores the store's
+/// length too (Cpu::jit_smc_len, the `widths` given: the host meets the whole span with the
+/// code's, review e18bf44).
 fn smc_exits(bytes: &[u8]) -> Option<usize> {
     let mut v = bytes.to_vec();
     v.push(0xc3);
     let mut m = wasm::Module::default();
     jit::translate_region(&mut m, &mut koji::Rom::<0x10_0000>(v), &[0x10_0000], 16, |_| true)?;
     let b = m.finish();
-    let mut c = wasm::Code::default();
-    c.store32(std::mem::offset_of!(koji::Cpu, jit_smc) as u32);
-    Some(b.windows(c.b.len()).filter(|w| *w == &c.b[..]).count())
+    let count = |off: usize| {
+        let mut c = wasm::Code::default();
+        c.store32(off as u32);
+        b.windows(c.b.len()).filter(|w| *w == &c.b[..]).count()
+    };
+    let exits = count(std::mem::offset_of!(koji::Cpu, jit_smc));
+    assert_eq!(count(std::mem::offset_of!(koji::Cpu, jit_smc_len)), exits, "an smc exit without the store's length");
+    Some(exits)
+}
+
+/// The lengths an smc exit of `bytes` stores (the i32.const before each store to jit_smc_len).
+fn smc_lengths(bytes: &[u8]) -> Vec<u32> {
+    let mut v = bytes.to_vec();
+    v.push(0xc3);
+    let mut m = wasm::Module::default();
+    jit::translate_region(&mut m, &mut koji::Rom::<0x10_0000>(v), &[0x10_0000], 16, |_| true).unwrap();
+    let b = m.finish();
+    let mut out = Vec::new();
+    for n in [1u32, 2, 4, 8, 10, 16] {
+        let mut c = wasm::Code::default();
+        c.u32c(n).store32(std::mem::offset_of!(koji::Cpu, jit_smc_len) as u32);
+        out.extend(std::iter::repeat_n(n, b.windows(c.b.len()).filter(|w| *w == &c.b[..]).count()));
+    }
+    out.sort();
+    out
+}
+
+#[test]
+fn an_smc_exit_says_how_many_bytes_were_stored() {
+    jit::set_watch(|_| true);
+    for (name, bytes, want) in [
+        ("mov [ebx], al", &[0x88, 0x03][..], 1),
+        ("mov [ebx], ax", &[0x66, 0x89, 0x03], 2),
+        ("mov [ebx], eax", &[0x89, 0x03], 4),
+        ("fld1; fstp qword [ebx]", &[0xd9, 0xe8, 0xdd, 0x1b], 8),
+        ("movups [ebx], xmm1", &[0x0f, 0x11, 0x0b], 16),
+    ] {
+        let got = smc_lengths(bytes);
+        assert!(!got.is_empty() && got.iter().all(|&n| n == want), "{name}: {got:?}");
+    }
 }
 
 #[test]

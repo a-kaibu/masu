@@ -62,12 +62,9 @@ pub struct Session {
     pub elapsed_ms: i64,
 }
 
-impl Library {
-    pub fn new(store: &Path) -> Result<Self> {
-        std::fs::create_dir_all(store)?;
-        let db = Self(store.join("library.sqlite3"));
-        let c = db.connect()?;
-        c.execute_batch("PRAGMA journal_mode=WAL;
+/// The tables of a store's database (`Library::new`; `Storage::restore` brings a snapshot of an
+/// older one up to them before registering the backup it came from).
+pub(crate) const SCHEMA: &str = "
             CREATE TABLE IF NOT EXISTS profiles(game TEXT PRIMARY KEY, favorite INTEGER NOT NULL DEFAULT 0, note TEXT NOT NULL DEFAULT '');
             CREATE TABLE IF NOT EXISTS sessions(id TEXT PRIMARY KEY, game TEXT NOT NULL, started_ms INTEGER NOT NULL, elapsed_ms INTEGER NOT NULL CHECK(elapsed_ms >= 0));
             CREATE INDEX IF NOT EXISTS sessions_game ON sessions(game,started_ms);
@@ -85,7 +82,14 @@ impl Library {
             CREATE TABLE IF NOT EXISTS egs_games(id INTEGER PRIMARY KEY, name TEXT NOT NULL, votes INTEGER NOT NULL DEFAULT 0);
             CREATE TABLE IF NOT EXISTS kv(key TEXT PRIMARY KEY, value TEXT NOT NULL);
             CREATE TABLE IF NOT EXISTS game_meta(game TEXT PRIMARY KEY, url TEXT NOT NULL, job TEXT NOT NULL, state TEXT NOT NULL CHECK(state IN ('pending','ok','error')), error TEXT NOT NULL DEFAULT '', info TEXT, cover BLOB, cover_type TEXT, updated_ms INTEGER NOT NULL);
-            PRAGMA user_version=1;")?;
+";
+
+impl Library {
+    pub fn new(store: &Path) -> Result<Self> {
+        std::fs::create_dir_all(store)?;
+        let db = Self(store.join("library.sqlite3"));
+        let c = db.connect()?;
+        c.execute_batch(&format!("PRAGMA journal_mode=WAL;\n{SCHEMA}PRAGMA user_version=1;"))?;
         Ok(db)
     }
 

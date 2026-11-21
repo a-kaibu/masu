@@ -1678,7 +1678,7 @@ fn sse_encodes() {
             None => {
                 bad += 1;
                 if bad < 5 {
-                    println!("{:?} ds {} d {:#x} k {:?} {:?}", i.code(), i.memory_displ_size(), i.memory_displacement64(), Vec::<_>::from_fn(i.op_count(), |k| i.op_kind(k)), BlockEncoder::encode(64, InstructionBlock::new(&[i], CODE as u64), BlockEncoderOptions::NONE).err());
+                    println!("{:?} ds {} d {:#x} k {:?} {:?}", i.code(), i.memory_displ_size(), i.memory_displacement64(), (0..i.op_count()).map(|k| i.op_kind(k)).collect::<Vec<_>>(), BlockEncoder::encode(64, InstructionBlock::new(&[i], CODE as u64), BlockEncoderOptions::NONE).err());
                 }
             }
         }

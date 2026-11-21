@@ -37,7 +37,7 @@ pub const ARCH_SITES: &str = "tools/ci/arch-lint-sites.tsv";
 
 fn arch_main(update: bool) -> Result<String, String> {
     let root = root();
-    let tree = Tree::repo(&root);
+    let tree = Tree::repo(&root)?;
     let found = arch::check(&tree, &arch::Rule::ALL);
     let sites_path = root.join(ARCH_SITES);
     let text = std::fs::read_to_string(&sites_path).unwrap_or_default();
@@ -80,7 +80,7 @@ pub const DUP_SKIP: &[&str] = &["vendor/", "tools/lint-fixtures/"];
 
 fn dup_main(update: bool, list: bool) -> Result<String, String> {
     let root = root();
-    let tree = Tree::repo(&root);
+    let tree = Tree::repo(&root)?;
     let found = dup::find(&dup_files(&tree));
     let path = root.join(DUP_SITES);
     let text = std::fs::read_to_string(&path).unwrap_or_default();
@@ -139,7 +139,11 @@ fn main() -> ExitCode {
 #[test]
 fn dup_the_repository_has_no_unknown_copies() {
     let root = root();
-    let found = dup::find(&dup_files(&Tree::repo(&root)));
+    let tree = match Tree::repo(&root) {
+        Ok(t) => t,
+        Err(e) => panic!("{e}"),
+    };
+    let found = dup::find(&dup_files(&tree));
     let known = dup::load_known(&std::fs::read_to_string(root.join(DUP_SITES)).unwrap_or_default());
     let new = dup::fresh(&found, &known);
     assert!(new.is_empty(), "{}", dup::report(&new, DUP_SITES));

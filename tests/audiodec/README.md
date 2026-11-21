@@ -7,7 +7,7 @@ of all Chromium processes, since its decoder runs off the page thread), how long
 waits for its samples when each is waited for, and how far apart the two decodes are. It also
 asks AudioDecoder which codecs it takes.
 
-    cargo build --release --target wasm32-unknown-unknown \
+    cargo build --release \
       --manifest-path tests/audiodec/vorbis-wasm/Cargo.toml
     node tests/audiodec/run.mjs \
       tests/audiodec/vorbis-wasm/target/wasm32-unknown-unknown/release/vorbis_wasm.wasm \

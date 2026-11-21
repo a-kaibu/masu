@@ -8,6 +8,10 @@
 //! * `render` – the thread that draws (WebGPU)
 //! * `wrap` – the few libc entry points (`-Wl,--wrap=...`) kura takes over
 
+// (Kani 0.68's compiler, nightly 2026-08-20, has these Rust 1.100 library features still
+// unstable: formal/kani.sh builds this crate with it; masu-lint kani-features)
+#![cfg_attr(kani, feature(vec_from_fn, bool_toggle, trim_prefix_suffix))]
+
 /// Whether environment variable `$name` is set, read once (std::env::var takes a lock and walks
 /// the environment on every call).
 #[macro_export]

@@ -5,6 +5,10 @@
 //!
 //! Source text in, bytecode out; std only. The dxwgsl crate turns the output into WGSL.
 
+// (Kani 0.68's compiler, nightly 2026-08-20, has these Rust 1.100 library features still
+// unstable: formal/kani.sh builds this crate with it; masu-lint kani-features)
+#![cfg_attr(kani, feature(vec_from_fn, bool_toggle, trim_prefix_suffix))]
+
 // (safe Rust, no shared state: tools/ci/sanitize.sh leaves the crate out of TSan, where it can
 // have no data race to find, #242)
 #![forbid(unsafe_code)]

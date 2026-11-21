@@ -802,7 +802,11 @@ mod proofs {
         let w: u32 = kani::any_where(|&w| (1..=16384).contains(&w));
         let h: u32 = kani::any_where(|&h| (1..=16384).contains(&h));
         let (pitch, rows) = pitch_rows(dxgi, w, h);
-        if let Some(f) = info(dxgi) {
+        if dxgi == 103 {
+            // (NV12: a byte per luma texel on an even pitch, then the half-height chroma rows)
+            assert!(pitch == w.next_multiple_of(2) && rows == h + h.div_ceil(2));
+            assert!(pitch as u64 * rows as u64 <= 16384 * 16384 * 2);
+        } else if let Some(f) = info(dxgi) {
             assert!(f.block == 1 || f.block == 4);
             assert!(pitch == w.div_ceil(f.block) * f.bpp && rows == h.div_ceil(f.block));
             assert!(pitch as u64 * rows as u64 <= 16384 * 16384 * 16);

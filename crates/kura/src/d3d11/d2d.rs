@@ -406,6 +406,7 @@ pub fn draw(addr: u32, items: &[Item], bitmap: Option<u32>) {
     let mut key = vec![vs, ps, 4, 0, 1, 0, 0, 0, 0, 0xffff];
     key.extend_from_slice(&[1, lo32(std::mem::size_of::<Item>()), 1, 5, 3, 0, 0, 3, 16, 1, 3, 32, 2, 3, 48, 3, 7, 64, 4]);
     key.extend_from_slice(&[1, tpage, 1, blend_factor(2, false).code(), blend_factor(6, false).code(), 1, blend_factor(2, true).code(), blend_factor(6, true).code(), 1, 0xf]);
+    let key = super::PipelineKey { fill: super::Fill::Solid, desc: key };
     let pipe = match d.pipelines.get(&key) {
         Some(&p) => {
             crate::render::gpu::pipeline_hit();
@@ -413,8 +414,8 @@ pub fn draw(addr: u32, items: &[Item], bitmap: Option<u32>) {
         }
         None => {
             let id = page_id();
-            let mut c = vec![gpu::CREATE_PIPELINE2, id, lo32(key.len())];
-            c.extend_from_slice(&key);
+            let mut c = vec![gpu::CREATE_PIPELINE2, id, lo32(key.desc.len())];
+            c.extend_from_slice(&key.desc);
             gpu::record(|q| q.cmd(&c));
             d.pipelines.insert(key, id);
             id

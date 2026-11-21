@@ -5,11 +5,14 @@ import { check } from "./boundaries.mjs";
 test("save metadata writes and unchecked runtime bytes stay with their callers", () => {
   const files = {
     "/src/saves.ts": `
-      const writeSync = () => {};
-      function cacheSave() { writeSync(); }
-      function acknowledgeSave() { writeSync(); }
-      function storeSaves() { writeSync(); }
-      const escaped = { writeSync };
+      async function localWrite() {}
+      function persist() { return localWrite(); }
+      async function loadSaves() { await localWrite(); }
+      function storeSaves() { localWrite(); }
+      const escaped = { localWrite };
+      const legacyFiles = (name) => ({ bin: name });
+      async function takeOver() { legacyFiles("game"); }
+      function readSync() { return legacyFiles("game"); }
     `,
     "/src/wasmsource.ts": `
       export function sakeWasmBytes() {}
@@ -26,7 +29,8 @@ test("save metadata writes and unchecked runtime bytes stay with their callers",
   host.getSourceFile = (f) =>
     files[f] === undefined ? undefined : ts.createSourceFile(f, files[f], ts.ScriptTarget.Latest, true);
   const findings = check(ts.createProgram(Object.keys(files), options, host));
-  expect(findings.filter((f) => f.startsWith("/src/saves.ts:"))).toHaveLength(2);
+  expect(findings.filter((f) => f.startsWith("/src/saves.ts:"))).toHaveLength(3);
+  expect(findings.filter((f) => f.includes("legacyFiles may only"))).toHaveLength(1);
   expect(findings.filter((f) => f.startsWith("/src/wasmsource.ts:"))).toHaveLength(1);
   expect(findings.some((f) => f.startsWith("/src/play.ts:"))).toBe(true);
   expect(findings.some((f) => f.includes(".test.ts:"))).toBe(false);

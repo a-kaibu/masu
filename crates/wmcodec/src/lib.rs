@@ -4,6 +4,10 @@
 //! have wasm SIMD128 versions (`simd`, built with `target_feature = "simd128"`), bit for bit the
 //! scalar ones (wasm-test.sh).
 
+// (Kani 0.68's compiler, nightly 2026-08-20, has these Rust 1.100 library features still
+// unstable: formal/kani.sh builds this crate with it; masu-lint kani-features)
+#![cfg_attr(kani, feature(vec_from_fn, bool_toggle, trim_prefix_suffix))]
+
 pub mod bits;
 pub mod hpel;
 pub mod idct;
