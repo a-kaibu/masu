@@ -8,6 +8,7 @@
 //! files). Most functions convert their arguments and call sake's own 32-bit handler
 //! (w16api.rs); window procedures go the other way through `call16`.
 
+use kome::locks::Lock as _;
 use crate::api::{self, Ctx, Handler};
 use crate::mem::{r16, r32, w16, w32, w8};
 use crate::HashMap;
@@ -62,7 +63,7 @@ enum Conv {
 static ST: Mutex<Option<St>> = Mutex::new(None);
 
 fn with<R>(f: impl FnOnce(&mut St) -> R) -> R {
-    f(ST.lock().unwrap().as_mut().expect("w16 state"))
+    f(ST.locked().as_mut().expect("w16 state"))
 }
 
 /// The running program (one task).
@@ -226,7 +227,7 @@ fn h16_in(hm: &Mutex<Option<HMap>>, h: u32, alive: impl Fn(u32) -> bool) -> u16 
         return h as u16;
     }
     for sweep in [false, true] {
-        let mut g = hm.lock().unwrap();
+        let mut g = hm.locked();
         let m = g.get_or_insert_with(|| HMap { to16: HashMap::default(), to32: HashMap::default(), next: 0x8000 });
         if let Some(&v) = m.to16.get(&h) {
             return v;
@@ -241,7 +242,7 @@ fn h16_in(hm: &Mutex<Option<HMap>>, h: u32, alive: impl Fn(u32) -> bool) -> u16 
         let all: Vec<(u16, u32)> = m.to32.iter().map(|(&a, &b)| (a, b)).collect();
         drop(g);
         let dead: Vec<(u16, u32)> = all.into_iter().filter(|&(_, b)| !alive(b)).collect();
-        let mut g = hm.lock().unwrap();
+        let mut g = hm.locked();
         if let Some(m) = g.as_mut() {
             for (a, b) in dead {
                 if m.to32.get(&a) == Some(&b) {
@@ -255,13 +256,13 @@ fn h16_in(hm: &Mutex<Option<HMap>>, h: u32, alive: impl Fn(u32) -> bool) -> u16 
 }
 
 pub fn h32(h: u16) -> u32 {
-    let g = HM.lock().unwrap();
+    let g = HM.locked();
     g.as_ref().and_then(|m| m.to32.get(&h).copied()).unwrap_or(h as u32)
 }
 
 /// The 32-bit handle is gone (DeleteObject, DestroyWindow...).
 pub fn h_release(h: u16) {
-    let mut g = HM.lock().unwrap();
+    let mut g = HM.locked();
     if let Some(m) = g.as_mut() && let Some(v) = m.to32.remove(&h) {
         m.to16.remove(&v);
     }
@@ -527,7 +528,7 @@ impl C16<'_> {
 
 /// Implements a 16-bit function (module as in specs16.txt).
 pub fn implement16(module: &str, name: &str, f: H16) {
-    IMPL16.lock().unwrap().get_or_insert_with(HashMap::default).insert(format!("{module}.{name}"), f);
+    IMPL16.locked().get_or_insert_with(HashMap::default).insert(format!("{module}.{name}"), f);
 }
 
 static IMPL16: Mutex<Option<HashMap<String, H16>>> = Mutex::new(None);
@@ -587,7 +588,7 @@ fn import(module: &str, ord: u16) -> Result<u32, String> {
     if let Some(v) = eq {
         return Ok(v);
     }
-    let f = IMPL16.lock().unwrap().as_ref().and_then(|m| m.get(&format!("{module}.{name}")).copied());
+    let f = IMPL16.locked().as_ref().and_then(|m| m.get(&format!("{module}.{name}")).copied());
     with(|s| {
         let i = match s.by_ord.get(&(module.clone(), ord)) {
             Some(&i) => i,
@@ -667,7 +668,7 @@ pub fn dispatch(cpu: &mut Cpu, a: u32) -> bool {
         None => {
             static SEEN: Mutex<Option<crate::HashSet<String>>> = Mutex::new(None);
             let key = format!("{module}.{name}");
-            if SEEN.lock().unwrap().get_or_insert_with(Default::default).insert(key.clone()) {
+            if SEEN.locked().get_or_insert_with(Default::default).insert(key.clone()) {
                 eprintln!("sake: unimplemented 16-bit {key} (returns 0)");
             }
             if conv == Conv::Stub || conv == Conv::Register {
@@ -1077,7 +1078,7 @@ pub fn proc_address(h: u16, e: Export) -> Option<u32> {
         };
         entry_point(d, ne, segs, ord)
     };
-    if let Some(r) = MODS.lock().unwrap().iter().find(|m| m.dgroup == h).map(|m| find(&m.file, m.ne, &m.segs)) {
+    if let Some(r) = MODS.locked().iter().find(|m| m.dgroup == h).map(|m| find(&m.file, m.ne, &m.segs)) {
         return r;
     }
     let t = task();
@@ -1120,7 +1121,7 @@ fn base_module(name: &str) -> String {
 /// The instance of loaded DLL `name` (a module name or a file's).
 pub fn find_module(name: &str) -> Option<u16> {
     let n = base_module(name);
-    MODS.lock().unwrap().iter().find(|m| m.name == n || base_module(&m.path) == n).map(|m| m.dgroup)
+    MODS.locked().iter().find(|m| m.name == n || base_module(&m.path) == n).map(|m| m.dgroup)
 }
 
 /// Loads DLL `name` (and the DLLs it imports from), its entries' prologues set to load its
@@ -1131,7 +1132,7 @@ pub fn load_dll(name: &str) -> Result<u16, u16> {
     let dirs = if file.contains(['\\', '/', ':']) {
         vec![String::new()]
     } else {
-        vec![EXE_DIR.lock().unwrap().clone(), crate::files::cwd(), "C:\\WINDOWS\\SYSTEM\\".into(), "C:\\WINDOWS\\".into()]
+        vec![EXE_DIR.locked().clone(), crate::files::cwd(), "C:\\WINDOWS\\SYSTEM\\".into(), "C:\\WINDOWS\\".into()]
     };
     let Some((path, host)) = dirs.iter().find_map(|d| {
         let w = crate::files::full_path(&format!("{d}{file}"));
@@ -1152,7 +1153,7 @@ pub fn load_dll(name: &str) -> Result<u16, u16> {
     let Some(img) = map_segments(&d, ne) else { return Err(11) };
     let Some(dgroup) = (if autodata == 0 { img.segs.first().copied() } else { seg_n(&img.segs, autodata as usize) }) else { return Err(11) };
     let dmin = if autodata == 0 { 0 } else { img.info[autodata as usize - 1].3 };
-    MODS.lock().unwrap().push(Mod16 { name: module_name(&d, ne), path, file: d.clone(), ne, segs: img.segs.clone(), dgroup, refs: 1 });
+    MODS.locked().push(Mod16 { name: module_name(&d, ne), path, file: d.clone(), ne, segs: img.segs.clone(), dgroup, refs: 1 });
     relocate(&d, ne, &img);
     fix_prologues(&d, ne, &img.segs, dgroup);
     // its local heap: after its data
@@ -1162,7 +1163,7 @@ pub fn load_dll(name: &str) -> Result<u16, u16> {
         s.heaps.insert(dgroup, m);
     });
     if let Some(sel) = (cs != 0).then(|| seg_n(&img.segs, cs as usize)).flatten() {
-        PENDING.lock().unwrap().push((dgroup, (sel as u32) << 16 | ip as u32, heap));
+        PENDING.locked().push((dgroup, (sel as u32) << 16 | ip as u32, heap));
     }
     Ok(dgroup)
 }
@@ -1208,7 +1209,7 @@ pub fn init_dlls(cpu: &mut Cpu) -> bool {
     let mut ok = true;
     loop {
         let next = {
-            let mut p = PENDING.lock().unwrap();
+            let mut p = PENDING.locked();
             if p.is_empty() { None } else { Some(p.remove(0)) }
         };
         let Some((h, entry, heap)) = next else { return ok };
@@ -1220,7 +1221,7 @@ pub fn init_dlls(cpu: &mut Cpu) -> bool {
         });
         if r & 0xffff == 0 {
             eprintln!("sake w16: the LibEntry of {h:#x} failed");
-            MODS.lock().unwrap().retain(|m| m.dgroup != h);
+            MODS.locked().retain(|m| m.dgroup != h);
             ok = false;
         }
     }
@@ -1244,7 +1245,7 @@ pub fn module_handle(name: &str) -> u16 {
 /// LibEntry run; an error below 32.
 pub fn load_library(cpu: &mut Cpu, name: &str) -> u16 {
     if let Some(h) = find_module(name) {
-        MODS.lock().unwrap().iter_mut().filter(|m| m.dgroup == h).for_each(|m| m.refs += 1);
+        MODS.locked().iter_mut().filter(|m| m.dgroup == h).for_each(|m| m.refs += 1);
         return h;
     }
     match load_dll(name) {
@@ -1260,7 +1261,7 @@ pub fn load_library(cpu: &mut Cpu, name: &str) -> u16 {
 /// (its memory stays: code of it may still be on a stack).
 pub fn free_library(cpu: &mut Cpu, h: u16) {
     let last = {
-        let mut v = MODS.lock().unwrap();
+        let mut v = MODS.locked();
         let Some(m) = v.iter_mut().find(|m| m.dgroup == h) else { return };
         m.refs = m.refs.saturating_sub(1);
         m.refs == 0
@@ -1269,7 +1270,7 @@ pub fn free_library(cpu: &mut Cpu, h: u16) {
         if let Some(wep) = proc_address(h, Export::Name("WEP")) {
             call16_in(cpu, wep, &[A::W(0)], h, |_| ());
         }
-        MODS.lock().unwrap().retain(|m| m.dgroup != h);
+        MODS.locked().retain(|m| m.dgroup != h);
     }
 }
 
@@ -1281,7 +1282,7 @@ pub fn start(cpu: &mut Cpu, exe: &str, wpath: &str, args: &[String]) -> ! {
     {
         let mut segs = Vec::with_capacity(NSEL as usize);
         segs.resize_with(NSEL as usize, || None);
-        *ST.lock().unwrap() = Some(St { ldt, segs, thunk: 0, by_ord: HashMap::default(), entries: vec![], heaps: HashMap::default() });
+        *ST.locked() = Some(St { ldt, segs, thunk: 0, by_ord: HashMap::default(), entries: vec![], heaps: HashMap::default() });
     }
     let thunk = sel_alloc(thunk_base, 0x10000);
     with(|s| s.thunk = thunk);
@@ -1293,7 +1294,7 @@ pub fn start(cpu: &mut Cpu, exe: &str, wpath: &str, args: &[String]) -> ! {
     let s16sel = sel_alloc(s16, 0x10000);
     SCR16.with(|s| s.set((s16sel, s16, 0xfff0)));
     crate::w16api::init();
-    *EXE_DIR.lock().unwrap() = wpath.rsplit_once('\\').map_or(String::new(), |(d, _)| format!("{d}\\"));
+    *EXE_DIR.locked() = wpath.rsplit_once('\\').map_or(String::new(), |(d, _)| format!("{d}\\"));
 
     let d = kura::fs::read(exe).unwrap_or_default();
     let ne = d.get(0x3c..0x40).map_or(0, |b| u32::from_le_bytes(b.try_into().unwrap()) as usize);
@@ -1468,6 +1469,7 @@ mod ne_tests {
 
 #[cfg(test)]
 mod alias_tests {
+    use kome::locks::Lock as _;
     use super::{h16_in, HMap, ALIASES};
     use proptest::prelude::*;
     use std::collections::HashSet;
@@ -1490,7 +1492,7 @@ mod alias_tests {
         // the odd handles are gone: the next one gets one of their aliases
         let a = h16_in(&hm, 0x900000, |h| h % 2 == 0);
         assert!(a != 0);
-        let m = hm.lock().unwrap();
+        let m = hm.locked();
         let m = m.as_ref().unwrap();
         assert_eq!(m.to32[&a], 0x900000);
         assert!(m.to16.keys().all(|&h| h % 2 == 0 || h == 0x900000));
@@ -1515,7 +1517,7 @@ mod alias_tests {
                 }
                 dead.remove(&h);
                 let a = h16_in(&hm, h, |x| !dead.contains(&x));
-                let g = hm.lock().unwrap();
+                let g = hm.locked();
                 let m = g.as_ref().unwrap();
                 prop_assert_eq!(m.to16.len(), m.to32.len());
                 for (&x, &y) in &m.to16 {

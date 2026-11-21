@@ -54,7 +54,7 @@ impl Default for List {
 static LISTS: Mutex<Option<HashMap<u32, List>>> = Mutex::new(None);
 
 fn list<R>(h: u32, f: impl FnOnce(&mut List) -> R) -> R {
-    f(LISTS.lock().unwrap().get_or_insert_with(HashMap::default).entry(h).or_default())
+    f(LISTS.locked().get_or_insert_with(HashMap::default).entry(h).or_default())
 }
 
 fn style(h: u32) -> u32 {
@@ -966,12 +966,12 @@ pub(super) fn proc_fn(c: &mut Ctx) -> u32 {
             for (i, it) in items.iter().enumerate().rev() {
                 delete_item(c, h, i, it.data, Gone::Destroyed);
             }
-            LISTS.lock().unwrap().get_or_insert_with(HashMap::default).remove(&h);
+            LISTS.locked().get_or_insert_with(HashMap::default).remove(&h);
             def_proc(c, wide)
         }
         // WM_NCDESTROY: what messages between WM_DESTROY and now made again goes too
         0x82 => {
-            LISTS.lock().unwrap().get_or_insert_with(HashMap::default).remove(&h);
+            LISTS.locked().get_or_insert_with(HashMap::default).remove(&h);
             def_proc(c, wide)
         }
         _ => def_proc(c, wide),

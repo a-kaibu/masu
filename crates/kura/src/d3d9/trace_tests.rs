@@ -5,6 +5,7 @@
 //! `MASU_TRACE_DIR=dir` writes `dir/d3d9-<seed>/ComTrace.tla`; `MASU_TRACE_SEEDS=n` (default 20).
 
 use super::draw_tests::call;
+use kome::locks::Lock as _;
 use super::*;
 use std::fmt::Write as _;
 use std::sync::Mutex;
@@ -29,7 +30,7 @@ impl Rng {
 static ARENA: Mutex<(u32, u32)> = Mutex::new((0, 0));
 
 pub(crate) unsafe extern "C" fn alloc(n: u32) -> *mut u8 {
-    let mut a = ARENA.lock().unwrap();
+    let mut a = ARENA.locked();
     if a.0 == 0 {
         let size = 512 << 20;
         let p = libc::mmap(std::ptr::null_mut(), size, libc::PROT_READ | libc::PROT_WRITE, libc::MAP_PRIVATE | libc::MAP_ANONYMOUS | libc::MAP_32BIT, -1, 0);
@@ -279,7 +280,7 @@ fn rd(p: u32) -> u32 {
 }
 
 fn with<R>(f: impl FnOnce(&mut D3d) -> R) -> R {
-    f(D3D.lock().unwrap().as_mut().unwrap())
+    f(D3D.locked().as_mut().unwrap())
 }
 
 fn id(addr: u32) -> u32 {

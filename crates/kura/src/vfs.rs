@@ -2407,6 +2407,7 @@ pub unsafe extern "C" fn vnhost_free(p: *mut c_void) {
 
 #[cfg(test)]
 pub(crate) mod tests {
+    use kome::locks::Lock as _;
     use super::*;
 
     /// Random puts, replacements (other lengths) and padded gets against a model: a list of
@@ -2580,13 +2581,13 @@ pub(crate) mod tests {
     #[unsafe(no_mangle)]
     extern "C" fn vnvm_fetch_hint(names: *const c_char, len: size_t) {
         let s = unsafe { std::slice::from_raw_parts(names as *const u8, len) };
-        HINTS.lock().unwrap().extend(String::from_utf8_lossy(s).split('\n').map(String::from));
+        HINTS.locked().extend(String::from_utf8_lossy(s).split('\n').map(String::from));
     }
 
     #[unsafe(no_mangle)]
     extern "C" fn vnvm_fetch(name: *const c_char, len: *mut size_t) -> *mut u8 {
         let name = unsafe { std::ffi::CStr::from_ptr(name) }.to_string_lossy().into_owned();
-        let mut g = STORE.lock().unwrap();
+        let mut g = STORE.locked();
         let (m, log) = g.get_or_insert_with(Default::default);
         log.push(name.clone());
         // (a range: `<name>#<from>+<len>`, as host/vnfs.js; fewer bytes past a short chunk's end)
@@ -2666,8 +2667,8 @@ pub(crate) mod tests {
             Some(Data::Dir(c)) => c[&format!("f{f}")],
             _ => unreachable!(),
         }).collect();
-        *FS.lock().unwrap() = Some(fs);
-        *STORE.lock().unwrap() = Some((chunks, Vec::new()));
+        *FS.locked() = Some(fs);
+        *STORE.locked() = Some((chunks, Vec::new()));
         // (what was fetched since, once the fetcher threads are done: a chunk fetched ahead
         // for one file must not land in the next one's count)
         let fetched = || {
@@ -2676,7 +2677,7 @@ pub(crate) mod tests {
                 g = AHEAD_DONE.wait(g).unwrap_or_else(|e| e.into_inner());
             }
             drop(g);
-            std::mem::take(&mut STORE.lock().unwrap().as_mut().unwrap().1)
+            std::mem::take(&mut STORE.locked().as_mut().unwrap().1)
         };
         // the first operation on each file: a truncation, checked for what it fetched
         for (f, &ino) in inos.iter().enumerate() {
@@ -2854,10 +2855,10 @@ pub(crate) mod tests {
             Some(Data::Dir(c)) => c["big"],
             _ => unreachable!(),
         };
-        *FS.lock().unwrap() = Some(fs);
+        *FS.locked() = Some(fs);
         let mut m = HashMap::new();
         m.insert(format!("chunks/ab/{h}"), data.clone());
-        *STORE.lock().unwrap() = Some((m, Vec::new()));
+        *STORE.locked() = Some((m, Vec::new()));
         // (what the guessing tests learned would fetch more than this read's blocks: a run
         // after bgi_archives_and_what_follows_a_file fetched blocks 0 and 48 here)
         forget_guesses();
@@ -2875,7 +2876,7 @@ pub(crate) mod tests {
                 g = AHEAD_DONE.wait(g).unwrap_or_else(|e| e.into_inner());
             }
             drop(g);
-            let log = std::mem::take(&mut STORE.lock().unwrap().as_mut().unwrap().1);
+            let log = std::mem::take(&mut STORE.locked().as_mut().unwrap().1);
             let bytes: u64 = log.iter().map(|n| n.rsplit('+').next().unwrap().split('/').next().unwrap().parse::<u64>().unwrap()).sum();
             // (a fetcher thread's ends "!a": host/fetch-bridge.js serves the game's reads first)
             assert!(log.iter().all(|n| n.ends_with("/24") || n.ends_with("/24!a")), "{log:?}");
@@ -2913,11 +2914,11 @@ pub(crate) mod tests {
         // (not at "/": the other tests' files (video's temporary .vnv) stay outside it)
         fs.mounts.push(("/vfs-test".into(), root));
         fs.load_tree(root, &tsv);
-        *FS.lock().unwrap() = Some(fs);
-        *STORE.lock().unwrap() = Some((m, Vec::new()));
+        *FS.locked() = Some(fs);
+        *STORE.locked() = Some((m, Vec::new()));
         forget_guesses();
-        *CACHE.lock().unwrap() = None;
-        *LAST_END.lock().unwrap() = None;
+        *CACHE.locked() = None;
+        *LAST_END.locked() = None;
         let At::Ours(Ok(fd)) = open_handle("/vfs-test/index.pck", libc::O_RDONLY, 0) else { panic!("open") };
         let mut seed = 0x9e37_79b9_7f4a_7c15u64;
         let mut rnd = move |n: u64| {
@@ -2943,7 +2944,7 @@ pub(crate) mod tests {
         assert!(queued <= 20 * 5 + 1, "{queued} windows for {reads} reads");
         assert!(reads >= 3 * queued, "{queued} windows for {reads} reads");
         // a read inside the last block again: nothing fetched, nothing queued
-        let fetched = || std::mem::take(&mut STORE.lock().unwrap().as_mut().unwrap().1);
+        let fetched = || std::mem::take(&mut STORE.locked().as_mut().unwrap().1);
         let wait_fetchers = || {
             let mut g = AHEAD.lock().unwrap_or_else(|e| e.into_inner());
             while g.as_ref().is_some_and(|a| !a.busy.is_empty()) {
@@ -2952,7 +2953,7 @@ pub(crate) mod tests {
         };
         wait_fetchers();
         fetched();
-        *CACHE.lock().unwrap() = None;
+        *CACHE.locked() = None;
         let last = model.len() as u64 - 3;
         h_seek(fd, last as i64, libc::SEEK_SET).unwrap();
         let mut b = [0u8; 2];
@@ -2964,7 +2965,7 @@ pub(crate) mod tests {
         for k in 0..400 {
             if k % 37 == 0 {
                 wait_fetchers();
-                *CACHE.lock().unwrap() = None;
+                *CACHE.locked() = None;
             }
             let off = rnd(model.len() as u64 + 30);
             let len = rnd(260) as usize;
@@ -2981,7 +2982,7 @@ pub(crate) mod tests {
         }
         wait_fetchers();
         release(fd);
-        *LAST_END.lock().unwrap() = None;
+        *LAST_END.locked() = None;
     }
 
     // same_nocase is `k.to_lowercase() == name.to_lowercase()` (what name_nocase compared,
@@ -3026,10 +3027,10 @@ pub(crate) mod tests {
         // (not at "/": the other tests' files (video's temporary .vnv) stay outside it)
         fs.mounts.push(("/vfs-test".into(), root));
         fs.load_tree(root, &tsv);
-        *FS.lock().unwrap() = Some(fs);
-        *STORE.lock().unwrap() = Some((m, Vec::new()));
-        *CACHE.lock().unwrap() = None;
-        *LAST_END.lock().unwrap() = None;
+        *FS.locked() = Some(fs);
+        *STORE.locked() = Some((m, Vec::new()));
+        *CACHE.locked() = None;
+        *LAST_END.locked() = None;
         let At::Ours(Ok(fd)) = open_handle("/vfs-test/big.pck", libc::O_RDONLY, 0) else { panic!("open") };
         let mut b = [0u8; 16];
         // (everything fetched once)
@@ -3058,7 +3059,7 @@ pub(crate) mod tests {
         }
         wait();
         release(fd);
-        *LAST_END.lock().unwrap() = None;
+        *LAST_END.locked() = None;
     }
 
     /// A read that waits for the network tells the page what the game reads soon: a voice the
@@ -3086,12 +3087,12 @@ pub(crate) mod tests {
         let root = fs.add(Data::Dir(BTreeMap::new()), 0o755, 0);
         fs.mounts.push(("/".into(), root));
         fs.load_tree(root, &tsv);
-        *FS.lock().unwrap() = Some(fs);
-        *STORE.lock().unwrap() = Some((m, Vec::new()));
-        *CACHE.lock().unwrap() = None;
-        *HINTED.lock().unwrap() = None;
-        *LAST_END.lock().unwrap() = None;
-        HINTS.lock().unwrap().clear();
+        *FS.locked() = Some(fs);
+        *STORE.locked() = Some((m, Vec::new()));
+        *CACHE.locked() = None;
+        *HINTED.locked() = None;
+        *LAST_END.locked() = None;
+        HINTS.locked().clear();
         BOOTED.store(true, std::sync::atomic::Ordering::Relaxed);
         let name = |i: u32| format!("chunks/{}/{}", &h(i)[..2], h(i));
         let read = |p: &str, off: u64| {
@@ -3100,7 +3101,7 @@ pub(crate) mod tests {
             let mut b = [0u8; 8];
             assert_eq!(read_at(ino, &mut b, off), Ok(8));
             release(fd);
-            std::mem::take(&mut *HINTS.lock().unwrap())
+            std::mem::take(&mut *HINTS.locked())
         };
         // (a voice: the next voices of its folder (all of them here), not itself nor those before it)
         assert_eq!(read("/voice/v005.ogg", 0), (6..=20).map(name).collect::<Vec<_>>());
@@ -3137,12 +3138,12 @@ pub(crate) mod tests {
         let root = fs.add(Data::Dir(BTreeMap::new()), 0o755, 0);
         fs.mounts.push(("/".into(), root));
         fs.load_tree(root, &tsv);
-        *FS.lock().unwrap() = Some(fs);
-        *STORE.lock().unwrap() = Some((m, Vec::new()));
-        *CACHE.lock().unwrap() = None;
-        *HINTED.lock().unwrap() = None;
-        *LAST_END.lock().unwrap() = None;
-        HINTS.lock().unwrap().clear();
+        *FS.locked() = Some(fs);
+        *STORE.locked() = Some((m, Vec::new()));
+        *CACHE.locked() = None;
+        *HINTED.locked() = None;
+        *LAST_END.locked() = None;
+        HINTS.locked().clear();
         BOOTED.store(false, std::sync::atomic::Ordering::Relaxed);
         let name = |i: u32| format!("chunks/{}/{}", &h(i)[..2], h(i));
         let read = |p: &str, off: u64| {
@@ -3151,7 +3152,7 @@ pub(crate) mod tests {
             let mut b = [0u8; 8];
             assert_eq!(read_at(ino, &mut b, off), Ok(8));
             release(fd);
-            std::mem::take(&mut *HINTS.lock().unwrap())
+            std::mem::take(&mut *HINTS.locked())
         };
         let got = read("/game.exe", 0);
         let boot: Vec<String> = [10, 11, 100, 109, 200, 204].into_iter().map(name).collect();
@@ -3160,8 +3161,8 @@ pub(crate) mod tests {
         // (once)
         let again = read("/v001.ogg", 0);
         assert!(!again.iter().any(|n| boot.contains(n)), "{again:?}");
-        *CACHE.lock().unwrap() = None;
-        *FS.lock().unwrap() = None;
+        *CACHE.locked() = None;
+        *FS.locked() = None;
     }
 
     /// A script the game reads names what comes next: a KiriKiri scenario inside an .xp3 (zlib'd,
@@ -3218,10 +3219,10 @@ pub(crate) mod tests {
         let root = fs.add(Data::Dir(BTreeMap::new()), 0o755, 0);
         fs.mounts.push(("/".into(), root));
         fs.load_tree(root, &tsv);
-        *FS.lock().unwrap() = Some(fs);
-        *STORE.lock().unwrap() = Some((m, Vec::new()));
-        *CACHE.lock().unwrap() = None;
-        *PREDICT.lock().unwrap() = None;
+        *FS.locked() = Some(fs);
+        *STORE.locked() = Some((m, Vec::new()));
+        *CACHE.locked() = None;
+        *PREDICT.locked() = None;
         let ino = |p: &str| {
             let At::Ours(Ok(fd)) = open_handle(p, libc::O_RDONLY, 0) else { panic!("open {p}") };
             let i = handle(fd).unwrap().0;
@@ -3231,7 +3232,7 @@ pub(crate) mod tests {
         let (data, scene) = (ino("/data.xp3"), ino("/scene.ks"));
         // (what is named, in order, but what the reads' fetches ahead put on the device meanwhile)
         let same = |got: Vec<Hash>, want: Vec<Hash>| {
-            let on = |h: &Hash| CACHE.lock().unwrap().as_ref().is_some_and(|c| c.contains(&(*h, 0)));
+            let on = |h: &Hash| CACHE.locked().as_ref().is_some_and(|c| c.contains(&(*h, 0)));
             let left: Vec<Hash> = want.iter().copied().filter(|h| got.contains(h) || !on(h)).collect();
             assert_eq!(got, left, "named {want:?}");
         };
@@ -3247,7 +3248,7 @@ pub(crate) mod tests {
         // (the game reads the header: the index is read, nothing named yet)
         assert!(predicted(data, 0, 32).is_empty());
         // (the game reads first.ks: bg01's member, v002, second.ks; in that order)
-        let starts: Vec<usize> = { let p = PREDICT.lock().unwrap(); let ms = &p.as_ref().unwrap().archives[&data]; ms.iter().filter(|m| predict::is_script(&m.name)).map(|m| m.segments[0].0 as usize).collect() };
+        let starts: Vec<usize> = { let p = PREDICT.locked(); let ms = &p.as_ref().unwrap().archives[&data]; ms.iter().filter(|m| predict::is_script(&m.name)).map(|m| m.segments[0].0 as usize).collect() };
         assert_eq!(starts.len(), 2, "two scripts in the archive");
         let got = predicted(data, starts[0] as u64, first.len() as u64);
         let v = |k: usize| hash(1000 + k);
@@ -3262,13 +3263,13 @@ pub(crate) mod tests {
         // (a loose script)
         same(predicted(scene, 0, 4), vec![v(3)]);
         // (what is on the device already: not again)
-        *PREDICT.lock().unwrap() = None;
+        *PREDICT.locked() = None;
         let mut c = Cache::default();
         c.put(&(v(3), 0), Arc::new(vec![3; 48]), false, 1 << 20);
-        *CACHE.lock().unwrap() = Some(c);
+        *CACHE.locked() = Some(c);
         assert!(predicted(scene, 0, 4).is_empty());
-        *CACHE.lock().unwrap() = None;
-        *FS.lock().unwrap() = None;
+        *CACHE.locked() = None;
+        *FS.locked() = None;
     }
 
     /// A table read ahead (masu serve's, of all a tree's scripts): a script this cannot read
@@ -3291,10 +3292,10 @@ pub(crate) mod tests {
         let root = fs.add(Data::Dir(BTreeMap::new()), 0o755, 0);
         fs.mounts.push(("/".into(), root));
         fs.load_tree(root, &tsv);
-        *FS.lock().unwrap() = Some(fs);
-        *STORE.lock().unwrap() = Some((m, Vec::new()));
-        *CACHE.lock().unwrap() = None;
-        *PREDICT.lock().unwrap() = None;
+        *FS.locked() = Some(fs);
+        *STORE.locked() = Some((m, Vec::new()));
+        *CACHE.locked() = None;
+        *PREDICT.locked() = None;
         let At::Ours(Ok(fd)) = open_handle("/data.xp3", libc::O_RDONLY, 0) else { panic!("open") };
         let data = handle(fd).unwrap().0;
         release(fd);
@@ -3312,10 +3313,10 @@ pub(crate) mod tests {
         // (no table: the noise names nothing)
         assert!(predicted(data, 0, 32).is_empty());
         assert!(predicted(data, first.0, first.1).is_empty());
-        *PREDICT.lock().unwrap() = None;
+        *PREDICT.locked() = None;
         foresee_table(&format!("{}\n{}{}", predict::TABLE_HEADER, predict::table_line("scenario/first.ks", &["bg01".into(), "second".into()]), predict::table_line("second.ks", &["bg03.png".into()])));
         predicted(data, 0, 32);
-        let on = |x: &Hash| CACHE.lock().unwrap().as_ref().is_some_and(|c| c.contains(&(*x, 0)));
+        let on = |x: &Hash| CACHE.locked().as_ref().is_some_and(|c| c.contains(&(*x, 0)));
         let got = predicted(data, first.0, first.1);
         let (s2, n2) = (ms[1].segments[0].0 as usize, ms[1].segments[0].1 as usize);
         let second: Vec<Hash> = (s2 / 64..=(s2 + n2 - 1) / 64).map(hash).collect();
@@ -3323,10 +3324,10 @@ pub(crate) mod tests {
         assert_eq!(got, want, "bg01, second.ks itself, then what second.ks names");
         assert!(!got.contains(&hash(png(1))), "not bg02, which nothing names");
         assert!(got.contains(&hash(png(2))));
-        *CACHE.lock().unwrap() = None;
-        *PREDICT.lock().unwrap() = None;
+        *CACHE.locked() = None;
+        *PREDICT.locked() = None;
         // (no tree at "/" left for the tests of host files)
-        *FS.lock().unwrap() = None;
+        *FS.locked() = None;
     }
 
     /// A BGI .arc with a table (its scripts are bytecode, named without extension): a script
@@ -3367,10 +3368,10 @@ pub(crate) mod tests {
         let root = fs.add(Data::Dir(BTreeMap::new()), 0o755, 0);
         fs.mounts.push(("/".into(), root));
         fs.load_tree(root, &tsv);
-        *FS.lock().unwrap() = Some(fs);
-        *STORE.lock().unwrap() = Some((m, Vec::new()));
-        *CACHE.lock().unwrap() = None;
-        *PREDICT.lock().unwrap() = None;
+        *FS.locked() = Some(fs);
+        *STORE.locked() = Some((m, Vec::new()));
+        *CACHE.locked() = None;
+        *PREDICT.locked() = None;
         let ino = |p: &str| {
             let At::Ours(Ok(fd)) = open_handle(p, libc::O_RDONLY, 0) else { panic!("open {p}") };
             let i = handle(fd).unwrap().0;
@@ -3397,7 +3398,7 @@ pub(crate) mod tests {
             }
             out
         };
-        let on = |x: &Hash| CACHE.lock().unwrap().as_ref().is_some_and(|c| c.contains(&(*x, 0)));
+        let on = |x: &Hash| CACHE.locked().as_ref().is_some_and(|c| c.contains(&(*x, 0)));
         let same = |got: Vec<Hash>, want: Vec<Hash>| {
             let left: Vec<Hash> = want.iter().copied().filter(|x| got.contains(x) || !on(x)).collect();
             assert_eq!(got, left);
@@ -3407,18 +3408,18 @@ pub(crate) mod tests {
         assert!(predicted(data, 0, 16).is_empty());
         same(predicted(data, base as u64, 64), named(vec![member(1), vec![hash(901)], member(2), vec![hash(902)], member(3)]));
         // (a picture read: what its scene names after it)
-        *PREDICT.lock().unwrap() = None;
+        *PREDICT.locked() = None;
         foresee_table(&format!("{}\n{}", predict::TABLE_HEADER, predict::table_line("01_start", &["bg01a".into(), "v001".into(), "ch01".into(), "v002".into(), "ch02".into()])));
         predicted(data, 0, 16);
         same(predicted(data, base as u64 + 64, 64), named(vec![vec![hash(901)], member(2), vec![hash(902)], member(3)]));
         // (a loose voice: what comes after it)
         same(predicted(v1, 0, 8), named(vec![member(2), vec![hash(902)], member(3)]));
         // (no table: a file that is no script says nothing)
-        *PREDICT.lock().unwrap() = None;
+        *PREDICT.locked() = None;
         HAS_TABLE.store(false, std::sync::atomic::Ordering::Relaxed);
         assert!(predicted(v1, 0, 8).is_empty());
-        *CACHE.lock().unwrap() = None;
-        *FS.lock().unwrap() = None;
+        *CACHE.locked() = None;
+        *FS.locked() = None;
     }
 
     /// The run's trace: a path before its file's reads, each chunk's first read once (with the
@@ -3442,14 +3443,14 @@ pub(crate) mod tests {
         let root = fs.add(Data::Dir(BTreeMap::new()), 0o755, 0);
         fs.mounts.push(("/".into(), root));
         fs.load_tree(root, &tsv);
-        *FS.lock().unwrap() = Some(fs);
-        *STORE.lock().unwrap() = Some((m, Vec::new()));
-        *CACHE.lock().unwrap() = None;
-        *PREDICT.lock().unwrap() = None;
-        *HINTED.lock().unwrap() = None;
+        *FS.locked() = Some(fs);
+        *STORE.locked() = Some((m, Vec::new()));
+        *CACHE.locked() = None;
+        *PREDICT.locked() = None;
+        *HINTED.locked() = None;
         // (a file's first read hints its folder: not the first when an earlier test's file had
         // this inode)
-        *LAST_END.lock().unwrap() = None;
+        *LAST_END.locked() = None;
         trace::reset();
         let read = |p: &str, off: u64, n: usize| {
             let At::Ours(Ok(fd)) = open_handle(p, libc::O_RDONLY, 0) else { panic!("open {p}") };
@@ -3486,8 +3487,8 @@ pub(crate) mod tests {
             _ => None,
         }).collect();
         assert!(ms.windows(2).all(|w| w[0] <= w[1]));
-        *CACHE.lock().unwrap() = None;
-        *FS.lock().unwrap() = None;
+        *CACHE.locked() = None;
+        *FS.locked() = None;
     }
 
     /// With no fetcher thread (none could be made) a read-ahead queues nothing, and a wait for
@@ -3530,9 +3531,9 @@ pub(crate) mod tests {
         std::thread::sleep(std::time::Duration::from_millis(300));
         let h: Hash = *b"queued-back-blk!";
         let hx = hex(&h);
-        STORE.lock().unwrap().get_or_insert_with(Default::default).0.insert(format!("chunks/{}/{hx}", &hx[..2]), vec![7u8; 100]);
+        STORE.locked().get_or_insert_with(Default::default).0.insert(format!("chunks/{}/{hx}", &hx[..2]), vec![7u8; 100]);
         {
-            let mut g = AHEAD.lock().unwrap();
+            let mut g = AHEAD.locked();
             let a = g.as_mut().unwrap();
             a.busy.insert((h, 0));
             a.queue.push_back(Piece { h, clen: 100, first: 0, n: 1 });
@@ -3548,7 +3549,7 @@ pub(crate) mod tests {
         r.expect("a read waited for a block no fetcher could take");
         assert_eq!(TAKEN_BACK.load(std::sync::atomic::Ordering::SeqCst), before + 1);
         assert!(cached(&(h, 0)));
-        let name = STORE.lock().unwrap().as_ref().unwrap().1.iter().rev().find(|n| n.contains(&hx)).cloned().unwrap();
+        let name = STORE.locked().as_ref().unwrap().1.iter().rev().find(|n| n.contains(&hx)).cloned().unwrap();
         assert!(!name.ends_with("!a"), "fetched at the read's priority: {name}");
     }
 

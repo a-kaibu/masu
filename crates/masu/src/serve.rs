@@ -1636,6 +1636,7 @@ async fn serve(dirs: &crate::dirs::Dirs, store: PathBuf, args: Resolved) -> anyh
 
 #[cfg(test)]
 mod tests {
+    use kome::locks::Lock as _;
     /// The game listener serves the frame's scripts with the headers a frame of the app's
     /// (cross-origin isolated) page needs, and nothing else: no game's files (those come from
     /// its service worker, web/src/game-sw.ts), no route of the app's.
@@ -1674,7 +1675,7 @@ mod tests {
     fn stuck_threads_print_where_they_wait() {
         if std::env::var_os("MASU_DUMP_CHILD").is_some() {
             let lock = std::sync::Arc::new(std::sync::Mutex::new(()));
-            let held = lock.lock().unwrap();
+            let held = lock.locked();
             let l = lock.clone();
             std::thread::Builder::new()
                 .name("stuck-one".into())
@@ -1754,7 +1755,7 @@ mod tests {
         assert_eq!(hangs.load(SeqCst), 0, "a runtime that runs its tasks");
         // every worker blocked on a lock nobody lets go of
         let lock = Arc::new(std::sync::Mutex::new(()));
-        let held = lock.lock().unwrap();
+        let held = lock.locked();
         for _ in 0..2 {
             let l = lock.clone();
             rt.spawn(async move {

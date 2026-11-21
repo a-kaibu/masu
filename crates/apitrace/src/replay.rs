@@ -160,7 +160,7 @@ pub fn convert_max(events: &[u8], bits: Option<u32>, cut: bool, max: usize) -> R
     }
     let mut p = Parser::new(events)?;
     p.cut = cut;
-    let mut c = Converter::new(bits);
+    let mut c = Converter::new(bits)?;
     c.out.extend_from_slice(MAGIC);
     c.out.extend_from_slice(&VERSION.to_le_bytes());
     c.out.extend_from_slice(&bits.to_le_bytes());
@@ -304,12 +304,12 @@ fn hands_out(v: &Value) -> bool {
 }
 
 impl Converter {
-    fn new(bits: u32) -> Converter {
-        Converter {
+    fn new(bits: u32) -> Result<Converter, String> {
+        Ok(Converter {
             out: vec![],
             stats: Stats { ptrbits: bits, ..Stats::default() },
             arch: (bits == 64) as usize,
-            l: Layouts::get(),
+            l: Layouts::get()?,
             names: HashMap::new(),
             next: 0,
             objects: HashMap::new(),
@@ -317,7 +317,7 @@ impl Converter {
             buffers: HashSet::new(),
             locks: BTreeMap::new(),
             winsize: None,
-        }
+        })
     }
 
     fn call(&mut self, call: &Call) -> Result<(), String> {
@@ -444,10 +444,11 @@ impl Converter {
         let Ty::Ptr(inner) = t else {
             // a value: an integer, a float, a window, a D3D8 shader handle
             let Some(v) = vin else { return Ok(Arg::Word(0)) };
-            let shader = |c: &Converter| iface.starts_with("IDirect3DDevice8") && arg_name == "Handle" && v.int().is_some_and(|h| c.shaders.contains_key(&(h as u64)));
+            // (a D3D8 shader handle the trace made: the stream's own)
+            let shader = if iface.starts_with("IDirect3DDevice8") && arg_name == "Handle" { v.int().and_then(|h| self.shaders.get(&(h as u64)).copied()) } else { None };
             return Ok(match (t, v) {
                 (Ty::Hwnd, Value::Opaque(a)) if *a != 0 => Arg::Window,
-                (Ty::Int(4), v) if shader(self) => Arg::Handle(self.shaders[&(v.int().unwrap() as u64)]),
+                (Ty::Int(4), _) if let Some(h) = shader => Arg::Handle(h),
                 (_, Value::Float(f)) => Arg::Word(f.to_bits() as u64),
                 (_, Value::Double(f)) => Arg::Word(f.to_bits()),
                 (_, Value::Null) | (_, Value::Opaque(_)) => Arg::Word(0),

@@ -3,6 +3,7 @@
 
 #![allow(non_snake_case)]
 
+use kome::locks::Lock as _;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
@@ -227,7 +228,7 @@ fn kw<R>(f: impl FnOnce(&mut Kern) -> R) -> R {
 pub fn pump() {
     let mut done = Vec::new();
     {
-        let mut g = PENDING_IO.lock().unwrap();
+        let mut g = PENDING_IO.locked();
         if g.is_empty() {
             return;
         }
@@ -256,9 +257,9 @@ fn watch() {
     }
     std::thread::spawn(|| loop {
         let generation = kern::with(|_| ()).1;
-        if PENDING_IO.lock().unwrap().is_empty() {
+        if PENDING_IO.locked().is_empty() {
             WATCHING.store(false, Ordering::Release);
-            if PENDING_IO.lock().unwrap().is_empty() || WATCHING.swap(true, Ordering::AcqRel) {
+            if PENDING_IO.locked().is_empty() || WATCHING.swap(true, Ordering::AcqRel) {
                 return;
             }
         }
@@ -291,7 +292,7 @@ fn io(h: u32, p: Handle, ov: u32, out: u32, mut op: Op) -> u32 {
     let mut r = kw(&mut op);
     if r == Err(PENDING) {
         if p.ovl && ov != 0 {
-            PENDING_IO.lock().unwrap().push(Pending { h, tid: crate::cur().tid, done: Done::Ov(ov), cancel: false, op });
+            PENDING_IO.locked().push(Pending { h, tid: crate::cur().tid, done: Done::Ov(ov), cancel: false, op });
             // (a change between the first try and now)
             pump();
             watch();
@@ -343,7 +344,7 @@ fn nt_io(h: u32, p: Handle, nt: NtIo, mut op: Op) -> u32 {
     let mut r = kw(&mut op);
     if r == Err(PENDING) {
         if p.ovl {
-            PENDING_IO.lock().unwrap().push(Pending { h, tid: crate::cur().tid, done: Done::Nt(nt), cancel: false, op });
+            PENDING_IO.locked().push(Pending { h, tid: crate::cur().tid, done: Done::Nt(nt), cancel: false, op });
             pump();
             watch();
             return PENDING;
@@ -703,7 +704,7 @@ fn overlapped_result(ov: u32, pn: u32, ms: u32) -> u32 {
 /// Cancels the pending I/O of handle `h` that `pick` picks; whether there was any.
 fn cancel(h: u32, pick: impl Fn(&Pending) -> bool) -> bool {
     let mut any = false;
-    for p in PENDING_IO.lock().unwrap().iter_mut().filter(|p| p.h == h && pick(p)) {
+    for p in PENDING_IO.locked().iter_mut().filter(|p| p.h == h && pick(p)) {
         p.cancel = true;
         any = true;
     }

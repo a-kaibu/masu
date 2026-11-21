@@ -13,6 +13,7 @@
 
 #![allow(non_snake_case)]
 
+use kome::locks::{Lock as _, Rw as _};
 use crate::api::{implement, Ctx};
 use crate::k32::last_error;
 use crate::mem::{self, cstr, r16, r32, rp, w16, w32, wstr};
@@ -1403,7 +1404,7 @@ static CTXS: Mutex<Option<HashMap<u32, Actx>>> = Mutex::new(None);
 static DEFAULT: Mutex<Option<u32>> = Mutex::new(None);
 
 fn with_ctxs<R>(f: impl FnOnce(&mut HashMap<u32, Actx>) -> R) -> R {
-    let mut g = CTXS.lock().unwrap();
+    let mut g = CTXS.locked();
     f(g.get_or_insert_with(HashMap::default))
 }
 
@@ -1684,7 +1685,7 @@ fn create(req: &Req) -> Result<u32, u32> {
     let app_dir = if req.flags & ACTCTX_FLAG_APPLICATION_NAME_VALID != 0 { req.app_name.clone() } else { Some(exe_dir()) };
     let h = register(Actx { refs: 1, asms, root_path: Some(root_path), app_dir, sections: HashMap::default() });
     if req.flags & ACTCTX_FLAG_SET_PROCESS_DEFAULT != 0 {
-        let mut d = DEFAULT.lock().unwrap();
+        let mut d = DEFAULT.locked();
         if d.is_none_or(|h| h == 0) {
             add_ref(h);
             *d = Some(h);
@@ -1696,10 +1697,10 @@ fn create(req: &Req) -> Result<u32, u32> {
 /// The process default context: the exe's RT_MANIFEST 1, else a <exe>.manifest beside it.
 /// 0: none.
 fn process_default() -> u32 {
-    if let Some(h) = *DEFAULT.lock().unwrap() {
+    if let Some(h) = *DEFAULT.locked() {
         return h;
     }
-    let exe = crate::pe::MODULES.read().unwrap().iter().find(|m| !m.dll).map(|m| m.base).unwrap_or(0);
+    let exe = crate::pe::MODULES.r().iter().find(|m| !m.dll).map(|m| m.base).unwrap_or(0);
     let mut h = 0;
     if exe != 0 {
         let r = Req { flags: ACTCTX_FLAG_HMODULE_VALID | ACTCTX_FLAG_RESOURCE_NAME_VALID, res: Some(crate::pe::ResId::Int(1)), module: exe, ..Default::default() };
@@ -1711,7 +1712,7 @@ fn process_default() -> u32 {
             }
         }
     }
-    let mut d = DEFAULT.lock().unwrap();
+    let mut d = DEFAULT.locked();
     // (another thread made it first: ours goes, its guest blocks with it)
     let won = *d.get_or_insert(h);
     drop(d);
@@ -1784,14 +1785,14 @@ pub fn inherit(obj: u32) {
     let h = active();
     if valid(h) {
         add_ref(h);
-        INHERIT.lock().unwrap().push((obj, h));
+        INHERIT.locked().push((obj, h));
     }
 }
 
 /// A thread `obj` that could not be made: the reference `inherit` took goes.
 pub fn forget(obj: u32) {
     let h = {
-        let mut v = INHERIT.lock().unwrap();
+        let mut v = INHERIT.locked();
         let Some(i) = v.iter().position(|x| x.0 == obj) else { return };
         v.remove(i).1
     };
@@ -1801,7 +1802,7 @@ pub fn forget(obj: u32) {
 /// On the new thread of `obj`: the context its creator had active, activated.
 pub fn adopt(obj: u32) {
     let h = {
-        let mut v = INHERIT.lock().unwrap();
+        let mut v = INHERIT.locked();
         let Some(i) = v.iter().position(|x| x.0 == obj) else { return };
         v.remove(i).1
     };

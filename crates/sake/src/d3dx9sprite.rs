@@ -6,6 +6,7 @@
 
 #![allow(non_snake_case)]
 
+use kome::locks::Lock as _;
 use crate::api::{vtable, Ctx, Handler};
 use crate::d3dx9::{add_ref, com_call, qi_no, zero};
 use crate::mem::{self, r32, w32};
@@ -48,7 +49,7 @@ struct Pending {
 static QUEUE: Mutex<Option<HashMap<u32, Pending>>> = Mutex::new(None);
 
 fn pending<R>(o: u32, f: impl FnOnce(&mut Pending) -> R) -> R {
-    f(QUEUE.lock().unwrap().get_or_insert_with(HashMap::default).entry(o).or_default())
+    f(QUEUE.locked().get_or_insert_with(HashMap::default).entry(o).or_default())
 }
 
 fn rf(p: u32, i: u32) -> f32 {
@@ -88,7 +89,7 @@ fn release(c: &mut Ctx) -> u32 {
     w32(o + 4, n);
     if n == 0 {
         // (the textures queued and never drawn, the state block, the device)
-        let p = QUEUE.lock().unwrap().get_or_insert_with(HashMap::default).remove(&o);
+        let p = QUEUE.locked().get_or_insert_with(HashMap::default).remove(&o);
         for t in p.map(|p| p.held).unwrap_or_default().into_iter().chain([r32(o + SB), r32(o + DEV)]) {
             if t != 0 {
                 com_call(c, t, 2, &[]);

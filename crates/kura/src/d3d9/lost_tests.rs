@@ -3,6 +3,7 @@
 //! uploads again what it keeps (device.rs `after_lost`). Through the real entry point, with the
 //! page's executor on the model of WebGPU (render/model.rs) in the same thread.
 
+use kome::locks::Lock as _;
 use super::lock_tests::{fill_color, name_of, write_bytes};
 use super::trace_tests::{alloc, CALLS, SERIAL};
 use super::draw_tests::call;
@@ -18,7 +19,7 @@ fn rd(p: u32) -> u32 {
 }
 
 fn with<R>(f: impl FnOnce(&mut D3d) -> R) -> R {
-    f(D3D.lock().unwrap().as_mut().unwrap())
+    f(D3D.locked().as_mut().unwrap())
 }
 
 type Page = std::rc::Rc<std::cell::RefCell<Option<crate::render::d3d::D3d>>>;

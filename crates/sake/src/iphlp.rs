@@ -12,6 +12,7 @@
 
 #![allow(non_snake_case)]
 
+use kome::locks::{Lock as _, Rw as _};
 use crate::api::{implement, Ctx};
 use crate::k32::last_error;
 use crate::mem::{self, ps, r16, r32, w16, w32, w64, w8, wp};
@@ -682,7 +683,7 @@ fn owner_module(c: &mut Ctx, pid_at: u32) -> u32 {
         // TCPIP_OWNER_MODULE_INFO_BASIC only
         return ERROR_INVALID_PARAMETER;
     }
-    let path = crate::pe::MODULES.read().unwrap().iter().find(|m| !m.dll).map(|m| m.path.clone()).unwrap_or_default();
+    let path = crate::pe::MODULES.r().iter().find(|m| !m.dll).map(|m| m.path.clone()).unwrap_or_default();
     let name = path.rsplit('\\').next().unwrap_or(&path).to_string();
     let w = |s: &str| s.encode_utf16().chain([0]).flat_map(|u| u.to_le_bytes()).collect::<Vec<u8>>();
     let (nw, pw) = (w(&name), w(&path));
@@ -1722,20 +1723,20 @@ fn NotifyChange(c: &mut Ctx) -> u32 {
     }
     wp(ov, 0x103); // STATUS_PENDING in Internal
     wp(ov + crate::mem::ps(), 0);
-    PENDING.lock().unwrap().push((ov, h));
+    PENDING.locked().push((ov, h));
     crate::k32::last_error(ERROR_IO_PENDING);
     ERROR_IO_PENDING
 }
 /// The handle of a pending NotifyAddrChange / NotifyRouteChange closed: its wait goes (a later
 /// CancelIPChangeNotify would complete on whatever handle has that number by then)
 pub fn forget(h: u32) {
-    PENDING.lock().unwrap().retain(|&(_, x)| x != h);
+    PENDING.locked().retain(|&(_, x)| x != h);
 }
 
 /// CancelIPChangeNotify(overlapped): the pending wait ends with STATUS_CANCELLED
 fn CancelIPChangeNotify(c: &mut Ctx) -> u32 {
     let ov = c.a(0);
-    let mut p = PENDING.lock().unwrap();
+    let mut p = PENDING.locked();
     let Some(i) = p.iter().position(|&(o, _)| o == ov && ov != 0) else { return 0 };
     let (_, h) = p.remove(i);
     drop(p);
@@ -1939,12 +1940,12 @@ fn Netbios(c: &mut Ctx) -> u32 {
         // NRC_ENVNOTDEF (0x34) is for an existing adapter that has not been reset.
         _ if lana >= adapters.len() => 0x23, // NRC_BRIDGE: invalid LANA
         0x32 => { // NCBRESET: no live sessions exist in this model.
-            let mut reset = RESET.lock().unwrap();
+            let mut reset = RESET.locked();
             if !reset.contains(&lana) { reset.push(lana); }
             0
         }
         0x33 => { // NCBASTAT: only a query for this adapter's local status.
-            if !RESET.lock().unwrap().contains(&lana) { 0x34 }
+            if !RESET.locked().contains(&lana) { 0x34 }
             else if mem::r8(ncb + call_off) != b'*' { 0x17 }
             else if buffer == 0 || capacity < 60 { 1 }
             else {
@@ -2285,9 +2286,9 @@ mod issue88 {
         for _ in 0..50 {
             assert_eq!(crate::test_guest::call(NotifyChange, &[hp, ov]), ERROR_IO_PENDING);
             let h = r32(hp);
-            assert!(PENDING.lock().unwrap().iter().any(|&(_, x)| x == h));
+            assert!(PENDING.locked().iter().any(|&(_, x)| x == h));
             assert!(crate::obj::close(h));
-            assert!(!PENDING.lock().unwrap().iter().any(|&(_, x)| x == h));
+            assert!(!PENDING.locked().iter().any(|&(_, x)| x == h));
             assert_eq!(crate::test_guest::call(CancelIPChangeNotify, &[ov]), 0);
         }
         mem::heap_free(hp);

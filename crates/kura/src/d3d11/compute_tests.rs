@@ -3,6 +3,7 @@
 //! validation error, and what a dispatch writes depends on what it reads (constants, shader
 //! resources, the UAV's old texels it reads back) and on nothing else.
 
+use kome::locks::Lock as _;
 use super::*;
 use crate::d3d9::trace_tests::{alloc, attach_page, CALLS, SERIAL};
 use crate::render::model;
@@ -115,7 +116,7 @@ impl Dev {
     }
     fn read(&mut self, t: u32) -> Vec<u32> {
         let g = {
-            let g = D11S.lock().unwrap();
+            let g = D11S.locked();
             let d = g.as_ref().unwrap();
             match &d.objs[&d.id_of(t)].data {
                 Data::Texture(x) => x.gpu,

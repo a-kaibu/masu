@@ -17,16 +17,16 @@
 //!
 //! ```compile_fail
 //! kura::pool!(mod a: u8 as A);
-//! a::POOL.lock().unwrap().give(kura::pool::Lease(1u8, std::marker::PhantomData));
+//! a::POOL.locked().give(kura::pool::Lease(1u8, std::marker::PhantomData));
 //! ```
 //! ```compile_fail
 //! kura::pool!(mod a: u8 as A);
-//! a::POOL.lock().unwrap().give(1u8);
+//! a::POOL.locked().give(1u8);
 //! ```
 //! ```compile_fail
 //! // (not Clone: one lease, one give)
 //! kura::pool!(mod a: u8 as A);
-//! let mut p = a::POOL.lock().unwrap();
+//! let mut p = a::POOL.locked();
 //! let l = p.take(|| 1).lease();
 //! p.give(l.clone());
 //! ```
@@ -34,8 +34,8 @@
 //! // (another pool's lease)
 //! kura::pool!(mod a: u8 as A);
 //! kura::pool!(mod b: u8 as B);
-//! let l = a::POOL.lock().unwrap().take(|| 42).lease();
-//! b::POOL.lock().unwrap().give(l);
+//! let l = a::POOL.locked().take(|| 42).lease();
+//! b::POOL.locked().give(l);
 //! ```
 //! ```compile_fail
 //! // (a second pool of a brand: the brand's one value is in its pool, none made outside)
@@ -49,7 +49,7 @@
 //! ```
 //! ```
 //! kura::pool!(mod a: u8 as A);
-//! let mut p = a::POOL.lock().unwrap();
+//! let mut p = a::POOL.locked();
 //! let l = p.take(|| 42).lease();
 //! p.give(l);
 //! assert_eq!(p.counts().waiting, 1);

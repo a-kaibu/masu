@@ -8,6 +8,7 @@
 
 #![allow(non_snake_case)]
 
+use kome::locks::Lock as _;
 use crate::api::{vtable, Ctx, Handler};
 use crate::d3dx9::{add_ref, com_call, qi_no};
 use crate::mem::{self, r32, w32};
@@ -157,7 +158,7 @@ struct Const {
 static FX: Mutex<Option<HashMap<u32, Effect>>> = Mutex::new(None);
 
 fn with<R>(this: u32, f: impl FnOnce(&mut Effect) -> R) -> Option<R> {
-    FX.lock().unwrap().get_or_insert_with(HashMap::default).get_mut(&this).map(f)
+    FX.locked().get_or_insert_with(HashMap::default).get_mut(&this).map(f)
 }
 
 // ---- parsing ----
@@ -1118,7 +1119,7 @@ fn fx_release(c: &mut Ctx) -> u32 {
     if !last {
         return n;
     }
-    let Some(e) = FX.lock().unwrap().get_or_insert_with(HashMap::default).remove(&o) else { return 0 };
+    let Some(e) = FX.locked().get_or_insert_with(HashMap::default).remove(&o) else { return 0 };
     for p in e.strings.values().copied().chain([e.hbase]) {
         mem::heap_free(p);
     }
@@ -1666,7 +1667,7 @@ pub fn create(c: &mut Ctx, device: u32, data: &[u8]) -> Result<u32, String> {
     com_call(c, device, 1, &[]);
     let names = top_names(&params, &top);
     let e = Effect { device, params, top, values, techniques, objects, hbase, tech: 0, block: 0, pass: None, ctabs, pres: pres_map, strings: HashMap::default(), names };
-    FX.lock().unwrap().get_or_insert_with(HashMap::default).insert(o, e);
+    FX.locked().get_or_insert_with(HashMap::default).insert(o, e);
     Ok(o)
 }
 
@@ -1748,7 +1749,7 @@ mod lifetime_tests {
         w32(o + 4, 1);
         let names = top_names(&params, &top);
         let e = Effect { device: 0, params, top, values, techniques, objects, hbase, tech: 0, block: 0, pass: None, ctabs: HashMap::default(), pres: HashMap::default(), strings: HashMap::default(), names };
-        FX.lock().unwrap().get_or_insert_with(HashMap::default).insert(o, e);
+        FX.locked().get_or_insert_with(HashMap::default).insert(o, e);
         o
     }
 

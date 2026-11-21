@@ -4,6 +4,7 @@
 //! to date whenever a draw would read it, must hold the guest's bytes (zeros past the end); and
 //! a buffer filled once and drawn from keeps no third copy (review b03 #13).
 
+use kome::locks::Lock as _;
 use super::draw_tests::{call, out, put_bytes, rd};
 use super::trace_tests::{alloc, Rng, CALLS, SERIAL};
 use super::*;
@@ -31,7 +32,7 @@ fn page_copies_hold_the_guests_bytes() {
     let o = out();
     assert_eq!(call(IF_D3D9, 16, &[d3d, 0, 1, 1, 0x40, pp, o]), 0);
     let dev = rd(o);
-    let with = |f: &mut dyn FnMut(&mut D3d)| f(D3D.lock().unwrap().as_mut().unwrap());
+    let with = |f: &mut dyn FnMut(&mut D3d)| f(D3D.locked().as_mut().unwrap());
     let mut r = Rng(0xb0ff_e125);
     let (mut kept_once, mut relocked) = (0, 0);
     for round in 0..40 {
@@ -127,7 +128,7 @@ fn cached_index_ranges_follow_every_lock() {
     call(IF_DEVICE, 89, &[dev, 0x42]);
     call(IF_DEVICE, 100, &[dev, 0, vb, 0, 16]);
     call(IF_DEVICE, 41, &[dev]);
-    let with = |f: &mut dyn FnMut(&mut D3d)| f(D3D.lock().unwrap().as_mut().unwrap());
+    let with = |f: &mut dyn FnMut(&mut D3d)| f(D3D.locked().as_mut().unwrap());
     let mut r = Rng(0x1d_c0de);
     let (mut lists, mut used) = (0, 0);
     for round in 0..12 {

@@ -31,7 +31,7 @@ fn program() -> u32 {
     glAttachShader(p, fs);
     glLinkProgram(p);
     glUseProgram(p);
-    assert!(GL.lock().unwrap().programs[&p].linked.is_some(), "links");
+    assert!(GL.locked().programs[&p].linked.is_some(), "links");
     p
 }
 
@@ -74,7 +74,7 @@ proptest! {
                 }
             }
         }
-        let g = GL.lock().unwrap();
+        let g = GL.locked();
         let x = &g.programs[&p];
         for (u, &(name, n, per)) in UNIFORMS.iter().enumerate() {
             let got = x.values.get(name).cloned().unwrap_or_default();
@@ -98,7 +98,7 @@ fn far_elements_and_big_counts_allocate_nothing() {
     // (a count of a billion past a[2]: one element is written, the pointer is read for one)
     let one = [1.0f32, 2.0, 3.0, 4.0];
     unsafe { glUniform4fv(location(p, "a[2]"), 1_000_000_000, one.as_ptr()) };
-    let g = GL.lock().unwrap();
+    let g = GL.locked();
     let v = &g.programs[&p].values["a"];
     assert_eq!(v.len(), 12);
     assert_eq!(&v[8..], &one.map(f32::to_bits));
@@ -117,7 +117,7 @@ fn attribute_indices_past_the_limit_are_refused() {
     unsafe { glBindAttribLocation(p, 15, extra.as_ptr()) };
     assert_eq!(glGetError(), 0);
     glLinkProgram(p);
-    let g = GL.lock().unwrap();
+    let g = GL.locked();
     let l = g.programs[&p].linked.as_ref().expect("links");
     assert_eq!(l.attribs.iter().find(|a| a.0 == "extra").map(|a| a.1), Some(15));
     assert!(l.attribs.iter().all(|a| a.1 < MAX_ATTRIBS), "{:?}", l.attribs);

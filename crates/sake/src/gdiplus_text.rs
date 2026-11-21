@@ -10,6 +10,7 @@
 
 #![allow(non_snake_case)]
 
+use kome::locks::Lock as _;
 use crate::api::{implement, Ctx, Handler};
 use crate::gdi::{LogFont, TextFont};
 use crate::mem::{self, put32, r32, w32};
@@ -37,7 +38,7 @@ enum Obj {
 static OBJS: Mutex<Option<HashMap<u32, Obj>>> = Mutex::new(None);
 
 fn with<R>(f: impl FnOnce(&mut HashMap<u32, Obj>) -> R) -> R {
-    f(OBJS.lock().unwrap().get_or_insert_with(HashMap::default))
+    f(OBJS.locked().get_or_insert_with(HashMap::default))
 }
 fn new_obj(o: Obj, out: crate::api::Out) -> u32 {
     crate::gdiplus::new_handle(&OBJS, o, out)
@@ -426,7 +427,7 @@ fn GdipDeleteStringFormat(c: &mut Ctx) -> u32 {
 static GENERIC_FORMATS: Mutex<[u32; 2]> = Mutex::new([0; 2]);
 fn generic_format(out: crate::api::Out, typographic: bool) -> u32 {
     if out.is_null() { return INVALID_PARAMETER; }
-    let mut handles = GENERIC_FORMATS.lock().unwrap();
+    let mut handles = GENERIC_FORMATS.locked();
     let h = &mut handles[usize::from(typographic)];
     if *h == 0 {
         let mut v = StringFormat::new(if typographic { 0x6004 } else { 0 });

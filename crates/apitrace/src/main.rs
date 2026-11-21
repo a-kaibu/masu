@@ -7,11 +7,18 @@ fn main() {
     if a.len() == 3 && a[1] == "dump" {
         let file = std::fs::read(&a[2]).unwrap_or_else(|e| panic!("{}: {e}", a[2]));
         // (a game's trace, cut where the game was killed: the calls before its last chunk)
-        let (ev, _) = apitrace::trace::unpack_cut(&file).unwrap();
-        let mut p = apitrace::trace::Parser::new(&ev).unwrap();
-        println!("{:?}", p.properties);
-        while let Ok(Some(c)) = p.next_call() {
-            println!("{c}");
+        let dump = || -> Result<(), String> {
+            let (ev, _) = apitrace::trace::unpack_cut(&file)?;
+            let mut p = apitrace::trace::Parser::new(&ev)?;
+            println!("{:?}", p.properties);
+            while let Ok(Some(c)) = p.next_call() {
+                println!("{c}");
+            }
+            Ok(())
+        };
+        if let Err(e) = dump() {
+            eprintln!("{}: {e}", a[2]);
+            std::process::exit(1);
         }
         return;
     }

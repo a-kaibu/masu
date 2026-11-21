@@ -4,6 +4,7 @@
 
 #![allow(non_snake_case)]
 
+use kome::locks::Lock as _;
 use crate::HashMap;
 use std::sync::Mutex;
 
@@ -330,7 +331,7 @@ static PROCS: Mutex<Vec<(u32, u32)>> = Mutex::new(Vec::new());
 /// The game's I/O procedure for this open: MMIOINFO's pIOProc, its fccIOProc installed, or the
 /// one installed for the name's "file.EXT+" extension.
 fn io_proc(name: u32, info: u32, wide: bool) -> Option<u32> {
-    let procs = PROCS.lock().unwrap();
+    let procs = PROCS.locked();
     let find = |f: u32| procs.iter().rev().find(|&&(k, _)| k == f).map(|&(_, p)| p);
     if info != 0 {
         if r32(info + 8) != 0 {
@@ -385,7 +386,7 @@ fn read_via(c: &mut Ctx, proc: u32, name: u32, info: u32, flags: u32) -> Option<
 /// mmioInstallIOProc(fcc, proc, flags): INSTALL 0x10000, REMOVE 0x20000, FINDPROC 0x40000
 fn mmioInstallIOProcA(c: &mut Ctx) -> u32 {
     let (fcc, proc, flags) = (c.a(0), c.a(1), c.a(2));
-    let mut procs = PROCS.lock().unwrap();
+    let mut procs = PROCS.locked();
     if flags & 0x10000 != 0 {
         procs.push((fcc, proc));
         return proc;

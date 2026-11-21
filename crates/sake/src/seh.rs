@@ -4,6 +4,7 @@
 //! exception (RtlUnwind, then a jump into its function) leaves no host frame behind; the
 //! stub reports each handler's verdict to the host through SEH_TRAP.
 
+use kome::locks::Lock as _;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::OnceLock;
 
@@ -223,7 +224,7 @@ pub fn raise(cpu: &mut Cpu, code: u32, flags: u32, addr: u32, params: &[u32]) {
     cpu.regs[EBX] = block;
     cpu.regs[ESP] = block - 16;
     // vectored handlers first (AddVectoredExceptionHandler): -1 continues at the context
-    let veh: Vec<u32> = VEH.lock().unwrap().iter().map(|&(_, f)| f).collect();
+    let veh: Vec<u32> = VEH.locked().iter().map(|&(_, f)| f).collect();
     if !veh.is_empty() {
         let ptrs = block - 8;
         w32(ptrs, rec);
@@ -246,19 +247,19 @@ static VEH: std::sync::Mutex<Vec<(u32, u32)>> = std::sync::Mutex::new(Vec::new()
 pub fn add_veh(c: &mut Ctx) -> u32 {
     static NEXT: AtomicU32 = AtomicU32::new(0x7e00);
     let h = NEXT.fetch_add(1, Ordering::Relaxed);
-    let mut v = VEH.lock().unwrap();
+    let mut v = VEH.locked();
     if c.a(0) != 0 { v.insert(0, (h, c.a(1))) } else { v.push((h, c.a(1))) }
     h
 }
 
 /// The vectored handlers' functions, in calling order.
 pub fn veh_list() -> Vec<u32> {
-    VEH.lock().unwrap().iter().map(|&(_, f)| f).collect()
+    VEH.locked().iter().map(|&(_, f)| f).collect()
 }
 
 /// RemoveVectoredExceptionHandler(handle)
 pub fn remove_veh(c: &mut Ctx) -> u32 {
-    let mut v = VEH.lock().unwrap();
+    let mut v = VEH.locked();
     let n = v.len();
     v.retain(|&(h, _)| h != c.a(0));
     (v.len() != n) as u32
@@ -268,7 +269,7 @@ pub fn remove_veh(c: &mut Ctx) -> u32 {
 /// one of them returns EXCEPTION_CONTINUE_EXECUTION too).
 static VCH: std::sync::Mutex<Vec<(u32, u32)>> = std::sync::Mutex::new(Vec::new());
 pub fn continue_handlers(cpu: &mut Cpu, ptrs: u32) {
-    let list: Vec<u32> = VCH.lock().unwrap().iter().map(|&(_, f)| f).collect();
+    let list: Vec<u32> = VCH.locked().iter().map(|&(_, f)| f).collect();
     for f in list {
         if crate::call(cpu, f, &[ptrs]) == 0xffff_ffff {
             break;
@@ -276,7 +277,7 @@ pub fn continue_handlers(cpu: &mut Cpu, ptrs: u32) {
     }
 }
 fn remove_vch(c: &mut Ctx) -> u32 {
-    let mut v = VCH.lock().unwrap();
+    let mut v = VCH.locked();
     let n = v.len();
     v.retain(|&(h, _)| h != c.a(0));
     (v.len() != n) as u32
@@ -463,7 +464,7 @@ pub fn raise_exception(c: &mut Ctx) -> u32 {
 fn continue_handler(c: &mut Ctx) -> u32 {
     static NEXT: AtomicU32 = AtomicU32::new(0x7f00);
     let h = NEXT.fetch_add(1, Ordering::Relaxed);
-    let mut v = VCH.lock().unwrap();
+    let mut v = VCH.locked();
     if c.a(0) != 0 { v.insert(0, (h, c.a(1))) } else { v.push((h, c.a(1))) }
     h
 }

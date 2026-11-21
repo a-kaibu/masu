@@ -7,6 +7,7 @@
 //! machine's name (which has only its loopback addresses), and everything else is
 //! WSAHOST_NOT_FOUND, as on a Windows machine without a connection.
 
+use kome::locks::Lock as _;
 use crate::api::{implement, Ctx};
 use crate::mem::{self, ps, r16, r32, w16, w32, w8, wp};
 use crate::netaddr;
@@ -199,13 +200,13 @@ static BUFS: Mutex<Option<HashMap<(u32, u8), u32>>> = Mutex::new(None);
 /// a per-thread buffer that a function returns (inet_ntoa's, hostent, ...), `size` bytes
 fn thread_buf(kind: u8, size: u32) -> u32 {
     let tid = crate::cur().tid;
-    let mut g = BUFS.lock().unwrap();
+    let mut g = BUFS.locked();
     *g.get_or_insert_with(HashMap::default).entry((tid, kind)).or_insert_with(|| mem::heap_alloc(size, true))
 }
 
 /// A thread ends (k32::exit_thread): its buffers go back to the heap
 pub fn thread_exit(tid: u32) {
-    let gone: Vec<u32> = match BUFS.lock().unwrap().as_mut() {
+    let gone: Vec<u32> = match BUFS.locked().as_mut() {
         Some(m) => {
             let keys: Vec<_> = m.keys().filter(|k| k.0 == tid).copied().collect();
             keys.iter().filter_map(|k| m.remove(k)).collect()
@@ -927,12 +928,12 @@ fn hosts(name: &str) -> Option<Vec<Addr>> {
     static CACHE: Mutex<Option<(u64, std::sync::Arc<Vec<(Addr, Vec<String>)>>)>> = Mutex::new(None);
     let path = crate::files::to_host("C:\\windows\\system32\\drivers\\etc\\hosts");
     let stamp = kura::fs::stamp(&path);
-    let cached = CACHE.lock().unwrap().as_ref().filter(|c| stamp != 0 && c.0 == stamp).map(|c| c.1.clone());
+    let cached = CACHE.locked().as_ref().filter(|c| stamp != 0 && c.0 == stamp).map(|c| c.1.clone());
     let table = match cached {
         Some(t) => t,
         None => {
             let t = std::sync::Arc::new(std::fs::read(&path).map(|b| hosts_parse(&b)).unwrap_or_default());
-            *CACHE.lock().unwrap() = Some((stamp, t.clone()));
+            *CACHE.locked() = Some((stamp, t.clone()));
             t
         }
     };

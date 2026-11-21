@@ -7,6 +7,7 @@
 //!
 //! The message for an event and POINTER_INFO's bytes are pure functions here; user.rs posts them.
 #![allow(non_snake_case)]
+use kome::locks::Lock as _;
 use crate::api::{implement, Ctx};
 use crate::k32::last_error;
 use crate::mem::{self, w32};
@@ -110,7 +111,7 @@ pub struct Info {
 static LAST: Mutex<Option<Info>> = Mutex::new(None);
 
 pub fn set_last(i: Info) {
-    *LAST.lock().unwrap() = Some(i);
+    *LAST.locked() = Some(i);
 }
 
 /// POINTER_INFO's bytes: 88 on x86, 96 on x64 (sourceDevice and hwndTarget are pointer-sized).
@@ -184,7 +185,7 @@ fn GetPointerInfo(c: &mut Ctx) -> u32 {
     if !known(c.a(0) & 0xffff) || c.a(1) == 0 {
         return 0;
     }
-    let i = LAST.lock().unwrap().unwrap_or_default();
+    let i = LAST.locked().unwrap_or_default();
     mem::write(c.a(1), &info_bytes(&i, mem::x64()));
     1
 }

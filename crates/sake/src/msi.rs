@@ -7,6 +7,7 @@
 //! to (buffer, *size in characters): the size is set to the length without the NUL; a
 //! buffer that is too small gets what fits and ERROR_MORE_DATA.
 
+use kome::locks::Lock as _;
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 
@@ -62,7 +63,7 @@ struct Table {
 static HANDLES: Mutex<Table> = Mutex::new(Table { next: 1, objs: BTreeMap::new() });
 
 pub fn new_handle(o: Obj) -> u32 {
-    let mut t = HANDLES.lock().unwrap();
+    let mut t = HANDLES.locked();
     let h = t.next;
     t.next += 1;
     t.objs.insert(h, Arc::new(Mutex::new(o)));
@@ -70,17 +71,17 @@ pub fn new_handle(o: Obj) -> u32 {
 }
 
 pub fn get(h: u32) -> Option<Arc<Mutex<Obj>>> {
-    HANDLES.lock().unwrap().objs.get(&h).cloned()
+    HANDLES.locked().objs.get(&h).cloned()
 }
 
 pub fn close(h: u32) -> bool {
-    HANDLES.lock().unwrap().objs.remove(&h).is_some()
+    HANDLES.locked().objs.remove(&h).is_some()
 }
 
 /// Runs `f` on a record handle's record.
 fn with_rec<T>(h: u32, f: impl FnOnce(&mut Record) -> T) -> Option<T> {
     let o = get(h)?;
-    let mut o = o.lock().unwrap();
+    let mut o = o.locked();
     match &mut *o {
         Obj::Rec(r) => Some(f(r)),
         _ => None,
@@ -93,10 +94,10 @@ pub fn rec_of(h: u32) -> Option<Record> {
 
 pub fn db_of(h: u32) -> Option<Db> {
     let o = get(h)?;
-    let o = o.lock().unwrap();
+    let o = o.locked();
     match &*o {
         Obj::Db(d) => Some(d.clone()),
-        Obj::Pkg(p) => Some(p.lock().unwrap().db.clone()),
+        Obj::Pkg(p) => Some(p.locked().db.clone()),
         _ => None,
     }
 }
@@ -149,7 +150,7 @@ fn MsiCloseHandle(c: &mut Ctx) -> u32 {
 }
 
 fn MsiCloseAllHandles(_c: &mut Ctx) -> u32 {
-    let mut t = HANDLES.lock().unwrap();
+    let mut t = HANDLES.locked();
     let n = t.objs.len() as u32;
     t.objs.clear();
     n
@@ -294,7 +295,7 @@ fn format_record(c: &mut Ctx, wide: bool) -> u32 {
         return ERROR_INVALID_PARAMETER;
     }
     let s = match crate::msi_pkg::pkg_of(hinst) {
-        Some(p) => p.lock().unwrap().format_record(&rec),
+        Some(p) => p.locked().format_record(&rec),
         None if hinst != 0 => return ERROR_INVALID_HANDLE,
         None => format::format_record(&rec, &format::NoPackage),
     };
@@ -391,7 +392,7 @@ fn MsiOpenDatabaseW(c: &mut Ctx) -> u32 {
 
 fn MsiDatabaseCommit(c: &mut Ctx) -> u32 {
     let Some(d) = db_of(c.a(0)) else { return ERROR_INVALID_HANDLE };
-    let mut o = d.lock().unwrap();
+    let mut o = d.locked();
     if o.readonly {
         return ERROR_SUCCESS;
     }
@@ -405,7 +406,7 @@ fn MsiDatabaseCommit(c: &mut Ctx) -> u32 {
 
 fn MsiGetDatabaseState(c: &mut Ctx) -> u32 {
     match db_of(c.a(0)) {
-        Some(d) => d.lock().unwrap().writable as u32,
+        Some(d) => d.locked().writable as u32,
         None => u32::MAX, // MSIDBSTATE_ERROR
     }
 }
@@ -417,7 +418,7 @@ fn open_view(c: &mut Ctx, wide: bool) -> u32 {
         return ERROR_BAD_QUERY_SYNTAX;
     }
     let sql = arg_str(q, wide);
-    let v = View::new(&d.lock().unwrap().db, &sql);
+    let v = View::new(&d.locked().db, &sql);
     match v {
         Ok(v) => {
             w32(out, new_handle(Obj::View(d, Arc::new(Mutex::new(v)))));
@@ -435,7 +436,7 @@ fn MsiDatabaseOpenViewW(c: &mut Ctx) -> u32 {
 
 fn view_of(h: u32) -> Option<(Db, Arc<Mutex<View>>)> {
     let o = get(h)?;
-    let o = o.lock().unwrap();
+    let o = o.locked();
     match &*o {
         Obj::View(d, v) => Some((d.clone(), v.clone())),
         _ => None,
@@ -451,9 +452,9 @@ fn MsiViewExecute(c: &mut Ctx) -> u32 {
             None => return ERROR_INVALID_HANDLE,
         },
     };
-    let mut o = d.lock().unwrap();
+    let mut o = d.locked();
     let readonly = o.readonly;
-    let mut v = v.lock().unwrap();
+    let mut v = v.locked();
     if readonly && !matches!(v.stmt, msidb::sql::Stmt::Select { .. }) {
         return ERROR_FUNCTION_FAILED;
     }
@@ -466,8 +467,8 @@ fn MsiViewFetch(c: &mut Ctx) -> u32 {
         return ERROR_INVALID_PARAMETER;
     }
     let Some((d, v)) = view_of(h) else { return ERROR_INVALID_HANDLE };
-    let o = d.lock().unwrap();
-    let r = v.lock().unwrap().fetch(&o.db);
+    let o = d.locked();
+    let r = v.locked().fetch(&o.db);
     match r {
         Ok(mut rec) => {
             // (field 0 of a fetched record: the view it came from, as on Windows)
@@ -484,7 +485,7 @@ fn MsiViewFetch(c: &mut Ctx) -> u32 {
 
 fn MsiViewClose(c: &mut Ctx) -> u32 {
     let Some((_, v)) = view_of(c.a(0)) else { return ERROR_INVALID_HANDLE };
-    v.lock().unwrap().close();
+    v.locked().close();
     ERROR_SUCCESS
 }
 
@@ -492,13 +493,13 @@ fn MsiViewModify(c: &mut Ctx) -> u32 {
     let (h, mode, hrec) = (c.a(0), c.i(1), c.a(2));
     let Some((d, v)) = view_of(h) else { return ERROR_INVALID_HANDLE };
     let Some(ro) = get(hrec) else { return ERROR_INVALID_HANDLE };
-    let mut ro = ro.lock().unwrap();
+    let mut ro = ro.locked();
     let Obj::Rec(rec) = &mut *ro else { return ERROR_INVALID_HANDLE };
-    let mut o = d.lock().unwrap();
+    let mut o = d.locked();
     if o.readonly && !matches!(mode, view::MSIMODIFY_SEEK | view::MSIMODIFY_REFRESH | view::MSIMODIFY_VALIDATE..=view::MSIMODIFY_VALIDATE_DELETE) {
         return ERROR_ACCESS_DENIED;
     }
-    let r = v.lock().unwrap().modify(&mut o.db, mode, rec);
+    let r = v.locked().modify(&mut o.db, mode, rec);
     status(r)
 }
 
@@ -511,8 +512,8 @@ fn MsiViewGetColumnInfo(c: &mut Ctx) -> u32 {
         return ERROR_INVALID_PARAMETER;
     }
     let Some((d, v)) = view_of(h) else { return ERROR_INVALID_HANDLE };
-    let o = d.lock().unwrap();
-    let cols = match v.lock().unwrap().columns(&o.db) {
+    let o = d.locked();
+    let cols = match v.locked().columns(&o.db) {
         Ok(c) => c,
         Err(e) => return e,
     };
@@ -530,7 +531,7 @@ fn view_get_error(c: &mut Ctx, wide: bool) -> u32 {
         return u32::MAX - 1; // MSIDBERROR_INVALIDARG
     }
     let Some((_, v)) = view_of(h) else { return u32::MAX - 1 };
-    let e = v.lock().unwrap().error.clone();
+    let e = v.locked().error.clone();
     match e {
         Some((col, code)) => {
             if out_str(buf, pcch, &col, wide) == ERROR_MORE_DATA {
@@ -558,7 +559,7 @@ fn primary_keys(c: &mut Ctx, wide: bool) -> u32 {
         return ERROR_INVALID_PARAMETER;
     }
     let name = arg_str(t, wide);
-    let o = d.lock().unwrap();
+    let o = d.locked();
     let Some(tb) = o.db.table(&name) else { return ERROR_INVALID_TABLE };
     let keys: Vec<String> = tb.keys().map(|k| tb.cols[k].name.clone()).collect();
     let mut r = Record::new(keys.len());
@@ -584,7 +585,7 @@ fn table_persistent(c: &mut Ctx, wide: bool) -> u32 {
         return 3;
     }
     let name = arg_str(t, wide);
-    let o = d.lock().unwrap();
+    let o = d.locked();
     match o.db.table(&name) {
         Some(tb) => tb.persistent as u32,
         None if view::VIRTUAL.contains(&name.as_str()) => 1,
@@ -609,7 +610,7 @@ fn db_export(c: &mut Ctx, wide: bool) -> u32 {
         return ERROR_INVALID_PARAMETER;
     }
     let (t, folder, file) = (arg_str(t, wide), arg_str(folder, wide), arg_str(file, wide));
-    let mut o = d.lock().unwrap();
+    let mut o = d.locked();
     let (text, files) = if t == "_SummaryInformation" {
         (Vec::new(), Vec::new())
     } else {
@@ -645,7 +646,7 @@ fn db_import(c: &mut Ctx, wide: bool) -> u32 {
     }
     let (folder, file) = (arg_str(folder, wide), arg_str(file, wide));
     let Some(data) = crate::files::resolve(&join(&folder, &file)).and_then(|h| kura::fs::read(h).ok()) else { return ERROR_FUNCTION_FAILED };
-    let mut o = d.lock().unwrap();
+    let mut o = d.locked();
     // (binary fields: files in a folder named after the archive file, or after the table)
     let stem = file.rsplit(['\\', '/']).next().unwrap_or(&file).rsplit_once('.').map_or(file.as_str(), |x| x.0).to_string();
     let read = |table: &str, name: &str| {
@@ -680,7 +681,7 @@ fn get_summary(c: &mut Ctx, wide: bool) -> u32 {
         (None, p)
     };
     let info = match &db {
-        Some(d) => d.lock().unwrap().db.summary.as_deref().map(SummaryInfo::parse).unwrap_or_default(),
+        Some(d) => d.locked().db.summary.as_deref().map(SummaryInfo::parse).unwrap_or_default(),
         None => match open_db(&path, MSIDBOPEN_READONLY, None) {
             Ok(o) => o.db.summary.as_deref().map(SummaryInfo::parse).unwrap_or_default(),
             Err(ERROR_OPEN_FAILED) => return ERROR_INSTALL_PACKAGE_OPEN_FAILED,
@@ -700,7 +701,7 @@ fn MsiGetSummaryInformationW(c: &mut Ctx) -> u32 {
 fn MsiSummaryInfoGetPropertyCount(c: &mut Ctx) -> u32 {
     let (h, out) = (c.a(0), c.a(1));
     let Some(o) = get(h) else { return ERROR_INVALID_HANDLE };
-    let o = o.lock().unwrap();
+    let o = o.locked();
     let Obj::Sum { info, .. } = &*o else { return ERROR_INVALID_HANDLE };
     if out != 0 {
         w32(out, info.props.len() as u32);
@@ -711,7 +712,7 @@ fn MsiSummaryInfoGetPropertyCount(c: &mut Ctx) -> u32 {
 fn sum_get(c: &mut Ctx, wide: bool) -> u32 {
     let (h, pid, pty, pint, pft, buf, pcch) = (c.a(0), c.a(1), c.a(2), c.a(3), c.a(4), c.a(5), c.a(6));
     let Some(o) = get(h) else { return ERROR_INVALID_HANDLE };
-    let o = o.lock().unwrap();
+    let o = o.locked();
     let Obj::Sum { info, .. } = &*o else { return ERROR_INVALID_HANDLE };
     if pid > suminfo::MAX_PID {
         return ERROR_UNKNOWN_PROPERTY;
@@ -751,7 +752,7 @@ fn MsiSummaryInfoGetPropertyW(c: &mut Ctx) -> u32 {
 fn sum_set(c: &mut Ctx, wide: bool) -> u32 {
     let (h, pid, ty, iv, pft, s) = (c.a(0), c.a(1), c.a(2), c.i(3), c.a(4), c.a(5));
     let Some(o) = get(h) else { return ERROR_INVALID_HANDLE };
-    let mut o = o.lock().unwrap();
+    let mut o = o.locked();
     let Obj::Sum { info, max, changed, .. } = &mut *o else { return ERROR_INVALID_HANDLE };
     let Some(want) = suminfo::type_of(pid) else { return ERROR_UNKNOWN_PROPERTY };
     if ty == suminfo::VT_EMPTY {
@@ -793,14 +794,14 @@ fn MsiSummaryInfoSetPropertyW(c: &mut Ctx) -> u32 {
 
 fn MsiSummaryInfoPersist(c: &mut Ctx) -> u32 {
     let Some(o) = get(c.a(0)) else { return ERROR_INVALID_HANDLE };
-    let o = o.lock().unwrap();
+    let o = o.locked();
     let Obj::Sum { db, info, path, max, .. } = &*o else { return ERROR_INVALID_HANDLE };
     if *max == 0 {
         return ERROR_FUNCTION_FAILED;
     }
     match db {
         Some(d) => {
-            let mut d = d.lock().unwrap();
+            let mut d = d.locked();
             if d.readonly {
                 return ERROR_FUNCTION_FAILED;
             }

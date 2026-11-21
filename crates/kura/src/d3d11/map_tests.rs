@@ -9,6 +9,7 @@
 //! write paints whole cells with bytes that name it (d3d9/lock_tests.rs).
 
 use super::trace_tests::{call1, each_seed, m, mem, put, rd1};
+use kome::locks::Lock as _;
 use super::*;
 use crate::d3d9::lock_tests::{fill_color, name_of, random_rect, write_bytes};
 use crate::d3d9::trace_tests::{alloc, attach_page, hr, write_module, Rng, SERIAL};
@@ -110,7 +111,7 @@ fn run(seed: u64) {
     assert_eq!(call1(m(IF_DEVICE, 9), &[dev, res[0], 0, o]), 0);
     let rtv = rd1(o);
     let gpu_of = |a: u32| {
-        let g = D11S.lock().unwrap();
+        let g = D11S.locked();
         let d = g.as_ref().unwrap();
         match &d.objs[&d.id_of(a)].data {
             Data::Texture(t) => t.gpu,
@@ -243,7 +244,7 @@ fn run(seed: u64) {
     // references from here)
     let release = |a: u32| {
         let iface = {
-            let g = D11S.lock().unwrap();
+            let g = D11S.locked();
             let d = g.as_ref().unwrap();
             d.objs[&d.id_of(a)].faces.iter().find(|f| f.1 == a).unwrap().0
         };

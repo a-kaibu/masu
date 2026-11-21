@@ -2,6 +2,7 @@
 //! TLC to check against formal/tla/ComRefs.tla, like d3d9/trace_tests.rs: views, swap chain
 //! buffers across ResizeBuffers, the context's bindings and ClearState.
 
+use kome::locks::Lock as _;
 use super::*;
 use crate::d3d9::trace_tests::{alloc, hr, seeds, write_trace, Rng, Step, CALLS, SERIAL};
 
@@ -28,7 +29,7 @@ pub(super) fn m(iface: u32, m: u32) -> u32 {
 }
 
 fn with<R>(f: impl FnOnce(&mut D11) -> R) -> R {
-    f(D11S.lock().unwrap().as_mut().unwrap())
+    f(D11S.locked().as_mut().unwrap())
 }
 
 fn id(addr: u32) -> u32 {

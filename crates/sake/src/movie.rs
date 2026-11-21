@@ -12,6 +12,7 @@
 //! The player: +0xc4 how pixels go out (0: Y Cb Cr 255, 1: Y Cb Cr alpha, the game converting on
 //! the GPU; 2: RGB), +0xc8 width, +0xcc height, +0x120/+0x124 the frame decoded last.
 
+use kome::locks::Lock as _;
 use std::collections::HashMap;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
@@ -95,7 +96,7 @@ pub fn patch(base: u32, size: u32) {
     let Some(t) = api::stub(&[0; PROLOGUE + 5]) else { return };
     tr.extend((back.wrapping_sub(t + PROLOGUE as u32 + 5)).to_le_bytes());
     crate::mem::write(t, &tr);
-    *TRAMPOLINE.lock().unwrap() = t;
+    *TRAMPOLINE.locked() = t;
     let h = api::host_fn("siglus_movie_frame", frame, 0x18);
     let mut jmp = vec![0xe9];
     jmp.extend(h.wrapping_sub(f + 5).to_le_bytes());
@@ -175,7 +176,7 @@ fn frame(c: &mut Ctx) -> u32 {
     });
     let Some(id) = stream else {
         // the game's own decoder
-        c.cpu.eip = *TRAMPOLINE.lock().unwrap();
+        c.cpu.eip = *TRAMPOLINE.locked();
         c.jumped = true;
         return 0;
     };

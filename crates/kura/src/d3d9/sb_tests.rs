@@ -10,6 +10,7 @@
 //!
 //! `MASU_TRACE_DIR=dir` writes `dir/d3d9sb-<seed>/`; `MASU_TRACE_SEEDS=n` (default 20).
 
+use kome::locks::Lock as _;
 use super::trace_tests::{alloc, seeds, write_module, Rng, CALLS, SERIAL};
 use super::draw_tests::call;
 use super::*;
@@ -89,8 +90,8 @@ impl Dev {
             call(IF_DEVICE, m, args);
             let o = rd(b, 0);
             if o != 0 {
-                let id = D3D.lock().unwrap().as_ref().unwrap().id_of(o);
-                let iface = D3D.lock().unwrap().as_ref().unwrap().objs[&id].iface;
+                let id = D3D.locked().as_ref().unwrap().id_of(o);
+                let iface = D3D.locked().as_ref().unwrap().objs[&id].iface;
                 call(iface, 2, &[o]);
             }
             o
@@ -524,7 +525,7 @@ fn an_apply_that_changes_nothing_keeps_the_preparation() {
     }
     assert_eq!(call(IF_D3D9, 16, &[d3d, 0, 1, 1, 0x40, pp, o]), 0);
     let dev = rd(o, 0);
-    let gens = || D3D.lock().unwrap().as_ref().unwrap().dev.as_ref().map(|d| (d.prep_gen, d.uni_gen)).unwrap();
+    let gens = || D3D.locked().as_ref().unwrap().dev.as_ref().map(|d| (d.prep_gen, d.uni_gen)).unwrap();
     for ty in [1, 2, 3] {
         assert_eq!(call(IF_DEVICE, 59, &[dev, ty, o]), 0);
         let sb = rd(o, 0);

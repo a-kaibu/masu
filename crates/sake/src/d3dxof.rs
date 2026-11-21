@@ -8,6 +8,7 @@
 //! the IDirectXFile (its templates are shared, not its count). Each enumerator has its own objects
 //! and each object its own data (GetData's pointer stays the same for it, a DWORD >= 2 before it).
 
+use kome::locks::Lock as _;
 use kome::guid::IID_IUNKNOWN;
 use crate::hresult::{E_NOINTERFACE, E_NOTIMPL};
 use crate::api::{implement, Ctx, Handler};
@@ -47,7 +48,7 @@ struct Obj {
 static OBJS: Mutex<Option<HashMap<u32, Obj>>> = Mutex::new(None);
 
 fn objs<R>(f: impl FnOnce(&mut HashMap<u32, Obj>) -> R) -> R {
-    f(OBJS.lock().unwrap().get_or_insert_with(HashMap::new))
+    f(OBJS.locked().get_or_insert_with(HashMap::new))
 }
 
 
@@ -167,7 +168,7 @@ fn register_templates(c: &mut Ctx) -> u32 {
         return xof::BADVALUE;
     }
     let bytes = mem::bytes(data, size);
-    let r = xof::register(&bytes, &mut t.lock().unwrap());
+    let r = xof::register(&bytes, &mut t.locked());
     r.err().unwrap_or(0)
 }
 
@@ -210,7 +211,7 @@ fn create_enum_object(c: &mut Ctx) -> u32 {
         Ok(b) => b,
         Err(e) => return e,
     };
-    let f = match XFile::open(&bytes, &mut t.lock().unwrap(), mem::ps() as usize) {
+    let f = match XFile::open(&bytes, &mut t.locked(), mem::ps() as usize) {
         Ok(f) => f,
         Err(e) => return e,
     };
@@ -259,9 +260,9 @@ fn get_next_data_object(c: &mut Ctx) -> u32 {
     }
     mem::putp(out, 0);
     let r = {
-        let mut g = f.lock().unwrap();
+        let mut g = f.locked();
         let (file, reg) = &mut *g;
-        let mut reg = reg.lock().unwrap();
+        let mut reg = reg.locked();
         file.next_top(&mut reg)
     };
     match r {
@@ -285,9 +286,9 @@ fn by(c: &mut Ctx, name: bool) -> u32 {
     let n = mem::cstr(key);
     let g = mem::array::<16>(key);
     let hit = {
-        let mut l = f.lock().unwrap();
+        let mut l = f.locked();
         let (file, reg) = &mut *l;
-        let mut reg = reg.lock().unwrap();
+        let mut reg = reg.locked();
         if name { file.find(&mut reg, Some(&n), None) } else { file.find(&mut reg, None, Some(&g)) }
     };
     match hit {
@@ -311,7 +312,7 @@ fn ident(this: u32) -> Option<(Option<Vec<u8>>, Option<Guid>)> {
     Some(match k {
         Ok(v) => v,
         Err((f, n)) => {
-            let g = f.lock().unwrap();
+            let g = f.locked();
             (g.0.nodes[n].name.clone(), g.0.nodes[n].guid)
         }
     })
@@ -359,7 +360,7 @@ fn data_buf(this: u32) -> Option<(u32, Vec<(Vec<u8>, usize, usize)>, usize)> {
         Kind::Data { f, node, buf, .. } => Some((f.clone(), *node, *buf)),
         _ => None,
     })?;
-    let g = f.lock().unwrap();
+    let g = f.locked();
     let n = &g.0.nodes[node];
     let p = match buf {
         Some(p) => p,
@@ -412,7 +413,7 @@ fn get_data(c: &mut Ctx) -> u32 {
 /// A GUID's copy in guest memory that stays (GetType hands out a pointer).
 fn guid_ptr(g: Guid) -> u32 {
     static PTRS: OnceLock<Mutex<HashMap<Guid, u32>>> = OnceLock::new();
-    *PTRS.get_or_init(Default::default).lock().unwrap().entry(g).or_insert_with(|| {
+    *PTRS.get_or_init(Default::default).locked().entry(g).or_insert_with(|| {
         let p = mem::heap_alloc(16, false);
         mem::write(p, &g);
         p
@@ -430,7 +431,7 @@ fn get_type(c: &mut Ctx) -> u32 {
         _ => None,
     });
     let Some((f, n)) = t else { return xof::BADOBJECT };
-    let g = f.lock().unwrap().0.nodes[n].tpl_guid;
+    let g = f.locked().0.nodes[n].tpl_guid;
     mem::putp(out, guid_ptr(g));
     0
 }
@@ -450,7 +451,7 @@ fn get_next_object(c: &mut Ctx) -> u32 {
         _ => None,
     });
     let Some((f, node, i, owner)) = st else { return xof::BADOBJECT };
-    let child = f.lock().unwrap().0.nodes[node].children.get(i).cloned();
+    let child = f.locked().0.nodes[node].children.get(i).cloned();
     // (the enumerator that made this object holds its children too, while it lives)
     let owner = (owner != 0 && objs(|m| m.contains_key(&owner))).then_some(owner);
     let holders: Vec<u32> = std::iter::once(this).chain(owner).collect();
@@ -493,9 +494,9 @@ fn resolve(c: &mut Ctx) -> u32 {
     let Some((name, guid)) = ident(this) else { return xof::BADOBJECT };
     let Some(f) = shared_of(this) else { return xof::BADOBJECT };
     let hit = {
-        let mut l = f.lock().unwrap();
+        let mut l = f.locked();
         let (file, reg) = &mut *l;
-        let mut reg = reg.lock().unwrap();
+        let mut reg = reg.locked();
         file.find(&mut reg, name.as_deref(), guid.as_ref())
     };
     match hit {

@@ -5,6 +5,7 @@
 //! constant by constant: the range's constants while inside the buffer, zeros after (D3D11.1
 //! functional spec; Windows' answers in winref d3d11cb1).
 
+use kome::locks::Lock as _;
 use super::*;
 use crate::d3d9::trace_tests::{alloc, attach_page, CALLS, SERIAL};
 
@@ -111,7 +112,7 @@ fn ranges_as_the_model_says() {
                     if buf < 2 {
                         let want = shader_constants * 16;
                         let (g, len) = {
-                            let mut lock = D11S.lock().unwrap();
+                            let mut lock = D11S.locked();
                             let d = lock.as_mut().unwrap();
                             let id = d.id_of(bufs[buf]);
                             cb_binding(d, id, r, want)
@@ -122,7 +123,7 @@ fn ranges_as_the_model_says() {
                             prop_assert_eq!(len, (sizes[buf] * 16).min(65536));
                         } else {
                             prop_assert_eq!(len, want);
-                            let lock = D11S.lock().unwrap();
+                            let lock = D11S.locked();
                             let d = lock.as_ref().unwrap();
                             let id = d.id_of(bufs[buf]);
                             let bytes = &d.cb_copies[&(id, r.first, want)].1;

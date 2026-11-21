@@ -10,6 +10,7 @@
 
 #![allow(non_snake_case)]
 
+use kome::locks::{Lock as _, Rw as _};
 use std::cell::RefCell;
 
 use koji::Cpu;
@@ -112,11 +113,11 @@ static DYNAMIC: std::sync::Mutex<Vec<(u32, u32, u32)>> = std::sync::Mutex::new(V
 pub fn lookup(pc: u32) -> Option<(u32, u32)> {
     // (the image's table, then the dynamic ones under their lock: no copies; this runs for
     // every frame of every dispatch and unwind)
-    let found = crate::pe::MODULES.read().unwrap().iter().find(|m| pc.wrapping_sub(m.base) < m.size).map(|m| (m.base, m.pdata));
+    let found = crate::pe::MODULES.r().iter().find(|m| pc.wrapping_sub(m.base) < m.size).map(|m| (m.base, m.pdata));
     if let Some((base, (t, n))) = found && let Some(e) = search(t, n, pc.wrapping_sub(base), |a| r32(a)) {
         return Some((e, base));
     }
-    DYNAMIC.lock().unwrap().iter().find_map(|&(t, n, base)| search(t, n, pc.wrapping_sub(base), |a| r32(a)).map(|e| (e, base)))
+    DYNAMIC.locked().iter().find_map(|&(t, n, base)| search(t, n, pc.wrapping_sub(base), |a| r32(a)).map(|e| (e, base)))
 }
 
 /// The function `pc` is in (its RUNTIME_FUNCTION's [begin, end), a chained one's
@@ -656,7 +657,7 @@ fn RtlPcToFileHeader(c: &mut Ctx) -> u32 {
 
 /// RtlAddFunctionTable(table, count, base)
 fn RtlAddFunctionTable(c: &mut Ctx) -> u32 {
-    DYNAMIC.lock().unwrap().push((c.a(0), c.a(1), c.a(2)));
+    DYNAMIC.locked().push((c.a(0), c.a(1), c.a(2)));
     1
 }
 
@@ -667,14 +668,14 @@ fn RtlAddGrowableFunctionTable(c: &mut Ctx) -> u32 {
     if out == 0 || t == 0 {
         return 0xc000_000d; // STATUS_INVALID_PARAMETER
     }
-    DYNAMIC.lock().unwrap().push((t, n, base));
+    DYNAMIC.locked().push((t, n, base));
     crate::mem::put64(out, crate::mem::widen(t));
     0
 }
 /// RtlGrowFunctionTable(handle, new count)
 fn RtlGrowFunctionTable(c: &mut Ctx) -> u32 {
     let (t, n) = (c.a(0), c.a(1));
-    if let Some(e) = DYNAMIC.lock().unwrap().iter_mut().find(|e| e.0 == t) {
+    if let Some(e) = DYNAMIC.locked().iter_mut().find(|e| e.0 == t) {
         e.1 = n;
     }
     0
@@ -682,12 +683,12 @@ fn RtlGrowFunctionTable(c: &mut Ctx) -> u32 {
 /// RtlDeleteGrowableFunctionTable(handle)
 fn RtlDeleteGrowableFunctionTable(c: &mut Ctx) -> u32 {
     let t = c.a(0);
-    DYNAMIC.lock().unwrap().retain(|e| e.0 != t);
+    DYNAMIC.locked().retain(|e| e.0 != t);
     0
 }
 fn RtlDeleteFunctionTable(c: &mut Ctx) -> u32 {
     let t = c.a(0);
-    let mut g = DYNAMIC.lock().unwrap();
+    let mut g = DYNAMIC.locked();
     let n = g.len();
     g.retain(|e| e.0 != t);
     (g.len() != n) as u32

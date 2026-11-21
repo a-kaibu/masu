@@ -7,6 +7,7 @@
 //! the extra data blocks, IPropertyStore (AppUserModelID).
 #![allow(non_snake_case)]
 
+use kome::locks::Lock as _;
 use crate::api::Ctx;
 use crate::k32::arg_str;
 use crate::mem;
@@ -163,7 +164,7 @@ struct State {
 static LINKS: Mutex<Option<HashMap<u32, State>>> = Mutex::new(None);
 
 fn links<R>(f: impl FnOnce(&mut HashMap<u32, State>) -> R) -> R {
-    f(LINKS.lock().unwrap().get_or_insert_with(HashMap::default))
+    f(LINKS.locked().get_or_insert_with(HashMap::default))
 }
 
 /// The interfaces, in the object's order: IShellLinkW, IShellLinkA, IPersistFile

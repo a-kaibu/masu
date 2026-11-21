@@ -10,6 +10,7 @@
 
 #![allow(non_snake_case)]
 
+use kome::locks::Lock as _;
 use std::sync::Mutex;
 
 use crate::api::{implement, Ctx};
@@ -69,7 +70,7 @@ pub fn check(c: &Cred) -> Result<(), u32> {
 
 pub fn write(c: Cred) -> Result<(), u32> {
     check(&c)?;
-    let mut s = STORE.lock().unwrap();
+    let mut s = STORE.locked();
     let key = lower(&c.target);
     s.retain(|o| !(o.ty == c.ty && lower(&o.target) == key));
     s.push(c);
@@ -77,18 +78,18 @@ pub fn write(c: Cred) -> Result<(), u32> {
 }
 pub fn read(target: &[u16], ty: u32) -> Option<Cred> {
     let key = lower(target);
-    STORE.lock().unwrap().iter().find(|o| o.ty == ty && lower(&o.target) == key).cloned()
+    STORE.locked().iter().find(|o| o.ty == ty && lower(&o.target) == key).cloned()
 }
 pub fn delete(target: &[u16], ty: u32) -> bool {
     let key = lower(target);
-    let mut s = STORE.lock().unwrap();
+    let mut s = STORE.locked();
     let n = s.len();
     s.retain(|o| !(o.ty == ty && lower(&o.target) == key));
     s.len() != n
 }
 /// The credentials a CredEnumerate filter selects: all, a name, or a prefix ending in '*'
 pub fn select(filter: Option<&[u16]>) -> Vec<Cred> {
-    let s = STORE.lock().unwrap();
+    let s = STORE.locked();
     let Some(f) = filter else { return s.clone() };
     let f = lower(f);
     s.iter()
@@ -377,7 +378,7 @@ fn cred_read_domain(c: &mut Ctx, wide: bool) -> u32 {
     }
     // TargetName, NetbiosServerName, DnsServerName, NetbiosDomainName, DnsDomainName
     let names: Vec<Vec<u16>> = (0..5).filter_map(|i| text_in(rp(info + i * ps()), wide)).map(|n| lower(&n)).collect();
-    let cs: Vec<Cred> = STORE.lock().unwrap().iter().filter(|c| domain_type(c.ty) && names.contains(&lower(&c.target))).cloned().collect();
+    let cs: Vec<Cred> = STORE.locked().iter().filter(|c| domain_type(c.ty) && names.contains(&lower(&c.target))).cloned().collect();
     if cs.is_empty() {
         return fail(ERROR_NOT_FOUND);
     }

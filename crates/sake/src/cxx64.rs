@@ -22,6 +22,7 @@
 
 #![allow(non_snake_case)]
 
+use kome::locks::Rw as _;
 use std::cell::{Cell, RefCell};
 use std::sync::OnceLock;
 
@@ -139,7 +140,7 @@ fn is_consolidate(rec: u32, n: u32) -> bool {
 
 /// The image base that holds `addr` (the thrown type's RVAs are from it).
 pub fn image_base_of(addr: u32) -> u64 {
-    crate::pe::MODULES.read().unwrap().iter().find(|m| addr.wrapping_sub(m.base) < m.size).map_or(0, |m| crate::mem::widen(m.base))
+    crate::pe::MODULES.r().iter().find(|m| addr.wrapping_sub(m.base) < m.size).map_or(0, |m| crate::mem::widen(m.base))
 }
 
 /// Entries read from one table of a function's FuncInfo (try blocks, catch blocks, unwind

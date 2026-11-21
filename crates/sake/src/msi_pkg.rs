@@ -3,6 +3,7 @@
 //! package's properties, directories, features and components. The sequences and actions
 //! that install a product are msi_install.rs.
 
+use kome::locks::Lock as _;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
@@ -107,7 +108,7 @@ pub struct Package {
 /// The package handle's package.
 pub fn pkg_of(h: u32) -> Option<Arc<Mutex<Package>>> {
     let o = crate::msi::get(h)?;
-    let o = o.lock().unwrap();
+    let o = o.locked();
     match &*o {
         Obj::Pkg(p) => Some(p.clone()),
         _ => None,
@@ -120,7 +121,7 @@ fn int(f: &Field) -> i32 {
 
 /// Rows of `sql` as records (no table: none).
 pub fn query(db: &Db, sql: &str) -> Vec<Record> {
-    let mut d = db.lock().unwrap();
+    let mut d = db.locked();
     let Ok(mut v) = View::new(&d.db, sql) else { return Vec::new() };
     if v.execute(&mut d.db, None).is_err() {
         return Vec::new();
@@ -221,7 +222,7 @@ fn system_props(p: &mut HashMap<String, String>) {
 impl Package {
     pub fn open(db: Db, path: &str) -> Package {
         {
-            let mut o = db.lock().unwrap();
+            let mut o = db.locked();
             if o.db.table_index("_Property").is_none() {
                 let cols = vec![
                     msidb::Col { name: "Property".into(), ty: 0x2d48 | msidb::db::T_TEMPORARY },
@@ -230,7 +231,7 @@ impl Package {
                 let _ = o.db.create_table("_Property", cols, false);
             }
         }
-        let summary = db.lock().unwrap().db.summary.as_deref().map(SummaryInfo::parse).unwrap_or_default();
+        let summary = db.locked().db.summary.as_deref().map(SummaryInfo::parse).unwrap_or_default();
         let mut props = HashMap::new();
         system_props(&mut props);
         for r in query(&db, "SELECT `Property`, `Value` FROM `Property`") {
@@ -238,7 +239,7 @@ impl Package {
         }
         // (the package's folder: a relative path is taken from the current directory)
         // ("#handle": the database's file)
-        let file = if path.starts_with('#') { db.lock().unwrap().path.clone() } else { path.to_string() };
+        let file = if path.starts_with('#') { db.locked().path.clone() } else { path.to_string() };
         let full = if file.is_empty() { String::new() } else { crate::files::full_path(&file) };
         let dir = full.rsplit_once('\\').map_or(String::new(), |d| slash(d.0));
         props.insert("DATABASE".into(), path.to_string());
@@ -332,7 +333,7 @@ impl Package {
     /// The active database's temporary _Property table, where Windows keeps a package's
     /// properties (a SELECT on it sees them): `name`'s row as the property is now.
     pub fn sync_prop(&self, name: &str) {
-        let mut o = self.db.lock().unwrap();
+        let mut o = self.db.locked();
         let db = &mut o.db;
         let Some(ti) = db.table_index("_Property") else { return };
         if let Some(ri) = db.row_by_keys(ti, &[0], &[Field::Str(name.to_string())]) {
@@ -745,7 +746,7 @@ pub fn open_package(path: &str) -> R<Arc<Mutex<Package>>> {
     };
     // (a database with a _Property table of its own is not a package: that name is the
     // package's properties')
-    if db.lock().unwrap().db.table("_Property").is_some_and(|t| t.persistent) {
+    if db.locked().db.table("_Property").is_some_and(|t| t.persistent) {
         return Err(ERROR_INSTALL_PACKAGE_INVALID);
     }
     let full = if path.starts_with('#') { path.to_string() } else { crate::files::full_path(path) };
@@ -788,7 +789,7 @@ fn get_property(c: &mut Ctx, wide: bool) -> u32 {
         return ERROR_INVALID_PARAMETER;
     }
     let Some(p) = pkg_of(h) else { return ERROR_INVALID_HANDLE };
-    let v = p.lock().unwrap().prop(&arg_str(n, wide));
+    let v = p.locked().prop(&arg_str(n, wide));
     out_str(buf, pcch, &v, wide)
 }
 fn MsiGetPropertyA(c: &mut Ctx) -> u32 {
@@ -809,7 +810,7 @@ fn set_property(c: &mut Ctx, wide: bool) -> u32 {
         return ERROR_SUCCESS;
     }
     let val = if v == 0 { String::new() } else { arg_str(v, wide) };
-    p.lock().unwrap().set_prop(&name, &val);
+    p.locked().set_prop(&name, &val);
     ERROR_SUCCESS
 }
 fn MsiSetPropertyA(c: &mut Ctx) -> u32 {
@@ -826,7 +827,7 @@ fn eval_condition(c: &mut Ctx, wide: bool) -> u32 {
         return cond::Cond::None as u32;
     }
     let s = arg_str(s, wide);
-    let p = p.lock().unwrap();
+    let p = p.locked();
     evaluate(&p, &s) as u32
 }
 fn MsiEvaluateConditionA(c: &mut Ctx) -> u32 {
@@ -839,7 +840,7 @@ fn MsiEvaluateConditionW(c: &mut Ctx) -> u32 {
 fn MsiGetActiveDatabase(c: &mut Ctx) -> u32 {
     match pkg_of(c.a(0)) {
         Some(p) => {
-            let db = p.lock().unwrap().db.clone();
+            let db = p.locked().db.clone();
             new_handle(Obj::Db(db))
         }
         None => 0,
@@ -848,7 +849,7 @@ fn MsiGetActiveDatabase(c: &mut Ctx) -> u32 {
 
 fn MsiGetLanguage(c: &mut Ctx) -> u32 {
     match pkg_of(c.a(0)) {
-        Some(p) => p.lock().unwrap().prop("ProductLanguage").parse().unwrap_or(0),
+        Some(p) => p.locked().prop("ProductLanguage").parse().unwrap_or(0),
         None => 0,
     }
 }
@@ -856,7 +857,7 @@ fn MsiGetLanguage(c: &mut Ctx) -> u32 {
 fn MsiGetMode(c: &mut Ctx) -> u32 {
     let (h, m) = (c.a(0), c.a(1));
     let Some(p) = pkg_of(h) else { return 0 };
-    let p = p.lock().unwrap();
+    let p = p.locked();
     match m {
         // MSIRUNMODE_SOURCESHORTNAMES 9 / TARGETSHORTNAMES 10: as the summary says
         9 => (p.summary.props.get(&msidb::suminfo::PID_WORDCOUNT).is_some_and(|x| matches!(x, Prop::I4(v) if v & 1 != 0))) as u32,
@@ -871,7 +872,7 @@ fn MsiSetMode(c: &mut Ctx) -> u32 {
     if m != 4 && m != 5 {
         return ERROR_ACCESS_DENIED;
     }
-    let mut p = p.lock().unwrap();
+    let mut p = p.locked();
     if on {
         p.mode |= 1 << m;
     } else {
@@ -887,7 +888,7 @@ fn target_path(c: &mut Ctx, wide: bool, source: bool) -> u32 {
     }
     let Some(p) = pkg_of(h) else { return ERROR_INVALID_HANDLE };
     let name = arg_str(d, wide);
-    let p = p.lock().unwrap();
+    let p = p.locked();
     if source {
         if pcch == 0 {
             return ERROR_INVALID_PARAMETER;
@@ -921,7 +922,7 @@ fn set_target_path(c: &mut Ctx, wide: bool) -> u32 {
     }
     let Some(p) = pkg_of(h) else { return ERROR_INVALID_HANDLE };
     let (name, path) = (arg_str(d, wide), arg_str(v, wide));
-    let mut p = p.lock().unwrap();
+    let mut p = p.locked();
     if !p.costed {
         return ERROR_FUNCTION_NOT_CALLED;
     }
@@ -945,7 +946,7 @@ fn state(c: &mut Ctx, wide: bool, feature: bool) -> u32 {
     }
     let Some(p) = pkg_of(h) else { return ERROR_INVALID_HANDLE };
     let name = arg_str(n, wide);
-    let p = p.lock().unwrap();
+    let p = p.locked();
     let unknown = if feature { ERROR_UNKNOWN_FEATURE } else { ERROR_UNKNOWN_COMPONENT };
     if !p.cost_started {
         return unknown;
@@ -984,7 +985,7 @@ fn set_feature_state(c: &mut Ctx, wide: bool) -> u32 {
     }
     let Some(p) = pkg_of(h) else { return ERROR_INVALID_HANDLE };
     let name = arg_str(n, wide);
-    let mut p = p.lock().unwrap();
+    let mut p = p.locked();
     if !p.cost_started || !p.features.iter().any(|f| f.name == name) {
         return ERROR_UNKNOWN_FEATURE;
     }
@@ -1006,7 +1007,7 @@ fn set_component_state(c: &mut Ctx, wide: bool) -> u32 {
     }
     let Some(p) = pkg_of(h) else { return ERROR_INVALID_HANDLE };
     let name = arg_str(n, wide);
-    let mut p = p.lock().unwrap();
+    let mut p = p.locked();
     if !p.cost_started {
         return ERROR_UNKNOWN_COMPONENT;
     }
@@ -1037,7 +1038,7 @@ fn enum_component_costs(c: &mut Ctx, wide: bool) -> u32 {
     }
     let Some(p) = pkg_of(h) else { return ERROR_INVALID_HANDLE };
     let name = arg_str(n, wide);
-    let p = p.lock().unwrap();
+    let p = p.locked();
     if !p.cost_started {
         return ERROR_INVALID_HANDLE_STATE;
     }
@@ -1079,7 +1080,7 @@ fn get_feature_cost(c: &mut Ctx, wide: bool) -> u32 {
     }
     let Some(p) = pkg_of(h) else { return ERROR_INVALID_HANDLE };
     let name = arg_str(n, wide);
-    let p = p.lock().unwrap();
+    let p = p.locked();
     if !p.cost_started || !p.features.iter().any(|f| f.name == name) {
         return ERROR_UNKNOWN_FEATURE;
     }

@@ -9,6 +9,7 @@
 //!
 //! The rest of ws2_32 (names, address text, the catalog) is ws2name.rs.
 
+use kome::locks::Lock as _;
 use crate::api::{implement, Ctx};
 use crate::iocp::{self, STATUS_PENDING};
 use crate::mem::{self, ps, r16, r32, rp, w16, w32, wp};
@@ -2708,7 +2709,7 @@ fn opt_put(level: u32, opt: u32, val: u32, lenp: u32, v: u32) -> Result<u32, u32
 static OPENTYPE: Mutex<Option<HashMap<u32, u32>>> = Mutex::new(None);
 fn opentype(set: Option<u32>) -> u32 {
     let tid = crate::cur().tid;
-    let mut g = OPENTYPE.lock().unwrap();
+    let mut g = OPENTYPE.locked();
     let m = g.get_or_insert_with(HashMap::default);
     if let Some(v) = set {
         m.insert(tid, v);

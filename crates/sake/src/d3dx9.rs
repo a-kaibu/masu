@@ -6,6 +6,7 @@
 
 #![allow(non_snake_case)]
 
+use kome::locks::Lock as _;
 use crate::api::{implement, vtable, Ctx, Handler};
 use crate::mem::{self, r32, w32};
 
@@ -776,14 +777,14 @@ fn ms_release(c: &mut Ctx) -> u32 {
     let o = c.a(0);
     let (n, last) = release_count(o);
     if last {
-        STACKS.lock().unwrap().get_or_insert_with(Default::default).remove(&o);
+        STACKS.locked().get_or_insert_with(Default::default).remove(&o);
         mem::heap_free(o);
     }
     n
 }
 fn ms_pop(c: &mut Ctx) -> u32 {
     let o = c.a(0);
-    let m = STACKS.lock().unwrap().get_or_insert_with(Default::default).get_mut(&o).and_then(|v| v.pop());
+    let m = STACKS.locked().get_or_insert_with(Default::default).get_mut(&o).and_then(|v| v.pop());
     if let Some(m) = m {
         wm(o + 16, &m);
     }
@@ -791,7 +792,7 @@ fn ms_pop(c: &mut Ctx) -> u32 {
 }
 fn ms_push(c: &mut Ctx) -> u32 {
     let o = c.a(0);
-    STACKS.lock().unwrap().get_or_insert_with(Default::default).entry(o).or_default().push(rm(o + 16));
+    STACKS.locked().get_or_insert_with(Default::default).entry(o).or_default().push(rm(o + 16));
     0
 }
 fn ms_identity(c: &mut Ctx) -> u32 {
@@ -2172,9 +2173,9 @@ mod lifetime_tests {
         assert_eq!(call(D3DXCreateMatrixStack, &[0, out]), 0);
         let s = r32(out);
         assert_eq!(vcall(s, 4), 0); // Push
-        assert!(STACKS.lock().unwrap().as_ref().is_some_and(|m| m.contains_key(&s)));
+        assert!(STACKS.locked().as_ref().is_some_and(|m| m.contains_key(&s)));
         assert_eq!(vcall(s, 2), 0);
-        assert!(!STACKS.lock().unwrap().as_ref().is_some_and(|m| m.contains_key(&s)));
+        assert!(!STACKS.locked().as_ref().is_some_and(|m| m.contains_key(&s)));
         assert!(!mem::heap_owns(s));
         // (D3DXCreateFontW(device, ..., out) without a device: nothing else to release)
         let mut a = vec![0u32; 11];

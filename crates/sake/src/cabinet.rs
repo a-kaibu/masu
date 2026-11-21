@@ -13,6 +13,7 @@
 //! in the next cabinet of a set (spanning) is FDIERROR_CORRUPT_CABINET for now.
 #![allow(non_snake_case)]
 
+use kome::locks::Lock as _;
 use crate::api::{implement, Ctx};
 use crate::mem::{self, w16, w32};
 
@@ -477,7 +478,7 @@ struct Fdi {
 static FDIS: std::sync::Mutex<Vec<(u32, Fdi)>> = std::sync::Mutex::new(Vec::new());
 
 fn fdi(h: u32) -> Option<Fdi> {
-    FDIS.lock().unwrap().iter().find(|e| e.0 == h).map(|e| e.1)
+    FDIS.locked().iter().find(|e| e.0 == h).map(|e| e.1)
 }
 
 fn set_erf(erf: u32, oper: u32) {
@@ -504,7 +505,7 @@ fn FDICreate(c: &mut Ctx) -> u32 {
     if f.erf != 0 {
         mem::fill(f.erf, 12, 0);
     }
-    FDIS.lock().unwrap().push((h, f));
+    FDIS.locked().push((h, f));
     h
 }
 
@@ -512,7 +513,7 @@ fn FDICreate(c: &mut Ctx) -> u32 {
 fn FDIDestroy(c: &mut Ctx) -> u32 {
     let h = c.a(0);
     let f = {
-        let mut g = FDIS.lock().unwrap();
+        let mut g = FDIS.locked();
         let Some(i) = g.iter().position(|e| e.0 == h) else { return 0 };
         g.remove(i).1
     };

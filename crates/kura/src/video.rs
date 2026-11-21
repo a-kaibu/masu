@@ -7,6 +7,7 @@
 //! of the newest request and copies decoded frames into the stream's slots
 //! (`vnhost_video_begin` / `vnhost_video_ready`); `frame` turns a slot into the guest's pixels.
 
+use kome::locks::Lock as _;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
 use std::sync::{Arc, Condvar, Mutex, OnceLock};
@@ -532,7 +533,7 @@ fn stat(waited: Duration, n: i32, late: bool) {
         return;
     }
     static S: Mutex<(Option<Instant>, u32, Duration, Duration, i32, u32)> = Mutex::new((None, 0, Duration::ZERO, Duration::ZERO, -1, 0));
-    let mut g = S.lock().unwrap();
+    let mut g = S.locked();
     let t0 = *g.0.get_or_insert_with(Instant::now);
     g.1 += 1;
     g.2 += waited;

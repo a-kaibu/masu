@@ -4,6 +4,7 @@
 
 #![allow(non_snake_case)]
 
+use kome::locks::Lock as _;
 use crate::HashMap;
 use std::io::SeekFrom;
 use std::sync::{Arc, Mutex, OnceLock};
@@ -120,7 +121,7 @@ pub fn data(name: &str) -> Option<u32> {
     if !NAMES.contains(&name) {
         return None;
     }
-    let mut g = DATA.lock().unwrap();
+    let mut g = DATA.locked();
     let m = g.get_or_insert_with(HashMap::default);
     if let Some(&a) = m.get(name) {
         return Some(a);
@@ -179,7 +180,7 @@ pub fn crtdll_data(name: &str) -> Option<u32> {
         "_daylight_dll" => "_daylight",
         "_basemajor_dll" | "_baseminor_dll" | "_cpumode_dll" | "_osmode_dll" => {
             static OWN: Mutex<Option<HashMap<String, u32>>> = Mutex::new(None);
-            return Some(*OWN.lock().unwrap().get_or_insert_with(HashMap::default).entry(name.into()).or_insert_with(|| var(0)));
+            return Some(*OWN.locked().get_or_insert_with(HashMap::default).entry(name.into()).or_insert_with(|| var(0)));
         }
         n => n.trim_suffix("_dll"),
     };
@@ -272,7 +273,7 @@ const CP1252_CTYPE: [u16; 128] = [
 /// The user locale's ctype table (EOF first), once a code page.
 fn user_ctype_table(cp: u32) -> u32 {
     static T: Mutex<Vec<(u32, u32)>> = Mutex::new(Vec::new());
-    let mut g = T.lock().unwrap();
+    let mut g = T.locked();
     if let Some(&(_, t)) = g.iter().find(|x| x.0 == cp) {
         return t;
     }
@@ -310,7 +311,7 @@ fn string_array(words: Vec<Vec<u8>>, unit: u32) -> u32 {
 /// (argc, argv) parsed from the command line, as the CRT does.
 fn args() -> (u32, u32) {
     static A: Mutex<(u32, u32)> = Mutex::new((0, 0));
-    let mut g = A.lock().unwrap();
+    let mut g = A.locked();
     if g.1 == 0 {
         let words = split_words(&cstr(crate::k32::cmdline().0));
         *g = (words.len() as u32, string_array(words, 1));
@@ -321,7 +322,7 @@ fn args() -> (u32, u32) {
 /// (argc, wargv) parsed from the wide command line.
 fn wargs() -> (u32, u32) {
     static A: Mutex<(u32, u32)> = Mutex::new((0, 0));
-    let mut g = A.lock().unwrap();
+    let mut g = A.locked();
     if g.1 == 0 {
         let words = split_wwords(&mem::wstr(crate::k32::cmdline().1));
         let n = words.len() as u32;
@@ -365,22 +366,22 @@ fn _initterm_e(c: &mut Ctx) -> u32 {
 static ATEXIT: Mutex<Vec<u32>> = Mutex::new(Vec::new());
 
 fn _onexit(c: &mut Ctx) -> u32 {
-    ATEXIT.lock().unwrap().push(c.a(0));
+    ATEXIT.locked().push(c.a(0));
     c.a(0)
 }
 fn atexit(c: &mut Ctx) -> u32 {
-    ATEXIT.lock().unwrap().push(c.a(0));
+    ATEXIT.locked().push(c.a(0));
     0
 }
 /// __dllonexit(func, &begin, &end): a DLL's own table; we keep them all in one list.
 fn __dllonexit(c: &mut Ctx) -> u32 {
-    ATEXIT.lock().unwrap().push(c.a(0));
+    ATEXIT.locked().push(c.a(0));
     c.a(0)
 }
 fn exit(c: &mut Ctx) -> u32 {
     let code = c.a(0);
     loop {
-        let Some(f) = ATEXIT.lock().unwrap().pop() else { break };
+        let Some(f) = ATEXIT.locked().pop() else { break };
         c.call(f, &[]);
     }
     unsafe { libc::exit(code as i32) }
@@ -2321,7 +2322,7 @@ static FILES: Mutex<Option<HashMap<u32, Arc<Mutex<Stream>>>>> = Mutex::new(None)
 
 fn iob() -> u32 {
     let p = mem::heap_alloc(file_size() * 20, true);
-    let mut g = FILES.lock().unwrap();
+    let mut g = FILES.locked();
     let m = g.get_or_insert_with(HashMap::default);
     for i in 0..3 {
         // (sake's stdin reads nothing: at its end, but feof says so only once read)
@@ -2332,7 +2333,7 @@ fn iob() -> u32 {
 }
 
 fn with_file<R>(fp: u32, f: impl FnOnce(&mut Stream) -> R) -> Option<R> {
-    let s = FILES.lock().unwrap().get_or_insert_with(HashMap::default).get(&fp).cloned()?;
+    let s = FILES.locked().get_or_insert_with(HashMap::default).get(&fp).cloned()?;
     let mut g = s.lock().unwrap_or_else(|e| e.into_inner());
     Some(f(&mut g))
 }
@@ -2370,7 +2371,7 @@ fn new_stream_of(f: Arc<File>, fd: u32, mode: &[u8]) -> u32 {
     let fp = mem::heap_alloc(file_size(), true);
     let mut st = Stream::new(fp, Some(f), fd, mode_flag(mode), false);
     st.text = text_mode(mode);
-    FILES.lock().unwrap().get_or_insert_with(HashMap::default).insert(fp, Arc::new(Mutex::new(st)));
+    FILES.locked().get_or_insert_with(HashMap::default).insert(fp, Arc::new(Mutex::new(st)));
     fp
 }
 /// _get_stream_buffer_pointers(stream, &base, &ptr, &cnt): the FILE's buffer fields (UCRT
@@ -2426,7 +2427,7 @@ fn rename(c: &mut Ctx) -> u32 {
 }
 fn fclose(c: &mut Ctx) -> u32 {
     let fp = c.a(0);
-    let had = FILES.lock().unwrap().get_or_insert_with(HashMap::default).remove(&fp);
+    let had = FILES.locked().get_or_insert_with(HashMap::default).remove(&fp);
     if let Some(s) = had {
         let fd = s.lock().unwrap_or_else(|e| e.into_inner()).fd;
         if fd > 2 {
@@ -2620,7 +2621,7 @@ fn find_next(c: &mut Ctx, kind: (bool, bool, bool)) -> u32 {
         _ => None,
     });
     let Some(f) = f else { return u32::MAX };
-    let mut f = f.lock().unwrap();
+    let mut f = f.locked();
     if f.at >= f.entries.len() {
         set_errno(2);
         return u32::MAX;
@@ -2780,7 +2781,7 @@ pub(crate) fn getenv(c: &mut Ctx) -> u32 {
     let name = cstr(c.a(0));
     let Some(v) = io::env_get(&a2s(&name)) else { return 0 };
     let bytes = crate::text::s2a(&v);
-    let mut g = VALS.lock().unwrap();
+    let mut g = VALS.locked();
     let m = g.get_or_insert_with(HashMap::default);
     // (an unchanged value keeps its pointer: two libraries reading TEMP both keep theirs)
     if let Some(&p) = m.get(&name.to_ascii_uppercase()) {
@@ -3231,7 +3232,7 @@ fn __acrt_iob_func(c: &mut Ctx) -> u32 {
 fn _create_locale(c: &mut Ctx) -> u32 {
     static LOC: Mutex<[u32; 2]> = Mutex::new([0; 2]);
     let ucrt = is_ucrt(c);
-    let mut cache = LOC.lock().unwrap();
+    let mut cache = LOC.locked();
     if cache[ucrt as usize] == 0 {
         cache[ucrt as usize] = make_locale(locale_layout(ucrt, ps()));
     }
@@ -3463,7 +3464,7 @@ fn _execute_onexit_table(c: &mut Ctx) -> u32 {
 }
 fn _cexit(c: &mut Ctx) -> u32 {
     loop {
-        let Some(f) = ATEXIT.lock().unwrap().pop() else { break };
+        let Some(f) = ATEXIT.locked().pop() else { break };
         c.call(f, &[]);
     }
     0
@@ -4691,6 +4692,7 @@ mod libm_sse2_tests {
 /// a model of msvcrt's fread (binary as is, text with CR LF as LF and Ctrl-Z as the end)
 #[cfg(test)]
 mod fread_tests {
+    use kome::locks::Lock as _;
     use super::{fread_to, new_stream, with_file, File};
     use crate::mem;
     use proptest::prelude::*;
@@ -4710,7 +4712,7 @@ mod fread_tests {
         new_stream(f, mode)
     }
     fn close(fp: u32) {
-        super::FILES.lock().unwrap().as_mut().unwrap().remove(&fp);
+        super::FILES.locked().as_mut().unwrap().remove(&fp);
         mem::heap_free(fp);
     }
     /// msvcrt's text-mode translation of a whole file

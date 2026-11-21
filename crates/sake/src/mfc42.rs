@@ -21,6 +21,7 @@
 
 #![allow(non_snake_case)]
 
+use kome::locks::Lock as _;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::{Mutex, OnceLock};
@@ -742,11 +743,11 @@ struct Thread {
 static THREADS: Mutex<Option<HashMap<u32, Thread>>> = Mutex::new(None);
 fn ts() -> Thread {
     let tid = crate::cur().tid;
-    THREADS.lock().unwrap().get_or_insert_with(HashMap::default).get(&tid).copied().unwrap_or_default()
+    THREADS.locked().get_or_insert_with(HashMap::default).get(&tid).copied().unwrap_or_default()
 }
 fn ts_set(f: impl FnOnce(&mut Thread)) {
     let tid = crate::cur().tid;
-    f(THREADS.lock().unwrap().get_or_insert_with(HashMap::default).entry(tid).or_default());
+    f(THREADS.locked().get_or_insert_with(HashMap::default).entry(tid).or_default());
 }
 
 /// AfxGetThread: the thread's CWinThread, else the application
@@ -844,7 +845,7 @@ static BASE_FNS: Mutex<Option<HashMap<u32, String>>> = Mutex::new(None);
 /// The CRuntimeClass of `name` {m_lpszClassName, m_nObjectSize, m_wSchema 0xffff,
 /// m_pfnCreateObject, m_pfnGetBaseClass (the DLL build's), m_pNextClass}
 pub fn runtime_class(name: &str) -> u32 {
-    if let Some(&p) = RTC.lock().unwrap().get_or_insert_with(HashMap::default).get(name) {
+    if let Some(&p) = RTC.locked().get_or_insert_with(HashMap::default).get(name) {
         return p;
     }
     let (base, mut size) = CLASSES.iter().find(|x| x.0 == name).map_or(("CObject", 0), |x| (x.1, x.2));
@@ -858,14 +859,14 @@ pub fn runtime_class(name: &str) -> u32 {
     w32(p + 8, 0xffff);
     if name != "CObject" {
         let f = api::host_fn(&format!("mfc42 {name}::_GetBaseClass"), get_base_class, 0);
-        BASE_FNS.lock().unwrap().get_or_insert_with(HashMap::default).insert(f, base.to_string());
+        BASE_FNS.locked().get_or_insert_with(HashMap::default).insert(f, base.to_string());
         w32(p + 16, f);
     }
-    RTC.lock().unwrap().get_or_insert_with(HashMap::default).insert(name.to_string(), p);
+    RTC.locked().get_or_insert_with(HashMap::default).insert(name.to_string(), p);
     p
 }
 fn get_base_class(c: &mut Ctx) -> u32 {
-    let base = BASE_FNS.lock().unwrap().as_ref().and_then(|m| m.get(&c.trap).cloned()).unwrap_or_default();
+    let base = BASE_FNS.locked().as_ref().and_then(|m| m.get(&c.trap).cloned()).unwrap_or_default();
     runtime_class(&base)
 }
 /// GetRuntimeClass of any class (its name in the export's)
@@ -1063,7 +1064,7 @@ fn export(n: &str) -> u32 {
 }
 pub fn vtable(class: &str) -> u32 {
     let key = format!("{} {class}", dll());
-    if let Some(&v) = VTABLES.lock().unwrap().get_or_insert_with(HashMap::default).get(&key) {
+    if let Some(&v) = VTABLES.locked().get_or_insert_with(HashMap::default).get(&key) {
         return v;
     }
     let s = slots(class);
@@ -1073,7 +1074,7 @@ pub fn vtable(class: &str) -> u32 {
             "" => export(&format!("?GetRuntimeClass@{class}@@UBEPAUCRuntimeClass@@XZ")),
             "~" => {
                 let f = api::host_fn(&format!("mfc42 {class}::`scalar deleting destructor'"), scalar_deleting_dtor, 4);
-                DTORS.lock().unwrap().get_or_insert_with(HashMap::default).insert(f, class.to_string());
+                DTORS.locked().get_or_insert_with(HashMap::default).insert(f, class.to_string());
                 f
             }
             n if n.starts_with('-') => api::host_fn(&format!("mfc42 nop{n}"), nop, n[1..].parse().unwrap_or(0)),
@@ -1081,7 +1082,7 @@ pub fn vtable(class: &str) -> u32 {
         };
         w32(v + 4 * i as u32, f);
     }
-    VTABLES.lock().unwrap().get_or_insert_with(HashMap::default).insert(key, v);
+    VTABLES.locked().get_or_insert_with(HashMap::default).insert(key, v);
     v
 }
 fn nop(_: &mut Ctx) -> u32 {
@@ -1098,7 +1099,7 @@ fn ret_minus1(_: &mut Ctx) -> u32 {
 }
 fn scalar_deleting_dtor(c: &mut Ctx) -> u32 {
     let (o, flags) = (this(c), c.a(0));
-    let class = DTORS.lock().unwrap().as_ref().and_then(|m| m.get(&c.trap).cloned()).unwrap_or_default();
+    let class = DTORS.locked().as_ref().and_then(|m| m.get(&c.trap).cloned()).unwrap_or_default();
     destruct(c, &class, o);
     if flags & 1 != 0 {
         free(o);
@@ -1517,7 +1518,7 @@ static TEMP_DC: Mutex<Option<HashMap<u32, u32>>> = Mutex::new(None);
 static TEMP_MENU: Mutex<Option<HashMap<u32, u32>>> = Mutex::new(None);
 
 fn from_handle_permanent(h: u32) -> u32 {
-    PERMANENT.lock().unwrap().get_or_insert_with(HashMap::default).get(&h).copied().unwrap_or(0)
+    PERMANENT.locked().get_or_insert_with(HashMap::default).get(&h).copied().unwrap_or(0)
 }
 /// CWnd::FromHandle: the window's CWnd (a temporary one made for a window MFC doesn't have)
 pub fn wnd_from_handle(h: u32) -> u32 {
@@ -1528,7 +1529,7 @@ pub fn wnd_from_handle(h: u32) -> u32 {
     if p != 0 {
         return p;
     }
-    *TEMPORARY.lock().unwrap().get_or_insert_with(HashMap::default).entry(h).or_insert_with(|| {
+    *TEMPORARY.locked().get_or_insert_with(HashMap::default).entry(h).or_insert_with(|| {
         let o = alloc(0x40);
         cmd_target_init(o, "CWnd");
         w32(o + 0x20, h);
@@ -1539,7 +1540,7 @@ fn dc_from_handle(h: u32) -> u32 {
     if h == 0 {
         return 0;
     }
-    *TEMP_DC.lock().unwrap().get_or_insert_with(HashMap::default).entry(h).or_insert_with(|| {
+    *TEMP_DC.locked().get_or_insert_with(HashMap::default).entry(h).or_insert_with(|| {
         let o = alloc(0x10);
         w32(o, vtable("CDC"));
         w32(o + 4, h);
@@ -1551,7 +1552,7 @@ fn menu_from_handle(h: u32) -> u32 {
     if h == 0 {
         return 0;
     }
-    *TEMP_MENU.lock().unwrap().get_or_insert_with(HashMap::default).entry(h).or_insert_with(|| {
+    *TEMP_MENU.locked().get_or_insert_with(HashMap::default).entry(h).or_insert_with(|| {
         let o = alloc(8);
         w32(o, vtable("CMenu"));
         w32(o + 4, h);
@@ -1562,15 +1563,15 @@ fn attach(o: u32, h: u32) -> bool {
     if h == 0 {
         return false;
     }
-    PERMANENT.lock().unwrap().get_or_insert_with(HashMap::default).insert(h, o);
-    TEMPORARY.lock().unwrap().get_or_insert_with(HashMap::default).remove(&h);
+    PERMANENT.locked().get_or_insert_with(HashMap::default).insert(h, o);
+    TEMPORARY.locked().get_or_insert_with(HashMap::default).remove(&h);
     w32(o + 0x20, h);
     true
 }
 fn detach(o: u32) -> u32 {
     let h = r32(o + 0x20);
     if h != 0 {
-        let mut g = PERMANENT.lock().unwrap();
+        let mut g = PERMANENT.locked();
         let m = g.get_or_insert_with(HashMap::default);
         if m.get(&h) == Some(&o) {
             m.remove(&h);
@@ -2995,7 +2996,7 @@ fn CClientDC_dtor(c: &mut Ctx) -> u32 {
 /// The ThrowInfo of `CFileException*` (catchable as CFileException*, CException*, CObject*)
 fn throw_info(class: &str) -> u32 {
     static T: Mutex<Option<HashMap<String, u32>>> = Mutex::new(None);
-    if let Some(&p) = T.lock().unwrap().get_or_insert_with(HashMap::default).get(class) {
+    if let Some(&p) = T.locked().get_or_insert_with(HashMap::default).get(class) {
         return p;
     }
     let mut chain = vec![class.to_string()];
@@ -3024,7 +3025,7 @@ fn throw_info(class: &str) -> u32 {
     static SLOT_DTOR: std::sync::OnceLock<u32> = std::sync::OnceLock::new();
     w32(ti + 4, *SLOT_DTOR.get_or_init(|| crate::api::host_fn_this("mfc42::throw_slot_dtor", throw_slot_dtor, 0)));
     w32(ti + 12, arr);
-    T.lock().unwrap().get_or_insert_with(HashMap::default).insert(class.to_string(), ti);
+    T.locked().get_or_insert_with(HashMap::default).insert(class.to_string(), ti);
     ti
 }
 /// ThrowInfo's destructor of a thrown pointer's slot (`throw`)

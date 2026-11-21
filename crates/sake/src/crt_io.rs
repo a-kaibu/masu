@@ -50,7 +50,7 @@ struct Fd {
 static FDS: Mutex<Vec<Option<Fd>>> = Mutex::new(Vec::new());
 
 fn with_fds<R>(f: impl FnOnce(&mut Vec<Option<Fd>>) -> R) -> R {
-    let mut g = FDS.lock().unwrap();
+    let mut g = FDS.locked();
     if g.is_empty() {
         for i in 0..3 {
             g.push(Some(Fd {
@@ -306,7 +306,7 @@ fn _eof(c: &mut Ctx) -> u32 {
 fn chsize(fd: u32, size: u64) -> u32 {
     match file_of(fd) {
         Some(f) if f.write => {
-            if f.f.lock().unwrap().set_len(size).is_ok() {
+            if f.f.locked().set_len(size).is_ok() {
                 0
             } else {
                 set_errno(EACCES);
@@ -479,7 +479,7 @@ fn _pipe(c: &mut Ctx) -> u32 {
 }
 fn _umask(c: &mut Ctx) -> u32 {
     static MASK: Mutex<u32> = Mutex::new(0);
-    std::mem::replace(&mut *MASK.lock().unwrap(), c.a(0) & 0o600)
+    std::mem::replace(&mut *MASK.locked(), c.a(0) & 0o600)
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -601,7 +601,7 @@ fn fstat(c: &mut Ctx, k: StatKind) -> u32 {
             ctime: 0,
         },
         Some(Kind::File(f)) => {
-            let Ok(m) = f.f.lock().unwrap().metadata() else { return bad() };
+            let Ok(m) = f.f.locked().metadata() else { return bad() };
             info_of(&m, &f.path)
         }
         // (a pipe: _S_IFIFO, the bytes waiting as its size)
@@ -921,7 +921,7 @@ fn _wutime64(c: &mut Ctx) -> u32 {
 /// so getenv does not see what a program (Python's os.environ, say) set through kernel32 only.
 static CRT_ENV: Mutex<Option<Vec<(String, String)>>> = Mutex::new(None);
 fn with_crt_env<R>(f: impl FnOnce(&mut Vec<(String, String)>) -> R) -> R {
-    let mut g = CRT_ENV.lock().unwrap();
+    let mut g = CRT_ENV.locked();
     f(g.get_or_insert_with(crate::k32::env_vars))
 }
 pub(super) fn env_get(name: &str) -> Option<String> {
@@ -968,7 +968,7 @@ fn env_array(wide: bool, pin: bool) -> u32 {
         })
         .collect();
     let unit = if wide { 2 } else { 1 };
-    let mut g = ENV_COPIES.lock().unwrap();
+    let mut g = ENV_COPIES.locked();
     let c = g.get_or_insert_with(EnvCopies::default);
     let argv = mem::heap_alloc(ps() * (words.len() as u32 + 1), true);
     for (i, w) in words.into_iter().enumerate() {
@@ -990,7 +990,7 @@ pub(super) fn refresh_environ() {
         let var = data(name).unwrap();
         let old = rp(var);
         wp(var, env_array(wide, false));
-        let mut g = ENV_COPIES.lock().unwrap();
+        let mut g = ENV_COPIES.locked();
         let c = g.get_or_insert_with(EnvCopies::default);
         if old != 0 && !c.pinned.contains(&old) {
             mem::heap_free(old);
@@ -1004,7 +1004,7 @@ pub(super) fn refresh_environ() {
             [(true, s.encode_utf16().flat_map(u16::to_le_bytes).collect()), (false, crate::text::s2a(&s))]
         })
         .collect();
-    let mut g = ENV_COPIES.lock().unwrap();
+    let mut g = ENV_COPIES.locked();
     let c = g.get_or_insert_with(EnvCopies::default);
     c.strs.retain(|k, &mut (p, pinned)| {
         let keep = pinned || now.contains(k);
@@ -1024,7 +1024,7 @@ fn _wgetenv(c: &mut Ctx) -> u32 {
     let name = path_arg(c.a(0), true);
     let Some(v) = env_get(&name) else { return 0 };
     let w: Vec<u16> = v.encode_utf16().collect();
-    let mut g = VALS.lock().unwrap();
+    let mut g = VALS.locked();
     let m = g.get_or_insert_with(HashMap::default);
     let key = name.to_ascii_uppercase();
     // (the same value: the same pointer, which a caller may still hold, as Windows' points
@@ -1225,7 +1225,7 @@ fn locale_of(s: &str) -> Option<(String, u32)> {
 
 /// setlocale's answer for `cat`: a name, LC_ALL's a composite one when the categories differ
 fn locale_name(cat: u32) -> String {
-    let n = LC_NAMES.lock().unwrap();
+    let n = LC_NAMES.locked();
     let one = |i: usize| n[i].clone().unwrap_or_else(|| "C".to_string());
     if cat != 0 {
         return one(cat as usize - 1);
@@ -1252,7 +1252,7 @@ fn set_locale(c: &mut Ctx, wide: bool) -> u32 {
     }
     if p != 0 {
         let Some((name, cp)) = locale_of(&path_arg(p, wide)) else { return 0 };
-        let mut n = LC_NAMES.lock().unwrap();
+        let mut n = LC_NAMES.locked();
         for i in 0..5 {
             if cat == 0 || cat as usize == i + 1 {
                 n[i] = (cp != 0).then(|| name.clone());
@@ -1273,7 +1273,7 @@ fn set_locale(c: &mut Ctx, wide: bool) -> u32 {
     // (one block per name, kept: `old = setlocale(LC_ALL, NULL); setlocale(LC_ALL, "C"); ...;
     // setlocale(LC_ALL, old)` reads the first answer after the second call, and the names a
     // program uses are few)
-    let mut b = BUF.lock().unwrap();
+    let mut b = BUF.locked();
     let m = b.get_or_insert_with(HashMap::default);
     *m.entry(units).or_insert_with_key(|u| {
         let p = mem::heap_alloc(u.len() as u32, true);
@@ -1637,7 +1637,7 @@ fn _popen(_: &mut Ctx) -> u32 {
 
 fn _set_invalid_parameter_handler(c: &mut Ctx) -> u32 {
     static H: Mutex<u32> = Mutex::new(0);
-    std::mem::replace(&mut *H.lock().unwrap(), c.a(0))
+    std::mem::replace(&mut *H.locked(), c.a(0))
 }
 fn _get_invalid_parameter_handler(_: &mut Ctx) -> u32 {
     0

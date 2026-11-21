@@ -11,6 +11,7 @@
 //!
 //! `MASU_TRACE_DIR=dir` writes `dir/d3d9lock-<seed>/`; `MASU_TRACE_SEEDS=n` (default 20).
 
+use kome::locks::Lock as _;
 use super::trace_tests::{alloc, attach_page, hr, seeds, write_module, Rng, CALLS, SERIAL};
 use super::draw_tests::call;
 use super::*;
@@ -26,7 +27,7 @@ fn rd(p: u32) -> u32 {
 }
 
 fn with<R>(f: impl FnOnce(&mut D3d) -> R) -> R {
-    f(D3D.lock().unwrap().as_mut().unwrap())
+    f(D3D.locked().as_mut().unwrap())
 }
 
 /// A RECT in guest memory (pixels).

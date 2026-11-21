@@ -7,6 +7,7 @@
 
 #![allow(non_snake_case)]
 
+use kome::locks::Lock as _;
 use crate::hresult::{S_OK, E_NOTIMPL, E_INVALIDARG, DISP_E_MEMBERNOTFOUND, DISP_E_PARAMNOTFOUND, DISP_E_TYPEMISMATCH, DISP_E_UNKNOWNNAME, DISP_E_EXCEPTION, DISP_E_BADPARAMCOUNT, TYPE_E_ELEMENTNOTFOUND, TYPE_E_CANTLOADLIBRARY};
 use crate::api::{implement, vtable, Ctx};
 use crate::mem::{self, put32, r16, r32, w16, w32};
@@ -375,7 +376,7 @@ static LIBS: Mutex<Vec<std::sync::Arc<Loaded>>> = Mutex::new(Vec::new());
 
 /// Library `li`
 fn lib(li: usize) -> Option<std::sync::Arc<Loaded>> {
-    LIBS.lock().unwrap().get(li).cloned()
+    LIBS.locked().get(li).cloned()
 }
 
 fn lib_vtbl() -> u32 {
@@ -450,7 +451,7 @@ fn free_it(c: &mut Ctx) -> u32 {
 
 /// Registers a parsed library; its ITypeLib.
 pub fn add(lib: Lib) -> u32 {
-    let mut libs = LIBS.lock().unwrap();
+    let mut libs = LIBS.locked();
     if let Some(l) = libs.iter().find(|l| l.lib.guid == lib.guid && l.lib.guid != [0; 16]) {
         return l.block;
     }
@@ -483,7 +484,7 @@ fn with_info<R>(li: usize, ii: usize, f: impl FnOnce(&Lib, &Info) -> R) -> Optio
     l.lib.infos.get(ii).map(|i| f(&l.lib, i))
 }
 fn info_block(li: usize, ii: usize) -> Option<u32> {
-    LIBS.lock().unwrap().get(li).and_then(|l| l.infos.get(ii).copied())
+    LIBS.locked().get(li).and_then(|l| l.infos.get(ii).copied())
 }
 
 fn guid_eq(p: u32, g: &[u8; 16]) -> bool {
@@ -505,7 +506,7 @@ fn L_QueryInterface(c: &mut Ctx) -> u32 {
     }
 }
 fn L_GetTypeInfoCount(c: &mut Ctx) -> u32 {
-    LIBS.lock().unwrap().get(lib_of(c)).map_or(0, |l| l.lib.infos.len() as u32)
+    LIBS.locked().get(lib_of(c)).map_or(0, |l| l.lib.infos.len() as u32)
 }
 fn L_GetTypeInfo(c: &mut Ctx) -> u32 {
     let c = &mut c.args::<crate::api::outs::iface::ITypeLib::GetTypeInfo>();
@@ -530,7 +531,7 @@ fn L_GetTypeInfoOfGuid(c: &mut Ctx) -> u32 {
     let c = &mut c.args::<crate::api::outs::iface::ITypeLib::GetTypeInfoOfGuid>();
     let li = lib_of(c.ctx());
     let g = c.a::<1>();
-    let hit = LIBS.lock().unwrap().get(li).and_then(|l| l.lib.infos.iter().position(|i| guid_eq(g, &i.guid)).map(|i| l.infos[i]));
+    let hit = LIBS.locked().get(li).and_then(|l| l.lib.infos.iter().position(|i| guid_eq(g, &i.guid)).map(|i| l.infos[i]));
     match hit {
         Some(b) => {
             c.out::<2>().put(b);
@@ -544,7 +545,7 @@ fn L_GetTypeInfoOfGuid(c: &mut Ctx) -> u32 {
 }
 fn L_GetLibAttr(c: &mut Ctx) -> u32 {
     let c = &mut c.args::<crate::api::outs::iface::ITypeLib::GetLibAttr>();
-    let Some((g, lcid, ver, flags)) = LIBS.lock().unwrap().get(lib_of(c.ctx())).map(|l| (l.lib.guid, l.lib.lcid, l.lib.version, l.lib.flags)) else {
+    let Some((g, lcid, ver, flags)) = LIBS.locked().get(lib_of(c.ctx())).map(|l| (l.lib.guid, l.lib.lcid, l.lib.version, l.lib.flags)) else {
         return E_INVALIDARG;
     };
     let p = mem::heap_alloc(32, true);
@@ -566,7 +567,7 @@ fn L_GetDocumentation(c: &mut Ctx) -> u32 {
     let c = &mut c.args::<crate::api::outs::iface::ITypeLib::GetDocumentation>();
     let li = lib_of(c.ctx());
     let idx = c.a::<1>() as i32;
-    let n = LIBS.lock().unwrap().get(li).and_then(|l| if idx < 0 { Some(l.lib.name.clone()) } else { l.lib.infos.get(idx as usize).map(|i| i.name.clone()) });
+    let n = LIBS.locked().get(li).and_then(|l| if idx < 0 { Some(l.lib.name.clone()) } else { l.lib.infos.get(idx as usize).map(|i| i.name.clone()) });
     let Some(n) = n else { return TYPE_E_ELEMENTNOTFOUND };
     put_bstr(c.out::<2>(), &n);
     for p in [c.out::<3>(), c.out::<5>()] {
@@ -577,7 +578,7 @@ fn L_GetDocumentation(c: &mut Ctx) -> u32 {
 }
 fn L_IsName(c: &mut Ctx) -> u32 {
     let name = String::from_utf16_lossy(&mem::wstr(c.a(1)));
-    let found = LIBS.lock().unwrap().get(lib_of(c)).is_some_and(|l| {
+    let found = LIBS.locked().get(lib_of(c)).is_some_and(|l| {
         l.lib.infos.iter().any(|i| i.name.eq_ignore_ascii_case(&name) || i.funcs.iter().any(|f| f.name.eq_ignore_ascii_case(&name)))
     });
     put32(c.a(3), if found { 0xffff } else { 0 });
@@ -639,11 +640,11 @@ fn write_tdesc(p: u32, t: &Td) {
             // ReleaseTypeAttr free only the block, so a fresh one per call would leak 8 bytes per
             // pointer parameter per GetFuncDesc)
             static KEPT: Mutex<Option<std::collections::HashMap<Td, u32>>> = Mutex::new(None);
-            let known = KEPT.lock().unwrap().get_or_insert_with(Default::default).get(&**inner).copied();
+            let known = KEPT.locked().get_or_insert_with(Default::default).get(&**inner).copied();
             let q = known.unwrap_or_else(|| {
                 let q = mem::heap_alloc(8, true);
                 write_tdesc(q, inner);
-                KEPT.lock().unwrap().get_or_insert_with(Default::default).insert((**inner).clone(), q);
+                KEPT.locked().get_or_insert_with(Default::default).insert((**inner).clone(), q);
                 q
             });
             w32(p, q);
@@ -822,7 +823,7 @@ fn I_GetRefTypeInfo(c: &mut Ctx) -> u32 {
 fn I_GetContainingTypeLib(c: &mut Ctx) -> u32 {
     let c = &mut c.args::<crate::api::outs::iface::ITypeInfo::GetContainingTypeLib>();
     let (li, ii) = info_of(c.ctx());
-    if let Some(b) = LIBS.lock().unwrap().get(li).map(|l| l.block) {
+    if let Some(b) = LIBS.locked().get(li).map(|l| l.block) {
         c.out::<1>().put(b);
     }
     put32(c.a::<2>(), ii as u32);
@@ -1131,7 +1132,7 @@ fn LoadTypeLibEx(c: &mut Ctx) -> u32 {
 fn LoadRegTypeLib(c: &mut Ctx) -> u32 {
     let c = &mut c.args::<crate::api::outs::LoadRegTypeLib>();
     let g = c.a::<0>();
-    let hit = LIBS.lock().unwrap().iter().find(|l| guid_eq(g, &l.lib.guid)).map(|l| l.block);
+    let hit = LIBS.locked().iter().find(|l| guid_eq(g, &l.lib.guid)).map(|l| l.block);
     c.out::<4>().put(hit.unwrap_or(0));
     if hit.is_some() { S_OK } else { TYPE_E_CANTLOADLIBRARY }
 }

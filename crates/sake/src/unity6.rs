@@ -764,6 +764,7 @@ mod tests {
     /// SAKE_UNITY_DLL=path cargo test -p sake --lib unity6::tests::native -- --ignored --nocapture
     #[cfg(all(target_arch = "x86_64", target_os = "linux"))]
     mod native {
+        use kome::locks::Lock as _;
         use super::super::*;
         use proptest::prelude::*;
         use std::collections::HashMap;
@@ -965,7 +966,7 @@ mod tests {
             if std::env::var_os("SAKE_UNITY_DLL").is_none() {
                 return;
             }
-            let img = image().lock().unwrap();
+            let img = image().locked();
             let cfg = ProptestConfig {
                 cases: 400,
                 ..ProptestConfig::default()

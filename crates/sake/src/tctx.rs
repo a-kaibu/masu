@@ -9,6 +9,7 @@
 
 #![allow(non_snake_case)]
 
+use kome::locks::Lock as _;
 use crate::api::{implement, Ctx};
 use crate::mem::{self, r32};
 use crate::HashMap;
@@ -98,7 +99,7 @@ fn with_scratch<R>(n: u32, f: impl FnOnce(u32) -> R) -> R {
 
 /// A thread's exit: a context set for it that it never took goes
 pub fn thread_gone(tid: u32) {
-    if ANY.load(Ordering::Acquire) && let Some(m) = PENDING.lock().unwrap().as_mut() {
+    if ANY.load(Ordering::Acquire) && let Some(m) = PENDING.locked().as_mut() {
         m.remove(&tid);
     }
 }
@@ -134,7 +135,7 @@ pub fn apply_pending(cpu: &mut koji::Cpu) -> bool {
         return false;
     }
     let tid = crate::cur().tid;
-    let Some((flags, bytes)) = PENDING.lock().unwrap().get_or_insert_with(HashMap::default).remove(&tid) else { return false };
+    let Some((flags, bytes)) = PENDING.locked().get_or_insert_with(HashMap::default).remove(&tid) else { return false };
     with_scratch(2, |base| {
         let given = base + size(mem::x64()) + 16;
         capture(cpu, (0, 0), base);
@@ -157,7 +158,7 @@ pub fn apply_pending_after_call(cpu: &mut koji::Cpu) {
 /// A context set for thread `tid` that it has not taken yet, over `at` (GetThreadContext
 /// sees what SetThreadContext set)
 fn overlay_pending(tid: u32, at: u32) {
-    let p = PENDING.lock().unwrap().get_or_insert_with(HashMap::default).get(&tid).cloned();
+    let p = PENDING.locked().get_or_insert_with(HashMap::default).get(&tid).cloned();
     if let Some((flags, bytes)) = p {
         let n = size(mem::x64());
         let tmp = mem::heap_alloc(n + 16, true);
@@ -187,7 +188,7 @@ pub fn context_of(tid: u32) -> Option<Vec<u8>> {
 /// crate::xmem's SET_CONTEXT: the parts `flags` names of `bytes` for thread `tid`, as
 /// SetThreadContext of it here
 pub fn set_context_of(tid: u32, flags: u32, bytes: &[u8]) {
-    PENDING.lock().unwrap().get_or_insert_with(HashMap::default).insert(tid, (flags, bytes.to_vec()));
+    PENDING.locked().get_or_insert_with(HashMap::default).insert(tid, (flags, bytes.to_vec()));
     ANY.store(true, Ordering::Release);
 }
 
@@ -263,7 +264,7 @@ fn SetThreadContext(c: &mut Ctx) -> u32 {
         return 1;
     }
     let bytes = mem::bytes(ctx, size(x64));
-    PENDING.lock().unwrap().get_or_insert_with(HashMap::default).insert(tid, (flags, bytes));
+    PENDING.locked().get_or_insert_with(HashMap::default).insert(tid, (flags, bytes));
     ANY.store(true, Ordering::Release);
     1
 }
@@ -384,7 +385,7 @@ mod tests {
         set_context_of(0x7123, 0x1003f, &[1, 2, 3]);
         set_context_of(0x7124, 0x1003f, &[4]);
         thread_gone(0x7123);
-        let g = PENDING.lock().unwrap();
+        let g = PENDING.locked();
         let m = g.as_ref().unwrap();
         assert!(!m.contains_key(&0x7123) && m.contains_key(&0x7124));
         drop(g);

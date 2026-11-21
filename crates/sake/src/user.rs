@@ -6,6 +6,7 @@
 
 #![allow(non_snake_case)]
 
+use kome::locks::{Lock as _, Rw as _};
 use crate::HashMap;
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
@@ -515,7 +516,7 @@ pub fn target(h: u32) -> Option<Target> {
 /// Sends part of a top-level window's surface to the display.
 pub fn flush(top: u32, r: Rect) {
     let Some(surf) = with(|s| s.wins.get(&top).and_then(|w| w.surface.clone())) else { return };
-    let mut g = surf.lock().unwrap();
+    let mut g = surf.locked();
     let r = r.and(&Rect { l: 0, t: 0, r: g.w, b: g.h });
     if r.empty() {
         return;
@@ -585,7 +586,7 @@ fn ensure_surface(w: &mut Window) {
         // (this thread is drawing on it: resized at its next draw, not locked twice)
         Some(s) if crate::gdi::holds(Arc::as_ptr(s) as *const () as usize) => {}
         Some(s) => {
-            let mut g = s.lock().unwrap();
+            let mut g = s.locked();
             if g.w != cw || g.h != ch {
                 g.unshare();
                 let mut px = vec![0xff00_0000u32; (cw * ch) as usize];
@@ -674,14 +675,14 @@ struct Ctl {
 static CTLS: Mutex<Option<HashMap<u32, Ctl>>> = Mutex::new(None);
 
 fn ctl(h: u32) -> Ctl {
-    CTLS.lock().unwrap().get_or_insert_with(HashMap::default).get(&h).copied().unwrap_or_default()
+    CTLS.locked().get_or_insert_with(HashMap::default).get(&h).copied().unwrap_or_default()
 }
 /// A button's check state (BM_GETCHECK): BST_CHECKED or indeterminate (SAKE_AUTO looks).
 pub(crate) fn button_checked(h: u32) -> bool {
     ctl(h).check != 0
 }
 fn set_ctl(h: u32, f: impl FnOnce(&mut Ctl)) {
-    f(CTLS.lock().unwrap().get_or_insert_with(HashMap::default).entry(h).or_default());
+    f(CTLS.locked().get_or_insert_with(HashMap::default).entry(h).or_default());
 }
 
 /// Combo boxes (settings dialogs): their items and selection, drawn as a box with the selected
@@ -697,7 +698,7 @@ fn combo_proc() -> u32 {
     *P.get_or_init(|| crate::api::host_fn("combo_proc", combo_proc_fn, 16))
 }
 fn combo<R>(h: u32, f: impl FnOnce(&mut Combo) -> R) -> R {
-    let mut g = COMBOS.lock().unwrap();
+    let mut g = COMBOS.locked();
     let e = g.get_or_insert_with(HashMap::default).entry(h).or_insert_with(|| Combo { items: Vec::new(), sel: -1 });
     f(e)
 }
@@ -837,7 +838,7 @@ fn combo_proc_fn(c: &mut Ctx) -> u32 {
             0
         }
         0x2 => {
-            COMBOS.lock().unwrap().get_or_insert_with(HashMap::default).remove(&h);
+            COMBOS.locked().get_or_insert_with(HashMap::default).remove(&h);
             def_proc(c, wide)
         }
         _ => def_proc(c, wide),
@@ -1771,7 +1772,7 @@ fn control_proc_fn(c: &mut Ctx) -> u32 {
             r
         }
         0x2 => {
-            CTLS.lock().unwrap().get_or_insert_with(HashMap::default).remove(&h);
+            CTLS.locked().get_or_insert_with(HashMap::default).remove(&h);
             def_proc(c, msg_wide())
         }
         _ => def_proc(c, msg_wide()),
@@ -2034,7 +2035,7 @@ fn send_other_thread(cpu: &mut koji::Cpu, tid: u32, msg: Msg) -> u32 {
     // wait, handling messages sent to us meanwhile
     loop {
         {
-            let mut g = result.0.lock().unwrap();
+            let mut g = result.0.locked();
             if g.is_none() {
                 g = result.1.wait_timeout(g, Duration::from_millis(5)).unwrap().0;
             }
@@ -2126,7 +2127,7 @@ pub fn thread_gone(tid: u32) {
         (gone, answered)
     });
     for sent in answered {
-        *sent.result.0.lock().unwrap() = Some((0, Instant::now(), None));
+        *sent.result.0.locked() = Some((0, Instant::now(), None));
         sent.result.1.notify_all();
         if let Some((id, buf)) = sent.remote {
             if buf != 0 {
@@ -2135,7 +2136,7 @@ pub fn thread_gone(tid: u32) {
             crate::kern::with(|k| k.reply(id, 0));
         }
     }
-    let mut g = HOOKS.lock().unwrap();
+    let mut g = HOOKS.locked();
     g.retain(|x| {
         if x.3 != tid {
             return true;
@@ -2222,7 +2223,7 @@ fn process_sent(cpu: &mut koji::Cpu) {
         let gate = release_gate(last, sent.from);
         // (marked before it can go on: its next call that does something comes after)
         LAST_RELEASE.set(Some((sent.from, at, crate::obj::HANDOFF.work_mark(sent.from))));
-        *sent.result.0.lock().unwrap() = Some((r, at, gate));
+        *sent.result.0.locked() = Some((r, at, gate));
         sent.result.1.notify_all();
         if let Some((id, buf)) = sent.remote {
             if buf != 0 {
@@ -4204,7 +4205,7 @@ fn dde_string(c: &mut Ctx, wide: bool) -> u32 {
     let p = c.a(1);
     let t = if p == 0 { Vec::new() } else if wide { wstr(p) } else { a2w(&cstr(p)) };
     let low = |v: &[u16]| v.iter().map(|&ch| crate::text::lower16(ch)).collect::<Vec<_>>();
-    let mut g = DDE_STR.lock().unwrap();
+    let mut g = DDE_STR.locked();
     if let Some(x) = g.iter().find(|x| low(&x.1) == low(&t)) {
         return x.0;
     }
@@ -4222,7 +4223,7 @@ fn DdeCreateStringHandleW(c: &mut Ctx) -> u32 {
 /// else the characters copied (at most cch-1, and a NUL)
 fn dde_query(c: &mut Ctx, wide: bool) -> u32 {
     let (h, buf, cch) = (c.a(1), c.a(2), c.a(3));
-    let Some(t) = DDE_STR.lock().unwrap().iter().find(|x| x.0 == h).map(|x| x.1.clone()) else { return 0 };
+    let Some(t) = DDE_STR.locked().iter().find(|x| x.0 == h).map(|x| x.1.clone()) else { return 0 };
     let len = if wide { t.len() } else { w2a(&t).len() } as u32;
     if buf == 0 || cch == 0 {
         return len;
@@ -5557,7 +5558,7 @@ fn set_hook(c: &mut Ctx) -> u32 {
         // (a hook for this thread when it names none and is not a DLL's global one; CBT
         // hooks always this thread's, as before)
         let tid = if c.a(3) != 0 { c.a(3) } else if id == WH_CBT || c.a(2) == 0 { crate::cur().tid } else { 0 };
-        HOOKS.lock().unwrap().push((h, id, c.a(1), tid));
+        HOOKS.locked().push((h, id, c.a(1), tid));
         match id {
             WH_CBT => {}
             WH_GETMESSAGE => {
@@ -5577,7 +5578,7 @@ fn SetWindowsHookExW(c: &mut Ctx) -> u32 {
     set_hook(c)
 }
 fn UnhookWindowsHookEx(c: &mut Ctx) -> u32 {
-    let mut g = HOOKS.lock().unwrap();
+    let mut g = HOOKS.locked();
     if let Some(i) = g.iter().position(|x| x.0 == c.a(0)) {
         match g.remove(i).1 {
             WH_CBT => {}
@@ -5593,7 +5594,7 @@ fn UnhookWindowsHookEx(c: &mut Ctx) -> u32 {
 }
 /// The procedures of thread `tid`'s hooks of kind `id`, newest first
 fn hooks_of(id: u32, tid: u32) -> Vec<u32> {
-    HOOKS.lock().unwrap().iter().rev().filter(|x| x.1 == id && (x.3 == tid || x.3 == 0)).map(|x| x.2).collect()
+    HOOKS.locked().iter().rev().filter(|x| x.1 == id && (x.3 == tid || x.3 == 0)).map(|x| x.2).collect()
 }
 /// The thread's WH_GETMESSAGE hooks for the message GetMessage / PeekMessage just wrote at `p`
 /// (HC_ACTION, PM_REMOVE or PM_NOREMOVE, the MSG: a hook may change it before the program sees
@@ -6912,7 +6913,7 @@ fn load_string(c: &mut Ctx, wide: bool) -> u32 {
     if !wide && cap == 0 {
         return 0xffff_ffff;
     }
-    let inst = if inst == 0 { crate::pe::MODULES.read().unwrap().iter().find(|m| !m.dll).map_or(0, |m| m.base) } else { inst };
+    let inst = if inst == 0 { crate::pe::MODULES.r().iter().find(|m| !m.dll).map_or(0, |m| m.base) } else { inst };
     let Some(e) = crate::pe::find_resource(inst, &crate::pe::ResId::Int(6), &crate::pe::ResId::Int(id / 16 + 1)) else {
         // no block: ERROR_RESOURCE_NAME_NOT_FOUND and an empty string
         crate::k32::last_error(1814);
@@ -6964,7 +6965,7 @@ fn fake_handle() -> u32 {
 static SHARED_ICONS: Mutex<Option<HashMap<(u32, u32, String), u32>>> = Mutex::new(None);
 fn shared_handle(inst: u32, kind: u32, name: u32, wide: bool) -> u32 {
     let key = if name < 0x10000 { format!("#{name}") } else { arg_str(name, wide).to_uppercase() };
-    *SHARED_ICONS.lock().unwrap().get_or_insert_with(HashMap::default).entry((inst, kind, key)).or_insert_with(fake_handle)
+    *SHARED_ICONS.locked().get_or_insert_with(HashMap::default).entry((inst, kind, key)).or_insert_with(fake_handle)
 }
 fn LoadCursorA(c: &mut Ctx) -> u32 {
     shared_handle(c.a(0), 2, c.a(1), false)
@@ -6995,7 +6996,7 @@ fn cursor_from_file(name: u32, wide: bool) -> u32 {
     };
     let h = fake_handle();
     if let Some(hot) = cur_hotspot(&data) {
-        HOTSPOTS.lock().unwrap().get_or_insert_with(HashMap::default).insert(h, hot);
+        HOTSPOTS.locked().get_or_insert_with(HashMap::default).insert(h, hot);
     }
     h
 }
@@ -7088,7 +7089,7 @@ fn icon_from_resource_call(c: &mut Ctx, version: u32) -> u32 {
     let Some(hot) = icon_from_resource(&bits, icon, version) else { return 0 };
     let h = fake_handle();
     if let Some(hot) = hot {
-        HOTSPOTS.lock().unwrap().get_or_insert_with(HashMap::default).insert(h, hot);
+        HOTSPOTS.locked().get_or_insert_with(HashMap::default).insert(h, hot);
     }
     h
 }
@@ -7121,7 +7122,7 @@ fn GetIconInfo(c: &mut Ctx) -> u32 {
     let p = c.a(1);
     let (size, mask) = if mem::x64() { (32, 16) } else { (20, 12) };
     mem::fill(p, size, 0);
-    if let Some((x, y)) = HOTSPOTS.lock().unwrap().get_or_insert_with(HashMap::default).get(&c.a(0)) {
+    if let Some((x, y)) = HOTSPOTS.locked().get_or_insert_with(HashMap::default).get(&c.a(0)) {
         w32(p + 4, *x as u32);
         w32(p + 8, *y as u32);
     }
@@ -7153,7 +7154,7 @@ fn resource(inst: u32, name: u32, ty: u32, wide: bool) -> Option<(u32, u32)> {
 static ACCELS: Mutex<Option<HashMap<u32, Vec<(u8, u16, u16)>>>> = Mutex::new(None);
 fn new_accel(t: Vec<(u8, u16, u16)>) -> u32 {
     let h = fake_handle();
-    ACCELS.lock().unwrap().get_or_insert_with(HashMap::default).insert(h, t);
+    ACCELS.locked().get_or_insert_with(HashMap::default).insert(h, t);
     h
 }
 /// LoadAccelerators: RT_ACCELERATOR entries are 8 bytes (flags, key, id, pad); 0x80 ends them
@@ -7189,13 +7190,13 @@ fn CreateAcceleratorTableW(c: &mut Ctx) -> u32 {
     CreateAcceleratorTableA(c)
 }
 fn DestroyAcceleratorTable(c: &mut Ctx) -> u32 {
-    ACCELS.lock().unwrap().get_or_insert_with(HashMap::default).remove(&c.a(0)).is_some() as u32
+    ACCELS.locked().get_or_insert_with(HashMap::default).remove(&c.a(0)).is_some() as u32
 }
 /// CopyAcceleratorTable(h, ACCEL*, n): the entry count with a null buffer, else how many
 /// were copied
 fn CopyAcceleratorTableA(c: &mut Ctx) -> u32 {
     let (h, p, n) = (c.a(0), c.a(1), c.a(2));
-    let Some(t) = ACCELS.lock().unwrap().get_or_insert_with(HashMap::default).get(&h).cloned() else { return 0 };
+    let Some(t) = ACCELS.locked().get_or_insert_with(HashMap::default).get(&h).cloned() else { return 0 };
     if p == 0 {
         return t.len() as u32;
     }
@@ -7220,7 +7221,7 @@ fn TranslateAcceleratorA(c: &mut Ctx) -> u32 {
         return 0;
     }
     let (msg, wp) = (r32(m + 4), r32(m + 8));
-    let Some(t) = ACCELS.lock().unwrap().get_or_insert_with(HashMap::default).get(&h).cloned() else { return 0 };
+    let Some(t) = ACCELS.locked().get_or_insert_with(HashMap::default).get(&h).cloned() else { return 0 };
     let down = |k: usize| with(|s| s.keys[k] & 0x80 != 0);
     let mods = (if down(0x10) { 4 } else { 0 }) | (if down(0x11) { 8 } else { 0 }) | (if down(0x12) { 16 } else { 0 });
     let hit = t.iter().find(|&&(f, key, _)| {
@@ -8258,7 +8259,7 @@ fn create_dialog(c: &mut Ctx, inst: u32, t: u32, owner: u32, proc_: u32, param: 
     if send(c, dlg, 0x110, first, param) != 0 && first != 0 {
         set_focus(c, first);
     }
-    if is_window(dlg) && (modal || style & 0x1000_0000 != 0) && !DLG_END.lock().unwrap().get_or_insert_with(HashMap::default).contains_key(&dlg) {
+    if is_window(dlg) && (modal || style & 0x1000_0000 != 0) && !DLG_END.locked().get_or_insert_with(HashMap::default).contains_key(&dlg) {
         show(c, dlg, 5);
     }
     sdrt_login::fill(c, dlg, inst);
@@ -8299,7 +8300,7 @@ fn dialog_box(c: &mut Ctx, inst: u32, t: u32, owner: u32, proc_: u32, param: u32
     let r = loop {
         // (a message another thread sent may end it: EndDialog in its handling)
         process_sent(c.cpu);
-        if let Some(r) = DLG_END.lock().unwrap().get_or_insert_with(HashMap::default).remove(&dlg) {
+        if let Some(r) = DLG_END.locked().get_or_insert_with(HashMap::default).remove(&dlg) {
             break r;
         }
         if !is_window(dlg) {
@@ -8403,7 +8404,7 @@ fn CreateDialogIndirectParamW(c: &mut Ctx) -> u32 {
 }
 fn EndDialog(c: &mut Ctx) -> u32 {
     let (h, r) = (c.a(0), c.a(1));
-    DLG_END.lock().unwrap().get_or_insert_with(HashMap::default).insert(h, r);
+    DLG_END.locked().get_or_insert_with(HashMap::default).insert(h, r);
     show(c, h, 0);
     1
 }
@@ -8517,7 +8518,7 @@ fn ImmGetDefaultIMEWnd(c: &mut Ctx) -> u32 {
             None => return 0,
         }
     };
-    let known = IME_WNDS.lock().unwrap().get_or_insert_with(HashMap::default).get(&tid).copied();
+    let known = IME_WNDS.locked().get_or_insert_with(HashMap::default).get(&tid).copied();
     if let Some(w) = known.filter(|&w| is_window(w)) {
         return w;
     }
@@ -8531,7 +8532,7 @@ fn ImmGetDefaultIMEWnd(c: &mut Ctx) -> u32 {
     let w = gcall(c, "user32", "CreateWindowExA", &[0, strs, strs + 4, 0x8800_0000, 0, 0, 1, 1, 0, 0, 0, 0]);
     mem::heap_free(strs);
     if w != 0 {
-        IME_WNDS.lock().unwrap().get_or_insert_with(HashMap::default).insert(tid, w);
+        IME_WNDS.locked().get_or_insert_with(HashMap::default).insert(tid, w);
     }
     w
 }

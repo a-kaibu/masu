@@ -1,5 +1,6 @@
 //! OLE font objects backed by the ordinary GDI font implementation.
 #![allow(non_snake_case)]
+use kome::locks::Lock as _;
 use crate::api::{self, Ctx, Handler};
 use crate::mem::{self, ps, r16, r32, r64, rp, w16, w32, w64, wp};
 use std::collections::HashMap;
@@ -41,7 +42,7 @@ struct Font {
 static FONTS: Mutex<Option<HashMap<u32, Font>>> = Mutex::new(None);
 fn with<R>(this: u32, f: impl FnOnce(&mut Font) -> R) -> Option<R> {
     let base = rp(this + ps());
-    FONTS.lock().unwrap().as_mut()?.get_mut(&base).map(f)
+    FONTS.locked().as_mut()?.get_mut(&base).map(f)
 }
 fn is_iid(p: u32, id: u32, tail: &[u8]) -> bool {
     p != 0 && r32(p) == id && &mem::array::<12>(p + 4) == tail
@@ -86,7 +87,7 @@ fn add(c: &mut Ctx) -> u32 {
 fn release(c: &mut Ctx) -> u32 {
     let base = rp(c.a(0) + ps());
     let removed = {
-        let mut guard = FONTS.lock().unwrap();
+        let mut guard = FONTS.locked();
         let Some(map) = guard.as_mut() else { return 0 };
         let Some(f) = map.get_mut(&base) else {
             return 0;
@@ -522,8 +523,7 @@ fn make(props: Properties, scale: (i32, i32)) -> u32 {
     wp(base + 2 * ps(), disp);
     wp(base + 3 * ps(), base);
     FONTS
-        .lock()
-        .unwrap()
+        .locked()
         .get_or_insert_with(HashMap::new)
         .insert(
             base,

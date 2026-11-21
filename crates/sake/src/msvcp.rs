@@ -14,6 +14,7 @@
 
 #![allow(non_snake_case)]
 
+use kome::locks::Lock as _;
 use std::sync::OnceLock;
 
 use crate::api::{host_fn_this, implement, Ctx, Handler};
@@ -210,7 +211,7 @@ pub(crate) fn reg_in(old: bool, name: &str, f: Handler) {
     }
     #[cfg(test)]
     if !done {
-        MISSED.lock().unwrap().push(name.to_string());
+        MISSED.locked().push(name.to_string());
     }
 }
 /// reg_in for msvcp140 and msvcp120
@@ -398,7 +399,7 @@ fn constant(name: &str) -> Option<u32> {
         _ => return None,
     };
     static CELLS: std::sync::Mutex<Vec<(String, u32)>> = std::sync::Mutex::new(Vec::new());
-    let mut g = CELLS.lock().unwrap();
+    let mut g = CELLS.locked();
     if let Some(&(_, a)) = g.iter().find(|(n, _)| n == name) {
         return Some(a);
     }
@@ -422,7 +423,7 @@ pub fn data(name: &str) -> Option<u32> {
     if !(name.starts_with("?id@?$") && name.ends_with("@std@@2V0locale@2@A")) {
         return None;
     }
-    let mut g = IDS.lock().unwrap();
+    let mut g = IDS.locked();
     if let Some(&(_, a)) = g.iter().find(|(n, _)| n == name) {
         return Some(a);
     }
@@ -753,7 +754,7 @@ fn copy32(c: &mut Ctx) -> u32 {
 /// The ThrowInfo of `class` (made once per class).
 fn throw_info(class: &Class) -> u32 {
     static MADE: std::sync::Mutex<Vec<(&'static str, u32)>> = std::sync::Mutex::new(Vec::new());
-    let mut g = MADE.lock().unwrap();
+    let mut g = MADE.locked();
     if let Some(&(_, t)) = g.iter().find(|(n, _)| *n == class.names[0]) {
         return t;
     }

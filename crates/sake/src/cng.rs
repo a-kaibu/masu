@@ -14,6 +14,7 @@
 
 #![allow(non_snake_case)]
 
+use kome::locks::Lock as _;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
@@ -765,7 +766,7 @@ struct State {
 }
 static STATE: Mutex<Option<State>> = Mutex::new(None);
 fn with<R>(f: impl FnOnce(&mut State) -> R) -> R {
-    f(STATE.lock().unwrap().get_or_insert_with(State::default))
+    f(STATE.locked().get_or_insert_with(State::default))
 }
 fn is_prov(h: u32) -> bool {
     h != 0 && with(|s| s.provs.contains(&h))
@@ -1557,7 +1558,7 @@ fn nt(e: u32) -> u32 {
 /// BCRYPT_ALG_HANDLEs: the algorithm each names
 static ALG_HANDLES: Mutex<Vec<(u32, String)>> = Mutex::new(Vec::new());
 fn alg_of(h: u32) -> Option<String> {
-    ALG_HANDLES.lock().unwrap().iter().find(|a| a.0 == h).map(|a| a.1.clone())
+    ALG_HANDLES.locked().iter().find(|a| a.0 == h).map(|a| a.1.clone())
 }
 
 /// BCryptOpenAlgorithmProvider(&alg, name, implementation, flags)
@@ -1568,13 +1569,13 @@ fn BCryptOpenAlgorithmProvider(c: &mut Ctx) -> u32 {
         return STATUS_INVALID_PARAMETER;
     }
     let h = new_handle();
-    ALG_HANDLES.lock().unwrap().push((h, wname(name).unwrap()));
+    ALG_HANDLES.locked().push((h, wname(name).unwrap()));
     out.put(h);
     0
 }
 fn BCryptCloseAlgorithmProvider(c: &mut Ctx) -> u32 {
     let h = c.a(0);
-    let mut l = ALG_HANDLES.lock().unwrap();
+    let mut l = ALG_HANDLES.locked();
     let Some(i) = l.iter().position(|a| a.0 == h) else { return STATUS_INVALID_HANDLE };
     l.swap_remove(i);
     drop(l);

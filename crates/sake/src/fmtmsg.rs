@@ -4,6 +4,7 @@
 //! modes of FORMAT_MESSAGE_MAX_WIDTH_MASK, va_list or ARGUMENT_ARRAY arguments,
 //! IGNORE_INSERTS, ALLOCATE_BUFFER and the buffer-too-small error.
 
+use kome::locks::Rw as _;
 use crate::api::Ctx;
 use crate::mem::{self, r16, r32};
 use crate::text::{a2w, w2a};
@@ -76,7 +77,7 @@ fn system_message(id: u32) -> Option<&'static str> {
 /// A module's RT_MESSAGETABLE entry for `id`: MESSAGE_RESOURCE_DATA {blocks, {low, high,
 /// offset}...}, entries {length, flags (1: UTF-16), text}.
 fn table_message(module: u32, id: u32) -> Option<Vec<u16>> {
-    let m = if module == 0 { crate::pe::MODULES.read().unwrap().iter().find(|m| !m.dll).map_or(0, |m| m.base) } else { module };
+    let m = if module == 0 { crate::pe::MODULES.r().iter().find(|m| !m.dll).map_or(0, |m| m.base) } else { module };
     let e = crate::pe::find_resource(m, &crate::pe::ResId::Int(11), &crate::pe::ResId::Int(1))?;
     let (p, size) = crate::pe::resource_data(m, e);
     let blocks = r32(p);

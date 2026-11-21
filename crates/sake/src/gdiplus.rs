@@ -4,6 +4,7 @@
 
 #![allow(non_snake_case)]
 
+use kome::locks::Lock as _;
 use crate::api::{implement, Ctx, Handler};
 use crate::mem::{self, put32, r32, w32};
 use crate::HashMap;
@@ -210,7 +211,7 @@ pub(crate) fn new_handle<T>(table: &Mutex<Option<HashMap<u32, T>>>, o: T, out: c
 }
 
 fn with<R>(f: impl FnOnce(&mut HashMap<u32, Bitmap>) -> R) -> R {
-    f(IMAGES.lock().unwrap().get_or_insert_with(HashMap::default))
+    f(IMAGES.locked().get_or_insert_with(HashMap::default))
 }
 
 fn add(b: Bitmap, out: crate::api::Out) -> u32 {

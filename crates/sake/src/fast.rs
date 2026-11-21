@@ -7,6 +7,7 @@
 //!
 //! SAKE_NO_FAST=1 binds the traps instead.
 
+use kome::locks::Lock as _;
 use crate::HashMap;
 use std::sync::Mutex;
 
@@ -74,7 +75,7 @@ fn code_alloc(n: u32) -> u32 {
     static ARENA: Mutex<(u32, u32)> = Mutex::new((0, 0));
     const SIZE: u32 = 0x10000;
     let n = (n + 15) & !15;
-    let mut a = ARENA.lock().unwrap();
+    let mut a = ARENA.locked();
     if a.0 == 0 || a.1 + n > SIZE {
         let base = mem::reserve(0, SIZE.max(n), 0x20, 0x100_0000, true).expect("fast: no room for the stubs");
         mem::commit_range(base, SIZE.max(n), 0x20);
@@ -440,7 +441,7 @@ pub fn bind(dll: &str, name: &str, trap: u32) -> u32 {
     if crate::env_on!("SAKE_NO_FAST") || crate::mem::x64() {
         return trap;
     }
-    let mut g = STUBS.lock().unwrap();
+    let mut g = STUBS.locked();
     let m = g.get_or_insert_with(HashMap::default);
     if let Some(&a) = m.get(name) {
         return a;

@@ -12,6 +12,7 @@
 
 #![allow(non_snake_case)]
 
+use kome::locks::Lock as _;
 use crate::api::{implement, Ctx, Handler};
 use crate::mem::{self, put32, r32, w32};
 use crate::HashMap;
@@ -247,7 +248,7 @@ struct Cap {
 static OBJS: Mutex<Option<HashMap<u32, Obj>>> = Mutex::new(None);
 
 fn with<R>(f: impl FnOnce(&mut HashMap<u32, Obj>) -> R) -> R {
-    f(OBJS.lock().unwrap().get_or_insert_with(HashMap::default))
+    f(OBJS.locked().get_or_insert_with(HashMap::default))
 }
 fn new_obj(o: Obj, out: crate::api::Out) -> u32 {
     crate::gdiplus::new_handle(&OBJS, o, out)
