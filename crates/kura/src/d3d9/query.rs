@@ -97,6 +97,20 @@ pub enum State {
     Issued { ticket: u32, lost: u32 },
 }
 
+impl State {
+    /// Its ticket is not asked about any more (Direct3D 9's and 11's queries alike).
+    pub fn forget(self) {
+        match self {
+            State::Fresh => {}
+            State::Building { ticket, .. } | State::Issued { ticket, .. } => {
+                if ticket != 0 {
+                    gpu::query_forget(ticket);
+                }
+            }
+        }
+    }
+}
+
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct Query {
     pub kind: Kind,
@@ -108,7 +122,8 @@ fn losses() -> u32 {
     crate::render::lost_gen()
 }
 
-fn ns_now() -> u64 {
+/// The time now in nanoseconds since 1970 (a timestamp nothing measured; Direct3D 11's too).
+pub(crate) fn ns_now() -> u64 {
     std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| u64::try_from(d.as_nanos()).unwrap_or(u64::MAX))
 }
 
@@ -119,14 +134,7 @@ impl Query {
 
     /// Its ticket is not asked about any more (released, or issued again).
     pub fn forget(&self) {
-        match self.state {
-            State::Fresh => {}
-            State::Building { ticket, .. } | State::Issued { ticket, .. } => {
-                if ticket != 0 {
-                    gpu::query_forget(ticket);
-                }
-            }
-        }
+        self.state.forget();
     }
 
     /// IDirect3DQuery9::Issue
