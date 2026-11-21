@@ -229,7 +229,7 @@ ntdll:port	ok	0	0
 ntdll:reg	crash	47	0
 ntdll:rtl	crash	2	0
 ntdll:rtlbitmap	fail	338	376
-ntdll:rtlstr	timeout	694958	0
+ntdll:rtlstr	fail	65687	2178626
 ntdll:string	fail	8	1973924
 ntdll:sync	fail	130	433
 ntdll:thread	timeout	7	0
