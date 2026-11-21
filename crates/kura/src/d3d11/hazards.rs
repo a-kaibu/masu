@@ -14,6 +14,7 @@ use super::{Data, State, View, D11};
 fn span(d: &D11, view: u32) -> Option<(u32, u32, u32, u32, u32)> {
     match d.objs.get(&view).map(|o| &o.data) {
         Some(Data::View(View { buf: Some(b), .. })) => Some((b.buf, 0, u32::MAX, 0, u32::MAX)),
+        Some(Data::BufferUav(u)) => Some((u.buf, 0, u32::MAX, 0, u32::MAX)),
         Some(Data::View(v)) => Some((v.res, v.mip, v.mips.max(1), v.layer, v.layers.max(1))),
         _ => None,
     }

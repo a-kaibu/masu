@@ -114,11 +114,59 @@ pub enum Ty {
     Sampler(bool),
     /// RWTexture1D/2D/3D(Array)<el>: a typed unordered access view (compute shaders)
     RwTex(Dim, Box<Ty>),
+    /// StructuredBuffer<el> and its read-write, append and consume kinds, ByteAddressBuffer and
+    /// RWByteAddressBuffer (element uint): buffers read and written by address, not by format
+    Buf(BufKind, Box<Ty>),
     /// sampler2D... of shader model 2/3 code: a texture and a sampler on one register
     Legacy(Dim),
     Str,
     /// PointStream / LineStream / TriangleStream<el>: a geometry shader's output stream
     Stream(StreamKind, Box<Ty>),
+}
+
+/// What kind of structured or raw buffer a `Ty::Buf` is.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum BufKind {
+    /// StructuredBuffer (t register)
+    Structured,
+    /// RWStructuredBuffer (u register)
+    RwStructured,
+    /// AppendStructuredBuffer (u register, with its hidden counter)
+    Append,
+    /// ConsumeStructuredBuffer (u register, with its hidden counter)
+    Consume,
+    /// ByteAddressBuffer (t register)
+    Raw,
+    /// RWByteAddressBuffer (u register)
+    RwRaw,
+}
+
+impl BufKind {
+    /// on a u register (an unordered access view), not a t register
+    pub fn uav(self) -> bool {
+        match self {
+            BufKind::Structured | BufKind::Raw => false,
+            BufKind::RwStructured | BufKind::Append | BufKind::Consume | BufKind::RwRaw => true,
+        }
+    }
+    /// addressed by bytes (ByteAddressBuffer), not by element
+    pub fn raw(self) -> bool {
+        match self {
+            BufKind::Raw | BufKind::RwRaw => true,
+            BufKind::Structured | BufKind::RwStructured | BufKind::Append | BufKind::Consume => false,
+        }
+    }
+    pub fn of_name(s: &str) -> Option<BufKind> {
+        Some(match s {
+            "StructuredBuffer" => BufKind::Structured,
+            "RWStructuredBuffer" => BufKind::RwStructured,
+            "AppendStructuredBuffer" => BufKind::Append,
+            "ConsumeStructuredBuffer" => BufKind::Consume,
+            "ByteAddressBuffer" => BufKind::Raw,
+            "RWByteAddressBuffer" => BufKind::RwRaw,
+            _ => return None,
+        })
+    }
 }
 
 /// A geometry shader output stream's topology.
@@ -177,7 +225,7 @@ impl Ty {
         match self {
             Ty::Scalar(b) | Ty::Vec(b, _) | Ty::Mat(b, _, _) => *b,
             Ty::Array(t, _) => t.base(),
-            Ty::Void | Ty::Struct(_) | Ty::Tex(..) | Ty::Sampler(_) | Ty::RwTex(..) | Ty::Legacy(_) | Ty::Str | Ty::Stream(..) => B::Float,
+            Ty::Void | Ty::Struct(_) | Ty::Tex(..) | Ty::Sampler(_) | Ty::RwTex(..) | Ty::Buf(..) | Ty::Legacy(_) | Ty::Str | Ty::Stream(..) => B::Float,
         }
     }
     pub fn numeric(&self) -> bool {
@@ -189,7 +237,7 @@ impl Ty {
             Ty::Scalar(_) => 1,
             Ty::Vec(_, n) => usize::from(*n),
             Ty::Mat(_, r, c) => r.get() * c.get(),
-            Ty::Void | Ty::Array(..) | Ty::Struct(_) | Ty::Tex(..) | Ty::Sampler(_) | Ty::RwTex(..)
+            Ty::Void | Ty::Array(..) | Ty::Struct(_) | Ty::Tex(..) | Ty::Sampler(_) | Ty::RwTex(..) | Ty::Buf(..)
             | Ty::Legacy(_) | Ty::Str | Ty::Stream(..) => 0,
         }
     }
@@ -198,14 +246,14 @@ impl Ty {
             Ty::Scalar(_) => Ty::Scalar(b),
             Ty::Vec(_, n) => Ty::Vec(b, *n),
             Ty::Mat(_, r, c) => Ty::Mat(b, *r, *c),
-            t @ (Ty::Void | Ty::Array(..) | Ty::Struct(_) | Ty::Tex(..) | Ty::Sampler(_) | Ty::RwTex(..)
+            t @ (Ty::Void | Ty::Array(..) | Ty::Struct(_) | Ty::Tex(..) | Ty::Sampler(_) | Ty::RwTex(..) | Ty::Buf(..)
                  | Ty::Legacy(_) | Ty::Str | Ty::Stream(..)) => t.clone(),
         }
     }
     /// a texture or sampler, or an array of them
     pub fn is_object(&self) -> bool {
         match self {
-            Ty::Tex(..) | Ty::Sampler(_) | Ty::Legacy(_) | Ty::RwTex(..) | Ty::Stream(..) => true,
+            Ty::Tex(..) | Ty::Sampler(_) | Ty::Legacy(_) | Ty::RwTex(..) | Ty::Buf(..) | Ty::Stream(..) => true,
             Ty::Array(e, _) => e.is_object(),
             Ty::Void | Ty::Scalar(_) | Ty::Vec(..) | Ty::Mat(..) | Ty::Struct(_) | Ty::Str => false,
         }
@@ -304,6 +352,8 @@ pub struct Var<T = Ty> {
     pub is_const: bool,
     /// groupshared (compute shaders' thread group memory)
     pub shared: bool,
+    /// globallycoherent (a UAV whose writes all thread groups see after a barrier)
+    pub coherent: bool,
     pub uniform: bool,
     /// row_major (Some(true)) / column_major
     pub row_major: Option<bool>,
@@ -375,8 +425,8 @@ impl Var {
 
 impl Mods {
     pub fn typed(self, ty: Ty) -> Var {
-        let Var { name, ty: (), init, sem, reg, packoffset, is_static, is_const, shared, uniform, row_major, interp, prim, is_in, is_out, line, annos, states, fx } = self;
-        Var { name, ty, init, sem, reg, packoffset, is_static, is_const, shared, uniform, row_major, interp, prim, is_in, is_out, line, annos, states, fx }
+        let Var { name, ty: (), init, sem, reg, packoffset, is_static, is_const, shared, coherent, uniform, row_major, interp, prim, is_in, is_out, line, annos, states, fx } = self;
+        Var { name, ty, init, sem, reg, packoffset, is_static, is_const, shared, coherent, uniform, row_major, interp, prim, is_in, is_out, line, annos, states, fx }
     }
 }
 

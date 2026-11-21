@@ -250,7 +250,7 @@ fn events_and_timestamps_as_windows() {
         assert_eq!(le(&wait(dis, 4)[..4]), 0);
         // a device lost and made again in between: disjoint
         assert_eq!(call(IF_QUERY, 6, &[dis, 2]), 0);
-        crate::render::set_lost_gen(crate::render::lost_gen() + 1);
+        crate::render::lose_device();
         assert_eq!(call(IF_QUERY, 6, &[dis, 1]), 0);
         assert_eq!(le(&wait(dis, 4)[..4]), 1);
         let b = get(dis, 2, 1).1;

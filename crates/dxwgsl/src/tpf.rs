@@ -143,6 +143,36 @@ pub struct Inst {
     pub data: Vec<u32>,
 }
 
+impl Inst {
+    /// Operand `k` (an error naming the instruction when it has fewer).
+    pub fn op(&self, k: usize) -> Result<&Operand, String> {
+        self.ops.get(k).ok_or_else(|| format!("instruction {:#x}: no operand {k}", self.code))
+    }
+}
+
+/// The atomic instructions and the operand of each that names the memory it changes.
+pub const ATOMIC_DST: [(Opcode, usize); 19] = [
+    (Opcode::AtomicAnd, 0),
+    (Opcode::AtomicOr, 0),
+    (Opcode::AtomicXor, 0),
+    (Opcode::AtomicCmpStore, 0),
+    (Opcode::AtomicIadd, 0),
+    (Opcode::AtomicImax, 0),
+    (Opcode::AtomicImin, 0),
+    (Opcode::AtomicUmax, 0),
+    (Opcode::AtomicUmin, 0),
+    (Opcode::ImmAtomicIadd, 1),
+    (Opcode::ImmAtomicAnd, 1),
+    (Opcode::ImmAtomicOr, 1),
+    (Opcode::ImmAtomicXor, 1),
+    (Opcode::ImmAtomicExch, 1),
+    (Opcode::ImmAtomicCmpExch, 1),
+    (Opcode::ImmAtomicImax, 1),
+    (Opcode::ImmAtomicImin, 1),
+    (Opcode::ImmAtomicUmax, 1),
+    (Opcode::ImmAtomicUmin, 1),
+];
+
 pub struct Program {
     pub kind: ProgramType,
     pub major: u32,
@@ -158,7 +188,7 @@ pub enum Shape {
     Decl(usize),
     /// OP_CUSTOMDATA: a length, then data (Inst::data)
     Data,
-    /// not checked: operands up to the instruction's end (the hull, geometry, double and atomic
+    /// not checked: operands up to the instruction's end (the hull, interface and double
     /// instructions wgsl.rs does not translate, and unknown opcodes)
     Unchecked,
 }
@@ -372,27 +402,27 @@ opcodes! {
     StoreRaw = 0xa6 => Ops(3),
     LdStructured = 0xa7 => Ops(4),
     StoreStructured = 0xa8 => Ops(4),
-    AtomicAnd = 0xa9 => Unchecked,
-    AtomicOr = 0xaa => Unchecked,
-    AtomicXor = 0xab => Unchecked,
-    AtomicCmpStore = 0xac => Unchecked,
-    AtomicIadd = 0xad => Unchecked,
-    AtomicImax = 0xae => Unchecked,
-    AtomicImin = 0xaf => Unchecked,
-    AtomicUmax = 0xb0 => Unchecked,
-    AtomicUmin = 0xb1 => Unchecked,
-    ImmAtomicAlloc = 0xb2 => Unchecked,
-    ImmAtomicConsume = 0xb3 => Unchecked,
-    ImmAtomicIadd = 0xb4 => Unchecked,
-    ImmAtomicAnd = 0xb5 => Unchecked,
-    ImmAtomicOr = 0xb6 => Unchecked,
-    ImmAtomicXor = 0xb7 => Unchecked,
-    ImmAtomicExch = 0xb8 => Unchecked,
-    ImmAtomicCmpExch = 0xb9 => Unchecked,
-    ImmAtomicImax = 0xba => Unchecked,
-    ImmAtomicImin = 0xbb => Unchecked,
-    ImmAtomicUmax = 0xbc => Unchecked,
-    ImmAtomicUmin = 0xbd => Unchecked,
+    AtomicAnd = 0xa9 => Ops(3),
+    AtomicOr = 0xaa => Ops(3),
+    AtomicXor = 0xab => Ops(3),
+    AtomicCmpStore = 0xac => Ops(4),
+    AtomicIadd = 0xad => Ops(3),
+    AtomicImax = 0xae => Ops(3),
+    AtomicImin = 0xaf => Ops(3),
+    AtomicUmax = 0xb0 => Ops(3),
+    AtomicUmin = 0xb1 => Ops(3),
+    ImmAtomicAlloc = 0xb2 => Ops(2),
+    ImmAtomicConsume = 0xb3 => Ops(2),
+    ImmAtomicIadd = 0xb4 => Ops(4),
+    ImmAtomicAnd = 0xb5 => Ops(4),
+    ImmAtomicOr = 0xb6 => Ops(4),
+    ImmAtomicXor = 0xb7 => Ops(4),
+    ImmAtomicExch = 0xb8 => Ops(4),
+    ImmAtomicCmpExch = 0xb9 => Ops(5),
+    ImmAtomicImax = 0xba => Ops(4),
+    ImmAtomicImin = 0xbb => Ops(4),
+    ImmAtomicUmax = 0xbc => Ops(4),
+    ImmAtomicUmin = 0xbd => Ops(4),
     Sync = 0xbe => Ops(0),
     Dadd = 0xbf => Unchecked,
     Dmax = 0xc0 => Unchecked,

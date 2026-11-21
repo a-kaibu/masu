@@ -271,6 +271,17 @@ pub fn set_lost_gen(n: u32) {
     TEST_LOST.with(|c| c.set(n))
 }
 
+/// Tests: the page's device was lost and made again, a count no thread had before (the counts
+/// are per thread: one thread's next count was another's, and a device another thread's test
+/// left behind took the loss for one it had already seen).
+#[cfg(test)]
+pub fn lose_device() -> u32 {
+    static NEXT: AtomicU32 = AtomicU32::new(1);
+    let n = NEXT.fetch_add(1, SeqCst);
+    set_lost_gen(n);
+    n
+}
+
 /// host/vngpu.js: the device was lost (`device.lost`); the drawing stops until a new one
 /// comes (`vnhost_render_lost`, or `vnhost_render_lost_for_good` when none does).
 #[unsafe(no_mangle)]

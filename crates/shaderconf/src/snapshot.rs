@@ -50,6 +50,9 @@ fn binding(b: &dxwgsl::Binding) -> String {
         dxwgsl::Binding::Sampler(c) => format!("s{}", u8::from(*c)),
         dxwgsl::Binding::Storage(d, f) => format!("w{d},{f}"),
         dxwgsl::Binding::StorageBuffer(rw) => format!("b{}", u8::from(*rw)),
+        dxwgsl::Binding::BufferView(rw) => format!("v{}", u8::from(*rw)),
+        dxwgsl::Binding::Counter => "c".into(),
+        dxwgsl::Binding::BufferRanges(v) => format!("r{}", v.iter().map(|b| b.to_string()).collect::<Vec<_>>().join(",")),
     }
 }
 

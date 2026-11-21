@@ -63,7 +63,7 @@ pub(super) fn device() -> (u32, u32) {
     call1(INIT, &[vt, 256]);
     attach_page();
     // (a new page: what the device made on the last test's is gone, as after a lost device)
-    crate::render::set_lost_gen(crate::render::lost_gen().wrapping_add(1));
+    crate::render::lose_device();
     let desc = mem(16);
     put(desc, &[64, 64, 60, 1, 28, 0, 0, 1, 0, 0x20, 1, 1, 1, 0, 0]);
     let (sc_out, dev_out, level, ctx_out) = (mem(2), mem(2), mem(2), mem(2));
@@ -258,7 +258,7 @@ fn events_timestamps_and_dispatches() {
         assert_eq!(u64s(&b[..8])[0], crate::d3d9::query::FREQ);
         assert_eq!(b[8..12], [0; 4]);
         cc(ctx, 27, &[dis]);
-        crate::render::set_lost_gen(crate::render::lost_gen() + 1);
+        crate::render::lose_device();
         cc(ctx, 28, &[dis]);
         assert_eq!(wait(ctx, dis, 16)[8..12], [1, 0, 0, 0]);
         no_model_errors();

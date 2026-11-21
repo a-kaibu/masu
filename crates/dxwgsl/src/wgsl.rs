@@ -73,6 +73,29 @@ struct Res {
     depth: bool,
 }
 
+/// A raw or structured buffer view (dcl_resource_raw/structured, dcl_uav_raw/structured) or
+/// groupshared memory (dcl_tgsm_raw/structured).
+#[derive(Clone, Copy, Debug)]
+struct BufDecl {
+    /// dwords of an element; None: raw (byte addressed)
+    stride: Option<u32>,
+    /// an atomic instruction operates on it: an array of atomic<u32>
+    atomic: bool,
+}
+
+/// What raw/structured instructions read and write: groupshared g<n> or a buffer view (WGSL
+/// u32 expressions).
+struct MemRef {
+    arr: String,
+    /// the view's first dword in the array
+    base: String,
+    /// its dwords
+    dwords: String,
+    /// its elements (structured)
+    count: String,
+    decl: BufDecl,
+}
+
 /// A typed UAV (dcl_uav_typed)
 struct UavDecl {
     dim: u32,
@@ -126,8 +149,15 @@ struct W {
     /// a compute shader: [numthreads]
     threads: Option<[u32; 3]>,
     uavs: BTreeMap<u32, UavDecl>,
-    /// groupshared memory: dwords of each g register, and the structured ones' strides
-    tgsm: BTreeMap<u32, (u32, u32)>,
+    /// groupshared memory: dwords of each g register, and how it is addressed
+    tgsm: BTreeMap<u32, (u32, BufDecl)>,
+    /// raw and structured views: t registers (binding 500 + n) and u registers (600 + n)
+    tbufs: BTreeMap<u32, BufDecl>,
+    ubufs: BTreeMap<u32, BufDecl>,
+    used_tb: std::collections::BTreeSet<u32>,
+    used_ub: std::collections::BTreeSet<u32>,
+    /// UAVs whose hidden counter the shader uses (imm_atomic_alloc/consume: binding 700 + n)
+    used_uc: std::collections::BTreeSet<u32>,
     /// compute inputs (register types 32..35) read
     sys_in: std::collections::BTreeSet<tpf::OpType>,
     used_u: std::collections::BTreeSet<u32>,
@@ -171,6 +201,9 @@ struct W {
 }
 
 type R<T> = Result<T, String>;
+
+/// The binding of the raw and structured views' ranges (Binding::BufferRanges).
+pub const BUFFER_RANGES: u32 = 498;
 
 /// The declarations of a program, read into `w`.
 fn declarations(w: &mut W, p: &Program) -> R<()> {
@@ -341,17 +374,30 @@ fn declarations(w: &mut W, p: &Program) -> R<()> {
             Opcode::DclTgsmRaw | Opcode::DclTgsmStructured => {
                 let o = &i.ops[0];
                 let (bytes, stride) = match (i.op, &i.extra[..]) {
-                    (Opcode::DclTgsmRaw, [b]) => (*b, 4),
-                    (Opcode::DclTgsmStructured, [s, n]) => (s.saturating_mul(*n), *s),
+                    (Opcode::DclTgsmRaw, [b]) => (*b, None),
+                    (Opcode::DclTgsmStructured, [s, n]) => (s.saturating_mul(*n), Some(*s)),
                     _ => return Err("bad groupshared declaration".into()),
                 };
-                if o.ty != tpf::TGSM || bytes % 4 != 0 || stride % 4 != 0 || stride == 0 || bytes == 0 || bytes > 32768 {
+                if o.ty != tpf::TGSM || bytes % 4 != 0 || stride.is_some_and(|s| s % 4 != 0 || s == 0) || bytes == 0 || bytes > 32768 {
                     return Err("groupshared memory past Direct3D's limits".into());
                 }
-                w.tgsm.insert(o.reg(), (bytes / 4, stride));
+                w.tgsm.insert(o.reg(), (bytes / 4, BufDecl { stride: stride.map(|s| s / 4), atomic: false }));
             }
             Opcode::DclResourceRaw | Opcode::DclResourceStructured | Opcode::DclUavRaw | Opcode::DclUavStructured => {
-                return Err("raw/structured buffers and UAVs".into())
+                let o = i.op(0)?;
+                let uav = matches!(i.op, Opcode::DclUavRaw | Opcode::DclUavStructured);
+                let stride = match (i.op, &i.extra[..]) {
+                    (Opcode::DclResourceRaw | Opcode::DclUavRaw, []) => None,
+                    // (D3D11: an element of 4 to 2048 bytes, a multiple of 4)
+                    (Opcode::DclResourceStructured | Opcode::DclUavStructured, [s]) if *s % 4 == 0 && (4..=2048).contains(s) => Some(*s / 4),
+                    _ => return Err("bad raw or structured buffer declaration".into()),
+                };
+                let d = BufDecl { stride, atomic: false };
+                let (ty, max) = if uav { (tpf::UAV, 64) } else { (tpf::RESOURCE, 128) };
+                if o.ty != ty || o.reg() >= max {
+                    return Err("a raw or structured buffer declaration of a bad register".into());
+                }
+                if uav { w.ubufs.insert(o.reg(), d) } else { w.tbufs.insert(o.reg(), d) };
             }
             Opcode::Add | Opcode::And | Opcode::Break | Opcode::Breakc | Opcode::Call | Opcode::Callc | Opcode::Case
             | Opcode::Continue | Opcode::Continuec | Opcode::Cut | Opcode::Default | Opcode::DerivRtx | Opcode::DerivRty | Opcode::Discard
@@ -399,6 +445,24 @@ fn declarations(w: &mut W, p: &Program) -> R<()> {
         }
         if w.tgsm.values().map(|t| t.0).sum::<u32>() > 8192 {
             return Err("more than 32 KB of groupshared memory".into());
+        }
+    }
+    // (memory an atomic operates on: arrays of atomic<u32>)
+    for i in &p.insts {
+        let Some(&(_, at)) = tpf::ATOMIC_DST.iter().find(|(op, _)| *op == i.op) else { continue };
+        let Some(o) = i.ops.get(at) else { continue };
+        match o.ty {
+            tpf::UAV => {
+                if let Some(d) = w.ubufs.get_mut(&o.reg()) {
+                    d.atomic = true;
+                }
+            }
+            tpf::TGSM => {
+                if let Some(d) = w.tgsm.get_mut(&o.reg()) {
+                    d.1.atomic = true;
+                }
+            }
+            _ => {}
         }
     }
     check_registers(w, p)?;
@@ -493,7 +557,7 @@ fn check_registers(w: &W, p: &Program) -> R<()> {
                 2
             }
             tpf::RESOURCE => {
-                if !w.res.contains_key(&o.reg()) {
+                if !w.res.contains_key(&o.reg()) && !w.tbufs.contains_key(&o.reg()) {
                     return Err(format!("t{} is not declared", o.reg()));
                 }
                 1
@@ -506,7 +570,7 @@ fn check_registers(w: &W, p: &Program) -> R<()> {
             }
             tpf::IMM32 | tpf::NULL => 0,
             tpf::UAV => {
-                if !w.uavs.contains_key(&o.reg()) {
+                if !w.uavs.contains_key(&o.reg()) && !w.ubufs.contains_key(&o.reg()) {
                     return Err(format!("u{} is not declared", o.reg()));
                 }
                 1
@@ -630,6 +694,11 @@ impl W {
             threads: None,
             uavs: BTreeMap::new(),
             tgsm: BTreeMap::new(),
+            tbufs: BTreeMap::new(),
+            ubufs: BTreeMap::new(),
+            used_tb: Default::default(),
+            used_ub: Default::default(),
+            used_uc: Default::default(),
             sys_in: Default::default(),
             used_u: Default::default(),
             used_ur: Default::default(),
@@ -1530,8 +1599,26 @@ impl W {
             Opcode::Gather4 | Opcode::Gather4C => self.gather(i)?,
             Opcode::LdUavTyped => self.ld_uav(i)?,
             Opcode::StoreUavTyped => self.store_uav(i)?,
-            Opcode::LdRaw | Opcode::LdStructured => self.ld_tgsm(i)?,
-            Opcode::StoreRaw | Opcode::StoreStructured => self.store_tgsm(i)?,
+            Opcode::LdRaw | Opcode::LdStructured => self.ld_mem(i)?,
+            Opcode::StoreRaw | Opcode::StoreStructured => self.store_mem(i)?,
+            Opcode::AtomicAnd | Opcode::AtomicOr | Opcode::AtomicXor | Opcode::AtomicCmpStore | Opcode::AtomicIadd | Opcode::AtomicImax
+            | Opcode::AtomicImin | Opcode::AtomicUmax | Opcode::AtomicUmin | Opcode::ImmAtomicIadd | Opcode::ImmAtomicAnd | Opcode::ImmAtomicOr
+            | Opcode::ImmAtomicXor | Opcode::ImmAtomicExch | Opcode::ImmAtomicCmpExch | Opcode::ImmAtomicImax | Opcode::ImmAtomicImin
+            | Opcode::ImmAtomicUmax | Opcode::ImmAtomicUmin => self.atomic(i)?,
+            Opcode::ImmAtomicAlloc | Opcode::ImmAtomicConsume => {
+                let u = i.op(1)?;
+                let n = u.reg();
+                if u.ty != tpf::UAV || self.ubufs.get(&n).is_none_or(|d| d.stride.is_none()) {
+                    return Err(format!("{:?} of what is no structured UAV", i.op));
+                }
+                self.used_uc.insert(n);
+                let e = if i.op == Opcode::ImmAtomicAlloc { format!("atomicAdd(&uc{n}, 1u)") } else { format!("(atomicSub(&uc{n}, 1u) - 1u)") };
+                let t = self.fresh();
+                self.line(&format!("let {t} = {e};"));
+                let k = bits(u32::from(i.op(0)?.mask())).len();
+                let v = if k == 1 { t } else { format!("vec{k}<u32>({t})") };
+                self.dst(i.op(0)?, v, K::U, false)?;
+            }
             Opcode::Sync => {
                 if self.threads.is_none() {
                     return Err("sync outside a compute shader".into());
@@ -1542,9 +1629,16 @@ impl W {
                     self.line("workgroupBarrier();");
                 }
             }
-            Opcode::BufInfo => {
-                let (t, _, _, _) = self.texture(&i.ops[1])?;
+            Opcode::BufInfo if i.ops.get(1).is_some_and(|o| self.is_buffer_view(o)) => {
+                // (a structured view's elements, a raw view's bytes)
+                let m = self.mem_ref(i.op(1)?)?;
+                let e = if m.decl.stride.is_some() { m.count } else { format!("({} << 2u)", m.dwords) };
                 let swz = i.ops[1].swizzle();
+                self.vec4_result(i, format!("vec4<u32>({e})"), U, swz)?;
+            }
+            Opcode::BufInfo => {
+                let (t, _, _, _) = self.texture(i.op(1)?)?;
+                let swz = i.op(1)?.swizzle();
                 self.vec4_result(i, format!("vec4<u32>(textureDimensions(t{t}).x)"), U, swz)?;
             }
             Opcode::Rcp => self.cw(i, F, F, |a| format!("(1.0f / {})", a[0]))?,
@@ -1613,10 +1707,7 @@ impl W {
             | Opcode::Uaddc | Opcode::Usubb | Opcode::DclStream | Opcode::DclFunctionBody | Opcode::DclFunctionTable | Opcode::DclInterface | Opcode::DclInputControlPointCount
             | Opcode::DclOutputControlPointCount | Opcode::DclTessDomain | Opcode::DclTessPartitioning | Opcode::DclTessOutputPrimitive | Opcode::DclHsMaxTessFactor | Opcode::DclHsForkPhaseInstanceCount | Opcode::DclHsJoinPhaseInstanceCount
             | Opcode::DclThreadGroup | Opcode::DclUavTyped | Opcode::DclUavRaw | Opcode::DclUavStructured | Opcode::DclTgsmRaw | Opcode::DclTgsmStructured | Opcode::DclResourceRaw
-            | Opcode::DclResourceStructured | Opcode::AtomicAnd | Opcode::AtomicOr | Opcode::AtomicXor | Opcode::AtomicCmpStore | Opcode::AtomicIadd | Opcode::AtomicImax
-            | Opcode::AtomicImin | Opcode::AtomicUmax | Opcode::AtomicUmin | Opcode::ImmAtomicAlloc | Opcode::ImmAtomicConsume | Opcode::ImmAtomicIadd | Opcode::ImmAtomicAnd
-            | Opcode::ImmAtomicOr | Opcode::ImmAtomicXor | Opcode::ImmAtomicExch | Opcode::ImmAtomicCmpExch | Opcode::ImmAtomicImax | Opcode::ImmAtomicImin | Opcode::ImmAtomicUmax
-            | Opcode::ImmAtomicUmin | Opcode::Dadd | Opcode::Dmax | Opcode::Dmin | Opcode::Dmul | Opcode::Deq | Opcode::Dge
+            | Opcode::DclResourceStructured | Opcode::Dadd | Opcode::Dmax | Opcode::Dmin | Opcode::Dmul | Opcode::Deq | Opcode::Dge
             | Opcode::Dlt | Opcode::Dne | Opcode::Dmov | Opcode::Dmovc | Opcode::Dtof | Opcode::Ftod | Opcode::EvalSnapped
             | Opcode::EvalSampleIndex | Opcode::EvalCentroid | Opcode::DclGsInstanceCount | Opcode::Abort | Opcode::DebugBreak | Opcode::Reserved11 | Opcode::Ddiv
             | Opcode::Dfma | Opcode::Drcp | Opcode::Msad | Opcode::Dtoi | Opcode::Dtou | Opcode::Itod | Opcode::Utod
@@ -1683,76 +1774,172 @@ impl W {
         Ok(())
     }
 
-    /// The dword index in groupshared memory of ld/store_raw (byte address) or
-    /// ld/store_structured (index, byte offset), and the memory's name and size.
-    fn tgsm_addr(&mut self, i: &Inst, structured: bool, at: usize) -> R<(String, String, u32)> {
-        let g = &i.ops[if structured { at + 2 } else { at + 1 }];
-        if g.ty != tpf::TGSM {
-            return Err(format!("raw/structured access to register type {} (only groupshared memory is read so)", g.ty));
-        }
-        let n = g.reg();
-        let (dwords, stride) = *self.tgsm.get(&n).ok_or(format!("g{n} not declared"))?;
-        let a = if structured {
-            let idx = self.src(&i.ops[at], K::U, &[0])?;
-            let off = self.src(&i.ops[at + 1], K::U, &[0])?;
-            format!("(({idx}) * {}u + ({off} >> 2u))", stride / 4)
-        } else {
-            format!("({} >> 2u)", self.src(&i.ops[at], K::U, &[0])?)
-        };
-        let t = self.fresh();
-        self.line(&format!("let {t} = {a};"));
-        Ok((format!("g{n}"), t, dwords))
+    /// The memory a raw/structured operand names.
+    /// Whether `o` is a raw or structured view (t# or u#).
+    fn is_buffer_view(&self, o: &Operand) -> bool {
+        o.ty == tpf::RESOURCE && self.tbufs.contains_key(&o.reg()) || o.ty == tpf::UAV && self.ubufs.contains_key(&o.reg())
     }
 
-    fn ld_tgsm(&mut self, i: &Inst) -> R<()> {
+    fn mem_ref(&mut self, o: &Operand) -> R<MemRef> {
+        let n = o.reg();
+        match o.ty {
+            tpf::TGSM => {
+                let (dw, d) = *self.tgsm.get(&n).ok_or(format!("g{n} not declared"))?;
+                Ok(MemRef { arr: format!("g{n}"), base: "0u".into(), dwords: format!("{dw}u"), count: format!("{}u", d.stride.and_then(|s| dw.checked_div(s)).unwrap_or(0)), decl: d })
+            }
+            tpf::RESOURCE => {
+                let d = *self.tbufs.get(&n).ok_or(format!("t{n} is no raw or structured buffer"))?;
+                self.used_tb.insert(n);
+                Ok(MemRef { arr: format!("tb{n}"), base: format!("bv.t{n}.x"), dwords: format!("(bv.t{n}.y >> 2u)"), count: format!("bv.t{n}.z"), decl: d })
+            }
+            tpf::UAV => {
+                if self.uavs.contains_key(&n) {
+                    return Err(format!("raw/structured access to the typed UAV u{n}"));
+                }
+                let d = *self.ubufs.get(&n).ok_or(format!("u{n} not declared"))?;
+                self.used_ub.insert(n);
+                Ok(MemRef { arr: format!("ub{n}"), base: format!("bv.u{n}.x"), dwords: format!("(bv.u{n}.y >> 2u)"), count: format!("bv.u{n}.z"), decl: d })
+            }
+            t => Err(format!("raw/structured access to register type {t}")),
+        }
+    }
+
+    /// The dword (from the view's first) an access starts at, raw (`a` a byte address) or
+    /// structured (`a` an element, `b` a byte offset in it), and for each of 4 components
+    /// whether it is in the view (Direct3D: reads past it are 0, writes there do nothing).
+    fn mem_addr(&mut self, m: &MemRef, structured: bool, a: String, b: Option<String>) -> R<(String, [String; 4])> {
+        let t = self.fresh();
+        match (structured, m.decl.stride, b) {
+            (false, None, None) => {
+                self.line(&format!("let {t} = ({a}) >> 2u;"));
+                let d = &m.dwords;
+                Ok((t.clone(), [0, 1, 2, 3].map(|c| format!("({t} + {c}u < {d})"))))
+            }
+            (true, Some(s), Some(b)) => {
+                let (ti, to) = (self.fresh(), self.fresh());
+                self.line(&format!("let {ti} = {a}; let {to} = ({b}) >> 2u; let {t} = {ti} * {s}u + {to};"));
+                let n = &m.count;
+                Ok((t, [0, 1, 2, 3].map(|c| format!("({ti} < {n} && {to} + {c}u < {s}u)"))))
+            }
+            (false, Some(_), _) => Err(format!("a raw access to the structured {}", m.arr)),
+            (true, None, _) => Err(format!("a structured access to the raw {}", m.arr)),
+            (false, None, Some(_)) | (true, Some(_), None) => Err("a raw/structured address of the wrong size".into()),
+        }
+    }
+
+    fn ld_mem(&mut self, i: &Inst) -> R<()> {
         let structured = i.op == Opcode::LdStructured;
-        let (g, a, dwords) = self.tgsm_addr(i, structured, 1)?;
-        let swz = i.ops[if structured { 3 } else { 2 }].swizzle();
-        // (out of range: 0, as Direct3D reads past the memory)
-        let word = |c: u8| format!("select(0u, {g}[min({a} + {c}u, {}u)], {a} + {c}u < {dwords}u)", dwords - 1);
-        let e = format!("vec4<u32>({}, {}, {}, {})", word(0), word(1), word(2), word(3));
+        let ro = i.op(if structured { 3 } else { 2 })?;
+        let m = self.mem_ref(ro)?;
+        let a = self.src(i.op(1)?, K::U, &[0])?;
+        let b = if structured { Some(self.src(i.op(2)?, K::U, &[0])?) } else { None };
+        let (t, inb) = self.mem_addr(&m, structured, a, b)?;
+        let swz = ro.swizzle();
+        let words: Vec<String> = inb
+            .iter()
+            .enumerate()
+            .map(|(c, ok)| {
+                let at = format!("{}[{} + {t} + {c}u]", m.arr, m.base);
+                let v = if m.decl.atomic { format!("atomicLoad(&{at})") } else { at };
+                format!("select(0u, {v}, {ok})")
+            })
+            .collect();
+        let e = format!("vec4<u32>({})", words.join(", "));
         self.vec4_result(i, e, K::U, swz)
     }
 
-    fn store_tgsm(&mut self, i: &Inst) -> R<()> {
+    fn store_mem(&mut self, i: &Inst) -> R<()> {
         let structured = i.op == Opcode::StoreStructured;
-        let d = &i.ops[0];
+        let d = i.op(0)?;
+        if d.ty == tpf::RESOURCE {
+            return Err("a store to a read-only buffer".into());
+        }
         let comps = bits(u32::from(d.mask()));
-        let (g, a, dwords) = {
-            let g = d.reg();
-            if d.ty != tpf::TGSM {
-                return Err(format!("raw/structured store to register type {} (only groupshared memory is written so)", d.ty));
-            }
-            let (dwords, stride) = *self.tgsm.get(&g).ok_or(format!("g{g} not declared"))?;
-            let a = if structured {
-                let idx = self.src(&i.ops[1], K::U, &[0])?;
-                let off = self.src(&i.ops[2], K::U, &[0])?;
-                format!("(({idx}) * {}u + ({off} >> 2u))", stride / 4)
-            } else {
-                format!("({} >> 2u)", self.src(&i.ops[1], K::U, &[0])?)
-            };
-            let t = self.fresh();
-            self.line(&format!("let {t} = {a};"));
-            (format!("g{g}"), t, dwords)
-        };
-        let vo = &i.ops[if structured { 3 } else { 2 }];
+        let m = self.mem_ref(d)?;
+        let a = self.src(i.op(1)?, K::U, &[0])?;
+        let b = if structured { Some(self.src(i.op(2)?, K::U, &[0])?) } else { None };
+        let (t, inb) = self.mem_addr(&m, structured, a, b)?;
+        let vo = i.op(if structured { 3 } else { 2 })?;
         let v = self.src(vo, K::U, &comps)?;
-        let t = self.fresh();
-        self.line(&format!("let {t} = {v};"));
-        // (component c is the dword at address + 4c; out of range: not written)
+        let tv = self.fresh();
+        self.line(&format!("let {tv} = {v};"));
+        // (component c is the dword at address + 4c)
         for (k, &c) in comps.iter().enumerate() {
-            let val = if comps.len() == 1 { t.clone() } else { format!("{t}.{}", XYZW[k]) };
-            self.line(&format!("if ({a} + {c}u < {dwords}u) {{ {g}[{a} + {c}u] = {val}; }}"));
+            let val = if comps.len() == 1 { tv.clone() } else { format!("{tv}.{}", XYZW.get(k).ok_or("a store of more than 4 components")?) };
+            let at = format!("{}[{} + {t} + {c}u]", m.arr, m.base);
+            let st = if m.decl.atomic { format!("atomicStore(&{at}, {val});") } else { format!("{at} = {val};") };
+            let ok = inb.get(usize::from(c)).ok_or("a store past component w")?;
+            self.line(&format!("if {ok} {{ {st} }}"));
+        }
+        Ok(())
+    }
+
+    /// atomic_* and imm_atomic_* on groupshared memory or a raw or structured UAV: out of the
+    /// view, nothing is done (and 0 returned).
+    fn atomic(&mut self, i: &Inst) -> R<()> {
+        let imm = !matches!(
+            i.op,
+            Opcode::AtomicAnd | Opcode::AtomicOr | Opcode::AtomicXor | Opcode::AtomicCmpStore | Opcode::AtomicIadd | Opcode::AtomicImax | Opcode::AtomicImin | Opcode::AtomicUmax | Opcode::AtomicUmin
+        );
+        let at = usize::from(imm);
+        let ro = i.op(at)?;
+        if ro.ty == tpf::UAV && self.uavs.contains_key(&ro.reg()) {
+            return Err(format!("an atomic on the typed UAV u{} (WebGPU's storage textures have no atomics)", ro.reg()));
+        }
+        if ro.ty == tpf::RESOURCE {
+            return Err("an atomic on a read-only buffer".into());
+        }
+        let m = self.mem_ref(ro)?;
+        if !m.decl.atomic {
+            return Err(format!("{} is not declared atomic", m.arr));
+        }
+        let structured = m.decl.stride.is_some();
+        let ao = i.op(at.wrapping_add(1))?;
+        let a = self.src(ao, K::U, &[0])?;
+        let b = if structured { Some(self.src(ao, K::U, &[1])?) } else { None };
+        let (t, inb) = self.mem_addr(&m, structured, a, b)?;
+        let v0 = self.src(i.op(at.wrapping_add(2))?, K::U, &[0])?;
+        let v1 = match i.ops.get(at.wrapping_add(3)) {
+            Some(o) => Some(self.src(o, K::U, &[0])?),
+            None => None,
+        };
+        let p = format!("&{}[{} + {t}]", m.arr, m.base);
+        let r = self.fresh();
+        let x = self.fresh();
+        // (D3D's min/max of ints on u32 atomics, and its compare-exchange that never fails
+        // spuriously: loops of WGSL's weak compare-exchange)
+        let signed = |f: &str| format!("loop {{ let o = atomicLoad({p}); let {x} = atomicCompareExchangeWeak({p}, o, bitcast<u32>({f}(bitcast<i32>(o), bitcast<i32>({v0})))); if ({x}.exchanged) {{ {r} = o; break; }} }}");
+        let cmp = |c: &str, v: &str| format!("loop {{ let {x} = atomicCompareExchangeWeak({p}, {c}, {v}); if ({x}.exchanged || {x}.old_value != {c}) {{ {r} = {x}.old_value; break; }} }}");
+        let body = match (i.op, &v1) {
+            (Opcode::AtomicIadd | Opcode::ImmAtomicIadd, None) => format!("{r} = atomicAdd({p}, {v0});"),
+            (Opcode::AtomicAnd | Opcode::ImmAtomicAnd, None) => format!("{r} = atomicAnd({p}, {v0});"),
+            (Opcode::AtomicOr | Opcode::ImmAtomicOr, None) => format!("{r} = atomicOr({p}, {v0});"),
+            (Opcode::AtomicXor | Opcode::ImmAtomicXor, None) => format!("{r} = atomicXor({p}, {v0});"),
+            (Opcode::AtomicUmin | Opcode::ImmAtomicUmin, None) => format!("{r} = atomicMin({p}, {v0});"),
+            (Opcode::AtomicUmax | Opcode::ImmAtomicUmax, None) => format!("{r} = atomicMax({p}, {v0});"),
+            (Opcode::AtomicImin | Opcode::ImmAtomicImin, None) => signed("min"),
+            (Opcode::AtomicImax | Opcode::ImmAtomicImax, None) => signed("max"),
+            (Opcode::ImmAtomicExch, None) => format!("{r} = atomicExchange({p}, {v0});"),
+            // (cmp, then the value)
+            (Opcode::AtomicCmpStore | Opcode::ImmAtomicCmpExch, Some(v1)) => cmp(&v0, v1),
+            _ => return Err(format!("{:?} with {} operands", i.op, i.ops.len())),
+        };
+        self.line(&format!("var {r}: u32 = 0u;"));
+        self.line(&format!("if {} {{ {body} }}", inb[0]));
+        if imm {
+            let k = bits(u32::from(i.op(0)?.mask())).len();
+            let v = if k == 1 { r } else { format!("vec{k}<u32>({r})") };
+            self.dst(i.op(0)?, v, K::U, false)?;
         }
         Ok(())
     }
 
     fn shift(&mut self, i: &Inst, k: K, opr: &str) -> R<()> {
-        let comps = bits(u32::from(i.ops[0].mask()));
-        let a = self.src(&i.ops[1], k, &comps)?;
-        let b = self.src(&i.ops[2], K::U, &comps)?;
+        let comps = bits(u32::from(i.op(0)?.mask()));
+        let a = self.src(i.op(1)?, k, &comps)?;
+        let b = self.src(i.op(2)?, K::U, &comps)?;
         let m = self.splat(K::U, comps.len(), 31);
-        self.dst(&i.ops[0], format!("({a} {opr} ({b} & {m}))"), k, false)
+        self.dst(i.op(0)?, format!("({a} {opr} ({b} & {m}))"), k, false)
     }
 }
 
@@ -1891,8 +2078,8 @@ pub fn translate_compute(code: &[u8], uav_formats: &[(u32, &str)]) -> R<Wgsl> {
         };
         bindings.push((300 + n, Binding::Texture(vd, st)));
     }
-    for (g, &(dwords, _)) in &w.tgsm {
-        let _ = writeln!(m, "var<workgroup> g{g}: array<u32, {dwords}>;");
+    for (g, &(dwords, d)) in &w.tgsm {
+        m.push_str(&format!("var<workgroup> g{g}: array<{}, {dwords}>;\n", if d.atomic { "atomic<u32>" } else { "u32" }));
     }
     for (ty, name) in [(tpf::THREAD_ID, "vtid"), (tpf::THREAD_GROUP_ID, "vgid"), (tpf::THREAD_ID_IN_GROUP, "vltid"), (tpf::THREAD_ID_IN_GROUP_FLATTENED, "vlidx")] {
         if w.sys_in.contains(&ty) {
@@ -1960,6 +2147,34 @@ fn module_decls(w: &mut W, m: &mut String, bindings: &mut Vec<(u32, Binding)>, g
             }
         };
         bindings.push((16 + n, Binding::Texture(vd, st)));
+    }
+    // raw and structured views: whole buffers from a 256-byte aligned offset, the view's own
+    // range in `bv` (BufferRanges)
+    let mut ranges = Vec::new();
+    // (registers are below 128: check_registers)
+    for &n in &w.used_tb {
+        let b = n.saturating_add(500);
+        m.push_str(&format!("@group({group}) @binding({b}) var<storage, read> tb{n}: array<u32>;\n"));
+        bindings.push((b, Binding::BufferView(false)));
+        ranges.push((format!("t{n}"), b));
+    }
+    for &n in &w.used_ub {
+        let atomic = w.ubufs.get(&n).is_some_and(|d| d.atomic);
+        let b = n.saturating_add(600);
+        m.push_str(&format!("@group({group}) @binding({b}) var<storage, read_write> ub{n}: array<{}>;\n", if atomic { "atomic<u32>" } else { "u32" }));
+        bindings.push((b, Binding::BufferView(true)));
+        ranges.push((format!("u{n}"), b));
+    }
+    for &n in &w.used_uc {
+        let b = n.saturating_add(700);
+        m.push_str(&format!("@group({group}) @binding({b}) var<storage, read_write> uc{n}: atomic<u32>;\n"));
+        bindings.push((b, Binding::Counter));
+    }
+    if !ranges.is_empty() {
+        let fields: Vec<String> = ranges.iter().map(|(f, _)| format!("{f}: vec4<u32>")).collect();
+        m.push_str(&format!("struct BV {{ {} }}\n", fields.join(", ")));
+        m.push_str(&format!("@group({group}) @binding({BUFFER_RANGES}) var<uniform> bv: BV;\n"));
+        bindings.push((BUFFER_RANGES, Binding::BufferRanges(ranges.iter().map(|r| r.1).collect())));
     }
     for &n in &w.used_s {
         let cmp = w.samplers[&n];

@@ -325,6 +325,9 @@ pub struct BufSrc {
     /// first byte, bytes
     pub off: u32,
     pub bytes: u32,
+    /// all of the view's bytes (`bytes` is what its texture holds; raw and structured views
+    /// read the buffer itself, these)
+    pub view_bytes: u32,
     /// what the texture holds
     pub last: Vec<u8>,
 }
@@ -395,7 +398,17 @@ pub enum Data {
 pub struct BufferUav {
     pub buf: u32,
     pub view: check::BufView,
-    pub counter: u32,
+    pub counter: Count,
+    /// the page buffer of the counter when shaders count with it (0: none yet)
+    pub counter_page: u32,
+}
+
+/// Where a hidden counter's count is: kura's (set by an initial count, nothing counted since)
+/// or the page buffer's (a shader may have counted since it went there).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Count {
+    Host(u32),
+    Page,
 }
 
 impl BufferUav {
@@ -498,6 +511,11 @@ pub struct D11 {
     /// shader declares) -> the page buffer holding those bytes, zeros past the buffer's end
     /// (as Direct3D reads them), and the bytes last written to it
     cb_copies: HashMap<(u32, u32, u32), (u32, Vec<u8>)>,
+    /// page buffers of raw and structured views' ranges (BUFFER_RANGES uniforms), by bytes
+    view_ranges: HashMap<Vec<u8>, u32>,
+    /// the page buffers bound where no raw or structured view (or no counter) is: read-only,
+    /// read-write (0: not made yet)
+    null_views: [u32; 2],
     /// page targets set in this batch generation
     targets: Option<(u64, Vec<u32>)>,
     next_gpu: u32,
@@ -812,7 +830,12 @@ impl D11 {
                 self.release(s.device);
             }
             Data::Factory | Data::Adapter(_) | Data::Output | Data::Device | Data::Context | Data::Layout(_) | Data::State(_) | Data::CtxState(_) | Data::Other => {}
-            Data::BufferUav(u) => self.unbind(u.buf),
+            Data::BufferUav(u) => {
+                self.unbind(u.buf);
+                if u.counter_page != 0 {
+                    gpu::record(|q| q.cmd(&[gpu::DESTROY_BUFFER, u.counter_page]));
+                }
+            }
             Data::Query(q) => {
                 self.expand.open.retain(|&x| x != id);
                 q.forget();
@@ -853,6 +876,8 @@ pub unsafe fn init(vtbls: *const u32, count: u32) -> u32 {
                 pipelines: HashMap::new(),
                 sprite_view: (0, [0.0; 2]),
                 cb_copies: HashMap::new(),
+                view_ranges: HashMap::new(),
+                null_views: [0; 2],
                 targets: None,
                 next_gpu: 0,
                 lost_seen: crate::render::lost_gen(),
@@ -1483,6 +1508,22 @@ fn after_lost(d: &mut D11) {
     // (the expanded draws' page buffers and shaders went with it; what stream output wrote
     // there too: those buffers hold their guest bytes again)
     d.expand = expand::Gpu::default();
+    // (copies of constant buffer ranges and the views' range tables: empty now, written again
+    // when used; the null views' zeros and the hidden counters' page buffers, empty, are what
+    // they would be: a lost device's counts are 0)
+    d.cb_copies.retain(|_, (_, last)| {
+        last.clear();
+        true
+    });
+    let mut ranges: Vec<u32> = d.view_ranges.drain().map(|(_, g)| g).collect();
+    ranges.sort_unstable();
+    if !ranges.is_empty() {
+        gpu::record(|q| {
+            for g in ranges {
+                q.cmd(&[gpu::DESTROY_BUFFER, g]);
+            }
+        });
+    }
     let mut ids: Vec<u32> = d.objs.keys().copied().collect();
     ids.sort_unstable();
     for id in ids {
@@ -2713,7 +2754,7 @@ unsafe fn create_view(d: &mut D11, m: u32, res: u32, desc: u32, out: u32) -> u32
         if kind == check::UAV {
             // (the view holds its buffer; its counter starts at 0)
             d.bind(rid);
-            let o = d.new_obj(IF_UAV, Data::BufferUav(BufferUav { buf: rid, view: bv, counter: 0 }));
+            let o = d.new_obj(IF_UAV, Data::BufferUav(BufferUav { buf: rid, view: bv, counter: Count::Host(0), counter_page: 0 }));
             // SAFETY: the caller's out-pointer (create_view's contract)
             unsafe { wrp(out, 0, o) };
             return S_OK;
@@ -2749,7 +2790,7 @@ unsafe fn create_view(d: &mut D11, m: u32, res: u32, desc: u32, out: u32) -> u32
     if let Some(cid) = chroma {
         d.bind(cid);
         d.bind(rid);
-        let buf = Some(BufSrc { buf: rid, off: 0, bytes: 0, last: Vec::new() });
+        let buf = Some(BufSrc { buf: rid, off: 0, bytes: 0, view_bytes: 0, last: Vec::new() });
         let o = d.new_obj([IF_SRV, IF_UAV, IF_RTV, IF_DSV][us(m) - 7], Data::View(View { res: cid, buf, ..v }));
         wrp(out, 0, o);
         return S_OK;
@@ -2773,7 +2814,7 @@ unsafe fn create_buffer_srv(d: &mut D11, rid: u32, bv: check::BufView, out: u32)
     d.bind(tid);
     d.release(tid);
     d.bind(rid);
-    let buf = Some(BufSrc { buf: rid, off: bv.offset, bytes: n * f.bpp, last: Vec::new() });
+    let buf = Some(BufSrc { buf: rid, off: bv.offset, bytes: n.saturating_mul(f.bpp), view_bytes: bv.bytes, last: Vec::new() });
     let v = View { res: tid, fmt: bv.fmt, desc: bv.desc, mip: 0, mips: 1, layer: 0, layers: 1, buf };
     let o = d.new_obj(IF_SRV, Data::View(v));
     wrp(out, 0, o);
@@ -3113,7 +3154,7 @@ unsafe fn initial_counts(d: &mut D11, n: u32, views: u32, counts: u32) {
             continue;
         }
         if let Some(Data::BufferUav(u)) = d.objs.get_mut(&v).map(|o| &mut o.data) && u.counted() {
-            u.counter = c;
+            u.counter = Count::Host(c);
         }
     }
 }
@@ -3463,18 +3504,32 @@ unsafe fn context_call2(d: &mut D11, st: &mut State, m: u32, a: &dyn Fn(usize) -
             // CopyStructureCount(buffer, offset, uav): the view's hidden counter, as a UINT at
             // the offset (a view without one, or a place outside the buffer: nothing written)
             let (dst, at, v) = (d.id_of(a(1)), a(2), d.id_of(a(3)));
-            let count = match d.objs.get(&v).map(|o| &o.data) {
-                Some(Data::BufferUav(u)) if u.counted() => u.counter,
+            let (count, page) = match d.objs.get(&v).map(|o| &o.data) {
+                Some(Data::BufferUav(u)) if u.counted() => (u.counter, u.counter_page),
                 _ => return 0,
             };
-            expand::pull(d, dst);
-            if let Some(Data::Buffer(b)) = d.objs.get_mut(&dst).map(|o| &mut o.data)
-                && at % 4 == 0
-                && u64::from(at) + 4 <= u64::from(b.size)
-            {
-                // SAFETY: inside the buffer's guest memory (checked above)
-                unsafe { wr(b.mem.wrapping_add(at), 0, count) };
-                b.dirty = true;
+            let fits = matches!(d.objs.get(&dst).map(|o| &o.data), Some(Data::Buffer(b)) if at % 4 == 0 && u64::from(at) + 4 <= u64::from(b.size));
+            if !fits {
+                return 0;
+            }
+            match count {
+                Count::Host(c) => {
+                    expand::pull(d, dst);
+                    if let Some(Data::Buffer(b)) = d.objs.get_mut(&dst).map(|o| &mut o.data) {
+                        // SAFETY: inside the buffer's guest memory (`fits`)
+                        unsafe { wr(b.mem.wrapping_add(at), 0, c) };
+                        b.dirty = true;
+                    }
+                }
+                // (shaders counted on the page: the copy is the page's, the buffer's bytes
+                // read back when the guest looks at them)
+                Count::Page => {
+                    let g = buffer_gpu(d, dst);
+                    gpu::record(|q| q.cmd(&[gpu::COPY_BUFFER, page, 0, g, at, 4]));
+                    if let Some(Data::Buffer(b)) = d.objs.get_mut(&dst).map(|o| &mut o.data) {
+                        b.gpu_written = true;
+                    }
+                }
             }
         }
         // SetResourceMinLOD(resource, MinLOD), GetResourceMinLOD(resource): the float's bits
@@ -4404,6 +4459,9 @@ fn cb_binding(d: &mut D11, cb: u32, range: CbRange, size: u32) -> (u32, u32) {
     if off == 0 && len == b.size.min(65536) && full >= want {
         return (buffer_gpu(d, cb), full.min(65536));
     }
+    // (a shader or stream output wrote it: its bytes read back first)
+    expand::pull(d, cb);
+    let Some(Data::Buffer(b)) = d.objs.get(&cb).map(|o| &o.data) else { return (0, 0) };
     let mem = b.mem;
     // SAFETY: `mem` holds the buffer's `b.size` bytes, and range_copy reads words below
     // off + len <= b.size (CbRange::bytes)
@@ -4968,9 +5026,132 @@ fn bind_entries(d: &mut D11, st: &State, stage: usize, binds: &[(u32, dxwgsl::Bi
             // (a store of an expanded draw that `over` does not name: nothing, the page
             // binds zeros or runs nothing)
             dxwgsl::Binding::StorageBuffer(rw) => entries.push([*bi, if *rw { 10 } else { 9 }, 0, 0, 0, 0, 0, 0]),
+            dxwgsl::Binding::BufferView(_) => entries.push(buffer_view_binding(d, st, stage, *bi).0),
+            dxwgsl::Binding::Counter => entries.push(counter_binding(d, st, stage, *bi)),
+            dxwgsl::Binding::BufferRanges(list) => entries.push(ranges_binding(d, st, stage, list)),
         }
     }
     entries
+}
+
+/// The UAV slots shaders of stage `stage` (`State` order) see: the compute shader's, or the
+/// output merger's (pixel shaders, and every other stage's since D3D11.1).
+fn uav_slots_of(st: &State, stage: usize) -> &[u32] {
+    if stage == 5 { &st.uavs[1] } else { &st.uavs[0] }
+}
+
+/// The page buffer bound where nothing is (read-write or read-only): every range of it empty,
+/// its reads 0, its writes dropped (the shaders check the range).
+fn null_view(d: &mut D11, rw: bool) -> u32 {
+    let [ro, rwb] = &mut d.null_views;
+    let slot = if rw { rwb } else { ro };
+    if *slot == 0 {
+        let g = page_id();
+        *slot = g;
+        gpu::record(|q| q.cmd(&[gpu::CREATE_BUFFER, g, 256]));
+    }
+    *slot
+}
+
+/// The raw or structured view at binding `bi` of a shader of stage `stage`: 500 + n its
+/// SRV t<n>, 600 + n its UAV u<n>. Its entry, the whole buffer from the 256-byte boundary at
+/// or before the view's first byte (a storage buffer's offset must be one), and its range as
+/// BUFFER_RANGES holds it: (its first dword in what is bound, its bytes, its elements, 0),
+/// the elements a structured buffer's structures, a raw one's bytes. Nothing there (or a
+/// typed view): a null buffer, an empty range.
+fn buffer_view_binding(d: &mut D11, st: &State, stage: usize, bi: u32) -> ([u32; 8], [u32; 4]) {
+    let rw = bi >= 600;
+    let n = us(bi.saturating_sub(if rw { 600 } else { 500 }));
+    let v = if rw { uav_slots_of(st, stage).get(n) } else { st.srvs.get(stage).and_then(|c| c.get(n)) }.copied().unwrap_or(0);
+    let range = match d.objs.get(&v).map(|o| &o.data) {
+        Some(Data::BufferUav(u)) if rw => Some((u.buf, u.view.offset, u.view.bytes)),
+        Some(Data::View(View { buf: Some(b), .. })) if !rw => Some((b.buf, b.off, b.view_bytes)),
+        _ => None,
+    };
+    let found = range.and_then(|(buf, off, bytes)| match d.objs.get(&buf).map(|o| &o.data) {
+        Some(Data::Buffer(b)) if off.checked_add(bytes).is_some_and(|end| end <= b.size) => {
+            let elements = if b.misc & 0x40 != 0 { bytes.checked_div(b.stride).unwrap_or(0) } else { bytes };
+            Some((buf, off, bytes, elements))
+        }
+        _ => None,
+    });
+    let kind = if rw { 10 } else { 9 };
+    let Some((buf, off, bytes, elements)) = found else {
+        return ([bi, kind, null_view(d, rw), 0, 0, 0, 0, 0], [0; 4]);
+    };
+    let g = buffer_gpu(d, buf);
+    if rw && let Some(Data::Buffer(b)) = d.objs.get_mut(&buf).map(|o| &mut o.data) {
+        // (the shader may write it: the page's bytes are the buffer's from now on)
+        b.gpu_written = true;
+    }
+    let at = off & !255;
+    // (`at` is `off` with its low 8 bits cleared: never above it)
+    ([bi, kind, g, at, 0, 0, 0, 0], [(off & 255) >> 2, bytes, elements, 0])
+}
+
+/// The hidden counter of UAV u<n> (binding 700 + n) of a shader of stage `stage`: its page
+/// buffer, the count kura holds written to it first; a view without one: a null buffer.
+fn counter_binding(d: &mut D11, st: &State, stage: usize, bi: u32) -> [u32; 8] {
+    let v = uav_slots_of(st, stage).get(us(bi.saturating_sub(700))).copied().unwrap_or(0);
+    let g = match d.objs.get_mut(&v).map(|o| &mut o.data) {
+        Some(Data::BufferUav(u)) if u.counted() => {
+            let made = u.counter_page;
+            let g = if made != 0 { made } else { page_id() };
+            u.counter_page = g;
+            let host = match u.counter {
+                Count::Host(c) => Some(c),
+                Count::Page => None,
+            };
+            u.counter = Count::Page;
+            gpu::record(|q| {
+                if made == 0 {
+                    q.cmd(&[gpu::CREATE_BUFFER, g, 4]);
+                }
+                if let Some(c) = host {
+                    let at = q.blob(&c.to_le_bytes());
+                    q.cmd(&[gpu::WRITE_BUFFER, g, 0, at, 4]);
+                }
+            });
+            g
+        }
+        _ => null_view(d, true),
+    };
+    [bi, 10, g, 0, 0, 0, 0, 0]
+}
+
+/// The BUFFER_RANGES uniform of the views at `bindings` (buffer_view_binding's ranges, in
+/// order): a page buffer of those bytes, made once for each such table.
+fn ranges_binding(d: &mut D11, st: &State, stage: usize, bindings: &[u32]) -> [u32; 8] {
+    let mut bytes = Vec::new();
+    for &b in bindings {
+        let (_, r) = buffer_view_binding(d, st, stage, b);
+        bytes.extend(r.iter().flat_map(|w| w.to_le_bytes()));
+    }
+    let len = lo32(bytes.len()).max(16);
+    bytes.resize(us(len), 0);
+    let g = match d.view_ranges.get(&bytes) {
+        Some(&g) => g,
+        None => {
+            if d.view_ranges.len() >= 4096 {
+                let mut old: Vec<u32> = d.view_ranges.drain().map(|(_, g)| g).collect();
+                old.sort_unstable();
+                gpu::record(|q| {
+                    for g in old {
+                        q.cmd(&[gpu::DESTROY_BUFFER, g]);
+                    }
+                });
+            }
+            let g = page_id();
+            gpu::record(|q| {
+                let at = q.blob(&bytes);
+                q.cmd(&[gpu::CREATE_BUFFER, g, len]);
+                q.cmd(&[gpu::WRITE_BUFFER, g, 0, at, len]);
+            });
+            d.view_ranges.insert(bytes, g);
+            g
+        }
+    };
+    [dxwgsl::BUFFER_RANGES, 0, g, 0, len, len, 0, 0]
 }
 
 /// The point sprites' viewport uniform (b15 of their vertex shader): half the viewport's size.
@@ -5117,6 +5298,9 @@ unsafe fn dispatch(d: &mut D11, st: &State, x: u32, y: u32, z: u32) {
             }
             // (a store nothing names: none bound, nothing runs)
             dxwgsl::Binding::StorageBuffer(rw) => [*bi, if *rw { 10 } else { 9 }, 0, 0, 0, 0, 0, 0],
+            dxwgsl::Binding::BufferView(_) => buffer_view_binding(d, st, 5, *bi).0,
+            dxwgsl::Binding::Counter => counter_binding(d, st, 5, *bi),
+            dxwgsl::Binding::BufferRanges(list) => ranges_binding(d, st, 5, list),
         };
         w.extend_from_slice(&e);
     }

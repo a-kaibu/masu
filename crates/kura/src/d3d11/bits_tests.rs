@@ -802,7 +802,7 @@ fn a_lost_device_gets_the_kept_bits_and_buffers() {
         }
     });
     let generation = crate::render::lost_gen();
-    crate::render::set_lost_gen(generation + 1);
+    crate::render::lose_device();
     // (the guest's next call, whatever it is)
     call1(m(IF_DEVICE, 1), &[dev.dev]);
     call1(m(IF_DEVICE, 2), &[dev.dev]);

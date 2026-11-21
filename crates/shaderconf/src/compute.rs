@@ -188,7 +188,113 @@ pub fn cases() -> Result<String, String> {
         list(&want),
         string(&ours)
     ));
+    out.extend(buffer_cases()?);
     Ok(format!("[\n{}\n]\n", out.join(",\n")))
+}
+
+/// Words a buffer starts with where a shader leaves it alone.
+fn pattern(n: usize) -> Vec<u32> {
+    (0..kome::num::u32_of(n)).map(|k| k.wrapping_mul(0x0101_0107) ^ 0x5a5a_0000).collect()
+}
+
+fn words_bytes(w: &[u32]) -> Vec<u8> {
+    w.iter().flat_map(|v| v.to_le_bytes()).collect()
+}
+
+/// A case of buffers only: (binding, its words) bound, the bindings read back after one
+/// dispatch, what they must hold (Direct3D 11.3 spec: raw and structured views, the hidden
+/// counter, the atomics; reads out of the view 0, writes there dropped).
+fn buffer_case(name: &str, src: &str, dispatch: [u32; 3], bufs: &[(u32, Vec<u32>)], uniform: Vec<u32>, outs: &[u32], want: Vec<u32>) -> Result<String, String> {
+    let code = hlslc::compile(src, &[], &mut |_, _| None, "main", "cs_5_0", 0).map_err(|e| format!("{name}: hlslc: {e}"))?;
+    let ours = dxwgsl::translate_compute(&code, &[]).map_err(|e| format!("{name}: dxwgsl: {e}"))?;
+    let ranges: Vec<u32> = ours.bindings.iter().filter_map(|(_, b)| if let dxwgsl::Binding::BufferRanges(r) = b { Some(r.clone()) } else { None }).flatten().collect();
+    let want_ranges: Vec<u32> = bufs.iter().map(|b| b.0).filter(|&b| (500..700).contains(&b)).collect();
+    if ranges != want_ranges {
+        return Err(format!("{name}: ranges of {ranges:?}, the case binds {want_ranges:?}"));
+    }
+    let mut b: Vec<String> = bufs.iter().map(|(n, w)| format!(r#"{{"binding":{n},"buffer":{{"words":[{}]}}}}"#, list(w))).collect();
+    b.push(format!(r#"{{"binding":{},"uniform":[{}]}}"#, dxwgsl::BUFFER_RANGES, list(&uniform)));
+    Ok(format!(
+        r#"{{"name":{},"dispatch":[{},{},{}],"out":[{}],"want":[{}],"variants":[{{"name":"masu","wgsl":{}}}],"bindings":[{}]}}"#,
+        string(name),
+        dispatch[0],
+        dispatch[1],
+        dispatch[2],
+        list(outs),
+        list(&words_bytes(&want)),
+        string(&ours.code),
+        b.join(",")
+    ))
+}
+
+fn buffer_cases() -> Result<Vec<String>, String> {
+    let mut out = Vec::new();
+    // structured: a view from element 1 (its first dword 8 in what is bound) of 7 elements; a
+    // struct's members, a column_major matrix's elements, past the view 0; GetDimensions; a
+    // partial write keeps the rest of the element
+    let src = "struct P { float3 p; uint n; float2x2 m; };\n\
+        StructuredBuffer<P> sb : register(t0); RWStructuredBuffer<uint4> o : register(u1);\n\
+        [numthreads(8,1,1)] void main(uint3 t : SV_DispatchThreadID) {\n\
+          P a = sb[t.x];\n\
+          o[t.x] = uint4(asuint(a.p.y), a.n, asuint(a.m._12), asuint(a.m[1].x));\n\
+          if (t.x == 0) { uint n, s; sb.GetDimensions(n, s); o[8].xy = uint2(n, s); } }";
+    // (structure e of the view, word j: distinct, and floats where they are read as floats)
+    let elem = |e: u32, j: u32| 0x3f80_0000u32.wrapping_add(e.wrapping_mul(1000)).wrapping_add(j);
+    let mut input = pattern(8);
+    for e in 1..8 {
+        input.extend((0..8).map(|j| elem(e, j)));
+    }
+    let init = pattern(36);
+    let mut want = Vec::new();
+    for e in 1..8 {
+        want.extend([elem(e, 1), elem(e, 3), elem(e, 6), elem(e, 5)]);
+    }
+    want.extend([0, 0, 0, 0, 7, 32]);
+    want.extend_from_slice(init.get(34..).unwrap_or_default());
+    out.push(buffer_case("structured: view range, members, matrices, out of range", src, [1, 1, 1], &[(500, input), (601, init)], vec![8, 7 * 32, 7, 0, 0, 144, 9, 0], &[601], want)?);
+    // the hidden counters: Append and IncrementCounter return the count before, Consume and
+    // DecrementCounter the count after
+    let src = "AppendStructuredBuffer<uint> a : register(u0); RWStructuredBuffer<uint> c : register(u1); ConsumeStructuredBuffer<uint> s : register(u2);\n\
+        [numthreads(1,1,1)] void main() { a.Append(7); a.Append(8); uint i = c.IncrementCounter(); c[i] = 50; c[c.DecrementCounter() + 4] = 60;\n\
+          uint v = s.Consume(); c[6] = v; c[7] = s.Consume(); }";
+    let (ia, ic) = (pattern(4), pattern(8));
+    let mut want: Vec<u32> = ia.iter().take(2).copied().chain([7, 8]).collect();
+    want.extend(ic.iter().enumerate().map(|(k, &x)| match k {
+        1 => 50,
+        5 => 60,
+        6 => 12,
+        7 => 11,
+        _ => x,
+    }));
+    want.extend([4, 1, 1]);
+    out.push(buffer_case(
+        "append, consume and the counters",
+        src,
+        [1, 1, 1],
+        &[(600, ia), (601, ic), (602, vec![10, 11, 12, 13]), (700, vec![2]), (701, vec![1]), (702, vec![3])],
+        vec![0, 16, 4, 0, 0, 32, 8, 0, 0, 16, 4, 0],
+        &[600, 601, 700, 701, 702],
+        want,
+    )?);
+    // raw views and atomics (signed and unsigned min/max, compare-store, exchange, on groupshared
+    // memory too); a raw view of 6 dwords from dword 2
+    let src = "ByteAddressBuffer b : register(t0); RWByteAddressBuffer w : register(u0); groupshared uint g[4];\n\
+        [numthreads(64,1,1)] void main(uint i : SV_GroupIndex) {\n\
+          if (i < 4) g[i] = 0;\n\
+          GroupMemoryBarrierWithGroupSync();\n\
+          InterlockedAdd(g[i & 3], i);\n\
+          w.InterlockedAdd(0, 1); w.InterlockedMax(4, (int)i - 32); w.InterlockedMin(8, (int)i - 32); w.InterlockedMin(12, i + 5);\n\
+          w.InterlockedOr(16, 1u << (i & 31)); w.InterlockedXor(20, i); w.InterlockedCompareStore(24, 0, 77);\n\
+          uint was; if (i == 5) { w.InterlockedExchange(28, 99, was); w.Store(32, was); }\n\
+          GroupMemoryBarrierWithGroupSync();\n\
+          if (i == 0) { w.Store4(36, uint4(g[0], g[1], g[2], g[3])); uint d; b.GetDimensions(d); w.Store2(52, uint2(d, b.Load3(8).z)); w.Store(60, b.Load(1000)); } }";
+    let raw: Vec<u32> = (0x100..0x109).collect();
+    let iw: Vec<u32> = [0, (-100i32).cast_unsigned(), 100, 1000, 0, 0, 0, 13].into_iter().chain(pattern(16).into_iter().skip(8)).collect();
+    // (g[k]: the sum of the group indices i with i & 3 == k, 480 + 16k; raw dword 6 of the
+    // buffer, 0x106, is the view's dword 4)
+    let want = vec![64, 31, (-32i32).cast_unsigned(), 5, u32::MAX, 0, 77, 99, 13, 480, 496, 512, 528, 24, 0x106, 0];
+    out.push(buffer_case("raw views and atomics", src, [1, 1, 1], &[(500, raw), (600, iw)], vec![2, 24, 24, 0, 0, 64, 64, 0], &[600], want)?);
+    Ok(out)
 }
 
 #[cfg(test)]
@@ -197,6 +303,6 @@ mod tests {
     #[test]
     fn compute_cases_build() {
         let s = super::cases().unwrap();
-        assert_eq!(s.matches("\"dispatch\"").count(), 7);
+        assert_eq!(s.matches("\"dispatch\"").count(), 10);
     }
 }

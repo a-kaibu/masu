@@ -125,7 +125,7 @@ fn a_lost_device_gets_what_the_guest_keeps() {
     }
     assert_eq!(page_cells(level, 0x6c00_0004), all(-2));
     let generation = crate::render::lost_gen();
-    crate::render::set_lost_gen(generation + 1);
+    crate::render::lose_device();
     // (the guest's next call, whatever it is)
     assert_eq!(call(IF_DEVICE, 3, &[dev]), 0);
     gpu::pump();
