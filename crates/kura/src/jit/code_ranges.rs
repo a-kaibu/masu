@@ -65,7 +65,7 @@ impl CodeRanges {
     pub(crate) fn meets(&self, s: Span) -> bool {
         // (the last one starting before s ends: disjoint ones start in order, so it is the one
         // whose end is furthest among those that could reach s)
-        let last = if s.end() > u64::from(u32::MAX) { self.0.iter().next_back() } else { self.0.range(..lo32(s.end())).next_back() };
+        let last = if s.end() > u64::from(u32::MAX) { self.0.iter().next_back() } else { self.0.range(..clamp32(s.end())).next_back() };
         last.is_some_and(|(_, &e)| e > u64::from(s.addr))
     }
 
@@ -81,7 +81,7 @@ impl CodeRanges {
                 self.0.insert(a, lo);
             }
             if e > hi {
-                self.0.insert(lo32(hi), e);
+                self.0.insert(clamp32(hi), e);
             }
         }
     }
@@ -96,8 +96,8 @@ impl CodeRanges {
     }
 }
 
-/// `v` (below 2^32 where called) as a u32.
-fn lo32(v: u64) -> u32 {
+/// `v` as a u32, saturating at u32::MAX (not the low bits: 2^32 must stay the top, not 0).
+fn clamp32(v: u64) -> u32 {
     u32::try_from(v).unwrap_or(u32::MAX)
 }
 
@@ -137,7 +137,7 @@ mod tests {
                 match op {
                     Op::Insert(a, n) => {
                         // (code ends at 4 GB at the latest)
-                        let s = Span::at_least_one(a, n.min(lo32((1 << 32) - u64::from(a))));
+                        let s = Span::at_least_one(a, n.min(clamp32((1 << 32) - u64::from(a))));
                         r.insert(s);
                         bytes.extend(u64::from(a)..s.end());
                     }
