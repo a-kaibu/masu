@@ -1317,9 +1317,9 @@ fn diff64(want: &Cpu, got: &Cpu, writes: &[(u32, u8)]) -> Vec<String> {
     w.materialize();
     g.materialize();
     let mut d = Vec::new();
-    for i in 0..16 {
-        if w.gpr(i) != g.gpr(i) {
-            d.push(format!("r{i} want {:#x} got {:#x}", w.gpr(i), g.gpr(i)));
+    for r in koji::Reg64::ALL {
+        if w.gpr(r) != g.gpr(r) {
+            d.push(format!("{r:?} want {:#x} got {:#x}", w.gpr(r), g.gpr(r)));
         }
     }
     if w.eflags & 0x8d5 != g.eflags & 0x8d5 {
@@ -1370,7 +1370,7 @@ fn check64(before: &Cpu, states: &[(Cpu, usize)], got: &Cpu, writes: &[(u32, u8)
     }
     let mut bf = before.clone();
     bf.materialize();
-    let regs: Vec<String> = (0..16).map(|i| format!("{:x}", bf.gpr(i))).collect();
+    let regs: Vec<String> = koji::Reg64::ALL.iter().map(|&r| format!("{:x}", bf.gpr(r))).collect();
     eprintln!("vnjit64 verify {:x}{:08x} -> {:x}{:08x} ({} steps, {arrivals} arrivals): {} | before flags {:#x} regs {}", before.rip_hi, before.eip, got.rip_hi, got.eip, states.len(), d.join("; "), bf.eflags, regs.join(" "));
 }
 
