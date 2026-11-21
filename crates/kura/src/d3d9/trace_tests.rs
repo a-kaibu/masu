@@ -244,11 +244,17 @@ pub(crate) fn seeds() -> u64 {
     std::env::var("MASU_TRACE_SEEDS").ok().and_then(|s| s.parse().ok()).unwrap_or(20)
 }
 
+thread_local! {
+    /// the page `attach_page` made last (tests look at what it holds)
+    pub(crate) static PAGE: std::cell::RefCell<Option<std::rc::Rc<std::cell::RefCell<crate::render::d3d::D3d>>>> = const { std::cell::RefCell::new(None) };
+}
+
 /// The page's executor (render/d3d.rs) on a fresh model of WebGPU (render/model.rs), run in this
 /// thread whenever the guest waits for it (and at gpu::pump).
 pub(crate) fn attach_page() {
     crate::render::model::reset();
     let page = std::rc::Rc::new(std::cell::RefCell::new(crate::render::d3d::D3d::new()));
+    PAGE.with(|p| *p.borrow_mut() = Some(page.clone()));
     let pg = page.clone();
     gpu::set_pump(Some(Box::new(move || {
         while gpu::run_next(|c, data, blob| {

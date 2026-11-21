@@ -36,11 +36,30 @@ struct Out { @builtin(position) position: vec4f, @location(0) uv: vec2f };
 @group(0) @binding(1) var smp: sampler;
 /** the part of the texture drawn: u0 v0 u1 v1 */
 @group(0) @binding(2) var<uniform> uv: vec4f;
+/** the display's gamma ramp: texel i is what channel value i shows as (red, green, blue) */
+@group(0) @binding(3) var ramp: texture_2d<f32>;
 
 @fragment fn fs(in: Out) -> @location(0) vec4f {
-  return vec4f(textureSample(frame, smp, in.uv).rgb, 1.0);
+  let c = textureSample(frame, smp, in.uv).rgb;
+  let i = vec3u(clamp(round(c * 255.0), vec3f(0.0), vec3f(255.0)));
+  return vec4f(textureLoad(ramp, vec2u(i.r, 0u), 0).r, textureLoad(ramp, vec2u(i.g, 0u), 0).g, textureLoad(ramp, vec2u(i.b, 0u), 0).b, 1.0);
 }
 "#;
+
+/// The display's ramp as the 256x1 RGBA8 texels the screen is drawn through: an entry's top
+/// byte (the canvas has 8 bits a channel), the identity without one.
+pub fn ramp_texels(g: Option<&[u16; 768]>) -> [u8; 1024] {
+    let mut t = [255u8; 1024];
+    for (i, px) in t.chunks_exact_mut(4).enumerate() {
+        for (c, v) in px.iter_mut().take(3).enumerate() {
+            *v = match g {
+                Some(g) => g.get(c.saturating_mul(256).saturating_add(i)).map_or(0, |&e| e.to_be_bytes()[0]),
+                None => u8::try_from(i).unwrap_or(u8::MAX),
+            };
+        }
+    }
+    t
+}
 
 /// The canvas size in device pixels (the page's, `vnhost_render_resize`): w << 16 | h.
 static CANVAS: AtomicU32 = AtomicU32::new(0);
@@ -364,6 +383,10 @@ struct Render {
     pipes: std::collections::HashMap<&'static str, Pipe>,
     nearest: Id,
     linear: Id,
+    /// the gamma ramp's texture (`ramp_texels`), its view, and the d3d `gamma_gen` it holds
+    ramp: Id,
+    ramp_view: Id,
+    ramp_gen: u64,
     /// the screen's texture and its view, size
     tex: Id,
     tex_view: Id,
@@ -412,6 +435,9 @@ impl Render {
     fn new_with(d3d: d3d::D3d) -> Render {
         let headless = crate::env_on!("MASU_HEADLESS");
         let uv = (0..10).map(|_| gpu::buffer(16, usage::UNIFORM | usage::COPY_DST)).collect();
+        let ramp = gpu::texture(&format!(r#"{{"size":[256,1],"format":"rgba8unorm","usage":{}}}"#, usage::T_BINDING | usage::T_COPY_DST));
+        let identity = ramp_texels(None);
+        gpu::write_texture(ramp, 0, [0, 0, 0], identity.as_ptr(), identity.len(), 1024, 1, [256, 1, 1]);
         Render {
             d3d,
             headless,
@@ -419,6 +445,9 @@ impl Render {
             pipes: std::collections::HashMap::new(),
             nearest: gpu::sampler(r#"{"magFilter":"nearest","minFilter":"nearest"}"#),
             linear: gpu::sampler(r#"{"magFilter":"linear","minFilter":"linear"}"#),
+            ramp,
+            ramp_view: gpu::view(ramp, ""),
+            ramp_gen: 0,
             tex: 0,
             tex_view: 0,
             tex_size: (0, 0),
@@ -534,6 +563,12 @@ impl Render {
         self.d3d.poll();
         if self.d3d.frames != self.d3d_frames {
             self.d3d_frames = self.d3d.frames;
+            redraw = true;
+        }
+        if self.d3d.gamma_gen != self.ramp_gen {
+            self.ramp_gen = self.d3d.gamma_gen;
+            let t = ramp_texels(self.d3d.gamma.as_deref());
+            gpu::write_texture(self.ramp, 0, [0, 0, 0], t.as_ptr(), t.len(), 1024, 1, [256, 1, 1]);
             redraw = true;
         }
         // windows over the Direct3D one (a dialog the game opens) are drawn from the screen on top
@@ -672,7 +707,7 @@ impl Render {
         let gi = usize::from(nearest);
         if self.group_main[gi] == 0 {
             let smp = if nearest { self.nearest } else { self.linear };
-            self.group_main[gi] = gpu::bind_group(layout, &[(0, Res::Obj(self.tex_view)), (1, Res::Obj(smp)), (2, Res::Buffer(self.uv[0], 0, 16))]);
+            self.group_main[gi] = gpu::bind_group(layout, &[(0, Res::Obj(self.tex_view)), (1, Res::Obj(smp)), (2, Res::Buffer(self.uv[0], 0, 16)), (3, Res::Obj(self.ramp_view))]);
         }
         gpu::begin_pass(&format!(r#"{{"colorAttachments":[{{"view":{target},"loadOp":"clear","storeOp":"store","clearValue":[0,0,0,1]}}]}}"#));
         gpu::set_viewport(r.x, r.y, r.w, r.h, 0.0, 1.0);
@@ -682,7 +717,7 @@ impl Render {
         if let Some(o) = self.d3d.overlay {
             if (self.group_overlay.0, self.group_overlay.1) != (o.view, self.d3d.tex_gen) {
                 gpu::drop(self.group_overlay.2);
-                self.group_overlay = (o.view, self.d3d.tex_gen, gpu::bind_group(layout, &[(0, Res::Obj(o.view)), (1, Res::Obj(self.linear)), (2, Res::Buffer(self.uv[1], 0, 16))]));
+                self.group_overlay = (o.view, self.d3d.tex_gen, gpu::bind_group(layout, &[(0, Res::Obj(o.view)), (1, Res::Obj(self.linear)), (2, Res::Buffer(self.uv[1], 0, 16)), (3, Res::Obj(self.ramp_view))]));
             }
             let [ol, ot, or, ob] = o.rect;
             let (l, t, rr, b) = (ol.max(vl), ot.max(vt), or.min(vr), ob.min(vb));
@@ -725,7 +760,7 @@ impl Render {
                 let buf = self.uv[2 + k];
                 let (ox, oy) = self.origin;
                 write_f32(buf, &[(l - ox) as f32 / fw, (t - oy) as f32 / fh, (rr - ox) as f32 / fw, (b - oy) as f32 / fh]);
-                let g = gpu::bind_group(layout, &[(0, Res::Obj(self.tex_view)), (1, Res::Obj(self.nearest)), (2, Res::Buffer(buf, 0, 16))]);
+                let g = gpu::bind_group(layout, &[(0, Res::Obj(self.tex_view)), (1, Res::Obj(self.nearest)), (2, Res::Buffer(buf, 0, 16)), (3, Res::Obj(self.ramp_view))]);
                 gpu::set_viewport(x0, y0, x1 - x0, y1 - y0, 0.0, 1.0);
                 gpu::set_bind_group(0, g, &[]);
                 gpu::draw(3, 1, 0, 0);

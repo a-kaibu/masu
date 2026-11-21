@@ -52,6 +52,8 @@ mod ex_tests;
 #[cfg(test)]
 mod tex_tests;
 #[cfg(test)]
+mod dev_tests;
+#[cfg(test)]
 mod caps8_tests;
 #[cfg(test)]
 mod cost_tests;

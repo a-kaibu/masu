@@ -864,8 +864,6 @@ crates/kura/src/d3d9/device.rs	unsafe_op_in_unsafe_fn	*p.add(1068).cast::<u32>()
 crates/kura/src/d3d9/device.rs	unsafe_op_in_unsafe_fn	*p.add(1068).cast::<u32>() = 0x1c82;
 crates/kura/src/d3d9/device.rs	unsafe_op_in_unsafe_fn	*p.add(1088).cast::<u32>() = 0x5642_4e56;
 crates/kura/src/d3d9/device.rs	unsafe_op_in_unsafe_fn	*p.add(1088).cast::<u32>() = 0x5642_4e56;
-crates/kura/src/d3d9/device.rs	unsafe_op_in_unsafe_fn	*p.add(c * 256 + i) = (i * 257) as u16;
-crates/kura/src/d3d9/device.rs	unsafe_op_in_unsafe_fn	*p.add(c * 256 + i) = (i * 257) as u16;
 crates/kura/src/d3d9/device.rs	unsafe_op_in_unsafe_fn	*p.add(i) = *reg;
 crates/kura/src/d3d9/device.rs	unsafe_op_in_unsafe_fn	*p.add(i) = *reg;
 crates/kura/src/d3d9/device.rs	unsafe_op_in_unsafe_fn	*p.add(us(i)) = *x;

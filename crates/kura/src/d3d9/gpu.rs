@@ -53,6 +53,10 @@ pub const RESOLVE: u32 = 32; // dst dst_level dst_layer src src_layer: ResolveSu
 /// the render pipelines made of it go first (DESTROY_PIPELINE).
 pub const DESTROY_SHADER: u32 = 33; // id
 pub const DESTROY_PIPELINE: u32 = 34; // id (CREATE_PIPELINE's or CREATE_PIPELINE2's)
+/// The display's gamma ramp (a full-screen Direct3D 9 swap chain's SetGammaRamp, DXGI
+/// SetGammaControl): 3 x 256 u16 (red, green, blue) at blob_offset, or blob_offset u32::MAX for
+/// none (the identity). The screen is drawn through it.
+pub const GAMMA: u32 = 35; // blob_offset
 
 /// Texture formats on the page.
 pub const FMT_BGRA8: u32 = 0;

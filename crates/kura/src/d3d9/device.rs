@@ -26,6 +26,11 @@ const USAGE_DYNAMIC: u32 = 0x200;
 /// makes no levels
 const D3DOK_NOAUTOGEN: u32 = 0x0876_087f;
 const TEXF_NONE: u32 = 0;
+const CREATE_SOFTWARE_VP: u32 = 0x20;
+const CREATE_MIXED_VP: u32 = 0x80;
+/// D3DPRESENTFLAG_LOCKABLE_BACKBUFFER
+const PRESENTFLAG_LOCKABLE: u32 = 1;
+const SWAPEFFECT_FLIP: u32 = 2;
 const TEXF_LINEAR: u32 = 2;
 const LOCK_DISCARD: u32 = 0x2000;
 
@@ -425,8 +430,13 @@ pub struct Device {
     /// the batch `last_vs` / `last_ps` were written to
     uniform_gen: u64,
     pub in_scene: bool,
-    pub cursor: bool,
-    pub gamma: Vec<u8>,
+    pub cursor: Cursor,
+    /// SetGammaRamp's (None: none set, the identity)
+    pub gamma: Option<Box<[u16; 768]>>,
+    /// SetClipStatus's D3DCLIPSTATUS9 (ClipUnion, ClipIntersection)
+    pub clip_status: [u32; 2],
+    /// SetSoftwareVertexProcessing's (a mixed device's), or the device's own
+    pub software_vp: bool,
     pub frames: u64,
     /// the declarations GetVertexDeclaration hands out for FVFs (fvf -> object id)
     pub fvf_decls: HashMap<u32, u32>,
@@ -466,6 +476,23 @@ pub struct Device {
     /// IDirect3DDevice9Ex: Set/GetMaximumFrameLatency's (3 at first: Wine's tests of Windows,
     /// d3d9ex.c test_frame_latency)
     pub max_latency: u32,
+}
+
+/// The device's cursor (SetCursorProperties' image, ShowCursor, SetCursorPosition): hidden at
+/// first, and shown only once it has an image (Windows: Wine's test test_cursor).
+#[derive(Default)]
+pub struct Cursor {
+    pub image: Option<CursorImage>,
+    pub shown: bool,
+    pub at: (i32, i32),
+}
+
+pub struct CursorImage {
+    pub w: u32,
+    pub h: u32,
+    pub hot: (u32, u32),
+    /// A8R8G8B8 rows
+    pub bits: Vec<u32>,
 }
 
 /// D3DSWAPEFFECT_COPY (Direct3D 8's COPY_VSYNC is made one: d3d8.rs)
@@ -618,6 +645,10 @@ pub(crate) fn default_state() -> State {
 
 impl Device {
     pub fn release_all(self: Box<Self>, d: &mut D3d) {
+        // (a full-screen device's gamma ramp leaves the display with it)
+        if self.gamma.is_some() && self.pp.get(8) == Some(&0) {
+            send_gamma(None);
+        }
         let st = &self.st;
         let mut held: Vec<u32> = st.textures.iter().copied().filter(|&t| t != 0).collect();
         held.extend(st.streams.iter().map(|s| s.0).filter(|&s| s != 0));
@@ -1045,6 +1076,93 @@ unsafe fn adapter_modes() -> Vec<(u32, u32)> {
     v
 }
 
+/// Video memory kura answers GetAvailableTextureMem from (the 1 GiB it said before it counted)
+const VIDEO_MEMORY: u64 = 1 << 30;
+
+/// GetAvailableTextureMem: video memory less what the default pool's surfaces, textures,
+/// volumes and buffers take, in whole MB (it goes down as they are made: Wine's test
+/// test_vidmem_accounting; rounded to the MB: documented).
+fn available_texture_mem(d: &D3d) -> u32 {
+    // (in the order of the objects' ids: a sum, but the tables are walked in one order)
+    let mut ids: Vec<u32> = d.objs.keys().copied().collect();
+    ids.sort_unstable();
+    let mut used = 0u64;
+    for o in ids.iter().filter_map(|i| d.objs.get(i)) {
+        let bytes = match &o.data {
+            Data::Surface(s) if s.pool == POOL_DEFAULT && s.own_gpu => {
+                let (pitch, rows) = fmt::pitch_rows(s.fmt, s.w, s.h);
+                u64::from(pitch).saturating_mul(u64::from(rows))
+            }
+            Data::Texture(t) if t.pool == POOL_DEFAULT => {
+                let levels = 32u32.saturating_sub(t.w.max(t.h).max(t.depth).leading_zeros());
+                let on_page = if t.mips == Mips::Given { t.level_count() } else { levels };
+                (0..on_page).fold(0u64, |n, l| {
+                    let (w, h) = ((t.w >> l).max(1), (t.h >> l).max(1));
+                    let (pitch, rows) = fmt::pitch_rows(t.fmt, w, h);
+                    let slices = (t.depth >> l).max(1).max(t.faces);
+                    n.saturating_add(u64::from(pitch).saturating_mul(u64::from(rows)).saturating_mul(u64::from(slices)))
+                })
+            }
+            Data::Buffer(b) if b.pool == POOL_DEFAULT => u64::from(b.len),
+            Data::Surface(_) | Data::Texture(_) | Data::Buffer(_) | Data::D3d | Data::Device | Data::SwapChain(_) | Data::Volume(_) | Data::Decl(_) | Data::Shader(_) | Data::StateBlock(_) | Data::Query(_) | Data::Other => 0,
+        };
+        used = used.saturating_add(bytes);
+    }
+    let mb = VIDEO_MEMORY.saturating_sub(used) >> 20;
+    u32::try_from(mb << 20).unwrap_or(u32::MAX)
+}
+
+/// The display's gamma ramp to the page (None: the identity).
+fn send_gamma(r: Option<&[u16; 768]>) {
+    gpu::record(|b| match r {
+        Some(r) => {
+            let at = b.blob.len().next_multiple_of(4);
+            b.blob.resize(at, 0);
+            b.blob.extend(r.iter().flat_map(|v| v.to_le_bytes()));
+            b.cmd(&[gpu::GAMMA, lo32(at)]);
+        }
+        None => b.cmd(&[gpu::GAMMA, u32::MAX]),
+    });
+}
+
+/// SetCursorProperties(x hot spot, y hot spot, surface): an A8R8G8B8 surface whose width and
+/// height are powers of two no larger than the display's (Windows: Wine's test test_cursor;
+/// the format: documented).
+unsafe fn set_cursor_properties(d: &mut D3d, x: u32, y: u32, surface: u32) -> u32 {
+    let s = d.id_of(surface);
+    let Some(Data::Surface(sf)) = d.objs.get(&s).map(|o| &o.data) else { return D3DERR_INVALIDCALL };
+    let (w, h, f) = (sf.w, sf.h, sf.fmt);
+    let (mut dw, mut dh) = (0, 0);
+    // SAFETY: two out-parameters of this frame
+    unsafe { crate::display::vnhost_display_size(&raw mut dw, &raw mut dh) };
+    let fits = |v: u32, d: i32| v.is_power_of_two() && i64::from(v) <= i64::from(d);
+    if f != fmt::A8R8G8B8 || !fits(w, dw) || !fits(h, dh) {
+        return D3DERR_INVALIDCALL;
+    }
+    // SAFETY: the surface's guest copy (surface_mem), `pitch` bytes a row
+    let Some(mem) = (unsafe { surface_mem(d, s) }) else { return D3DERR_INVALIDCALL };
+    let Some(Data::Surface(sf)) = d.objs.get(&s).map(|o| &o.data) else { return D3DERR_INVALIDCALL };
+    let pitch = sf.pitch;
+    let mut bits = Vec::with_capacity(us(w.saturating_mul(h)));
+    for row in 0..h {
+        for col in 0..w {
+            // SAFETY: inside the surface's copy: row < h, col < w
+            bits.push(unsafe { rd(mem.saturating_add(row.saturating_mul(pitch)).saturating_add(col.saturating_mul(4)), 0) });
+        }
+    }
+    let Some(dev) = d.dev.as_mut() else { return D3DERR_INVALIDCALL };
+    dev.cursor.image = Some(CursorImage { w, h, hot: (x, y), bits });
+    S_OK
+}
+
+/// SetDialogBoxMode(enable): enabling needs a lockable back buffer, no multisampling and no
+/// flip swap effect (documented); disabling always succeeds.
+fn set_dialog_box_mode(dev: &mut Device, enable: u32) -> u32 {
+    let pp = dev.pp;
+    let ok = pp.get(11).is_some_and(|f| f & PRESENTFLAG_LOCKABLE != 0) && pp.get(4) == Some(&0) && pp.get(6) != Some(&SWAPEFFECT_FLIP);
+    if enable != 0 && !ok { D3DERR_INVALIDCALL } else { S_OK }
+}
+
 unsafe fn display_mode(out: u32) -> u32 {
     let (mut w, mut h) = (0, 0);
     crate::display::vnhost_display_size(&mut w, &mut h);
@@ -1349,8 +1467,10 @@ unsafe fn create_device(d: &mut D3d, d3d: u32, ty: u32, focus: u32, behavior: u3
         batch_gen: u64::MAX,
         uniform_gen: u64::MAX,
         in_scene: false,
-        cursor: true,
-        gamma: Vec::new(),
+        cursor: Cursor::default(),
+        gamma: None,
+        clip_status: [0, 0],
+        software_vp: behavior & CREATE_SOFTWARE_VP != 0,
         frames: 0,
         fvf_decls: HashMap::new(),
         palettes: HashMap::new(),
@@ -1554,8 +1674,12 @@ unsafe fn device_call(d: &mut D3d, m: u32, a: &dyn Fn(usize) -> u32, after: &mut
 
 unsafe fn device_method(d: &mut D3d, m: u32, a: &dyn Fn(usize) -> u32, after: &mut After) -> u32 {
     match m {
-        3 => S_OK, // TestCooperativeLevel
-        4 => 1024 * 1024 * 1024,
+        // TestCooperativeLevel: D3D_OK while the device's window keeps the focus (Wine's test
+        // test_reset: after creation, windowed or full-screen); no other program takes it
+        3 => S_OK,
+        4 => available_texture_mem(d),
+        // EvictManagedResources: managed resources leave video memory, to be loaded again when
+        // used (documented); kura's copies on the page are what draws read, so they stay
         5 => S_OK,
         6 => {
             let dev = dev!(d);
@@ -1578,12 +1702,20 @@ unsafe fn device_method(d: &mut D3d, m: u32, a: &dyn Fn(usize) -> u32, after: &m
             wr(a(1) + 8 + ptr(), 0, dev.behavior);
             S_OK
         }
-        10 => S_OK,
-        11 => S_OK,
+        // SAFETY: the surface is the caller's object (looked up)
+        10 => unsafe { set_cursor_properties(d, a(1), a(2), a(3)) },
+        // SetCursorPosition(x, y, flags)
+        11 => {
+            dev!(d).cursor.at = (a(1).cast_signed(), a(2).cast_signed());
+            S_OK
+        }
+        // ShowCursor(show): what it was; shown only with an image (Wine's test test_cursor)
         12 => {
-            let dev = dev!(d);
-            let was = dev.cursor;
-            dev.cursor = a(1) != 0;
+            let c = &mut dev!(d).cursor;
+            let was = c.shown;
+            if c.image.is_some() {
+                c.shown = a(1) != 0;
+            }
             u32::from(was)
         }
         13 => create_swap_chain(d, a(1), a(2)),
@@ -1597,6 +1729,7 @@ unsafe fn device_method(d: &mut D3d, m: u32, a: &dyn Fn(usize) -> u32, after: &m
             wrp(a(2), 0, d.addr_of(sc));
             S_OK
         }
+        // GetNumberOfSwapChains: the implicit ones (documented), one for a device of one adapter
         15 => 1,
         16 => {
             // Reset
@@ -1621,6 +1754,10 @@ unsafe fn device_method(d: &mut D3d, m: u32, a: &dyn Fn(usize) -> u32, after: &m
             p[5] = 0;
             write_pp(a(1), &p);
             let Some(dev) = d.dev.as_mut() else { return D3DERR_INVALIDCALL };
+            // (the gamma ramp on the display while full-screen)
+            if let Some(g) = &dev.gamma && (dev.pp.get(8) == Some(&0)) != (p.get(8) == Some(&0)) {
+                send_gamma((p.get(8) == Some(&0)).then_some(&**g));
+            }
             dev.pp = p;
             // unbind everything the old state held
             let st = std::mem::replace(&mut dev.st, default_state());
@@ -1636,18 +1773,36 @@ unsafe fn device_method(d: &mut D3d, m: u32, a: &dyn Fn(usize) -> u32, after: &m
         17 => present(d, after, a(1), a(2), a(3)),
         18 => get_backbuffer(d, a(4)),
         19 => raster_status(d, a(2)),
-        20 => S_OK,
-        21 => S_OK,
-        22 => {
-            // GetGammaRamp: identity
-            let p = gp::<u16>(a(3));
-            if !p.is_null() {
-                for c in 0..3 {
-                    for i in 0..256 {
-                        *p.add(c * 256 + i) = (i * 257) as u16;
-                    }
-                }
+        20 => set_dialog_box_mode(dev!(d), a(1)),
+        // SetGammaRamp(swap chain, flags, ramp): kept; a full-screen device's goes to the
+        // display (D3DCAPS2_FULLSCREENGAMMA)
+        21 => {
+            if a(1) != 0 || a(3) == 0 {
+                return S_OK;
             }
+            let mut r = Box::new([0u16; 768]);
+            // SAFETY: the caller's D3DGAMMARAMP (3 x 256 WORDs)
+            unsafe { std::ptr::copy_nonoverlapping(gc::<u16>(a(3)), r.as_mut_ptr(), 768) };
+            let dev = dev!(d);
+            let full = dev.pp.get(8) == Some(&0);
+            if full {
+                send_gamma(Some(&r));
+            }
+            dev.gamma = Some(r);
+            S_OK
+        }
+        // GetGammaRamp(swap chain, ramp): SetGammaRamp's, the identity before one
+        22 => {
+            let p = gp::<u16>(a(2));
+            if p.is_null() || a(1) != 0 {
+                return S_OK;
+            }
+            let r: [u16; 768] = match &dev!(d).gamma {
+                Some(g) => **g,
+                None => std::array::from_fn(|i| u16::try_from(i % 256).unwrap_or(0).wrapping_mul(257)),
+            };
+            // SAFETY: the caller's D3DGAMMARAMP
+            unsafe { std::ptr::copy_nonoverlapping(r.as_ptr(), p, 768) };
             S_OK
         }
         23 => create_texture(d, a(1), a(2), a(3), a(4), a(5), a(6), a(7)),
@@ -1906,7 +2061,24 @@ unsafe fn device_method(d: &mut D3d, m: u32, a: &dyn Fn(usize) -> u32, after: &m
             wrp(a(1), 0, o);
             S_OK
         }
-        62 | 63 => S_OK,
+        // SetClipStatus / GetClipStatus(D3DCLIPSTATUS9)
+        62 | 63 => {
+            if a(1) == 0 {
+                return D3DERR_INVALIDCALL;
+            }
+            let dev = dev!(d);
+            if m == 62 {
+                // SAFETY: the caller's D3DCLIPSTATUS9 (two DWORDs, checked non-null)
+                dev.clip_status = [0, 1].map(|i| unsafe { rd(a(1), i) });
+            } else {
+                let [u, x] = dev.clip_status;
+                // SAFETY: the caller's D3DCLIPSTATUS9, as above
+                unsafe { wr(a(1), 0, u) };
+                // SAFETY: as above
+                unsafe { wr(a(1), 1, x) };
+            }
+            S_OK
+        }
         64 => {
             let dev = dev!(d);
             let t = sampler_slot(a(1)).map_or(0, |s| dev.st.textures[s]);
@@ -2011,8 +2183,17 @@ unsafe fn device_method(d: &mut D3d, m: u32, a: &dyn Fn(usize) -> u32, after: &m
             std::ptr::copy_nonoverlapping(dev.st.scissor.as_ptr(), a(1) as *mut i32, 4);
             S_OK
         }
-        77 => S_OK,
-        78 => 0,
+        // SetSoftwareVertexProcessing(software): a mixed device's (the others are what they
+        // were made as)
+        77 => {
+            let dev = dev!(d);
+            if dev.behavior & CREATE_MIXED_VP == 0 {
+                return D3DERR_INVALIDCALL;
+            }
+            dev.software_vp = a(1) != 0;
+            S_OK
+        }
+        78 => u32::from(dev!(d).software_vp),
         79 => {
             let dev = dev!(d);
             dev.st.npatch = a(1);

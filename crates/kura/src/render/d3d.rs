@@ -913,6 +913,9 @@ pub struct D3d {
     /// changes when a texture goes or the overlay's view changes (view indexes are reused)
     pub tex_gen: u64,
     pub frames: u64,
+    /// the display's gamma ramp (GAMMA's; None: the identity) and a count of its changes
+    pub gamma: Option<Box<[u16; 768]>>,
+    pub gamma_gen: u64,
     inflight: u32,
     next_token: u32,
     pub gpu_ms: Cell<(f64, f64)>,
@@ -1049,6 +1052,8 @@ impl D3d {
             overlay: None,
             tex_gen: 0,
             frames: 0,
+            gamma: None,
+            gamma_gen: 0,
             inflight: 0,
             next_token: 1,
             gpu_ms: Cell::new((0.0, 0.0)),
@@ -1549,6 +1554,18 @@ impl D3d {
                     self.shader_dims.remove(&id);
                     self.shader_src.remove(&id);
                     i += 2;
+                }
+                GAMMA => {
+                    let off = us(a(1));
+                    self.gamma = blob.get(off..off.saturating_add(1536)).map(|b| {
+                        let mut r = Box::new([0u16; 768]);
+                        for (v, w) in r.iter_mut().zip(b.chunks_exact(2)) {
+                            *v = u16::from_le_bytes([w.first().copied().unwrap_or(0), w.get(1).copied().unwrap_or(0)]);
+                        }
+                        r
+                    });
+                    self.gamma_gen = self.gamma_gen.wrapping_add(1);
+                    i = i.saturating_add(2);
                 }
                 DESTROY_PIPELINE => {
                     let id = a(1);
