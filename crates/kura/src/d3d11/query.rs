@@ -100,13 +100,8 @@ impl Kind {
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum State {
-    Fresh,
-    /// begun: an occlusion query's ticket (0: none), the device losses then
-    Building { ticket: u32, lost: u32 },
-    Issued { ticket: u32, lost: u32 },
-}
+/// The same states as a D3D9 query (begun: an occlusion query's ticket, 0: none; the device losses then).
+pub use crate::d3d9::query::State;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct Query {
@@ -173,24 +168,13 @@ fn losses() -> u32 {
     crate::render::lost_gen()
 }
 
-fn ns_now() -> u64 {
-    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| u64::try_from(d.as_nanos()).unwrap_or(u64::MAX))
-}
-
 impl Query {
     pub fn new(kind: Kind) -> Query {
         Query { kind, state: State::Fresh, stats: [0; 11] }
     }
 
     pub fn forget(&self) {
-        match self.state {
-            State::Fresh => {}
-            State::Building { ticket, .. } | State::Issued { ticket, .. } => {
-                if ticket != 0 {
-                    gpu::query_forget(ticket);
-                }
-            }
-        }
+        self.state.forget();
     }
 
     /// ID3D11DeviceContext::Begin (`now`: the device's counts)
@@ -273,7 +257,7 @@ impl Query {
             }
             Answer::Done(v) => v,
             Answer::Unrun => match self.kind {
-                Kind::Timestamp => ns_now(),
+                Kind::Timestamp => crate::d3d9::query::ns_now(),
                 Kind::Event | Kind::Occlusion | Kind::TimestampDisjoint | Kind::PipelineStatistics | Kind::OcclusionPredicate | Kind::SoStatistics(_) | Kind::SoOverflowPredicate(_) => 0,
             },
         };
