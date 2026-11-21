@@ -28,6 +28,7 @@
 
 #![allow(non_snake_case)]
 
+use kome::locks::Lock as _;
 use std::collections::HashMap;
 use std::sync::Mutex;
 
@@ -107,7 +108,7 @@ const WM_NOTIFY: u32 = 0x4e;
 static PAGES: Mutex<Option<HashMap<u32, bool>>> = Mutex::new(None);
 
 fn page_wide(h: u32) -> Option<bool> {
-    PAGES.lock().unwrap().get_or_insert_with(HashMap::new).get(&h).copied()
+    PAGES.locked().get_or_insert_with(HashMap::new).get(&h).copied()
 }
 
 #[derive(Default)]
@@ -140,11 +141,11 @@ static SHEETS: Mutex<Option<HashMap<u32, Sheet>>> = Mutex::new(None);
 static NEXT_KEY: Mutex<u32> = Mutex::new(1);
 
 fn sheet<R>(key: u32, f: impl FnOnce(&mut Sheet) -> R) -> Option<R> {
-    SHEETS.lock().unwrap().get_or_insert_with(HashMap::new).get_mut(&key).map(f)
+    SHEETS.locked().get_or_insert_with(HashMap::new).get_mut(&key).map(f)
 }
 
 fn key_of(hwnd: u32) -> Option<u32> {
-    let g = SHEETS.lock().unwrap();
+    let g = SHEETS.locked();
     g.as_ref()?.iter().find(|(_, s)| s.hwnd == hwnd).map(|(k, _)| *k)
 }
 
@@ -224,7 +225,7 @@ fn create_page(c: &mut Ctx, src: u32, wide_: bool) -> u32 {
     for i in 0..size {
         mem::w8(p + i, mem::r8(src + i));
     }
-    PAGES.lock().unwrap().get_or_insert_with(HashMap::new).insert(p, wide_);
+    PAGES.locked().get_or_insert_with(HashMap::new).insert(p, wide_);
     if r32(p + 4) & PSP_USECALLBACK != 0 && psp_callback(p) != 0 {
         let cb = psp_callback(p);
         c.call(cb, &[0, PSPCB_ADDREF, p]);
@@ -240,7 +241,7 @@ fn destroy_page(c: &mut Ctx, h: u32) -> bool {
         let cb = psp_callback(h);
         c.call(cb, &[0, PSPCB_RELEASE, h]);
     }
-    PAGES.lock().unwrap().get_or_insert_with(HashMap::new).remove(&h);
+    PAGES.locked().get_or_insert_with(HashMap::new).remove(&h);
     mem::heap_free(h);
     true
 }
@@ -409,11 +410,11 @@ fn property_sheet(c: &mut Ctx, h: u32, wide_: bool) -> u32 {
         caption = prop_title(&caption);
     }
     let key = {
-        let mut k = NEXT_KEY.lock().unwrap();
+        let mut k = NEXT_KEY.locked();
         *k += 1;
         *k
     };
-    SHEETS.lock().unwrap().get_or_insert_with(HashMap::new).insert(key, Sheet { flags, inst, parent, caption, callback, start: start_idx, pages, ..Sheet::default() });
+    SHEETS.locked().get_or_insert_with(HashMap::new).insert(key, Sheet { flags, inst, parent, caption, callback, start: start_idx, pages, ..Sheet::default() });
     let modeless = flags & PSH_MODELESS != 0;
     let t = sheet_template(modeless);
     if callback != 0 {
@@ -435,7 +436,7 @@ fn property_sheet(c: &mut Ctx, h: u32, wide_: bool) -> u32 {
 
 /// The sheet is gone: its pages are destroyed (as PropertySheet does with them).
 fn end_sheet(c: &mut Ctx, key: u32) {
-    let s = SHEETS.lock().unwrap().get_or_insert_with(HashMap::new).remove(&key);
+    let s = SHEETS.locked().get_or_insert_with(HashMap::new).remove(&key);
     if let Some(s) = s {
         for p in s.pages {
             destroy_page(c, p.psp);

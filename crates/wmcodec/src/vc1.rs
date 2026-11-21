@@ -12,7 +12,7 @@ use crate::bits::Bits;
 use crate::hpel;
 use crate::idct;
 use crate::intrax8::{IntraX8, Plane};
-use crate::msmpeg4::{dc_vlc, mb_i_vlc, Error, Picture};
+use crate::msmpeg4::{block_index, dc_vlc, mb_i_vlc, Error, Picture};
 use crate::msmpeg4_tables as m4;
 use crate::vc1_tables as t;
 use crate::num::i32z;
@@ -995,16 +995,7 @@ impl Decoder {
     }
 
     fn init_block_index(&mut self) {
-        let (b8, mbs, mb_h) = (self.b8, self.mbs, self.mb_h);
-        let (x, y) = (self.mb_x, self.mb_y);
-        self.bi = [
-            b8 * (2 * y) + 2 * x,
-            b8 * (2 * y) + 1 + 2 * x,
-            b8 * (2 * y + 1) + 2 * x,
-            b8 * (2 * y + 1) + 1 + 2 * x,
-            mbs * (y + 1) + b8 * mb_h * 2 + x,
-            mbs * (y + mb_h + 2) + b8 * mb_h * 2 + x,
-        ];
+        self.bi = block_index(self.b8, self.mbs, self.mb_h, self.mb_x, self.mb_y);
     }
     /// s->dest[k] of the MB
     fn dest(&self, k: usize) -> isize {
@@ -3392,11 +3383,12 @@ pub mod synth {
     impl W {
         fn put(&mut self, v: u32, n: usize) {
             for k in (0..n).rev() {
-                if self.1 % 8 == 0 {
-                    self.0.push(0);
+                let bit = kome::num::lo8((v >> k) & 1) << (7 - self.1 % 8);
+                // (a byte boundary starts the next byte)
+                match self.0.last_mut() {
+                    Some(last) if self.1 % 8 != 0 => *last |= bit,
+                    _ => self.0.push(bit),
                 }
-                let b = (v >> k) & 1;
-                *self.0.last_mut().unwrap() |= kome::num::lo8(b) << (7 - self.1 % 8);
                 self.1 += 1;
             }
         }
@@ -3424,7 +3416,13 @@ pub mod synth {
         for (v, n) in [(u32::from(b), 3), (0, 2), (0, 1), (1, 1)] {
             w.put(v, n);
         }
-        w.0.try_into().unwrap()
+        // (25 + 7 bits: the four bytes)
+        debug_assert_eq!(w.1, 32);
+        let mut out = [0; 4];
+        for (o, b) in out.iter_mut().zip(&w.0) {
+            *o = *b;
+        }
+        out
     }
 
     /// An IntraX8 I picture (of an `extra_x8` stream), PQINDEX 10: its header then `body`, the

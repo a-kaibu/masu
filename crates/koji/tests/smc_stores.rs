@@ -6,17 +6,7 @@
 //! (review b02). WATCH is a static: this test is alone in its binary.
 
 use koji::jit::{self, wasm};
-use koji::{Fault, Memory};
 
-struct Code(Vec<u8>);
-impl Memory for Code {
-    fn read8(&mut self, a: u32) -> Result<u8, Fault> {
-        a.checked_sub(0x10_0000).and_then(|i| self.0.get(i as usize).copied()).ok_or(Fault { addr: a, write: false })
-    }
-    fn write8(&mut self, a: u32, _: u8) -> Result<(), Fault> {
-        Err(Fault { addr: a, write: true })
-    }
-}
 
 /// The JIT code of `bytes` then RET, as a region: how many smc exits (stores of an address
 /// into Cpu::jit_smc) it has, or None if nothing was translated.
@@ -24,7 +14,7 @@ fn smc_exits(bytes: &[u8]) -> Option<usize> {
     let mut v = bytes.to_vec();
     v.push(0xc3);
     let mut m = wasm::Module::default();
-    jit::translate_region(&mut m, &mut Code(v), &[0x10_0000], 16, |_| true)?;
+    jit::translate_region(&mut m, &mut koji::Rom::<0x10_0000>(v), &[0x10_0000], 16, |_| true)?;
     let b = m.finish();
     let mut c = wasm::Code::default();
     c.store32(std::mem::offset_of!(koji::Cpu, jit_smc) as u32);

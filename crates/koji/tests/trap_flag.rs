@@ -4,23 +4,8 @@
 //! the next instruction, POPF clearing it still traps after itself; a run with TF set changes
 //! nothing else (registers, flags, memory) than a run without.
 
-use koji::{flags::TF, step, Cpu, Exit, Fault, Memory};
-
-struct Flat(Vec<u8>);
-impl Memory for Flat {
-    fn read8(&mut self, a: u32) -> Result<u8, Fault> {
-        self.0.get(a as usize).copied().ok_or(Fault { addr: a, write: false })
-    }
-    fn write8(&mut self, a: u32, v: u8) -> Result<(), Fault> {
-        match self.0.get_mut(a as usize) {
-            Some(b) => {
-                *b = v;
-                Ok(())
-            }
-            None => Err(Fault { addr: a, write: true }),
-        }
-    }
-}
+use koji::{flags::TF, step, Cpu, Exit};
+use koji::Flat;
 
 const CODE: u32 = 0x1000;
 

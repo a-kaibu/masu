@@ -112,8 +112,8 @@ impl Gen<'_> {
         let lanes = if wide { 2 } else { 1 };
         match m {
             Vzeroall => {
-                for r in 0..16 {
-                    let (lo, hi) = halves(Register::try_from(Register::XMM0 as usize + r).unwrap());
+                for r in 0..16u32 {
+                    let (lo, hi) = halves(Register::XMM0 + r);
                     self.c.get(L_CPU).v128zero().v128store(lo);
                     self.c.get(L_CPU).v128zero().v128store(hi);
                 }

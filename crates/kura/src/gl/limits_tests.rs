@@ -206,7 +206,7 @@ fn window_buffers_go_with_their_last_context() {
             let mut want: Vec<u32> = model.values().copied().filter(|&h| h != 0).collect();
             want.sort();
             want.dedup();
-            let mut got: Vec<u32> = GL.lock().unwrap().drawables.keys().copied().collect();
+            let mut got: Vec<u32> = GL.locked().drawables.keys().copied().collect();
             got.sort();
             assert!(want.iter().all(|h| got.contains(h)), "seed {seed} step {step}: {got:?} {want:?}");
             if destroyed {
@@ -221,11 +221,11 @@ fn window_buffers_go_with_their_last_context() {
 static BLOCKS: std::sync::Mutex<Option<HashMap<usize, usize>>> = std::sync::Mutex::new(None);
 unsafe extern "C" fn block_alloc(n: u32) -> *mut u8 {
     let p = libc::malloc(n as usize) as *mut u8;
-    BLOCKS.lock().unwrap().get_or_insert_with(HashMap::new).insert(p as usize, n as usize);
+    BLOCKS.locked().get_or_insert_with(HashMap::new).insert(p as usize, n as usize);
     p
 }
 unsafe extern "C" fn block_free(p: *mut u8) {
-    let n = BLOCKS.lock().unwrap().as_mut().unwrap().remove(&(p as usize)).expect("freed twice, or never given");
+    let n = BLOCKS.locked().as_mut().unwrap().remove(&(p as usize)).expect("freed twice, or never given");
     // (whoever still reads it finds this)
     std::ptr::write_bytes(p, 0xdd, n);
     libc::free(p as *mut libc::c_void);
@@ -265,7 +265,7 @@ fn mapped_buffers_live_in_guest_memory() {
                     let src: Vec<u8> = (0..n).map(|_| r.next() as u8).collect();
                     unsafe { glBufferData(T, n as isize, if r.chance(30) { std::ptr::null() } else { src.as_ptr() }, 0x88E4) };
                     // (glBufferData(NULL) is zeros here; the mapping, if any, is gone)
-                    *data = GL.lock().unwrap().buffers[&id].data.clone();
+                    *data = GL.locked().buffers[&id].data.clone();
                     assert_eq!(data.len(), n, "{at}");
                     *mapped = 0;
                 }
@@ -281,7 +281,7 @@ fn mapped_buffers_live_in_guest_memory() {
                     if *mapped != 0 {
                         assert_eq!((p, glGetError()), (0, GL_INVALID_OPERATION), "{at}: mapped twice");
                     } else {
-                        let blocks = BLOCKS.lock().unwrap();
+                        let blocks = BLOCKS.locked();
                         assert!(blocks.as_ref().unwrap().get(&p).is_some_and(|&n| n >= data.len()), "{at}: not a guest block of the buffer's size");
                         assert_eq!(unsafe { std::slice::from_raw_parts(p as *const u8, data.len()) }, &data[..], "{at}");
                         *mapped = p;
@@ -297,12 +297,12 @@ fn mapped_buffers_live_in_guest_memory() {
                 6 => {
                     assert_eq!(glUnmapBuffer(T), 1);
                     *mapped = 0;
-                    assert_eq!(GL.lock().unwrap().buffers[&id].data, *data, "{at}: after the unmap");
+                    assert_eq!(GL.locked().buffers[&id].data, *data, "{at}: after the unmap");
                 }
                 7 => {
                     // (a draw of nothing: buffers still mapped are read as they are now)
                     glDrawArrays(4, 0, 0);
-                    assert_eq!(GL.lock().unwrap().buffers[&id].data, *data, "{at}: at a draw");
+                    assert_eq!(GL.locked().buffers[&id].data, *data, "{at}: at a draw");
                 }
                 8 if r.chance(40) => {
                     unsafe { glDeleteBuffers(1, &id) };
@@ -312,7 +312,7 @@ fn mapped_buffers_live_in_guest_memory() {
             }
             // the live blocks are the mappings, no more and no fewer
             let mut want: Vec<usize> = model.values().map(|m| m.1).filter(|&p| p != 0).collect();
-            let mut got: Vec<usize> = BLOCKS.lock().unwrap().as_ref().map_or_default(|b| b.keys().copied().collect());
+            let mut got: Vec<usize> = BLOCKS.locked().as_ref().map_or_default(|b| b.keys().copied().collect());
             want.sort();
             got.sort();
             assert_eq!(got, want, "{at}");
@@ -320,9 +320,9 @@ fn mapped_buffers_live_in_guest_memory() {
         for id in model.keys() {
             unsafe { glDeleteBuffers(1, id) };
         }
-        assert!(BLOCKS.lock().unwrap().as_ref().is_none_or(|b| b.is_empty()), "seed {seed}: blocks left");
+        assert!(BLOCKS.locked().as_ref().is_none_or(|b| b.is_empty()), "seed {seed}: blocks left");
     }
-    *GUEST.lock().unwrap() = None;
+    *GUEST.locked() = None;
 }
 
 /// Client arrays whose element would end past the program's memory (a pointer near 2 GB, a
@@ -333,7 +333,7 @@ fn mapped_buffers_live_in_guest_memory() {
 fn client_arrays_stay_in_guest_memory() {
     let _g = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
     fresh();
-    let g = GL.lock().unwrap();
+    let g = GL.locked();
     let g = g;
     let mut r = Rng(0xa11a_57e5);
     let def = [9.0, 8.0, 7.0, 6.0];
@@ -430,7 +430,7 @@ fn reads_come_from_the_read_framebuffer() {
             }
             _ => {}
         }
-        let mut lk = GL.lock().unwrap();
+        let mut lk = GL.locked();
         let g = &mut *lk;
         let c = g.ctxs.remove(&ctx).unwrap();
         let got = read_target(g, &c);

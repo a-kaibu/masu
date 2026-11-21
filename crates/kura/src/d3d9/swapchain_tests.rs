@@ -7,6 +7,7 @@
 //! shown in their own window by their Present, living on while the program holds it.
 //! (tests/winref/probes/d3d9swapchain.c makes the same calls on Windows and on sake.)
 
+use kome::locks::Lock as _;
 use super::draw_tests::{call, out, rd};
 use super::trace_tests::{alloc, attach_page, on_low_stack, CALLS, SERIAL};
 use super::*;
@@ -61,7 +62,7 @@ fn page() -> Rc<RefCell<Page>> {
 }
 
 fn live(addr: u32) -> bool {
-    D3D.lock().unwrap().as_ref().unwrap().objs.contains_key(&unsafe { *((addr + 4) as *const u32) })
+    D3D.locked().as_ref().unwrap().objs.contains_key(&unsafe { *((addr + 4) as *const u32) })
 }
 
 fn desc(surface: u32) -> [u32; 8] {
@@ -201,7 +202,7 @@ proptest! {
         init();
         attach_page();
         let dev = angle_device();
-        let base = D3D.lock().unwrap().as_ref().unwrap().objs.len();
+        let base = D3D.locked().as_ref().unwrap().objs.len();
         let mut held = Vec::new();
         for &(w, h, f, count, effect, windowed) in &chains {
             let pp = params(w, h, f, count, effect, 0x200, windowed);
@@ -233,7 +234,7 @@ proptest! {
         for (iface, a) in held.drain(..) {
             call(iface, 2, &[a]);
         }
-        prop_assert_eq!(D3D.lock().unwrap().as_ref().unwrap().objs.len(), base, "every chain and back buffer gone");
+        prop_assert_eq!(D3D.locked().as_ref().unwrap().objs.len(), base, "every chain and back buffer gone");
         gpu::set_pump(None);
     }
 }

@@ -5,25 +5,15 @@
 //! grows past the declared array. And glBindAttribLocation with an index past
 //! GL_MAX_VERTEX_ATTRIBS is GL_INVALID_VALUE and changes nothing.
 
+use super::draw_tests::guest;
 use super::*;
-use crate::d3d9::trace_tests::{alloc, SERIAL};
+use crate::d3d9::trace_tests::SERIAL;
 use proptest::prelude::*;
 use crate::d3d9::gpu;
 
 const VS: &str = "uniform vec4 a[3];\nuniform mat4 m[2];\nuniform float s;\nattribute vec4 extra;\n\
 void main() { gl_Position = gl_Vertex + a[0] + a[1] + a[2] + m[0][0] + m[1][1] + vec4(s) + extra; }";
 const FS: &str = "void main() { gl_FragColor = vec4(1.0); }";
-
-fn guest(text: &str) -> *const *const c_char {
-    unsafe {
-        let p = alloc(text.len() as u32 + 1);
-        std::ptr::copy_nonoverlapping(text.as_ptr(), p, text.len());
-        *p.add(text.len()) = 0;
-        let a = alloc(8) as *mut u32;
-        *a = p as usize as u32;
-        a as *const *const c_char
-    }
-}
 
 fn program() -> u32 {
     *GL.lock().unwrap_or_else(|e| e.into_inner()) = Gl::new();
@@ -41,7 +31,7 @@ fn program() -> u32 {
     glAttachShader(p, fs);
     glLinkProgram(p);
     glUseProgram(p);
-    assert!(GL.lock().unwrap().programs[&p].linked.is_some(), "links");
+    assert!(GL.locked().programs[&p].linked.is_some(), "links");
     p
 }
 
@@ -84,7 +74,7 @@ proptest! {
                 }
             }
         }
-        let g = GL.lock().unwrap();
+        let g = GL.locked();
         let x = &g.programs[&p];
         for (u, &(name, n, per)) in UNIFORMS.iter().enumerate() {
             let got = x.values.get(name).cloned().unwrap_or_default();
@@ -108,7 +98,7 @@ fn far_elements_and_big_counts_allocate_nothing() {
     // (a count of a billion past a[2]: one element is written, the pointer is read for one)
     let one = [1.0f32, 2.0, 3.0, 4.0];
     unsafe { glUniform4fv(location(p, "a[2]"), 1_000_000_000, one.as_ptr()) };
-    let g = GL.lock().unwrap();
+    let g = GL.locked();
     let v = &g.programs[&p].values["a"];
     assert_eq!(v.len(), 12);
     assert_eq!(&v[8..], &one.map(f32::to_bits));
@@ -127,7 +117,7 @@ fn attribute_indices_past_the_limit_are_refused() {
     unsafe { glBindAttribLocation(p, 15, extra.as_ptr()) };
     assert_eq!(glGetError(), 0);
     glLinkProgram(p);
-    let g = GL.lock().unwrap();
+    let g = GL.locked();
     let l = g.programs[&p].linked.as_ref().expect("links");
     assert_eq!(l.attribs.iter().find(|a| a.0 == "extra").map(|a| a.1), Some(15));
     assert!(l.attribs.iter().all(|a| a.1 < MAX_ATTRIBS), "{:?}", l.attribs);

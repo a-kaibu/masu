@@ -593,6 +593,7 @@ mod meta_tests {
 
 #[cfg(test)]
 mod egs_games_tests {
+    use kome::locks::Lock as _;
     use super::*;
     use std::collections::HashMap;
     use std::io::{BufRead, BufReader, Read, Write};
@@ -639,7 +640,7 @@ mod egs_games_tests {
                 let path = line.split(' ').nth(1).unwrap_or("").to_string();
                 let auth = h.get("authorization").cloned().unwrap_or_default();
                 let sql: String = form_urlencoded::parse(&body).find(|(k, _)| k == "sql").map_or_default(|(_, v)| v.into_owned());
-                let blob = st.gamedb.lock().unwrap().clone();
+                let blob = st.gamedb.locked().clone();
                 let digest = blob.as_ref().map(|b| format!("sha256:{}", ring::digest::digest(&ring::digest::SHA256, b).as_ref().iter().map(|x| format!("{x:02x}")).collect::<String>()));
                 let (status, extra, ty, out): (&str, String, &str, Vec<u8>) = if path.starts_with("/v2/") && auth != "Bearer tok" {
                     ("401 Unauthorized", format!("www-authenticate: Bearer realm=\"{me}/token\",service=\"t\",scope=\"repository:t/gamedb:pull\"\r\n"), "text/plain", b"auth".to_vec())
@@ -750,7 +751,7 @@ mod egs_games_tests {
         crate::gamedb::write(&file, &games, &[]).unwrap();
         // (built by hand two months ago: still taken)
         rusqlite::Connection::open(&file).unwrap().execute("UPDATE info SET value=? WHERE key='built_ms'", [(now_ms() - 60 * 86_400_000).to_string()]).unwrap();
-        *st.gamedb.lock().unwrap() = Some(zstd::encode_all(&std::fs::read(&file).unwrap()[..], 3).unwrap());
+        *st.gamedb.locked() = Some(zstd::encode_all(&std::fs::read(&file).unwrap()[..], 3).unwrap());
         let n = st.asked.load(Ordering::SeqCst);
         refill();
         let idx = db.egs_index().unwrap();
@@ -768,7 +769,7 @@ mod egs_games_tests {
     /// Until no fill of `db`'s list is under way.
     fn filled(db: &Library) {
         let t0 = std::time::Instant::now();
-        while FILLING.lock().unwrap().iter().any(|p| *p == db.0) {
+        while FILLING.locked().iter().any(|p| *p == db.0) {
             assert!(t0.elapsed() < std::time::Duration::from_secs(20), "the fill never ended");
             std::thread::sleep(std::time::Duration::from_millis(5));
         }
@@ -800,7 +801,7 @@ mod egs_games_tests {
     /// A list source that answers only once GATE opens.
     fn slow(_: &Library, _: bool) -> Result<Vec<(u32, String, u32)>> {
         SLOW_CALLS.fetch_add(1, Ordering::SeqCst);
-        let mut open = GATE.0.lock().unwrap();
+        let mut open = GATE.0.locked();
         while !*open {
             open = GATE.1.wait(open).unwrap();
         }
@@ -823,7 +824,7 @@ mod egs_games_tests {
             assert_eq!(found(&idx, "前からあるゲーム"), Some(1));
         }
         assert_eq!(SLOW_CALLS.load(Ordering::SeqCst), 1, "one fill, not one per caller");
-        *GATE.0.lock().unwrap() = true;
+        *GATE.0.locked() = true;
         GATE.1.notify_all();
         filled(&db);
         let idx = db.egs_index_with(slow).unwrap();

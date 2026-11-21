@@ -1768,18 +1768,7 @@ mod vtable_tests {
     //! Every WIC object's vtable, slot by slot (wic_vtables.txt), pinned before the method lists
     //! change shape (com::check_vtables).
     use super::*;
-    use crate::test_guest::{call, enter};
-
-    fn made(f: crate::api::Handler, args: &[u32]) -> u32 {
-        let o_own = mem::Scratch::new(8, true);
-        let o = o_own.get();
-        let mut a = args.to_vec();
-        a.push(o);
-        assert_eq!(call(f, &a), 0);
-        let p = mem::rp(o);
-        drop(o_own);
-        p
-    }
+    use crate::test_guest::{enter, made};
 
     #[test]
     fn every_objects_vtable() {

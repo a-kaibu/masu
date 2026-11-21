@@ -26,6 +26,14 @@ const GOOD_NTCRT: &str = concat!(
     "    implement(d, \"atoi\", f); implement(d, \"atol\", f); implement(d, \"_wtoi\", f); implement(d, \"_wtol\", f); implement(d, \"_atoi64\", f); implement(d, \"_wtoi64\", f);\n",
     "    implement(d, \"strtol\", f); implement(d, \"strtoul\", f); implement(d, \"wcstol\", f); implement(d, \"wcstoul\", f); implement(d, \"_wcstoi64\", f); implement(d, \"_wcstoui64\", f);\n",
     "    implement(d, \"RtlAnsiCharToUnicodeChar\", f);\n",
+    "    implement(d, \"RtlInitUnicodeStringEx\", f); implement(d, \"RtlAppendAsciizToString\", f); implement(d, \"RtlAppendStringToString\", f);\n",
+    "    implement(d, \"RtlAppendUnicodeStringToString\", f); implement(d, \"RtlAppendUnicodeToString\", f); implement(d, \"RtlCopyString\", f);\n",
+    "    implement(d, \"RtlUpperChar\", f); implement(d, \"RtlUpperString\", f); implement(d, \"RtlUpcaseUnicodeString\", f);\n",
+    "    implement(d, \"RtlDowncaseUnicodeString\", f); implement(d, \"RtlDuplicateUnicodeString\", f); implement(d, \"RtlFindCharInUnicodeString\", f);\n",
+    "    implement(d, \"RtlCompareUnicodeStrings\", f); implement(d, \"RtlGUIDFromString\", f); implement(d, \"RtlStringFromGUID\", f);\n",
+    "    implement(d, \"RtlUTF8ToUnicodeN\", f); implement(d, \"RtlUnicodeToUTF8N\", f); implement(d, \"RtlHashUnicodeString\", f);\n",
+    "    implement(d, \"RtlUnicodeStringToAnsiString\", f); implement(d, \"RtlDowncaseUnicodeChar\", f);\n",
+    "    implement(d, \"RtlFormatMessage\", f); implement(d, \"RtlFormatMessageEx\", f); implement(d, \"RtlIsTextUnicode\", f);\n",
     "}\n",
 );
 
@@ -90,6 +98,19 @@ fn fixture(r: Rule) -> Fixture {
             )],
             mutate: ("crates/sake/src/ntcrt.rs", |t| Some(t.replace("implement(d, \"_wtoi\",", "implement(d, \"_wtoi_gone\","))),
         },
+        Rule::Utf8OneDecoder => Fixture {
+            bad: &[("crates/sake/src/text.rs", "fn utf8_to_w(s: &[u8]) -> Vec<u16> {\n    for ch in s.utf8_chunks() {}\n}\n")],
+            good: &[
+                ("crates/sake/src/text.rs", "fn utf8_to_w(s: &[u8]) -> (Vec<u16>, bool) {\n    crate::rtlstr::utf8_units(s) // not utf8_chunks(\n}\n"),
+                ("crates/sake/src/rtlstr.rs", "fn f(b: &[u8]) { for ch in b.utf8_chunks() {} }\n"),
+            ],
+            mutate: ("crates/sake/src/text.rs", |t| Some(t.replace("crate::rtlstr::utf8_units(s)", "{ let _ = s.utf8_chunks(); crate::rtlstr::utf8_units(s) }"))),
+        },
+        Rule::MessageOneFormatter => Fixture {
+            bad: &[("crates/sake/src/fmtmsg.rs", "fn format(s: &[u16]) -> Vec<u16> {\n    crt::fmt::format(s, m, &mut a)\n}\n")],
+            good: &[("crates/sake/src/fmtmsg.rs", "fn format(r: &Request) -> Outcome {\n    rtlfmt::format(r, &mut g) // not a printf\n}\n")],
+            mutate: ("crates/sake/src/fmtmsg.rs", |t| Some(t.replace("rtlfmt::format(", "crate::misc::printf("))),
+        },
         Rule::BooleanArg => Fixture {
             bad: &[
                 ("crates/sake/src/k32.rs", "fn RtlAnsiStringToUnicodeString(c: &mut Ctx) -> u32 {\n    counted_out(c.a(0), &w, 2, c.a(2) != 0)\n}\n"),
@@ -141,10 +162,12 @@ fn fixture(r: Rule) -> Fixture {
             mutate: ("crates/sake/src/k32.rs", |t| Some(t + "\nconst E_FAIL: u32 = 0x8000_4005;\n")),
         },
         Rule::KomeCopy => Fixture {
-            bad: &[("crates/kura/src/x.rs", "fn lo16(x: u32) -> u16 {\n    x as u16\n}\npub trait Lock<T> {}\n"), ("crates/sake/src/y.rs", "const fn guid(d1: u32, d2: u16, d3: u16, d4: [u8; 8]) -> [u8; 16] { [0; 16] }\nfn read_guid(p: u32) -> [u8; 16] { mem::array::<16>(p) }\nfn be32(d: &[u8], o: usize) -> Option<u32> {\n    Some(u32::from_be_bytes(d.get(o..o + 4)?.try_into().ok()?))\n}\n")],
+            bad: &[("crates/kura/src/x.rs", "fn lo16(x: u32) -> u16 {\n    x as u16\n}\npub trait Lock<T> {}\n"), ("crates/sake/src/y.rs", "const fn guid(d1: u32, d2: u16, d3: u16, d4: [u8; 8]) -> [u8; 16] { [0; 16] }\nfn read_guid(p: u32) -> [u8; 16] { mem::array::<16>(p) }\nfn be32(d: &[u8], o: usize) -> Option<u32> {\n    Some(u32::from_be_bytes(d.get(o..o + 4)?.try_into().ok()?))\n}\n"), ("crates/sake/src/z_tests.rs", "fn h(b: &[u8]) -> u64 {\n    b.iter().fold(0xcbf29ce484222325, |h, &x| (h ^ u64::from(x)).wrapping_mul(0x100000001b3))\n}\n")],
             good: &[
                 ("crates/kura/src/x.rs", "use kome::num::lo16;\nimpl R {\n    fn u32_at(&self, o: usize) -> u32 { 0 }\n}\nfn word(b: &[u8], o: usize, k: usize) -> u32 { u32::from_le_bytes([0; 4]) }\nfn len(b: &[u8], o: usize) -> usize { b.len() - o }\n"),
                 ("crates/kome/src/num.rs", "pub fn lo16(x: u32) -> u16 { 0 }\n"),
+                ("crates/kome/src/golden.rs", "pub const PRIME: u64 = 0x100_0000_01b3;\n"),
+                ("crates/sake/src/z_tests.rs", "// (FNV-1a: 0x100_0000_01b3, kome's)\nfn h(b: &[u8]) -> u64 { kome::golden::Fnv::of(b) }\n"),
                 (MEM, "pub fn guid_at(p: u32) -> Option<[u8; 16]> { None }\n"),
             ],
             mutate: ("crates/kura/src/audio.rs", |t| Some(t + "\nfn lo32(x: u64) -> u32 {\n    x as u32\n}\n")),
@@ -154,11 +177,14 @@ fn fixture(r: Rule) -> Fixture {
                 ("crates/sake/src/x.rs", "fn f() { if std::env::var_os(\"SAKE_UPDATE_GOLDEN\").is_some() {} }\n"),
                 ("crates/kura/src/y.rs", "fn f() { std::env::var(\"MASU_UPDATE_GOLDEN\"); }\n"),
                 ("tools/x.sh", "BLESS=1 cargo test\n"),
+                ("crates/asf/tests/pin.rs", "fn f() { if std::env::var_os(\"PIN_RECORD\").is_some() {} }\n"),
+                ("crates/masu/src/pack.rs", "fn f() { std::env::var_os(\"MASU_REGEN\"); }\n"),
             ],
             good: &[
                 (GOLDEN_HOME, "pub const UPDATE: &str = \"MASU_UPDATE_GOLDEN\";\n"),
                 ("crates/sake/src/x.rs", "fn f() { if kome::golden::updating() {} }\n// MASU_UPDATE_GOLDEN=1 rewrites it\n"),
                 ("tests/x.sh", "MASU_UPDATE_GOLDEN=1 cargo test\n"),
+                ("crates/masu/src/update.rs", "fn f() { std::env::var(\"MASU_UPDATE_URL\"); std::env::var(\"MASU_GOLDEN_GROUP\"); }\n"),
             ],
             mutate: ("crates/sake/src/gl.rs", |t| Some(t + "\nfn regen() -> bool { std::env::var_os(\"SAKE_UPDATE_GOLDEN\").is_some() }\n")),
         },
@@ -210,7 +236,7 @@ fn fixture(r: Rule) -> Fixture {
             good: &[
                 ("tests/host-tests.sh", "export MASU_OUTS_STRICT=1\n"),
                 ("crates/sake/src/lib.rs", "#[cfg(test)]\nmod outptr_audit;\n"),
-                (".github/workflows/ci.yml", "cargo run -q --release -p masu-lint -- arch\ncargo test --workspace --release\ncargo run -q --release -p masu-lint -- ratchet\n"),
+                (".github/workflows/ci.yml", "cargo run -q --release -p masu-lint -- arch\ncargo run -q --release -p masu-lint -- dup\ncargo test --workspace --release\ncargo run -q --release -p masu-lint -- ratchet\n"),
             ],
             mutate: ("tests/host-tests.sh", |t| Some(t.replace("export MASU_OUTS_STRICT=1", ""))),
         },
@@ -279,12 +305,12 @@ fn fixture(r: Rule) -> Fixture {
             mutate: ("crates/sake/src/k32.rs", |t| Some(t + "\nfn Regression(_c: &mut Ctx) -> u32 {\n    1\n}\n")),
         },
         Rule::ConstantMethod => Fixture {
-            bad: &[("crates/kura/src/d3d11/x.rs", "fn f(m: u32) -> u32 {\n    match m {\n        49 | 51 => {}\n        // GetData\n        7 => S_OK,\n        _ => 0,\n    }\n}\n")],
+            bad: &[("crates/kura/src/d3d11/d3d10.rs", "fn device_call(d: u32, m: u32) -> u32 {\n    match m {\n        49 | 51 => {}\n        // GetData\n        7 => S_OK,\n        _ => 0,\n    }\n}\n")],
             good: &[(
-                "crates/kura/src/d3d11/x.rs",
-                "fn f(m: u32, a: u32) -> u32 {\n    match m {\n        // SetMarkerInt: annotations, which Windows' runtime drops without a tool attached (documented)\n        141 => {}\n        12 => S_OK, // AddRef as Windows (winref d3d11api)\n        13 => a,\n        _ => E_NOTIMPL,\n    }\n}\n",
+                "crates/kura/src/d3d11/d3d10.rs",
+                "fn context_call(m: u32, a: u32) -> u32 {\n    match m {\n        // SetMarkerInt: annotations, which Windows' runtime drops without a tool attached (documented)\n        141 => {}\n        12 => S_OK, // AddRef as Windows (winref d3d11api)\n        13 => a,\n        _ => E_NOTIMPL,\n    }\n}\nfn new_texture(dim: u32) -> u32 {\n    match dim {\n        3 => 1,\n        _ => 0,\n    }\n}\nfn blend_state(f: u32) -> u32 {\n    match f {\n        8 | 11 => 1,\n        f => f,\n    }\n}\n",
             )],
-            mutate: ("crates/kura/src/d3d11/mod.rs", |t| Some(t + "\nfn regression(m: u32) -> u32 {\n    match m {\n        51 | 52 => {}\n        _ => 1,\n    }\n}\n")),
+            mutate: ("crates/kura/src/d3d11/mod.rs", |t| Some(t + "\nfn regression_call(m: u32) -> u32 {\n    match m {\n        51 | 52 => {}\n        _ => 1,\n    }\n}\n")),
         },
         Rule::ArcTryUnwrap => Fixture {
             bad: &[
@@ -485,7 +511,7 @@ fn a_known_site_covers_as_many_as_it_is_listed() {
 
 #[test]
 fn every_regex_compiles() {
-    for r in [&BUILD_EXT, &BUILD_OK, &TARGET_DIR, &GOLDEN_ANY, &GOLDEN_FILES, &JOB, &CHECKS, &DISALLOWED, &REG_BY_NUMBER, &REG_UNTYPED] {
+    for r in [&BUILD_EXT, &BUILD_OK, &TARGET_DIR, &GOLDEN_ANY, &GOLDEN_READ, &FNV_PRIME, &GOLDEN_FILES, &JOB, &CHECKS, &DISALLOWED, &REG_BY_NUMBER, &REG_UNTYPED] {
         assert!(r.is_some());
     }
     for r in regress::regexes() {
@@ -513,9 +539,9 @@ fn the_new_rules_find_each_spelling_alone() {
     // names the method, not Windows' answer)
     assert_eq!(Rule::ConstantMethod.check(&Tree::made_up(fixture(Rule::ConstantMethod).bad)).len(), 2);
     // (and every site in the bad files, not only the first: w8(ga(key)) is two)
-    // (a copy of a number conversion, a lock trait, a GUID builder, a guest GUID reader and a
-    // big-endian byte reader)
-    assert_eq!(Rule::KomeCopy.check(&Tree::made_up(fixture(Rule::KomeCopy).bad)).len(), 5);
+    // (a copy of a number conversion, a lock trait, a GUID builder, a guest GUID reader, a
+    // big-endian byte reader and an FNV-1a loop)
+    assert_eq!(Rule::KomeCopy.check(&Tree::made_up(fixture(Rule::KomeCopy).bad)).len(), 6);
     assert_eq!(Rule::SafeRawPointerAbi.check(&Tree::made_up(fixture(Rule::SafeRawPointerAbi).bad)).len(), 3);
     assert_eq!(Rule::OutEscape.check(&Tree::made_up(fixture(Rule::OutEscape).bad)).len(), 6);
     // (the ExitProcess that returns u32 and crt_io's missing _amsg_exit; the three wildcard arms)

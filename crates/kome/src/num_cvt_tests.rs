@@ -32,3 +32,20 @@ proptest! {
         prop_assert_eq!(us(i), i as usize);
     }
 }
+
+// (Low's impls, one macro since 2026-11-21: each width of each type is its `as` cast)
+macro_rules! low_is_as {
+    ($($name:ident: $t:ty),*) => {$(
+        proptest! {
+            #[test]
+            fn $name(v: $t) {
+                prop_assert_eq!(Low::low_u8(v), v as u8);
+                prop_assert_eq!(Low::low_u16(v), v as u16);
+                prop_assert_eq!(Low::low_u32(v), v as u32);
+                prop_assert_eq!(Low::low_u64(v), v as u64);
+                prop_assert_eq!(Low::low_i16(v), v as i16);
+            }
+        }
+    )*};
+}
+low_is_as!(low_u8_is_as: u8, low_u16_is_as: u16, low_u32_is_as: u32, low_u64_is_as: u64, low_u128_is_as: u128, low_i8_is_as: i8, low_i16_is_as: i16, low_i32_is_as: i32, low_i64_is_as: i64, low_i128_is_as: i128, low_usize_is_as: usize, low_isize_is_as: isize);

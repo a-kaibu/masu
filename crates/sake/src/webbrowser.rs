@@ -11,6 +11,7 @@
 //! vtable is what programs call).
 #![allow(non_snake_case)]
 
+use kome::locks::Lock as _;
 use kome::guid::IID_IUNKNOWN;
 use kome::guid::{of_text, Guid};
 use crate::hresult::{S_OK, S_FALSE, E_NOTIMPL, E_NOINTERFACE, E_POINTER, E_FAIL, E_INVALIDARG, DISP_E_MEMBERNOTFOUND, DISP_E_UNKNOWNNAME, TYPE_E_ELEMENTNOTFOUND};
@@ -114,10 +115,10 @@ static BROWSERS: Mutex<Option<HashMap<u32, Browser>>> = Mutex::new(None);
 static POINTS: Mutex<Option<HashMap<u32, Point>>> = Mutex::new(None);
 
 fn browsers<R>(f: impl FnOnce(&mut HashMap<u32, Browser>) -> R) -> R {
-    f(BROWSERS.lock().unwrap().get_or_insert_with(HashMap::default))
+    f(BROWSERS.locked().get_or_insert_with(HashMap::default))
 }
 fn points<R>(f: impl FnOnce(&mut HashMap<u32, Point>) -> R) -> R {
-    f(POINTS.lock().unwrap().get_or_insert_with(HashMap::default))
+    f(POINTS.locked().get_or_insert_with(HashMap::default))
 }
 
 fn base_of(this: u32) -> u32 {
@@ -132,7 +133,7 @@ fn with<R>(this: u32, f: impl FnOnce(&mut Browser) -> R) -> Option<R> {
 /// A GUID in guest memory (for the IIDs sake asks objects of the program for)
 fn guest_guid(g: Guid) -> u32 {
     static AT: Mutex<Option<HashMap<Guid, u32>>> = Mutex::new(None);
-    *AT.lock().unwrap().get_or_insert_with(HashMap::default).entry(g).or_insert_with(|| {
+    *AT.locked().get_or_insert_with(HashMap::default).entry(g).or_insert_with(|| {
         let p = mem::heap_alloc(16, false);
         mem::write(p, &g);
         p

@@ -249,8 +249,8 @@ fn image_plan(img: &[u8], ip: u64) -> Option<(Vec<Edit>, Found)> {
 
 /// [start, end) of a mapped image's code sections.
 pub fn code_sections(img: &[u8]) -> Vec<(usize, usize)> {
-    let rd32 = |o: usize| img.get(o..o + 4).map(|b| u32::from_le_bytes(b.try_into().unwrap()) as usize);
-    let rd16 = |o: usize| img.get(o..o + 2).map(|b| u16::from_le_bytes(b.try_into().unwrap()) as usize);
+    let rd32 = |o: usize| kome::le::u32_at(img, o).map(|v| v as usize);
+    let rd16 = |o: usize| kome::le::u16_at(img, o).map(usize::from);
     let (Some(pe), mut v) = (rd32(0x3c), Vec::new()) else { return Vec::new() };
     let (Some(n), Some(opt)) = (rd16(pe + 6), rd16(pe + 20)) else { return v };
     for k in 0..n {
@@ -284,6 +284,11 @@ pub mod samples {
     pub const FIELD: &str = "81e2ffffff0f49c1ea1c8910418bd2488b810002000081e2ffffff0f49c1ea1c8910c3";
     // a flag test with the same constant
     pub const FLAG: &str = "f7430400000010c3";
+
+    /// The bytes of one of these (two hex digits a byte).
+    pub fn hex(s: &str) -> Vec<u8> {
+        s.as_bytes().chunks(2).filter_map(|c| std::str::from_utf8(c).ok().and_then(|t| u8::from_str_radix(t, 16).ok())).collect()
+    }
 }
 
 #[cfg(test)]
@@ -323,10 +328,6 @@ mod tests {
             let want = (floor.max(2)..=o).rev().find(|&p| code[p - 1] == 0xcc && code[p - 2] == 0xcc).unwrap_or(floor);
             proptest::prop_assert_eq!(sync_point(&code, o), want);
         }
-    }
-
-    fn hex(s: &str) -> Vec<u8> {
-        (0..s.len()).step_by(2).map(|i| u8::from_str_radix(&s[i..i + 2], 16).unwrap()).collect()
     }
 
     use super::samples::*;
@@ -763,6 +764,7 @@ mod tests {
     /// SAKE_UNITY_DLL=path cargo test -p sake --lib unity6::tests::native -- --ignored --nocapture
     #[cfg(all(target_arch = "x86_64", target_os = "linux"))]
     mod native {
+        use kome::locks::Lock as _;
         use super::super::*;
         use proptest::prelude::*;
         use std::collections::HashMap;
@@ -964,7 +966,7 @@ mod tests {
             if std::env::var_os("SAKE_UNITY_DLL").is_none() {
                 return;
             }
-            let img = image().lock().unwrap();
+            let img = image().locked();
             let cfg = ProptestConfig {
                 cases: 400,
                 ..ProptestConfig::default()

@@ -3,16 +3,12 @@
 //! uploads again what it keeps (device.rs `after_lost`). Through the real entry point, with the
 //! page's executor on the model of WebGPU (render/model.rs) in the same thread.
 
+use kome::locks::Lock as _;
 use super::lock_tests::{fill_color, name_of, write_bytes};
 use super::trace_tests::{alloc, CALLS, SERIAL};
+use super::draw_tests::call;
 use super::*;
 use crate::render::model;
-
-fn call(iface: u32, m: u32, args: &[u32]) -> u32 {
-    let mut a = args.to_vec();
-    a.resize(a.len().max(16), 0);
-    unsafe { vnhost_d3d9_call(iface << 8 | m, a.as_ptr(), &CALLS) }
-}
 
 fn out() -> u32 {
     unsafe { alloc(16) as u32 }
@@ -23,7 +19,7 @@ fn rd(p: u32) -> u32 {
 }
 
 fn with<R>(f: impl FnOnce(&mut D3d) -> R) -> R {
-    f(D3D.lock().unwrap().as_mut().unwrap())
+    f(D3D.locked().as_mut().unwrap())
 }
 
 type Page = std::rc::Rc<std::cell::RefCell<Option<crate::render::d3d::D3d>>>;

@@ -6,7 +6,7 @@
 //! checks any sequence of face/level locks against what the page holds. Direct3D 8 reads the
 //! same through d3d8.rs.
 
-use super::draw_tests::{call, out, put_bytes, rd};
+use super::draw_tests::{device_with, words, call, out, put_bytes, rd};
 use super::trace_tests::{alloc, attach_page, on_low_stack, CALLS, SERIAL};
 use super::*;
 use crate::render::model;
@@ -14,17 +14,7 @@ use proptest::prelude::*;
 
 /// A 64x64 device (software vertex processing).
 fn device() -> u32 {
-    attach_page();
-    let o = out();
-    unsafe { vnhost_d3d9_create(0x20, o as *mut u32, &CALLS) };
-    let d3d = rd(o);
-    let pp = unsafe { alloc(56) as u32 };
-    for (i, x) in [64, 64, 22, 1, 0, 0, 1, 1, 0, 0, 0, 0, 0, 0].into_iter().enumerate() {
-        unsafe { *((pp + 4 * i as u32) as *mut u32) = x };
-    }
-    let o = out();
-    assert_eq!(call(IF_D3D9, 16, &[d3d, 0, 1, 1, 0x20, pp, o]), 0);
-    rd(o)
+    device_with([64, 64, 22, 1, 0, 0, 1, 1, 0, 0, 0, 0, 0, 0])
 }
 
 fn init() {
@@ -68,12 +58,6 @@ fn fill(lr: u32, r: [u32; 4], px: impl Fn(u32, u32) -> u32) {
         let row: Vec<u8> = (r[0]..r[2]).flat_map(|x| px(x, y).to_le_bytes()).collect();
         put_bytes(bits + (y - r[1]) * pitch, &row);
     }
-}
-
-fn words(w: &[u32]) -> u32 {
-    let p = unsafe { alloc(4 * w.len() as u32) as u32 };
-    put_bytes(p, &w.iter().flat_map(|v| v.to_le_bytes()).collect::<Vec<_>>());
-    p
 }
 
 #[test]

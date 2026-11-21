@@ -5,6 +5,7 @@
 //! The view is a copy of the file in guest heap memory (sake's file mappings are copies too):
 //! with ReadOnly FALSE, changes made to it are not written back to the file.
 #![allow(non_snake_case)]
+use kome::locks::Rw as _;
 use crate::api::{implement, Ctx};
 use crate::mem::{self, r32, w32};
 
@@ -60,7 +61,7 @@ fn find(name: &str, dll_path: &str, ext: &str) -> Option<String> {
     } else if !dll_path.is_empty() {
         dll_path.split(';').filter(|d| !d.is_empty()).map(String::from).collect()
     } else {
-        let exe = crate::pe::MODULES.read().unwrap().iter().find(|m| !m.dll).map_or_default(|m| m.path.clone());
+        let exe = crate::pe::MODULES.r().iter().find(|m| !m.dll).map_or_default(|m| m.path.clone());
         let exe_dir = exe.rfind('\\').map_or_default(|i| exe[..i].to_string());
         vec![exe_dir, crate::files::cwd(), "C:\\windows\\system32".into(), "C:\\windows".into()]
     };

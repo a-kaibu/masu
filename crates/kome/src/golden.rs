@@ -93,6 +93,27 @@ impl Fnv {
         }
         self
     }
+    pub fn u8(&mut self, v: u8) -> &mut Fnv {
+        self.bytes(&[v])
+    }
+    /// its 2 little-endian bytes (and so on for the wider ones)
+    pub fn u16(&mut self, v: u16) -> &mut Fnv {
+        self.bytes(&v.to_le_bytes())
+    }
+    pub fn u32(&mut self, v: u32) -> &mut Fnv {
+        self.bytes(&v.to_le_bytes())
+    }
+    pub fn u128(&mut self, v: u128) -> &mut Fnv {
+        self.bytes(&v.to_le_bytes())
+    }
+    /// its 8 little-endian bytes
+    pub fn u64(&mut self, v: u64) -> &mut Fnv {
+        self.bytes(&v.to_le_bytes())
+    }
+    /// as a u64 (8 bytes on every target, so a hash is the same on 32- and 64-bit hosts)
+    pub fn usize(&mut self, v: usize) -> &mut Fnv {
+        self.u64(u64::try_from(v).unwrap_or(u64::MAX))
+    }
     pub fn get(&self) -> u64 {
         self.0
     }
@@ -145,6 +166,82 @@ impl Rng {
     pub fn coin(&mut self) -> bool {
         self.next() & 1 == 1
     }
+}
+
+/// `pieces` (packets, pages, chunks of a file) damaged by `seed`, the same on every run: a few
+/// bits flipped in a few pieces, and now and then a piece cut short, dropped, repeated, or two
+/// swapped. The behaviour pins of asf, mpeg1, vorbis and wmcodec feed their decoders these.
+pub fn damage(pieces: &[Vec<u8>], seed: u64) -> Vec<Vec<u8>> {
+    let mut r = Rng(seed.wrapping_mul(0x9e37_79b9_7f4a_7c15) | 1);
+    let mut p = pieces.to_vec();
+    if p.is_empty() {
+        return p;
+    }
+    for _ in 0..r.index(6).wrapping_add(1) {
+        let i = r.index(p.len());
+        if let Some(piece) = p.get_mut(i)
+            && !piece.is_empty()
+        {
+            let k = r.index(piece.len());
+            let bit = 1u8.wrapping_shl(u32::try_from(r.index(8)).unwrap_or(0));
+            if let Some(b) = piece.get_mut(k) {
+                *b ^= bit;
+            }
+        }
+    }
+    match r.index(6) {
+        0 => {
+            let i = r.index(p.len());
+            if let Some(piece) = p.get_mut(i) {
+                let n = r.index(piece.len());
+                piece.truncate(n);
+            }
+        }
+        1 => {
+            p.remove(r.index(p.len()));
+        }
+        2 => {
+            let i = r.index(p.len());
+            if let Some(piece) = p.get(i).cloned() {
+                p.insert(i, piece);
+            }
+        }
+        3 => {
+            let (i, j) = (r.index(p.len()), r.index(p.len()));
+            p.swap(i, j);
+        }
+        _ => {}
+    }
+    p
+}
+
+/// A behaviour-pin table (`name<TAB>hash` lines, `#` comments): every hash in `got` must be the
+/// table's. When [`updating`], writes `got` into it instead (keeping the rows this run did not
+/// make, such as those of files only some machines have).
+#[track_caller]
+pub fn pins(table: &Path, got: &std::collections::BTreeMap<String, u64>) {
+    let mut want = std::collections::BTreeMap::new();
+    let text = std::fs::read_to_string(table).unwrap_or_default();
+    for l in text.lines().filter(|l| !l.starts_with('#') && !l.is_empty()) {
+        let parsed = l.split_once('\t').and_then(|(k, v)| Some((k.to_owned(), u64::from_str_radix(v, 16).ok()?)));
+        match parsed {
+            Some((k, v)) => want.insert(k, v),
+            None => panic!("{}: not name<TAB>hex: {l:?}", table.display()),
+        };
+    }
+    if updating() {
+        want.extend(got.iter().map(|(k, v)| (k.clone(), *v)));
+        let mut s = format!("# behaviour pins: name, FNV-1a of every output ({UPDATE}=1 writes it)\n");
+        for (k, v) in &want {
+            s += &format!("{k}\t{v:016x}\n");
+        }
+        if let Err(e) = std::fs::write(table, s) {
+            panic!("{}: {e}", table.display());
+        }
+        return;
+    }
+    let bad: Vec<String> = got.iter().filter(|(k, v)| want.get(*k) != Some(v)).map(|(k, v)| format!("{k}: {v:016x}, pinned {:?}", want.get(k).map(|w| format!("{w:016x}")))).collect();
+    assert!(bad.is_empty(), "{}: behaviour changed (or new; {UPDATE}=1 writes it):\n{}", table.display(), bad.join("\n"));
 }
 
 #[cfg(test)]

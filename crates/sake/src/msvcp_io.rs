@@ -29,6 +29,7 @@
 
 #![allow(non_snake_case)]
 
+use kome::locks::Lock as _;
 use std::sync::{Mutex, OnceLock};
 
 use crate::api::{host_fn, Ctx, Handler};
@@ -295,7 +296,7 @@ fn base_init(c: &mut Ctx, ios: u32) {
 static STDSTR_TAB: Mutex<[(u32, u8); 10]> = Mutex::new([(0, 0); 10]);
 
 fn addstd(ios: u32) {
-    let mut t = STDSTR_TAB.lock().unwrap();
+    let mut t = STDSTR_TAB.locked();
     let mut i = 1;
     while i < 8 && t[i].0 != 0 && t[i].0 != ios {
         i += 1;
@@ -308,7 +309,7 @@ fn addstd(ios: u32) {
 fn base_dtor(c: &mut Ctx, ios: u32) {
     let i = rp(ios + STDSTR()) as usize;
     if i > 0 && i < 10 {
-        let mut t = STDSTR_TAB.lock().unwrap();
+        let mut t = STDSTR_TAB.locked();
         t[i].1 = t[i].1.wrapping_sub(1);
         if t[i].1 > 0 {
             return;
@@ -559,13 +560,13 @@ static SYNC: Mutex<bool> = Mutex::new(true);
 static INIT_CNT: OnceLock<u32> = OnceLock::new();
 
 fn base_xalloc(_: &mut Ctx) -> u32 {
-    let mut g = INDEX.lock().unwrap();
+    let mut g = INDEX.locked();
     let i = *g;
     *g += 1;
     i
 }
 fn base_sync_with_stdio(c: &mut Ctx) -> u32 {
-    let mut g = SYNC.lock().unwrap();
+    let mut g = SYNC.locked();
     let old = *g;
     *g = c.a(0) & 0xff != 0;
     old as u32
@@ -1863,7 +1864,7 @@ fn os_bool<const W: bool>(c: &mut Ctx) -> u32 {
     })
 }
 fn os_float<const W: bool>(c: &mut Ctx) -> u32 {
-    let (this, v) = (c.a(0), c.fl(1) as f64);
+    let (this, v) = (c.a(0), c.f(1) as f64);
     insert::<W>(c, this, |ios, fl| float_field(fl, r64(ios + PREC()) as i64, v))
 }
 fn os_double<const W: bool>(c: &mut Ctx) -> u32 {

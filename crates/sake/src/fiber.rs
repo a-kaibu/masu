@@ -17,6 +17,7 @@
 
 #![allow(non_snake_case)]
 
+use kome::locks::Lock as _;
 use crate::api::{implement, Ctx};
 use crate::k32::last_error;
 use crate::mem::{self, ps, r32, rp, w32, wp};
@@ -120,7 +121,7 @@ fn entries(g: u32) -> Vec<u32> {
 
 /// RtlFlsAlloc: the lowest free index gets `cb`
 pub fn alloc(cb: u32) -> Result<u32, u32> {
-    let mut g = FLS.lock().unwrap();
+    let mut g = FLS.locked();
     let g = global(&mut g);
     let p = ps();
     for j in 0..CHUNKS {
@@ -164,7 +165,7 @@ pub fn free(index: u32) -> Result<Vec<(u32, u32)>, u32> {
     if index == 0 || index > FLS_MAX {
         return Err(STATUS_INVALID_PARAMETER);
     }
-    let mut g = FLS.lock().unwrap();
+    let mut g = FLS.locked();
     let g = global(&mut g);
     let (j, k) = chunk_of(index);
     let c = cb_chunk(g, j);
@@ -243,7 +244,7 @@ fn new_data(slots: u32) -> u32 {
     if f == 0 {
         return 0;
     }
-    let mut g = FLS.lock().unwrap();
+    let mut g = FLS.locked();
     let g = global(&mut g);
     // InsertTailList
     let h = head(g);
@@ -298,7 +299,7 @@ pub fn process(f: u32, flags: u32) -> Vec<(u32, u32)> {
     }
     let p = ps();
     if flags & 1 != 0 {
-        let mut g = FLS.lock().unwrap();
+        let mut g = FLS.locked();
         let g = global(&mut g);
         // RemoveEntryList, then the entry linked to itself: a second teardown of the same
         // block (RtlProcessFlsData, then the thread's exit or DeleteFiber) rewrote its old
@@ -752,7 +753,7 @@ mod tests {
         fn fls_matches_a_model(ops in proptest::collection::vec(op(), 1..60)) {
             let _g = crate::test_guest::enter();
             // (a fresh global, as a process starts with)
-            *FLS.lock().unwrap() = 0;
+            *FLS.locked() = 0;
             let fibers: Vec<u32> = (0..3).map(|_| mem::heap_alloc(4, true)).collect();
             let mut live: Vec<(u32, u32)> = Vec::new(); // (index, callback)
             let mut vals: HashMap<(usize, u32), u32> = HashMap::new();
@@ -826,7 +827,7 @@ mod tests {
                 process(rp(fibers[f]), 2);
                 mem::heap_free(fibers[f]);
             }
-            *FLS.lock().unwrap() = 0;
+            *FLS.locked() = 0;
         }
     }
 }
@@ -843,9 +844,9 @@ mod fls_list_tests {
         #[test]
         fn fls_list_survives_repeated_teardown(n in 1usize..6, order in prop::collection::vec(0usize..6, 0..14)) {
             let _g = crate::test_guest::enter();
-            *FLS.lock().unwrap() = 0;
+            *FLS.locked() = 0;
             let p = ps();
-            let h = head(global(&mut FLS.lock().unwrap()));
+            let h = head(global(&mut FLS.locked()));
             let blocks: Vec<u32> = (0..n).map(|_| mem::heap_alloc((2 + CHUNKS) * p, true)).collect();
             // linked as InsertTailList does
             for &b in &blocks {

@@ -1368,7 +1368,7 @@ mod tests {
     /// testdata/blake3.tsv: chunk names (the first 16 bytes of BLAKE3) from the blake3 crate,
     /// for the page's own BLAKE3 (web/src/blake3.ts, host/fetch-bridge.js) to be checked
     /// against: `p` inputs are `i % 251`, `r` ones bytes of an LCG seeded with the length
-    /// (x = x * 1103515245 + 12345, byte = x >> 16 & 255). MASU_REGEN=1 writes it again.
+    /// (x = x * 1103515245 + 12345, byte = x >> 16 & 255). MASU_UPDATE_GOLDEN=1 writes it again.
     #[test]
     fn blake3_vectors_for_the_page() {
         let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../testdata/blake3.tsv");
@@ -1390,10 +1390,10 @@ mod tests {
                 want.push_str(&format!("{kind}\t{n}\t{}\n", &blake3::hash(&data).to_hex()[..32]));
             }
         }
-        if std::env::var_os("MASU_REGEN").is_some() {
+        if kome::golden::updating() {
             std::fs::write(&path, &want).unwrap();
         }
-        assert_eq!(std::fs::read_to_string(&path).unwrap(), want, "MASU_REGEN=1 to write it");
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), want, "MASU_UPDATE_GOLDEN=1 to write it");
     }
 
     #[test]

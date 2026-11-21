@@ -14,8 +14,9 @@ use std::sync::atomic::Ordering::SeqCst;
 /// made-up event handles for notifications (shown as their index)
 const EV0: u32 = 0xee00_0000;
 
+/// FNV-1a of the samples' bits
 fn hash_f(v: &[f32]) -> u64 {
-    v.iter().flat_map(|x| x.to_bits().to_le_bytes()).fold(0xcbf2_9ce4_8422_2325u64, |h, b| (h ^ u64::from(b)).wrapping_mul(0x100_0000_01b3))
+    kome::golden::Fnv::new().words(v.iter().map(|x| x.to_bits())).get()
 }
 
 fn fmt_str(f: &Fmt) -> String {
@@ -179,7 +180,7 @@ fn sound_pure_snapshot() {
         let img = seeded_riff(&mut r);
         let ch = wave_chunks(&img);
         let pcm = adpcm_to_pcm(img.clone());
-        let h = pcm.iter().fold(0xcbf2_9ce4_8422_2325u64, |h, &b| (h ^ u64::from(b)).wrapping_mul(0x100_0000_01b3));
+        let h = kome::golden::Fnv::of(&pcm);
         writeln!(out, "riff#{i} {} bytes: chunks {ch:?} pcm {} bytes {h:#x} same={}", img.len(), pcm.len(), pcm == img).unwrap();
     }
     // device ids, GUID text, notification lists

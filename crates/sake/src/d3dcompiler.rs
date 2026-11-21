@@ -3,6 +3,7 @@
 
 #![allow(non_snake_case)]
 
+use kome::locks::Lock as _;
 use crate::api::{implement, Ctx, Handler};
 use crate::mem::{self, r32, w32};
 
@@ -377,7 +378,7 @@ fn D3D10CompileShader(c: &mut Ctx) -> u32 {
 /// A string the guest keeps (the D3D10Get*ShaderProfile results).
 fn static_str(s: &'static str) -> u32 {
     static AT: std::sync::Mutex<Vec<(&'static str, u32)>> = std::sync::Mutex::new(Vec::new());
-    let mut g = AT.lock().unwrap();
+    let mut g = AT.locked();
     if let Some(&(_, p)) = g.iter().find(|x| x.0 == s) {
         return p;
     }

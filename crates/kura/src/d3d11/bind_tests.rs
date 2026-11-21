@@ -10,6 +10,7 @@
 //!
 //! `MASU_TRACE_DIR=dir` writes `dir/d3d11bind-<seed>/`; `MASU_TRACE_SEEDS=n` (default 20).
 
+use kome::locks::Lock as _;
 use super::*;
 use crate::d3d9::trace_tests::{alloc, seeds, write_module, Rng, CALLS, SERIAL};
 use std::fmt::Write as _;
@@ -33,7 +34,7 @@ fn m(iface: u32, m: u32) -> u32 {
 }
 fn release(a: u32) {
     let iface = {
-        let g = D11S.lock().unwrap();
+        let g = D11S.locked();
         let d = g.as_ref().unwrap();
         d.objs[&d.id_of(a)].faces.iter().find(|f| f.1 == a).unwrap().0
     };

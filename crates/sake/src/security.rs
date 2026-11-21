@@ -14,6 +14,7 @@
 
 #![allow(non_snake_case)]
 
+use kome::locks::Lock as _;
 use std::collections::HashSet;
 use std::sync::Mutex;
 
@@ -764,7 +765,7 @@ fn OpenThreadToken(c: &mut Ctx) -> u32 {
     let c = &mut c.args::<crate::api::outs::OpenThreadToken>();
     let out = c.out::<3>();
     let tid = crate::cur().tid;
-    let imp = IMPERSONATING.lock().unwrap().as_ref().is_some_and(|s| s.contains(&tid));
+    let imp = IMPERSONATING.locked().as_ref().is_some_and(|s| s.contains(&tid));
     if !imp {
         // (the handle is cleared through WoW64's thunk; 64-bit Windows leaves it, winref security)
         if !mem::x64() {
@@ -777,17 +778,17 @@ fn OpenThreadToken(c: &mut Ctx) -> u32 {
     1
 }
 fn ImpersonateSelf(_: &mut Ctx) -> u32 {
-    IMPERSONATING.lock().unwrap().get_or_insert_with(HashSet::new).insert(crate::cur().tid);
+    IMPERSONATING.locked().get_or_insert_with(HashSet::new).insert(crate::cur().tid);
     1
 }
 /// A thread's exit: it impersonates no more (a later thread with its id starts as itself)
 pub fn thread_gone(tid: u32) {
-    if let Some(s) = IMPERSONATING.lock().unwrap().as_mut() {
+    if let Some(s) = IMPERSONATING.locked().as_mut() {
         s.remove(&tid);
     }
 }
 fn RevertToSelf(_: &mut Ctx) -> u32 {
-    if let Some(s) = IMPERSONATING.lock().unwrap().as_mut() {
+    if let Some(s) = IMPERSONATING.locked().as_mut() {
         s.remove(&crate::cur().tid);
     }
     1
@@ -842,7 +843,7 @@ pub(crate) const PRIVILEGES: &[(u32, &str, bool)] = &[
 ];
 static ENABLED: Mutex<Option<HashSet<u32>>> = Mutex::new(None);
 fn enabled(luid: u32) -> bool {
-    ENABLED.lock().unwrap().as_ref().map_or(false, |s| s.contains(&luid)) || PRIVILEGES.iter().any(|p| p.0 == luid && p.2)
+    ENABLED.locked().as_ref().map_or(false, |s| s.contains(&luid)) || PRIVILEGES.iter().any(|p| p.0 == luid && p.2)
 }
 
 fn lookup_privilege(name: &str) -> Option<u32> {
@@ -928,7 +929,7 @@ fn AdjustTokenPrivileges(c: &mut Ctx) -> u32 {
             w32(e + 8, if *on { 2 } else { 0 });
         }
     }
-    let mut g = ENABLED.lock().unwrap();
+    let mut g = ENABLED.locked();
     let s = g.get_or_insert_with(HashSet::new);
     for (l, on) in changes {
         if on {
@@ -1485,9 +1486,9 @@ mod review_b09_tests {
         guest_thread();
         let tid = crate::cur().tid;
         call(ImpersonateSelf, &[]);
-        assert!(IMPERSONATING.lock().unwrap().as_ref().unwrap().contains(&tid));
+        assert!(IMPERSONATING.locked().as_ref().unwrap().contains(&tid));
         thread_gone(tid);
-        assert!(!IMPERSONATING.lock().unwrap().as_ref().unwrap().contains(&tid));
+        assert!(!IMPERSONATING.locked().as_ref().unwrap().contains(&tid));
     }
 }
 

@@ -9,6 +9,7 @@
 //! Actions run at once in sequence order; deferred custom actions run where they are
 //! scheduled, with CustomActionData set (no separate script phase, no rollback).
 
+use kome::locks::Lock as _;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
@@ -73,12 +74,12 @@ fn guest_str(s: &str, wide: bool) -> u32 {
 /// handled).
 pub fn send(c: &mut Ctx, pkg: Option<&Arc<Mutex<Package>>>, kind: u32, rec: &Record) -> i32 {
     let (handler, filter, ctx, wide, record, level) = {
-        let u = UI.lock().unwrap();
+        let u = UI.locked();
         (u.handler, u.filter, u.ctx, u.wide, u.record, u.level)
     };
     if crate::env_on!("SAKE_TRACE_MSI") {
         let text = match pkg {
-            Some(p) => p.lock().unwrap().format_record(rec),
+            Some(p) => p.locked().format_record(rec),
             None => format::format_record(rec, &format::NoPackage),
         };
         eprintln!("msi: message {:#x}: {text}", kind >> 24);
@@ -91,7 +92,7 @@ pub fn send(c: &mut Ctx, pkg: Option<&Arc<Mutex<Package>>>, kind: u32, rec: &Rec
             r
         } else {
             let text = match pkg {
-                Some(p) => p.lock().unwrap().format_record(rec),
+                Some(p) => p.locked().format_record(rec),
                 None => format::format_record(rec, &format::NoPackage),
             };
             let s = guest_str(&text, wide);
@@ -128,7 +129,7 @@ fn internal_ui(kind: u32, rec: &Record, level: u32) -> i32 {
 }
 
 fn action_start(c: &mut Ctx, p: &Arc<Mutex<Package>>, name: &str) {
-    let desc = crate::msi_pkg::query(&p.lock().unwrap().db, &format!("SELECT `Description`, `Template` FROM `ActionText` WHERE `Action` = '{}'", name.replace('\'', "")));
+    let desc = crate::msi_pkg::query(&p.locked().db, &format!("SELECT `Description`, `Template` FROM `ActionText` WHERE `Action` = '{}'", name.replace('\'', "")));
     let mut r = Record::new(3);
     r.f[0] = Field::Str("Action [Time]: [1]. [2]".into());
     r.f[1] = Field::Str(name.into());
@@ -145,12 +146,12 @@ fn action_start(c: &mut Ctx, p: &Arc<Mutex<Package>>, name: &str) {
 /// failure (and returns it). Negative sequences are the dialogs for the end states.
 pub fn run_sequence(c: &mut Ctx, p: &Arc<Mutex<Package>>, table: &str) -> u32 {
     let rows = {
-        let pk = p.lock().unwrap();
+        let pk = p.locked();
         crate::msi_pkg::query(&pk.db, &format!("SELECT `Action`, `Condition`, `Sequence` FROM `{table}` WHERE `Sequence` > 0 ORDER BY `Sequence`"))
     };
     for r in rows {
         let (name, cond) = (r.get(1).text(), r.get(2).text());
-        if !cond_true(&p.lock().unwrap(), &cond) {
+        if !cond_true(&p.locked(), &cond) {
             continue;
         }
         let e = do_action(c, p, &name, Some(table));
@@ -185,9 +186,9 @@ pub fn do_action(c: &mut Ctx, p: &Arc<Mutex<Package>>, name: &str, table: Option
 const MAX_ACTION_DEPTH: u32 = 32;
 fn do_action_nested(c: &mut Ctx, p: &Arc<Mutex<Package>>, name: &str, table: Option<&str>) -> u32 {
     action_start(c, p, name);
-    let prev = std::mem::replace(&mut p.lock().unwrap().action, name.to_string());
+    let prev = std::mem::replace(&mut p.locked().action, name.to_string());
     let r = do_action_inner(c, p, name, table);
-    let mut pk = p.lock().unwrap();
+    let mut pk = p.locked();
     pk.action = prev;
     pk.sync_props();
     r
@@ -198,11 +199,11 @@ fn do_action_inner(c: &mut Ctx, p: &Arc<Mutex<Package>>, name: &str, table: Opti
     let r = match crate::misc::reg_batch(|| standard(c, p, name, table)) {
         Some(r) => r,
         None => {
-            let ca = crate::msi_pkg::query(&p.lock().unwrap().db, &format!("SELECT `Action`, `Type`, `Source`, `Target` FROM `CustomAction` WHERE `Action` = '{}'", name.replace('\'', "")));
+            let ca = crate::msi_pkg::query(&p.locked().db, &format!("SELECT `Action`, `Type`, `Source`, `Target` FROM `CustomAction` WHERE `Action` = '{}'", name.replace('\'', "")));
             if let Some(ca) = ca.first() {
                 custom_action(c, p, name, ca.get(2).int(), &ca.get(3).text(), &ca.get(4).text())
             } else {
-                let dlg = crate::msi_pkg::query(&p.lock().unwrap().db, &format!("SELECT `Dialog` FROM `Dialog` WHERE `Dialog` = '{}'", name.replace('\'', "")));
+                let dlg = crate::msi_pkg::query(&p.locked().db, &format!("SELECT `Dialog` FROM `Dialog` WHERE `Dialog` = '{}'", name.replace('\'', "")));
                 if !dlg.is_empty() {
                     crate::msi_ui::dialog(c, p, name)
                 } else {
@@ -218,7 +219,7 @@ fn do_action_inner(c: &mut Ctx, p: &Arc<Mutex<Package>>, name: &str, table: Opti
 fn standard(c: &mut Ctx, p: &Arc<Mutex<Package>>, name: &str, _table: Option<&str>) -> Option<u32> {
     Some(match name {
         "CostInitialize" => {
-            let mut pk = p.lock().unwrap();
+            let mut pk = p.locked();
             pk.props.insert("CostingComplete".into(), "0".into());
             pk.cost_started = true;
             pk.resolve_sources();
@@ -226,7 +227,7 @@ fn standard(c: &mut Ctx, p: &Arc<Mutex<Package>>, name: &str, _table: Option<&st
         }
         "FileCost" => ERROR_SUCCESS,
         "CostFinalize" => {
-            let mut pk = p.lock().unwrap();
+            let mut pk = p.locked();
             pk.resolve_dirs();
             pk.plan_states();
             pk.costed = true;
@@ -243,11 +244,11 @@ fn standard(c: &mut Ctx, p: &Arc<Mutex<Package>>, name: &str, _table: Option<&st
         }
         "LaunchConditions" => launch_conditions(c, p),
         "ExecuteAction" => {
-            let ui = p.lock().unwrap().prop("EXECUTEACTION");
+            let ui = p.locked().prop("EXECUTEACTION");
             // (EXECUTEACTION: the top-level action the UI sequence chose; INSTALL's sequence
             // is the only one here)
             let _ = ui;
-            let mut pk = p.lock().unwrap();
+            let mut pk = p.locked();
             pk.executed = true;
             // (the features the UI chose, a dialog's AddLocal or MsiSetFeatureState, go to
             // the execute sequence's costing as request properties, as the client hands
@@ -288,7 +289,7 @@ fn standard(c: &mut Ctx, p: &Arc<Mutex<Package>>, name: &str, _table: Option<&st
             ERROR_SUCCESS
         }
         "InstallFinalize" => {
-            let mut pk = p.lock().unwrap();
+            let mut pk = p.locked();
             for c in pk.comps.values_mut() {
                 if c.action != INSTALLSTATE_UNKNOWN {
                     c.installed = c.action;
@@ -314,12 +315,12 @@ fn standard(c: &mut Ctx, p: &Arc<Mutex<Package>>, name: &str, _table: Option<&st
         "AppSearch" => app_search(p),
         "FindRelatedProducts" => find_related(p),
         "ResolveSource" => {
-            p.lock().unwrap().resolve_sources();
+            p.locked().resolve_sources();
             ERROR_SUCCESS
         }
         "ProcessComponents" => process_components(p),
         "InstallValidate" => {
-            p.lock().unwrap().validated = true;
+            p.locked().validated = true;
             ERROR_SUCCESS
         }
         "InstallInitialize" | "ValidateProductID" | "IsolateComponents" | "MigrateFeatureStates"
@@ -336,11 +337,11 @@ fn standard(c: &mut Ctx, p: &Arc<Mutex<Package>>, name: &str, _table: Option<&st
 }
 
 fn launch_conditions(c: &mut Ctx, p: &Arc<Mutex<Package>>) -> u32 {
-    let rows = crate::msi_pkg::query(&p.lock().unwrap().db, "SELECT `Condition`, `Description` FROM `LaunchCondition`");
+    let rows = crate::msi_pkg::query(&p.locked().db, "SELECT `Condition`, `Description` FROM `LaunchCondition`");
     for r in rows {
-        let ok = cond_true(&p.lock().unwrap(), &r.get(1).text());
+        let ok = cond_true(&p.locked(), &r.get(1).text());
         if !ok {
-            let msg = p.lock().unwrap().format(&r.get(2).text());
+            let msg = p.locked().format(&r.get(2).text());
             let mut rec = Record::new(0);
             rec.f[0] = Field::Str(msg);
             send(c, Some(p), INSTALLMESSAGE_ERROR, &rec);
@@ -355,7 +356,7 @@ fn host_mkdirs(win: &str) {
 }
 
 fn create_folders(p: &Arc<Mutex<Package>>) -> u32 {
-    let pk = p.lock().unwrap();
+    let pk = p.locked();
     for r in crate::msi_pkg::query(&pk.db, "SELECT `Directory_`, `Component_` FROM `CreateFolder`") {
         if pk.comps.get(&r.get(2).text()).is_some_and(|c| c.action == INSTALLSTATE_LOCAL) {
             host_mkdirs(&pk.target(&r.get(1).text()));
@@ -367,7 +368,7 @@ fn create_folders(p: &Arc<Mutex<Package>>) -> u32 {
 /// The files to install from each Media row: (cabinet, files by sequence up to LastSequence).
 fn install_files(c: &mut Ctx, p: &Arc<Mutex<Package>>) -> u32 {
     let (files, media, compressed_pkg, short_names) = {
-        let pk = p.lock().unwrap();
+        let pk = p.locked();
         let wc = match pk.summary.props.get(&msidb::suminfo::PID_WORDCOUNT) {
             Some(msidb::suminfo::Prop::I4(v)) => *v,
             _ => 0,
@@ -375,11 +376,10 @@ fn install_files(c: &mut Ctx, p: &Arc<Mutex<Package>>) -> u32 {
         let files: Vec<(FileRec, String, String)> = pk
             .files
             .iter()
-            .filter(|f| pk.comps.get(&f.comp).is_some_and(|c| c.action == INSTALLSTATE_LOCAL))
-            .map(|f| {
-                let comp = pk.comps.get(&f.comp).unwrap();
+            .filter_map(|f| {
+                let comp = pk.comps.get(&f.comp).filter(|c| c.action == INSTALLSTATE_LOCAL)?;
                 let src = pk.dirs.get(&comp.dir).map_or_default(|d| d.source.clone());
-                (f.clone(), pk.file_target(f), src)
+                Some((f.clone(), pk.file_target(f), src))
             })
             .collect();
         let media: Vec<(i32, String)> = crate::msi_pkg::query(&pk.db, "SELECT `LastSequence`, `Cabinet` FROM `Media` ORDER BY `DiskId`").iter().map(|r| (r.get(1).int(), r.get(2).text())).collect();
@@ -445,7 +445,7 @@ fn file_done(c: &mut Ctx, p: &Arc<Mutex<Package>>, f: &FileRec, target: &str) {
 
 /// A cabinet beside the package (None: missing).
 fn cab_beside(p: &Arc<Mutex<Package>>, cab: &str) -> Option<String> {
-    let src = p.lock().unwrap().prop("SourceDir");
+    let src = p.locked().prop("SourceDir");
     let w = format!("{}{cab}", if src.ends_with('\\') { src } else { format!("{src}\\") });
     crate::files::resolve(&w)
 }
@@ -523,8 +523,8 @@ fn extract_cab(c: &mut Ctx, p: &Arc<Mutex<Package>>, cab: &str, list: &[(FileRec
     }
     let mut tmp = TempFile(None);
     let host = if let Some(stream) = cab.strip_prefix('#') {
-        let pk = p.lock().unwrap();
-        let d = pk.db.lock().unwrap();
+        let pk = p.locked();
+        let d = pk.db.locked();
         let t = crate::files::resolve_new(&format!("C:\\windows\\temp\\sake-msi-{}.cab", crate::pid()));
         host_mkdirs("C:\\windows\\temp");
         tmp.0 = Some(t.clone());
@@ -532,7 +532,7 @@ fn extract_cab(c: &mut Ctx, p: &Arc<Mutex<Package>>, cab: &str, list: &[(FileRec
         d.db.copy_stream(stream, &mut f).map_err(|_| ERROR_INSTALL_FAILURE)?;
         t
     } else {
-        let src = p.lock().unwrap().prop("SourceDir");
+        let src = p.locked().prop("SourceDir");
         let w = format!("{}{cab}", if src.ends_with('\\') { src } else { format!("{src}\\") });
         match crate::files::resolve(&w) {
             Some(h) => h,
@@ -677,7 +677,7 @@ pub fn reg_value(v: &str) -> (u32, Vec<u8>) {
 }
 
 fn write_registry(p: &Arc<Mutex<Package>>) -> u32 {
-    let pk = p.lock().unwrap();
+    let pk = p.locked();
     let all = pk.prop("ALLUSERS") == "1" || pk.prop("ALLUSERS") == "2";
     for r in crate::msi_pkg::query(&pk.db, "SELECT `Root`, `Key`, `Name`, `Value`, `Component_` FROM `Registry`") {
         if !pk.comps.get(&r.get(5).text()).is_some_and(|c| c.action == INSTALLSTATE_LOCAL) {
@@ -697,7 +697,7 @@ fn write_registry(p: &Arc<Mutex<Package>>) -> u32 {
 }
 
 fn write_ini(p: &Arc<Mutex<Package>>) -> u32 {
-    let pk = p.lock().unwrap();
+    let pk = p.locked();
     for r in crate::msi_pkg::query(&pk.db, "SELECT `FileName`, `DirProperty`, `Section`, `Key`, `Value`, `Component_` FROM `IniFile`") {
         if !pk.comps.get(&r.get(6).text()).is_some_and(|c| c.action == INSTALLSTATE_LOCAL) {
             continue;
@@ -716,7 +716,7 @@ fn absent(pk: &Package, comp: &str) -> bool {
 /// RemoveFiles: the files of components going away, and the RemoveFile table's (on removal
 /// of its component: InstallMode 2 or 3).
 fn remove_files(p: &Arc<Mutex<Package>>) -> u32 {
-    let pk = p.lock().unwrap();
+    let pk = p.locked();
     for f in pk.files.iter().filter(|f| absent(&pk, &f.comp)) {
         if let Some(h) = crate::files::resolve(&pk.file_target(f)) {
             let _ = kura::fs::remove_file(h);
@@ -771,7 +771,7 @@ fn wildcard(p: &str, n: &str) -> bool {
 /// RemoveRegistryValues: the Registry table's values of components going away (a key
 /// marked "-" goes with everything under it).
 fn remove_registry(p: &Arc<Mutex<Package>>) -> u32 {
-    let pk = p.lock().unwrap();
+    let pk = p.locked();
     let all = pk.prop("ALLUSERS") == "1" || pk.prop("ALLUSERS") == "2";
     for r in crate::msi_pkg::query(&pk.db, "SELECT `Root`, `Key`, `Name`, `Value`, `Component_` FROM `Registry`") {
         if !absent(&pk, &r.get(5).text()) {
@@ -804,7 +804,7 @@ fn ini_file(pk: &Package, r: &Record) -> String {
 }
 
 fn remove_ini(p: &Arc<Mutex<Package>>) -> u32 {
-    let pk = p.lock().unwrap();
+    let pk = p.locked();
     for r in crate::msi_pkg::query(&pk.db, "SELECT `FileName`, `DirProperty`, `Section`, `Key`, `Value`, `Component_` FROM `IniFile`") {
         if absent(&pk, &r.get(6).text()) {
             crate::ini::delete_entry(&ini_file(&pk, &r), &pk.format(&r.get(3).text()), &pk.format(&r.get(4).text()));
@@ -834,7 +834,7 @@ fn remove_empty(pk: &Package, dirs: Vec<String>) {
 
 /// RemoveFolders: CreateFolder's folders of components going away, when empty.
 fn remove_folders(p: &Arc<Mutex<Package>>) -> u32 {
-    let pk = p.lock().unwrap();
+    let pk = p.locked();
     let mut dirs = Vec::new();
     for r in crate::msi_pkg::query(&pk.db, "SELECT `Directory_`, `Component_` FROM `CreateFolder`") {
         if absent(&pk, &r.get(2).text()) {
@@ -847,13 +847,13 @@ fn remove_folders(p: &Arc<Mutex<Package>>) -> u32 {
 
 /// AppSearch: properties from registry (RegLocator) and directory (DrLocator) searches.
 fn app_search(p: &Arc<Mutex<Package>>) -> u32 {
-    crate::msi_search::app_search(&mut p.lock().unwrap());
+    crate::msi_search::app_search(&mut p.locked());
     ERROR_SUCCESS
 }
 
 /// FindRelatedProducts: the Upgrade table's codes against the products registered.
 fn find_related(p: &Arc<Mutex<Package>>) -> u32 {
-    let mut pk = p.lock().unwrap();
+    let mut pk = p.locked();
     for r in crate::msi_pkg::query(&pk.db, "SELECT `UpgradeCode`, `ActionProperty` FROM `Upgrade`") {
         let found = related_products(&r.get(1).text());
         if !found.is_empty() {
@@ -875,7 +875,7 @@ fn custom_action(c: &mut Ctx, p: &Arc<Mutex<Package>>, name: &str, ty: i32, sour
     }
     if deferred {
         // (CustomActionData: the property named after the action)
-        let mut pk = p.lock().unwrap();
+        let mut pk = p.locked();
         let data = pk.prop(name);
         pk.props.insert("CustomActionData".into(), data);
     }
@@ -883,13 +883,13 @@ fn custom_action(c: &mut Ctx, p: &Arc<Mutex<Package>>, name: &str, ty: i32, sour
     let r = match base {
         // set a property / a directory
         51 => {
-            let mut pk = p.lock().unwrap();
+            let mut pk = p.locked();
             let (s, v) = (pk.format(source), pk.format(target));
             pk.set_prop(&s, &v);
             ERROR_SUCCESS
         }
         35 => {
-            let mut pk = p.lock().unwrap();
+            let mut pk = p.locked();
             let v = pk.format(target);
             if pk.costed {
                 pk.set_target(source, &v);
@@ -900,7 +900,7 @@ fn custom_action(c: &mut Ctx, p: &Arc<Mutex<Package>>, name: &str, ty: i32, sour
         }
         // error: show Target (formatted, or an Error table number) and end
         19 => {
-            let msg = p.lock().unwrap().format(target);
+            let msg = p.locked().format(target);
             let mut rec = Record::new(0);
             rec.f[0] = Field::Str(msg);
             send(c, Some(p), INSTALLMESSAGE_ERROR, &rec);
@@ -918,7 +918,7 @@ fn custom_action(c: &mut Ctx, p: &Arc<Mutex<Package>>, name: &str, ty: i32, sour
         // property (50)
         2 | 18 | 34 | 50 => {
             let (prog, args) = {
-                let pk = p.lock().unwrap();
+                let pk = p.locked();
                 match base {
                     2 => (binary_to_file_locked(&pk, source, "exe").unwrap_or_default(), pk.format(target)),
                     18 => (file_path_locked(&pk, source).unwrap_or_default(), pk.format(target)),
@@ -939,7 +939,7 @@ fn custom_action(c: &mut Ctx, p: &Arc<Mutex<Package>>, name: &str, ty: i32, sour
 }
 
 fn binary_to_file(p: &Arc<Mutex<Package>>, key: &str, ext: &str) -> Option<String> {
-    binary_to_file_locked(&p.lock().unwrap(), key, ext)
+    binary_to_file_locked(&p.locked(), key, ext)
 }
 
 fn binary_to_file_locked(pk: &Package, key: &str, ext: &str) -> Option<String> {
@@ -952,7 +952,7 @@ fn binary_to_file_locked(pk: &Package, key: &str, ext: &str) -> Option<String> {
 }
 
 fn file_path(p: &Arc<Mutex<Package>>, key: &str) -> Option<String> {
-    file_path_locked(&p.lock().unwrap(), key)
+    file_path_locked(&p.locked(), key)
 }
 
 fn file_path_locked(pk: &Package, key: &str) -> Option<String> {
@@ -1055,10 +1055,8 @@ fn put_str(key: &str, name: &str, v: &str) {
 fn get_str(key: &str, name: &str) -> Option<String> {
     let (ty, d) = crate::misc::reg_get(key, name)?;
     Some(match ty {
-        4 if d.len() >= 4 => u32::from_le_bytes(d[..4].try_into().unwrap()).to_string(),
-        _ => {
-            kome::le::utf16z_lossy(&d)
-        }
+        4 if let Some(v) = kome::le::u32_at(&d, 0) => v.to_string(),
+        _ => kome::le::utf16z_lossy(&d),
     })
 }
 
@@ -1069,7 +1067,7 @@ fn cache_package(pk: &Package, before: &str) -> String {
     if !before.is_empty() && crate::files::resolve(before).is_some() {
         return before.to_string();
     }
-    let src = if pk.path.starts_with('#') { pk.db.lock().unwrap().path.clone() } else { pk.path.clone() };
+    let src = if pk.path.starts_with('#') { pk.db.locked().path.clone() } else { pk.path.clone() };
     let Some(from) = crate::files::resolve(&crate::files::full_path(&src)) else { return pk.path.clone() };
     let mut h: u32 = 0x811c9dc5;
     for b in pk.prop("ProductCode").bytes().chain(pk.prop("PackageCode").bytes()) {
@@ -1085,7 +1083,7 @@ fn cache_package(pk: &Package, before: &str) -> String {
 }
 
 fn register_product(p: &Arc<Mutex<Package>>) {
-    let pk = p.lock().unwrap();
+    let pk = p.locked();
     let code = pk.prop("ProductCode");
     let packed = pack_guid(&code);
     if packed.is_empty() {
@@ -1146,7 +1144,7 @@ fn register_features(pk: &Package) {
 /// ProcessComponents: each component's path for this product (its key file; "01:" first
 /// when it runs from source), gone when it is removed.
 fn process_components(p: &Arc<Mutex<Package>>) -> u32 {
-    let pk = p.lock().unwrap();
+    let pk = p.locked();
     let packed = pack_guid(&pk.prop("ProductCode"));
     if packed.is_empty() {
         return ERROR_SUCCESS;
@@ -1360,7 +1358,7 @@ pub fn install_product(c: &mut Ctx, path: &str, cmdline: &str) -> u32 {
     let props = parse_props(cmdline);
     if let Some((_, t)) = props.iter().rev().find(|(k, _)| k == "TRANSFORMS") {
         let (db, full) = {
-            let pk = p.lock().unwrap();
+            let pk = p.locked();
             (pk.db.clone(), pk.path.clone())
         };
         let e = apply_transforms(&db, &full, t);
@@ -1369,12 +1367,12 @@ pub fn install_product(c: &mut Ctx, path: &str, cmdline: &str) -> u32 {
         }
         p = Arc::new(Mutex::new(Package::open(db, &full)));
     }
-    let level = match UI.lock().unwrap().level & 0x1f {
+    let level = match UI.locked().level & 0x1f {
         INSTALLUILEVEL_DEFAULT => INSTALLUILEVEL_BASIC,
         l => l,
     };
     {
-        let mut pk = p.lock().unwrap();
+        let mut pk = p.locked();
         pk.ui_level = level;
         pk.props.insert("UILevel".into(), level.to_string());
         for (k, v) in props {
@@ -1401,7 +1399,7 @@ pub fn install_product(c: &mut Ctx, path: &str, cmdline: &str) -> u32 {
         _ => -3,
     };
     if level >= INSTALLUILEVEL_REDUCED {
-        let rows = crate::msi_pkg::query(&p.lock().unwrap().db, &format!("SELECT `Action` FROM `InstallUISequence` WHERE `Sequence` = {end}"));
+        let rows = crate::msi_pkg::query(&p.locked().db, &format!("SELECT `Action` FROM `InstallUISequence` WHERE `Sequence` = {end}"));
         if let Some(a) = rows.first() {
             let name = a.get(1).text();
             do_action(c, &p, &name, None);
@@ -1429,7 +1427,7 @@ pub fn apply_transforms(db: &crate::msi::Db, package: &str, list: &str) -> u32 {
 }
 
 pub fn apply_transform(db: &crate::msi::Db, dir: &str, t: &str) -> u32 {
-    let mut o = db.lock().unwrap();
+    let mut o = db.locked();
     let data = if let Some(name) = t.strip_prefix(':') {
         o.db.storage(name)
     } else {
@@ -1445,12 +1443,12 @@ pub fn apply_transform(db: &crate::msi::Db, dir: &str, t: &str) -> u32 {
 }
 
 fn table_exists(p: &Arc<Mutex<Package>>, t: &str) -> bool {
-    p.lock().unwrap().db.lock().unwrap().db.table(t).is_some()
+    p.locked().db.locked().db.table(t).is_some()
 }
 
 fn ran_execute(p: &Arc<Mutex<Package>>) -> bool {
     // (the UI sequence's ExecuteAction ran the execute sequence)
-    p.lock().unwrap().executed
+    p.locked().executed
 }
 
 // ---- entry points
@@ -1508,7 +1506,7 @@ fn MsiSequenceW(c: &mut Ctx) -> u32 {
 
 /// The internal UI's level (msiexec's /q options).
 pub fn set_ui_level(level: u32) {
-    UI.lock().unwrap().level = level;
+    UI.locked().level = level;
 }
 
 fn MsiSetInternalUI(c: &mut Ctx) -> u32 {
@@ -1520,7 +1518,7 @@ fn MsiSetInternalUI(c: &mut Ctx) -> u32 {
     if base > INSTALLUILEVEL_FULL || level & !0x1f & !UI_FLAGS != 0 {
         return INSTALLUILEVEL_NOCHANGE;
     }
-    let mut u = UI.lock().unwrap();
+    let mut u = UI.locked();
     let old = u.level;
     if !phwnd.is_null() {
         let prev = u.parent;
@@ -1535,7 +1533,7 @@ fn MsiSetInternalUI(c: &mut Ctx) -> u32 {
 
 fn set_external(c: &mut Ctx, wide: bool) -> u32 {
     let (f, filter, ctx) = (c.a(0), c.a(1), c.a(2));
-    let mut u = UI.lock().unwrap();
+    let mut u = UI.locked();
     let old = if u.record { 0 } else { u.handler };
     u.handler = f;
     u.filter = filter;
@@ -1553,7 +1551,7 @@ fn MsiSetExternalUIW(c: &mut Ctx) -> u32 {
 
 fn MsiSetExternalUIRecord(c: &mut Ctx) -> u32 {
     let (f, filter, ctx, prev) = (c.a(0), c.a(1), c.a(2), c.a(3));
-    let mut u = UI.lock().unwrap();
+    let mut u = UI.locked();
     if prev != 0 {
         w32(prev, if u.record { u.handler } else { 0 });
     }
@@ -1870,7 +1868,7 @@ fn product_property(c: &mut Ctx, wide: bool) -> u32 {
         return ERROR_INVALID_PARAMETER;
     }
     let name = arg_str(n, wide);
-    let rows = crate::msi_pkg::query(&p.lock().unwrap().db, &format!("SELECT `Value` FROM `Property` WHERE `Property` = '{}'", name.replace('\'', "")));
+    let rows = crate::msi_pkg::query(&p.locked().db, &format!("SELECT `Value` FROM `Property` WHERE `Property` = '{}'", name.replace('\'', "")));
     let v = rows.first().map_or_default(|r| r.get(1).text());
     out_str(buf, pcch, &v, wide)
 }
@@ -1909,11 +1907,11 @@ fn MsiSourceListEnumSourcesW(c: &mut Ctx) -> u32 {
 /// write them.
 pub fn encode_guid85(g: &str) -> Option<String> {
     const A: &[u8] = b"!$%&'()*+,-.0123456789=?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[]^_`abcdefghijklmnopqrstuvwxyz{}~";
-    let h: Vec<u8> = g.bytes().filter(|c| c.is_ascii_hexdigit()).collect();
+    let h: Vec<u64> = g.chars().filter_map(|c| c.to_digit(16)).map(u64::from).collect();
     if h.len() != 32 {
         return None;
     }
-    let hex = |s: &[u8]| u64::from_str_radix(std::str::from_utf8(s).unwrap(), 16).unwrap();
+    let hex = |s: &[u64]| s.iter().fold(0, |v, &d| v << 4 | d);
     let mut b = Vec::with_capacity(16);
     b.extend((hex(&h[0..8]) as u32).to_le_bytes());
     b.extend((hex(&h[8..12]) as u16).to_le_bytes());
@@ -1922,8 +1920,8 @@ pub fn encode_guid85(g: &str) -> Option<String> {
         b.push(hex(&h[16 + 2 * i..18 + 2 * i]) as u8);
     }
     let mut out = String::new();
-    for k in 0..4 {
-        let mut x = u32::from_le_bytes(b[4 * k..4 * k + 4].try_into().unwrap()) as u64;
+    for w in kome::le::pieces::<4>(&b) {
+        let mut x = u64::from(u32::from_le_bytes(*w));
         for _ in 0..5 {
             out.push(A[(x % 85) as usize] as char);
             x /= 85;

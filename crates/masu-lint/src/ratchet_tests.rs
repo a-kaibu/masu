@@ -30,7 +30,16 @@ fn every_counted_lint_fires_on_its_fixture_line() {
         }
     }
     let disallowed = crate::arch::disallowed(&std::fs::read_to_string(repo.conf.join("clippy.toml")).unwrap_or_default());
-    let hits = clippy(&repo, &disallowed).unwrap_or_else(|e| panic!("clippy on the fixture: {e}"));
+    let Hits { all: hits, product } = clippy(&repo, &disallowed).unwrap_or_else(|e| panic!("clippy on the fixture: {e}"));
+    // (the fixture's library unwraps and expects, its cfg(test) code too: NEVER finds the
+    // library's only)
+    let nev = never(&product);
+    let lints: BTreeSet<&str> = nev.iter().map(|k| k.1.as_str()).collect();
+    assert_eq!(lints, NEVER.into_iter().collect(), "NEVER lints in the fixture's library");
+    let lib = std::fs::read_to_string(repo.root.join("crates/masu/src/lib.rs")).unwrap_or_default();
+    let test_only = lib.lines().position(|l| l.contains("fn test_only")).map(|i| i.saturating_add(2));
+    assert!(test_only.is_some(), "the fixture's cfg(all(test, ..)) function");
+    assert!(!product.iter().any(|h| Some(h.line) == test_only && h.file.as_str().ends_with("masu/src/lib.rs")), "a cfg(test) unwrap taken for product code: {product:#?}");
     let srcs = sources(&repo);
     let got: BTreeSet<(Rel, usize, String)> = hits.into_iter().chain(allow_attrs(&srcs)).chain(custom(&srcs)).map(|h| (h.file, h.line, h.lint)).collect();
     let missed: Vec<_> = want.difference(&got).collect();
@@ -50,6 +59,15 @@ fn every_counted_lint_fires_on_its_fixture_line() {
     assert!(unmarked.is_empty(), "lints without a fixture line in tools/lint-fixtures/ratchet: {unmarked:?}");
     let ungrouped: Vec<_> = GROUPS.iter().filter(|g| !groups.contains(**g)).collect();
     assert!(ungrouped.is_empty(), "clippy groups without a fixture line (mark it `<lint>@<group>`): {ungrouped:?}");
+}
+
+#[test]
+fn never_names_each_file_and_lint_once() {
+    let h = |f: &str, line: usize, lint: &str| Hit { file: Rel::new(f), line, col: 1, lint: lint.to_owned() };
+    let product: BTreeSet<Hit> = [h("a.rs", 1, "unwrap_used"), h("a.rs", 2, "unwrap_used"), h("b.rs", 3, "expect_used"), h("c.rs", 4, "as_conversions")].into_iter().collect();
+    let nev = never(&product);
+    let got: Vec<(&str, &str)> = nev.iter().map(|k| (k.0.as_str(), k.1.as_str())).collect();
+    assert_eq!(got, [("a.rs", "unwrap_used"), ("b.rs", "expect_used")]);
 }
 
 #[test]

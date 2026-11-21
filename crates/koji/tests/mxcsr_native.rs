@@ -7,7 +7,8 @@
 
 use core::arch::asm;
 use core::arch::x86_64::*;
-use koji::{flags32, flags64, narrow_flags, step, Cpu, Exit, FOp, Fault, Memory};
+use koji::{flags32, flags64, narrow_flags, step, Cpu, Exit, FOp};
+use koji::Flat;
 
 struct Rng(u64);
 impl Rng {
@@ -133,22 +134,6 @@ fn narrowing_flags_match_the_host() {
 }
 
 // ---- traps in the interpreter
-
-struct Flat(Vec<u8>);
-impl Memory for Flat {
-    fn read8(&mut self, a: u32) -> Result<u8, Fault> {
-        self.0.get(a as usize).copied().ok_or(Fault { addr: a, write: false })
-    }
-    fn write8(&mut self, a: u32, v: u8) -> Result<(), Fault> {
-        match self.0.get_mut(a as usize) {
-            Some(b) => {
-                *b = v;
-                Ok(())
-            }
-            None => Err(Fault { addr: a, write: true }),
-        }
-    }
-}
 
 /// Runs `code` from 0x1000 with MXCSR = `mx` until an exit other than Continue or the end.
 fn run(code: &[u8], mx: u32) -> (Cpu, Exit) {

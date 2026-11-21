@@ -17,10 +17,7 @@ impl Rng {
 }
 
 fn fnv(h: &mut u64, b: &[u8]) {
-    for &x in b {
-        *h ^= u64::from(x);
-        *h = h.wrapping_mul(0x100_0000_01b3);
-    }
+    *h = kome::golden::Fnv(*h).bytes(b).get();
 }
 
 fn table(name: &str, default: String, f: impl Fn(u32) -> String) -> String {

@@ -110,7 +110,8 @@ fn row_mul(v: [f32; 4], m: &[f32; 16]) -> [f32; 4] {
     r
 }
 
-fn mat_mul(a: &[f32; 16], b: &[f32; 16]) -> [f32; 16] {
+/// a * b of row-major 4x4 matrices (D3D's order: v * a * b)
+pub fn mat_mul(a: &[f32; 16], b: &[f32; 16]) -> [f32; 16] {
     let mut r = [0f32; 16];
     for i in 0..4 {
         for j in 0..4 {

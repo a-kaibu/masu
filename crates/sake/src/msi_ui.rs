@@ -13,6 +13,7 @@
 //! EventMapping subscribes. Bitmaps (Binary rows), lines and progress bars are painted by the
 //! dialog itself.
 
+use kome::locks::Lock as _;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
@@ -93,12 +94,12 @@ static NEXT_KEY: Mutex<u32> = Mutex::new(1);
 static MODELESS: Mutex<u32> = Mutex::new(0);
 
 fn with<R>(key: u32, f: impl FnOnce(&mut Dlg) -> R) -> Option<R> {
-    let mut g = DLGS.lock().unwrap();
+    let mut g = DLGS.locked();
     g.get_or_insert_with(HashMap::new).get_mut(&key).map(f)
 }
 
 fn key_of(hwnd: u32) -> Option<u32> {
-    let g = DLGS.lock().unwrap();
+    let g = DLGS.locked();
     g.as_ref()?.iter().find(|(_, d)| d.hwnd == hwnd).map(|(k, _)| *k)
 }
 
@@ -187,8 +188,8 @@ pub fn rtf_text(rtf: &str) -> String {
     let mut out: Vec<u16> = Vec::new();
     let mut bytes: Vec<u8> = Vec::new();
     let mut cp = 1252u32;
-    // per group: skipped
-    let mut skip = vec![false];
+    // the group's skipped, and the groups' outside it
+    let (mut skip, mut outer) = (false, Vec::new());
     let mut uc_skip = 0usize;
     let mut i = 0;
     let flush = |bytes: &mut Vec<u8>, out: &mut Vec<u16>, cp: u32| {
@@ -199,15 +200,15 @@ pub fn rtf_text(rtf: &str) -> String {
     };
     while i < b.len() {
         let ch = b[i];
-        let skipping = *skip.last().unwrap();
+        let skipping = skip;
         match ch {
             b'{' => {
-                skip.push(skipping);
+                outer.push(skip);
                 i += 1;
             }
             b'}' => {
-                if skip.len() > 1 {
-                    skip.pop();
+                if let Some(s) = outer.pop() {
+                    skip = s;
                 }
                 i += 1;
             }
@@ -229,7 +230,7 @@ pub fn rtf_text(rtf: &str) -> String {
                 if !n.is_ascii_alphabetic() {
                     // \\ \{ \} and other symbols; \* marks a destination to skip
                     if n == b'*' {
-                        *skip.last_mut().unwrap() = true;
+                        skip = true;
                     } else if !skipping && matches!(n, b'\\' | b'{' | b'}') {
                         bytes.push(n);
                     } else if !skipping && n == b'~' {
@@ -256,7 +257,7 @@ pub fn rtf_text(rtf: &str) -> String {
                 }
                 match word {
                     "fonttbl" | "colortbl" | "stylesheet" | "info" | "pict" | "header" | "footer" | "listtable" | "listoverridetable" | "rsidtbl" | "generator" | "xmlnstbl" | "themedata" | "datastore" | "latentstyles" => {
-                        *skip.last_mut().unwrap() = true;
+                        skip = true;
                     }
                     "ansicpg" => cp = num.unwrap_or(1252) as u32,
                     "par" | "line" | "sect" | "page" if !skipping => {
@@ -311,10 +312,10 @@ fn prop_value(pk: &Package, ctl: &Ctl) -> String {
 fn init(c: &mut Ctx, key: u32, hwnd: u32) {
     let Some((pkg, name)) = with(key, |d| {
         d.hwnd = hwnd;
-        (d.pkg.clone().unwrap(), d.name.clone())
-    }) else { return };
+        Some((d.pkg.clone()?, d.name.clone()))
+    }).flatten() else { return };
     let (dlg_row, rows, default_style) = {
-        let pk = pkg.lock().unwrap();
+        let pk = pkg.locked();
         let d = query(&pk.db, &format!("SELECT `HCentering`, `VCentering`, `Width`, `Height`, `Attributes`, `Title`, `Control_First`, `Control_Default`, `Control_Cancel` FROM `Dialog` WHERE `Dialog` = '{}'", q(&name))).into_iter().next();
         let rows = query(&pk.db, &format!("SELECT `Control`, `Type`, `X`, `Y`, `Width`, `Height`, `Attributes`, `Property`, `Text` FROM `Control` WHERE `Dialog_` = '{}'", q(&name)));
         (d, rows, pk.prop("DefaultUIFont"))
@@ -322,7 +323,7 @@ fn init(c: &mut Ctx, key: u32, hwnd: u32) {
     let Some(d) = dlg_row else { return };
     let (cw, ch) = (px(d.get(3).int()), px(d.get(4).int()));
     let (default, cancel) = (d.get(8).text(), d.get(9).text());
-    let title = pkg.lock().unwrap().format(&d.get(6).text());
+    let title = pkg.locked().format(&d.get(6).text());
     set_text(c, hwnd, &title);
     // the size and place: the client area Width x Height, centred by H/VCentering (percent)
     let rc_own = mem::Scratch::new(16, true);
@@ -338,7 +339,7 @@ fn init(c: &mut Ctx, key: u32, hwnd: u32) {
     let (x, y) = ((sw - ww) * pct(d.get(1).int()) / 100, (sh - wh) * pct(d.get(2).int()) / 100);
     g(c, "user32", "SetWindowPos", &[hwnd, 0, x.max(0) as u32, y.max(0) as u32, ww as u32, wh as u32, 0x14]);
     let dfont = {
-        let pk = pkg.lock().unwrap();
+        let pk = pkg.locked();
         font(c, key, &pk, &default_style)
     };
     let mut ctls = Vec::new();
@@ -360,7 +361,7 @@ fn init(c: &mut Ctx, key: u32, hwnd: u32) {
         };
         let base = Ctl { name: cname.clone(), kind: kind.clone(), id, rect, attrs, property: property.clone(), text: text.clone(), ..Ctl::default() };
         let (cls, st, label): (&str, u32, String) = {
-            let pk = pkg.lock().unwrap();
+            let pk = pkg.locked();
             let (_, t) = styled(&pk, &text);
             match kind.as_str() {
                 "Text" => ("Static", if attrs & CTL_RIGHT != 0 { 2 } else { 0 } | if attrs & CTL_NOPREFIX != 0 { 0x80 } else { 0 } | if attrs & CTL_SUNKEN != 0 { 0x1000 } else { 0 }, if attrs & CTL_INDIRECT != 0 || text.is_empty() && !property.is_empty() { prop_value(&pk, &base) } else { t }),
@@ -381,7 +382,7 @@ fn init(c: &mut Ctx, key: u32, hwnd: u32) {
         let mut ctl = base;
         match kind.as_str() {
             "Bitmap" | "Icon" => {
-                let pk = pkg.lock().unwrap();
+                let pk = pkg.locked();
                 let bm = binary_bitmap(&pk, &pk.format(&text));
                 paints.push((rect, bm, "bitmap"));
             }
@@ -398,7 +399,7 @@ fn init(c: &mut Ctx, key: u32, hwnd: u32) {
             mem::heap_free(cp);
             mem::heap_free(tp);
             let style_font = {
-                let pk = pkg.lock().unwrap();
+                let pk = pkg.locked();
                 styled(&pk, &text).0.map(|s| font(c, key, &pk, &s))
             };
             send_msg(c, h, 0x30, style_font.unwrap_or(dfont), 0);
@@ -411,7 +412,7 @@ fn init(c: &mut Ctx, key: u32, hwnd: u32) {
     let n = ctls.len();
     for i in 0..n {
         let ctl = ctls[i].clone();
-        let pk = pkg.lock().unwrap();
+        let pk = pkg.locked();
         match ctl.kind.as_str() {
             "CheckBox" => {
                 let v = query(&pk.db, &format!("SELECT `Value` FROM `CheckBox` WHERE `Property` = '{}'", q(&ctl.property))).first().map(|r| r.get(1).text()).unwrap_or_else(|| "1".into());
@@ -459,7 +460,7 @@ fn init(c: &mut Ctx, key: u32, hwnd: u32) {
         }
     }
     let subs: Vec<(String, usize, String)> = {
-        let pk = pkg.lock().unwrap();
+        let pk = pkg.locked();
         query(&pk.db, &format!("SELECT `Control_`, `Event`, `Attribute` FROM `EventMapping` WHERE `Dialog_` = '{}'", q(&name)))
             .iter()
             .filter_map(|r| Some((r.get(2).text(), ctls.iter().position(|x| x.name == r.get(1).text())?, r.get(3).text())))
@@ -483,10 +484,10 @@ fn init(c: &mut Ctx, key: u32, hwnd: u32) {
 fn refresh(c: &mut Ctx, key: u32) {
     let Some((pkg, name, ctls)) = with(key, |d| {
         d.busy = true;
-        (d.pkg.clone().unwrap(), d.name.clone(), d.ctls.clone())
-    }) else { return };
+        Some((d.pkg.clone()?, d.name.clone(), d.ctls.clone()))
+    }).flatten() else { return };
     let conds: Vec<(String, String)> = {
-        let pk = pkg.lock().unwrap();
+        let pk = pkg.locked();
         query(&pk.db, &format!("SELECT `Control_`, `Action`, `Condition` FROM `ControlCondition` WHERE `Dialog_` = '{}'", q(&name)))
             .iter()
             .filter(|r| cond_true(&pk, &r.get(3).text()))
@@ -518,7 +519,7 @@ fn refresh(c: &mut Ctx, key: u32) {
         if x.hwnd == 0 {
             continue;
         }
-        let pk = pkg.lock().unwrap();
+        let pk = pkg.locked();
         let v = match x.kind.as_str() {
             "Text" if x.attrs & CTL_INDIRECT != 0 || x.text.is_empty() && !x.property.is_empty() => Some(prop_value(&pk, x)),
             "Text" if x.text.contains('[') => Some(styled(&pk, &x.text).1),
@@ -539,9 +540,9 @@ fn refresh(c: &mut Ctx, key: u32) {
 
 /// A control's ControlEvent rows, in order; then the conditions again.
 fn publish(c: &mut Ctx, key: u32, ctl: &str) {
-    let Some((pkg, name, hwnd)) = with(key, |d| (d.pkg.clone().unwrap(), d.name.clone(), d.hwnd)) else { return };
+    let Some((pkg, name, hwnd)) = with(key, |d| Some((d.pkg.clone()?, d.name.clone(), d.hwnd))).flatten() else { return };
     let events: Vec<(String, String)> = {
-        let pk = pkg.lock().unwrap();
+        let pk = pkg.locked();
         query(&pk.db, &format!("SELECT `Event`, `Argument`, `Condition` FROM `ControlEvent` WHERE `Dialog_` = '{}' AND `Control_` = '{}' ORDER BY `Ordering`", q(&name), q(ctl)))
             .iter()
             .filter(|r| {
@@ -556,7 +557,7 @@ fn publish(c: &mut Ctx, key: u32, ctl: &str) {
         if crate::env_on!("SAKE_TRACE_MSI") {
             eprintln!("msi: {name}.{ctl}: {ev} {arg}");
         }
-        let farg = pkg.lock().unwrap().format(&arg);
+        let farg = pkg.locked().format(&arg);
         match ev.as_str() {
             "EndDialog" => {
                 end = Some(match arg.as_str() {
@@ -584,7 +585,7 @@ fn publish(c: &mut Ctx, key: u32, ctl: &str) {
             }
             "SetTargetPath" | "CheckTargetPath" | "CheckExistingTargetPath" => {
                 if ev == "SetTargetPath" {
-                    let mut pk = pkg.lock().unwrap();
+                    let mut pk = pkg.locked();
                     let v = pk.prop(&farg);
                     if !v.is_empty() && pk.costed {
                         pk.set_target(&farg, &v);
@@ -592,7 +593,7 @@ fn publish(c: &mut Ctx, key: u32, ctl: &str) {
                 }
             }
             "SetInstallLevel" => {
-                let mut pk = pkg.lock().unwrap();
+                let mut pk = pkg.locked();
                 pk.set_prop("INSTALLLEVEL", &farg);
                 if pk.costed {
                     pk.plan_states();
@@ -605,7 +606,7 @@ fn publish(c: &mut Ctx, key: u32, ctl: &str) {
                     "Remove" => crate::msi_pkg::INSTALLSTATE_ABSENT,
                     _ => crate::msi_pkg::INSTALLSTATE_LOCAL,
                 };
-                let mut pk = pkg.lock().unwrap();
+                let mut pk = pkg.locked();
                 if pk.cost_started {
                     let names: Vec<String> = if farg == "ALL" { pk.features.iter().map(|f| f.name.clone()).collect() } else { vec![farg.clone()] };
                     for n in names {
@@ -615,9 +616,9 @@ fn publish(c: &mut Ctx, key: u32, ctl: &str) {
             }
             "Reset" => {}
             e if e.starts_with('[') && e.ends_with(']') => {
-                let prop = pkg.lock().unwrap().format(&e[1..e.len() - 1]);
+                let prop = pkg.locked().format(&e[1..e.len() - 1]);
                 let v = if arg == "{}" { String::new() } else { farg };
-                pkg.lock().unwrap().set_prop(&prop, &v);
+                pkg.locked().set_prop(&prop, &v);
             }
             _ => {}
         }
@@ -631,7 +632,7 @@ fn publish(c: &mut Ctx, key: u32, ctl: &str) {
 
 /// A control's input taken into its property.
 fn take_input(c: &mut Ctx, key: u32, i: usize, code: u32) {
-    let Some((pkg, ctl, busy, all)) = with(key, |d| (d.pkg.clone().unwrap(), d.ctls[i].clone(), d.busy, d.ctls.clone())) else { return };
+    let Some((pkg, ctl, busy, all)) = with(key, |d| Some((d.pkg.clone()?, d.ctls.get(i)?.clone(), d.busy, d.ctls.clone()))).flatten() else { return };
     if busy || ctl.property.is_empty() {
         return;
     }
@@ -648,7 +649,7 @@ fn take_input(c: &mut Ctx, key: u32, i: usize, code: u32) {
     let Some(v) = v else { return };
     let mut prop = ctl.property.clone();
     {
-        let mut pk = pkg.lock().unwrap();
+        let mut pk = pkg.locked();
         if ctl.attrs & CTL_INDIRECT != 0 {
             prop = pk.prop(&prop);
         }
@@ -777,15 +778,15 @@ fn template(modeless: bool) -> u32 {
 }
 
 fn new_dlg(pkg: &Arc<Mutex<Package>>, name: &str) -> u32 {
-    let mut k = NEXT_KEY.lock().unwrap();
+    let mut k = NEXT_KEY.locked();
     let key = *k;
     *k += 1;
-    DLGS.lock().unwrap().get_or_insert_with(HashMap::new).insert(key, Dlg { pkg: Some(pkg.clone()), name: name.to_string(), ..Dlg::default() });
+    DLGS.locked().get_or_insert_with(HashMap::new).insert(key, Dlg { pkg: Some(pkg.clone()), name: name.to_string(), ..Dlg::default() });
     key
 }
 
 fn drop_dlg(c: &mut Ctx, key: u32) {
-    let d = DLGS.lock().unwrap().get_or_insert_with(HashMap::new).remove(&key);
+    let d = DLGS.locked().get_or_insert_with(HashMap::new).remove(&key);
     if let Some(d) = d {
         for f in d.fonts.values().chain(d.paints.iter().map(|p| &p.1)).filter(|&&h| h != 0) {
             g(c, "gdi32", "DeleteObject", &[*f]);
@@ -795,7 +796,7 @@ fn drop_dlg(c: &mut Ctx, key: u32) {
 
 /// Closes the modeless dialog that is up, if any.
 pub fn close_modeless(c: &mut Ctx) {
-    let key = std::mem::take(&mut *MODELESS.lock().unwrap());
+    let key = std::mem::take(&mut *MODELESS.locked());
     if key == 0 {
         return;
     }
@@ -810,7 +811,7 @@ pub fn close_modeless(c: &mut Ctx) {
 fn run_modal(c: &mut Ctx, pkg: &Arc<Mutex<Package>>, name: &str, parent: u32) -> u32 {
     let mut name = name.to_string();
     loop {
-        let exists = !query(&pkg.lock().unwrap().db, &format!("SELECT `Dialog` FROM `Dialog` WHERE `Dialog` = '{}'", q(&name))).is_empty();
+        let exists = !query(&pkg.locked().db, &format!("SELECT `Dialog` FROM `Dialog` WHERE `Dialog` = '{}'", q(&name))).is_empty();
         if !exists {
             eprintln!("msi: no dialog {name}");
             return ERROR_INSTALL_FAILURE;
@@ -835,8 +836,8 @@ fn run_modal(c: &mut Ctx, pkg: &Arc<Mutex<Package>>, name: &str, parent: u32) ->
 
 /// A dialog an action names (a sequence's or MsiDoAction's).
 pub fn dialog(c: &mut Ctx, p: &Arc<Mutex<Package>>, name: &str) -> u32 {
-    let level = p.lock().unwrap().ui_level & 0x1f;
-    let attrs = query(&p.lock().unwrap().db, &format!("SELECT `Attributes` FROM `Dialog` WHERE `Dialog` = '{}'", q(name))).first().map(|r| r.get(1).int()).unwrap_or(DLG_VISIBLE | DLG_MODAL);
+    let level = p.locked().ui_level & 0x1f;
+    let attrs = query(&p.locked().db, &format!("SELECT `Attributes` FROM `Dialog` WHERE `Dialog` = '{}'", q(name))).first().map(|r| r.get(1).int()).unwrap_or(DLG_VISIBLE | DLG_MODAL);
     let modal = attrs & DLG_MODAL != 0;
     let shown = match level {
         crate::msi_install::INSTALLUILEVEL_FULL => true,
@@ -855,7 +856,7 @@ pub fn dialog(c: &mut Ctx, p: &Arc<Mutex<Package>>, name: &str) -> u32 {
         let t = template(true);
         g(c, "user32", "CreateDialogIndirectParamW", &[0, t, 0, proc_addr(), key]);
         mem::heap_free(t);
-        *MODELESS.lock().unwrap() = key;
+        *MODELESS.locked() = key;
         pump(c);
         return ERROR_SUCCESS;
     }
@@ -879,11 +880,11 @@ fn pump(c: &mut Ctx) {
 /// Install messages for the modeless dialog's subscribers (EventMapping): ActionText (an
 /// action's description), ActionData, SetProgress. Returns whether a dialog took it.
 pub fn message(c: &mut Ctx, kind: u32, rec: &Record) -> bool {
-    let key = *MODELESS.lock().unwrap();
+    let key = *MODELESS.locked();
     if key == 0 {
         return false;
     }
-    let Some((pkg, subs, ctls)) = with(key, |d| (d.pkg.clone().unwrap(), d.subs.clone(), d.ctls.clone())) else { return false };
+    let Some((pkg, subs, ctls)) = with(key, |d| Some((d.pkg.clone()?, d.subs.clone(), d.ctls.clone()))).flatten() else { return false };
     let text_of = |f: &Field| match f {
         Field::Null => String::new(),
         f => f.text(),
@@ -908,7 +909,7 @@ pub fn message(c: &mut Ctx, kind: u32, rec: &Record) -> bool {
             if !tpl.is_empty() {
                 r.f[0] = Field::Str(tpl);
             }
-            let v = pkg.lock().unwrap().format_record(&r);
+            let v = pkg.locked().format_record(&r);
             set(c, "ActionData", &v);
         }
         // PROGRESS: [1] 0 reset (total [2]), 2 increment ([2]), 1 action info, 3 add to total

@@ -148,14 +148,14 @@ kernel32:drive	fail	13	129
 kernel32:environ	fail	96	454
 kernel32:fiber	fail	1	32993
 kernel32:file	timeout	484821	0
-kernel32:format_msg	fail	328	1552
+kernel32:format_msg	ok	0	1552
 kernel32:generated	ok	0	0
 kernel32:heap	fail	4134	278814
 kernel32:loader	crash	3675	0
 kernel32:locale	timeout	893818	0
 kernel32:mailslot	fail	84	126
 kernel32:module	fail	378	657
-kernel32:path	fail	99785	202591
+kernel32:path	fail	99780	202591
 kernel32:pipe	crash	56	0
 kernel32:power	fail	2	3
 kernel32:process	timeout	7	111
@@ -218,7 +218,7 @@ ntdll:directory	fail	16	8347
 ntdll:env	crash	68	0
 ntdll:error	fail	489	1448
 ntdll:exception	crash	73	0
-ntdll:file	fail	792	2155
+ntdll:file	fail	745	2165
 ntdll:generated	ok	0	0
 ntdll:info	crash	322	0
 ntdll:large_int	fail	454	756
@@ -229,7 +229,7 @@ ntdll:port	ok	0	0
 ntdll:reg	crash	47	0
 ntdll:rtl	crash	2	0
 ntdll:rtlbitmap	fail	338	376
-ntdll:rtlstr	timeout	694958	0
+ntdll:rtlstr	ok	0	2178626
 ntdll:string	fail	8	1973924
 ntdll:sync	fail	130	433
 ntdll:thread	timeout	7	0

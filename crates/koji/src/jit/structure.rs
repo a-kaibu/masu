@@ -104,7 +104,7 @@ pub(super) struct Layout {
 /// Builds the graph of blocks `blocks` (contexts `ctxs`, found by `targets`) and dispatch
 /// nodes `tables` (each block's in `jnode`), from block `entry`.
 pub(super) fn layout(
-    blocks: &[(u32, Vec<Instruction>)],
+    blocks: &[(u32, super::Insns)],
     ctxs: &[u32],
     targets: &BTreeMap<(u32, u32), u32>,
     inlined: &BTreeMap<usize, (usize, Option<u32>)>,
@@ -120,7 +120,7 @@ pub(super) fn layout(
     let find = |ctx: u32, a: u32| targets.get(&(ctx, a)).or_else(|| targets.get(&(0, a))).map(|&b| us(b));
     let mut succ: Vec<Vec<usize>> = alloc::vec![Vec::new(); total];
     for k in 0..n {
-        let last = blocks[k].1.last().unwrap();
+        let last = blocks[k].1.last();
         let ctx = ctxs[k];
         let mut s = Vec::new();
         match last.flow_control() {

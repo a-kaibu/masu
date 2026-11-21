@@ -9,6 +9,7 @@
 //! AFD_POLL_INFO { LARGE_INTEGER Timeout; ULONG NumberOfHandles; ULONG Exclusive;
 //!                 AFD_POLL_HANDLE_INFO { HANDLE Handle; ULONG Events; NTSTATUS Status } [] }
 
+use kome::locks::Lock as _;
 use crate::api::{implement, Ctx};
 use crate::mem::{ps, r32, rp, w32, wp};
 use crate::obj::{self, Obj};
@@ -161,7 +162,7 @@ fn finish(p: &Poll, status: u32, got: &[(u32, u32)]) {
 /// Ends the polls whose sockets have an asked event now; true if any did
 pub fn check() -> bool {
     let done: Vec<(Poll, Vec<(u32, u32)>)> = {
-        let mut ps = POLLS.lock().unwrap();
+        let mut ps = POLLS.locked();
         if ps.is_empty() {
             return false;
         }
@@ -187,7 +188,7 @@ pub fn check() -> bool {
 
 /// Whether polls wait (a port's waiter looks at them)
 pub fn pending() -> bool {
-    !POLLS.lock().unwrap().is_empty()
+    !POLLS.locked().is_empty()
 }
 
 /// NtDeviceIoControlFile(h, event, apc, apcctx, iosb, code, in, inlen, out, outlen) on an AFD handle
@@ -222,7 +223,7 @@ pub fn ioctl(c: &mut Ctx) -> Option<u32> {
     if iosb != 0 {
         wp(iosb, STATUS_PENDING);
     }
-    POLLS.lock().unwrap().push(p);
+    POLLS.locked().push(p);
     // (a socket that became ready since `fired` above: ws2's check ran before the poll was
     // here; formal/tla/AfdPoll.tla)
     check();
@@ -232,7 +233,7 @@ pub fn ioctl(c: &mut Ctx) -> Option<u32> {
 /// Ends polls of `afd` with STATUS_CANCELLED: the one with that IO_STATUS_BLOCK, or all (0)
 fn cancel(afd: u32, iosb: u32) -> bool {
     let gone: Vec<Poll> = {
-        let mut ps = POLLS.lock().unwrap();
+        let mut ps = POLLS.locked();
         let (gone, keep) = ps.drain(..).partition(|p| p.afd == afd && (iosb == 0 || p.iosb == iosb));
         *ps = keep;
         gone

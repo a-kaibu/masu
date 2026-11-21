@@ -15,6 +15,7 @@
 
 #![allow(non_snake_case)]
 
+use kome::locks::Lock as _;
 use std::sync::Mutex;
 
 use crate::api::{self, host_fn, Ctx, Handler};
@@ -267,24 +268,24 @@ fn _Cnd_signal(c: &mut Ctx) -> u32 {
 /// notify_all_at_thread_exit's registrations: (thread, cnd, mtx, int *done)
 static AT_EXIT: Mutex<Vec<(u32, u32, u32, u32)>> = Mutex::new(Vec::new());
 fn _Cnd_register_at_thread_exit(c: &mut Ctx) -> u32 {
-    AT_EXIT.lock().unwrap().push((tid(), c.a(0), c.a(1), c.a(2)));
+    AT_EXIT.locked().push((tid(), c.a(0), c.a(1), c.a(2)));
     0
 }
 fn _Cnd_unregister_at_thread_exit(c: &mut Ctx) -> u32 {
     let m = c.a(0);
-    AT_EXIT.lock().unwrap().retain(|e| e.2 != m);
+    AT_EXIT.locked().retain(|e| e.2 != m);
     0
 }
 /// A thread ended without its CRT's exit (TerminateThread, ExitThread): its registrations go
 /// without running, as on Windows (they waited for a thread id that a later thread could get).
 pub fn thread_gone(tid: u32) {
-    AT_EXIT.lock().unwrap().retain(|e| e.0 != tid);
+    AT_EXIT.locked().retain(|e| e.0 != tid);
 }
 /// At the thread's exit: each registration's flag set, its mutex unlocked, its waiters woken.
 fn _Cnd_do_broadcast_at_thread_exit(_: &mut Ctx) -> u32 {
     let me = tid();
     let mine: Vec<_> = {
-        let mut g = AT_EXIT.lock().unwrap();
+        let mut g = AT_EXIT.locked();
         let (mine, rest) = g.drain(..).partition(|e| e.0 == me);
         *g = rest;
         mine
@@ -678,7 +679,7 @@ fn errno_msg(e: u32) -> u32 {
     // every unknown code shares one "unknown error" string, as the STL's table does
     let e = if ERRNO_MSGS.iter().any(|(k, _)| *k == e) { e } else { u32::MAX };
     static STRS: Mutex<Vec<(u32, u32)>> = Mutex::new(Vec::new());
-    let mut g = STRS.lock().unwrap();
+    let mut g = STRS.locked();
     if let Some(&(_, p)) = g.iter().find(|(k, _)| *k == e) {
         return p;
     }
@@ -989,10 +990,10 @@ mod eptr_tests {
     /// A registration of a thread that ended without its CRT's exit is dropped, not run.
     #[test]
     fn registrations_of_an_ended_thread_go() {
-        AT_EXIT.lock().unwrap().push((0x7777, 1, 2, 3));
-        AT_EXIT.lock().unwrap().push((0x7778, 1, 2, 3));
+        AT_EXIT.locked().push((0x7777, 1, 2, 3));
+        AT_EXIT.locked().push((0x7778, 1, 2, 3));
         thread_gone(0x7777);
-        let left: Vec<u32> = AT_EXIT.lock().unwrap().iter().map(|e| e.0).filter(|&t| t >= 0x7777 && t <= 0x7778).collect();
+        let left: Vec<u32> = AT_EXIT.locked().iter().map(|e| e.0).filter(|&t| t >= 0x7777 && t <= 0x7778).collect();
         assert_eq!(left, vec![0x7778]);
         thread_gone(0x7778);
     }

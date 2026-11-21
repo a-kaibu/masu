@@ -87,7 +87,7 @@ impl Kind {
 const ALL: [Kind; 6] = [Kind::Sync, Kind::Profile, Kind::Header, Kind::Config, Kind::Props, Kind::Buffer];
 
 fn fnv(b: &[u8]) -> u64 {
-    b.iter().fold(0xcbf2_9ce4_8422_2325u64, |h, &x| (h ^ u64::from(x)).wrapping_mul(0x100_0000_01b3))
+    kome::golden::Fnv::of(b)
 }
 
 /// The bytes at `p` (`n` of them), words that point into them made offsets (a media type's

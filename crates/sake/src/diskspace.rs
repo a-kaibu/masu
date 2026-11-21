@@ -9,6 +9,7 @@
 //! later operation on the same file replaces the earlier one, except a delete after a copy, which
 //! is ignored. A drive is queried as exactly "x:" and only once the list has a file on it.
 
+use kome::locks::Lock as _;
 use crate::api::{implement, Ctx};
 use crate::k32::last_error;
 use crate::mem;
@@ -112,7 +113,7 @@ static LISTS: Mutex<Option<HashMap<u32, List>>> = Mutex::new(None);
 static NEXT: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0x6d50_0000);
 
 fn with<R>(f: impl FnOnce(&mut HashMap<u32, List>) -> R) -> R {
-    f(LISTS.lock().unwrap().get_or_insert_with(HashMap::default))
+    f(LISTS.locked().get_or_insert_with(HashMap::default))
 }
 
 fn fail(e: u32) -> u32 {

@@ -124,13 +124,13 @@ impl MediaType {
         MediaType { head, format }
     }
     fn major(&self) -> Guid {
-        self.head[0..16].try_into().unwrap()
+        kome::le::bytes_at(&self.head, 0).unwrap_or_default()
     }
     fn sub(&self) -> Guid {
-        self.head[16..32].try_into().unwrap()
+        kome::le::bytes_at(&self.head, 16).unwrap_or_default()
     }
     fn formattype(&self) -> Guid {
-        self.head[44..60].try_into().unwrap()
+        kome::le::bytes_at(&self.head, 44).unwrap_or_default()
     }
     /// into a caller's AM_MEDIA_TYPE: its format block a copy of ours (CoTaskMemAlloc'd)
     fn write(&self, p: u32) {
@@ -148,7 +148,7 @@ impl MediaType {
     /// the picture size its VIDEOINFOHEADER(2) gives
     pub fn size(&self) -> (i32, i32) {
         let bih = if self.formattype() == FORMAT_VIDEOINFO2 { 72 } else { 48 };
-        let at = |o: usize| self.format.get(bih + o..bih + o + 4).map_or(0, |b| i32::from_le_bytes(b.try_into().unwrap()));
+        let at = |o: usize| kome::le::u32_at(&self.format, bih + o).map_or(0, u32::cast_signed);
         (at(4), at(8).abs())
     }
 }
@@ -230,19 +230,13 @@ static VMRS: Mutex<Option<HashMap<u32, Vmr>>> = Mutex::new(None);
 static PINS: Mutex<Option<HashMap<u32, Pin>>> = Mutex::new(None);
 
 fn vmr_with<R>(b: u32, f: impl FnOnce(&mut Vmr) -> R) -> Option<R> {
-    VMRS.lock().unwrap_or_else(|e| e.into_inner()).get_or_insert_with(HashMap::new).get_mut(&b).map(f)
+    kome::locks::with_entry(&VMRS, &b, f)
 }
 fn pin_with<R>(p: u32, f: impl FnOnce(&mut Pin) -> R) -> Option<R> {
-    PINS.lock().unwrap_or_else(|e| e.into_inner()).get_or_insert_with(HashMap::new).get_mut(&p).map(f)
+    kome::locks::with_entry(&PINS, &p, f)
 }
 
-/// a method `slot` of COM object `obj` (in the guest) with `args` after `this`
-fn com_call(c: &mut Ctx, obj: u32, slot: u32, args: &[u32]) -> u32 {
-    let f = rp(rp(obj) + ps() * slot);
-    let mut a = vec![obj];
-    a.extend_from_slice(args);
-    c.call(f, &a)
-}
+use crate::dshow::com as com_call;
 fn guest_add_ref(c: &mut Ctx, obj: u32) {
     if obj != 0 {
         com_call(c, obj, 1, &[]);
@@ -1291,10 +1285,10 @@ struct Sample {
 static ALLOCS: Mutex<Option<HashMap<u32, Alloc>>> = Mutex::new(None);
 static SAMPLES: Mutex<Option<HashMap<u32, Sample>>> = Mutex::new(None);
 fn alloc_with<R>(a: u32, f: impl FnOnce(&mut Alloc) -> R) -> Option<R> {
-    ALLOCS.lock().unwrap_or_else(|e| e.into_inner()).get_or_insert_with(HashMap::new).get_mut(&a).map(f)
+    kome::locks::with_entry(&ALLOCS, &a, f)
 }
 fn sample_with<R>(s: u32, f: impl FnOnce(&mut Sample) -> R) -> Option<R> {
-    SAMPLES.lock().unwrap_or_else(|e| e.into_inner()).get_or_insert_with(HashMap::new).get_mut(&s).map(f)
+    kome::locks::with_entry(&SAMPLES, &s, f)
 }
 fn alloc_release(a: u32) {
     let n = alloc_with(a, |x| {

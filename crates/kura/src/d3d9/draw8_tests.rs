@@ -6,6 +6,7 @@
 //! cover the indices used, every primitive type. As draw_tests does for Direct3D 9: the
 //! primitives WebGPU's model assembles must be Direct3D 8's, vertex for vertex.
 
+use kome::locks::Lock as _;
 use super::draw_tests::{call, d3d_prims, layouts, out, put_bytes, rd, rotated, type_bytes};
 use super::trace_tests::{alloc, attach_page, on_low_stack, Rng, CALLS, SERIAL};
 use super::*;
@@ -300,7 +301,7 @@ fn d3d8_sprite_draws_join() {
         }
         // the same shader and base vertex again: nothing to prepare again (prep_gen kept); a
         // getter neither; another base vertex does
-        let generation = || D3D.lock().unwrap().as_ref().unwrap().dev.as_ref().unwrap().prep_gen;
+        let generation = || D3D.locked().as_ref().unwrap().dev.as_ref().unwrap().prep_gen;
         let g0 = generation();
         assert_eq!(devc(76, &[0x44]), 0);
         assert_eq!(devc(85, &[ib, 0]), 0);

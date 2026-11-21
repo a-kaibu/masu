@@ -1,5 +1,5 @@
 //! Taking a lock without an unwrap at every call: `m.locked()` for a Mutex, `l.r()` / `l.w()`
-//! for an RwLock, `wait(cv, g)` for a Condvar. A lock another thread panicked holding is NOT
+//! for an RwLock, `wait(cv, g)` / `wait_timeout(cv, g, d)` for a Condvar. A lock another thread panicked holding is NOT
 //! taken (review 2026-11-15: taking it anyway used whatever the panic left half changed): the
 //! caller panics too, naming the lock's type, as `.lock().unwrap()` would. The browser build
 //! aborts on a panic, so this only shows in tests and the server, where a request that panics
@@ -58,6 +58,27 @@ impl<T: ?Sized> Rw<T> for RwLock<T> {
 #[track_caller]
 pub fn wait<'a, T>(cv: &Condvar, g: MutexGuard<'a, T>) -> MutexGuard<'a, T> {
     cv.wait(g).unwrap_or_else(|_| poisoned::<T>())
+}
+
+/// `f` on the map a lazily made `static M: Mutex<Option<HashMap<..>>>` holds (made on first
+/// use, with any default hasher; the lock poisoned or not, as [`Lock::locked_anyway`]: for maps
+/// every change leaves whole).
+pub fn with_map<K, V, S: Default, R>(m: &Mutex<Option<std::collections::HashMap<K, V, S>>>, f: impl FnOnce(&mut std::collections::HashMap<K, V, S>) -> R) -> R {
+    f(m.locked_anyway().get_or_insert_with(std::collections::HashMap::default))
+}
+
+/// `f` on `key`'s value in such a map, if it has one ([`with_map`]).
+pub fn with_entry<K: Eq + std::hash::Hash, V, S: Default + std::hash::BuildHasher, R>(m: &Mutex<Option<std::collections::HashMap<K, V, S>>>, key: &K, f: impl FnOnce(&mut V) -> R) -> Option<R> {
+    with_map(m, |m| m.get_mut(key).map(f))
+}
+
+/// Condvar::wait_timeout: the guard and whether `d` ran out first; a panic if the lock was
+/// poisoned meanwhile (as `wait`)
+#[inline]
+#[track_caller]
+pub fn wait_timeout<'a, T>(cv: &Condvar, g: MutexGuard<'a, T>, d: std::time::Duration) -> (MutexGuard<'a, T>, bool) {
+    let (g, r) = cv.wait_timeout(g, d).unwrap_or_else(|_| poisoned::<T>());
+    (g, r.timed_out())
 }
 
 #[cfg(test)]

@@ -8,6 +8,10 @@ pub fn arr<const AT: usize, const L: usize, const N: usize>(b: &[u8; N]) -> [u8;
     std::array::from_fn(|i| b[AT + i])
 }
 
+pub fn u16<const AT: usize, const N: usize>(b: &[u8; N]) -> u16 {
+    u16::from_le_bytes(arr::<AT, 2, N>(b))
+}
+
 pub fn u32<const AT: usize, const N: usize>(b: &[u8; N]) -> u32 {
     u32::from_le_bytes(arr::<AT, 4, N>(b))
 }

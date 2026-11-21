@@ -13,37 +13,22 @@
 //!
 //! tests/testfloat/build.sh builds testfloat_gen into target/testfloat (pinned commits); without
 //! it this test does nothing. tests/testfloat/expected.tsv: passing cases per instruction and
-//! rounding mode; fewer fails, more prints a note (TF_UPDATE=1 rewrites). TF_FILTER=<substring
+//! rounding mode; fewer fails, more prints a note (MASU_UPDATE_GOLDEN=1 rewrites). TF_FILTER=<substring
 //! of the name>, TF_SHOW=<n> failures shown per run, TF_LEVEL=2 (TestFloat's level 2: much
 //! longer), TF_GEN=<path to testfloat_gen>.
 use iced_x86::code_asm::*;
-use koji::{Cpu, Exit, Fault, Memory};
+use koji::{Cpu, Exit};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 #[path = "../../../tests/testfloat/ops.rs"]
 mod ops;
 use ops::*;
+use koji::Flat as Ram;
 
 const CODE: u32 = 0x1000;
 const DATA: u32 = 0x10000;
 const OUT: u32 = DATA + 0x100;
-
-struct Ram(Vec<u8>);
-impl Memory for Ram {
-    fn read8(&mut self, a: u32) -> Result<u8, Fault> {
-        self.0.get(a as usize).copied().ok_or(Fault { addr: a, write: false })
-    }
-    fn write8(&mut self, a: u32, v: u8) -> Result<(), Fault> {
-        match self.0.get_mut(a as usize) {
-            Some(b) => {
-                *b = v;
-                Ok(())
-            }
-            None => Err(Fault { addr: a, write: true }),
-        }
-    }
-}
 
 /// The program: the instruction(s), then the flag read (STMXCSR [edi+8]); its end address
 fn program(op: &Op, rc: u32) -> (Vec<u8>, u32) {
@@ -175,17 +160,17 @@ fn testfloat() {
         total += n;
         match expected.get(k) {
             Some(&(want, _)) if ok < want => worse.push(format!("{k}: {ok}/{n} pass, expected.tsv says {want}")),
-            Some(&(want, _)) if ok > want => eprintln!("testfloat: {k} improved {want} -> {ok}/{n} (TF_UPDATE=1 records it)"),
+            Some(&(want, _)) if ok > want => eprintln!("testfloat: {k} improved {want} -> {ok}/{n} (MASU_UPDATE_GOLDEN=1 records it)"),
             Some(_) => {}
             None if ok < n => worse.push(format!("{k}: {ok}/{n} pass, not in expected.tsv")),
             None => {}
         }
     }
     eprintln!("testfloat: {pass}/{total} cases pass in {} runs", now.len());
-    if std::env::var_os("TF_UPDATE").is_some() && level == 1 {
+    if kome::golden::updating() && level == 1 {
         let mut all = expected.clone();
         all.extend(now);
-        let mut s = String::from("# instruction\trounding\tpassing\tcases  (crates/koji/tests/testfloat.rs; TF_UPDATE=1 rewrites)\n");
+        let mut s = String::from("# instruction\trounding\tpassing\tcases  (crates/koji/tests/testfloat.rs; MASU_UPDATE_GOLDEN=1 rewrites)\n");
         for (k, (a, b)) in all {
             s += &format!("{k}\t{a}\t{b}\n");
         }

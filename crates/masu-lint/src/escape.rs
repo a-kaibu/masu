@@ -189,20 +189,44 @@ pub fn constant_handler(tree: &Tree) -> Hits {
 /// a COM method's arm (by number, or sake's `Method { .. }`) that answers a constant
 static CONST_ARM: LazyLock<Option<Regex>> = LazyLock::new(|| Regex::new(r"^\s*(?:[0-9][0-9a-fx_ |.=]*|Method \{[^}]*\})\s*=>\s*(?:\{\s*\}|S_OK|0|1|E_NOTIMPL|E_FAIL|D3DERR_INVALIDCALL|return [A-Z_0-9]+;?)\s*,?\s*(//.*)?$").ok());
 
-/// The Direct3D objects' method tables: kura's d3d9 and d3d11 and sake's Direct3D 9 glue.
-const METHOD_TABLES: [&str; 3] = ["crates/kura/src/d3d9/", "crates/kura/src/d3d11/", "crates/sake/src/d3d9.rs"];
+/// The files of the Direct3D objects' method tables: kura's d3d9 and d3d11 (not their
+/// format tables) and sake's Direct3D 9 glue.
+const METHOD_TABLES: [&str; 9] = [
+    "crates/kura/src/d3d9/device.rs",
+    "crates/kura/src/d3d9/d3d8.rs",
+    "crates/kura/src/d3d9/mod.rs",
+    "crates/kura/src/d3d11/mod.rs",
+    "crates/kura/src/d3d11/d3d10.rs",
+    "crates/kura/src/d3d11/deferred.rs",
+    "crates/kura/src/d3d11/d2d.rs",
+    "crates/sake/src/d3d9.rs",
+    "crates/sake/src/d3d11.rs",
+];
+
+/// the function an arm is in: one that dispatches methods (it takes the method number
+/// `m: u32`, sake's `id: Method`, or is `query_interface`), not a table of state values
+/// (`blend_state`, `sampler_key`, `draw`)
+static FN_NAME: LazyLock<Option<Regex>> = LazyLock::new(|| Regex::new(r"\bfn ([A-Za-z_0-9]+)").ok());
+
+fn dispatches(name: &str, line: &str) -> bool {
+    line.contains("(m: u32") || line.contains(" m: u32") || line.contains("id: Method") || name == "query_interface"
+}
 
 /// `constant-method`: a method of a Direct3D object that does nothing and answers a constant
 /// (an empty arm, S_OK, 0, E_NOTIMPL...) whatever it is given, with no Windows evidence in its
 /// comment or the comment lines right above it: the method's behavior is not there.
 pub fn constant_method(tree: &Tree) -> Hits {
     let mut out = Hits::new();
-    let Some(re) = CONST_ARM.as_ref() else { return out };
+    let (Some(re), Some(fname)) = (CONST_ARM.as_ref(), FN_NAME.as_ref()) else { return out };
     for p in tree.rs(&METHOD_TABLES) {
         let text = tree.text(&p);
         let notes = comments(p.as_str(), &text);
+        let mut inside = false;
         for (i, l) in text.split('\n').enumerate() {
-            if !re.is_match(l) {
+            if let Some(n) = fname.captures(l).and_then(|c| c.get(1)) {
+                inside = dispatches(n.as_str(), l);
+            }
+            if !inside || !re.is_match(l) {
                 continue;
             }
             // (the evidence: its own comment and the comment block right above)

@@ -426,7 +426,7 @@ pub fn boxes(b: &[u8], from: usize, to: usize) -> Vec<([u8; 4], usize, usize)> {
     let mut o = from;
     while o + 8 <= to {
         let Some(size) = kome::le::u32_be_at(b, o) else { break };
-        let kind: [u8; 4] = b[o + 4..o + 8].try_into().unwrap();
+        let Some(kind) = kome::le::bytes_at::<4>(b, o + 4) else { break };
         let (body, end) = match size {
             0 => (o + 8, to),
             1 => match kome::le::u64_be_at(b, o + 8) {

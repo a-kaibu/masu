@@ -891,7 +891,7 @@ fn bmp_frame(data: &[u8]) -> Option<Frame> {
             for y in 0..h {
                 let r = row(y);
                 for x in 0..w as usize {
-                    let v = if bpp == 16 { u16::from_le_bytes([r[2 * x], r[2 * x + 1]]) as u32 } else { u32::from_le_bytes(r[4 * x..4 * x + 4].try_into().unwrap()) };
+                    let v = if bpp == 16 { u16::from_le_bytes([r[2 * x], r[2 * x + 1]]) as u32 } else { kome::le::u32_at(r, 4 * x)? };
                     let ch = |m: u32| {
                         if m == 0 {
                             return None;

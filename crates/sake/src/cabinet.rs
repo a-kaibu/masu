@@ -13,6 +13,7 @@
 //! in the next cabinet of a set (spanning) is FDIERROR_CORRUPT_CABINET for now.
 #![allow(non_snake_case)]
 
+use kome::locks::Lock as _;
 use crate::api::{implement, Ctx};
 use crate::mem::{self, w16, w32};
 
@@ -58,9 +59,9 @@ pub struct Header {
 
 /// The first 36 bytes: the header, or the FDIERROR they give.
 pub fn header(d: &[u8]) -> Result<Header, u32> {
-    if d.len() < CFHEADER {
+    let Some(h) = d.first_chunk::<CFHEADER>() else {
         return Err(FDIERROR_NOT_A_CABINET);
-    }
+    };
     if &d[0..4] != b"MSCF" {
         return Err(FDIERROR_NOT_A_CABINET);
     }
@@ -68,13 +69,13 @@ pub fn header(d: &[u8]) -> Result<Header, u32> {
     if major > 1 || (major == 1 && minor > 3) {
         return Err(FDIERROR_UNKNOWN_CABINET_VERSION);
     }
-    let flags = kome::le::u16_at(d, 30).unwrap();
+    let flags = kome::le::u16::<30, CFHEADER>(h);
     Ok(Header {
-        cb_cabinet: kome::le::u32_at(d, 8).unwrap(),
-        c_folders: kome::le::u16_at(d, 26).unwrap(),
-        c_files: kome::le::u16_at(d, 28).unwrap(),
-        set_id: kome::le::u16_at(d, 32).unwrap(),
-        i_cabinet: kome::le::u16_at(d, 34).unwrap(),
+        cb_cabinet: kome::le::u32::<8, CFHEADER>(h),
+        c_folders: kome::le::u16::<26, CFHEADER>(h),
+        c_files: kome::le::u16::<28, CFHEADER>(h),
+        set_id: kome::le::u16::<32, CFHEADER>(h),
+        i_cabinet: kome::le::u16::<34, CFHEADER>(h),
         reserve: flags & 4 != 0,
         has_prev: flags & 1 != 0,
         has_next: flags & 2 != 0,
@@ -139,7 +140,7 @@ impl Cab {
             folders.push(Folder { data: kome::le::u32_at(d, o).ok_or(BAD)?, blocks: kome::le::u16_at(d, o + 4).ok_or(BAD)?, comp: kome::le::u16_at(d, o + 6).ok_or(BAD)? });
             o += 8 + folder_reserve;
         }
-        let mut o = kome::le::u32_at(d, 16).unwrap() as usize;
+        let mut o = kome::le::u32_at(d, 16).ok_or(BAD)? as usize;
         let mut files = Vec::with_capacity(head.c_files as usize);
         for _ in 0..head.c_files {
             let size = kome::le::u32_at(d, o).ok_or(BAD)?;
@@ -434,10 +435,10 @@ pub fn stream(tables: &[u8], io: &mut dyn Io) -> Result<(), u32> {
             Some((i, dd)) => *i != f.folder || dd.pos() > f.offset as u64,
             None => true,
         };
-        if fresh {
-            dec = Some((f.folder, Decoder::new(folder, cab.data_reserve)?));
-        }
-        let dd = &mut dec.as_mut().unwrap().1;
+        let dd = match &mut dec {
+            Some((_, dd)) if !fresh => dd,
+            _ => &mut dec.insert((f.folder, Decoder::new(folder, cab.data_reserve)?)).1,
+        };
         while dd.pos() < f.offset as u64 {
             let skip = (f.offset as u64 - dd.pos()).min(usize::MAX as u64) as usize;
             dd.read(sink, skip)?;
@@ -477,7 +478,7 @@ struct Fdi {
 static FDIS: std::sync::Mutex<Vec<(u32, Fdi)>> = std::sync::Mutex::new(Vec::new());
 
 fn fdi(h: u32) -> Option<Fdi> {
-    FDIS.lock().unwrap().iter().find(|e| e.0 == h).map(|e| e.1)
+    FDIS.locked().iter().find(|e| e.0 == h).map(|e| e.1)
 }
 
 fn set_erf(erf: u32, oper: u32) {
@@ -504,7 +505,7 @@ fn FDICreate(c: &mut Ctx) -> u32 {
     if f.erf != 0 {
         mem::fill(f.erf, 12, 0);
     }
-    FDIS.lock().unwrap().push((h, f));
+    FDIS.locked().push((h, f));
     h
 }
 
@@ -512,7 +513,7 @@ fn FDICreate(c: &mut Ctx) -> u32 {
 fn FDIDestroy(c: &mut Ctx) -> u32 {
     let h = c.a(0);
     let f = {
-        let mut g = FDIS.lock().unwrap();
+        let mut g = FDIS.locked();
         let Some(i) = g.iter().position(|e| e.0 == h) else { return 0 };
         g.remove(i).1
     };

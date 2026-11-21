@@ -2,6 +2,7 @@
 //! signatures come from the registered proxy DLL's MIDL metadata. Vendor object
 //! code executes in its original server process; no method results are invented.
 #![allow(non_snake_case)]
+use kome::locks::Lock as _;
 use std::cell::Cell;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::{Arc, Mutex, atomic::{AtomicBool, AtomicU32, Ordering}};
@@ -94,9 +95,9 @@ fn read_interfaces(list: u32) -> Vec<Arc<Interface>> {
     result
 }
 fn interface(cpu: &mut koji::Cpu, iid: &[u8]) -> Result<Arc<Interface>, u32> {
-    if let Some(i) = INTERFACES.lock().unwrap().iter().find(|i| i.iid == iid).cloned() { return Ok(i); }
+    if let Some(i) = INTERFACES.locked().iter().find(|i| i.iid == iid).cloned() { return Ok(i); }
     if iid == kome::guid::IID_IUNKNOWN { return Ok(Arc::new(Interface { iid: iid.to_vec(), count: 3, methods: BTreeMap::new(), abi: BTreeMap::new() })); }
-    if MISSES.lock().unwrap().contains(iid) { return Err(NOINTERFACE); }
+    if MISSES.locked().contains(iid) { return Err(NOINTERFACE); }
     let proxy_class = crate::misc::registry_string(&format!("hkcr\\interface\\{}\\proxystubclsid32", text(iid)), "").ok_or(NOINTERFACE)?;
     let dll = crate::misc::registry_string(&format!("hkcr\\clsid\\{proxy_class}\\inprocserver32"), "").ok_or(NOINTERFACE)?;
     let base = crate::pe::load_library(cpu, &dll);
@@ -110,7 +111,7 @@ fn interface(cpu: &mut koji::Cpu, iid: &[u8]) -> Result<Arc<Interface>, u32> {
     let found = all.iter().find(|i| i.iid == iid).cloned();
     add_interfaces(all);
     if found.is_none() {
-        MISSES.lock().unwrap().insert(iid.to_vec());
+        MISSES.locked().insert(iid.to_vec());
     }
     found.ok_or(NOINTERFACE)
 }
@@ -120,8 +121,8 @@ static MISSES: Mutex<BTreeSet<Vec<u8>>> = Mutex::new(BTreeSet::new());
 /// Adds interfaces not known yet (the first registration of an IID stays, as lookups find it
 /// first; the list does not grow by the DLL's whole list per load)
 fn add_interfaces(new: Vec<Arc<Interface>>) {
-    let mut l = INTERFACES.lock().unwrap();
-    let mut misses = MISSES.lock().unwrap();
+    let mut l = INTERFACES.locked();
+    let mut misses = MISSES.locked();
     for i in new {
         misses.remove(&i.iid);
         if !l.iter().any(|o| o.iid == i.iid) {
@@ -198,7 +199,7 @@ static NEXT_COOKIE: AtomicU32 = AtomicU32::new(1);
 static REGISTERED: AtomicBool = AtomicBool::new(false);
 fn export(pointer: u32, owner: u32, iid: Vec<u8>) -> u32 {
     let id = NEXT_EXPORT.fetch_add(1, Ordering::Relaxed);
-    EXPORTS.lock().unwrap().get_or_insert_with(HashMap::new).insert(id,
+    EXPORTS.locked().get_or_insert_with(HashMap::new).insert(id,
         Export { owner, pointer, tid: crate::cur().tid, iid, refs: 1 });
     id
 }
@@ -275,7 +276,7 @@ fn serve(cpu: &mut koji::Cpu, call: &Call) -> Reply {
         let Some(class) = class.filter(|c| c.pid == crate::pid() && c.tid == crate::cur().tid && !c.suspended) else {
             return Reply { hr: CLASSNOTREG, data: vec![] };
         };
-        let factory = FACTORIES.lock().unwrap().as_ref().and_then(|f| f.get(&class.cookie)).copied();
+        let factory = FACTORIES.locked().as_ref().and_then(|f| f.get(&class.cookie)).copied();
         let Some((factory, _)) = factory else { return Reply { hr: CLASSNOTREG, data: vec![] } };
         let buffer_own = mem::Scratch::new(16 + ps(), true);
         let buffer = buffer_own.get(); mem::write(buffer, &call.iid);
@@ -287,7 +288,7 @@ fn serve(cpu: &mut koji::Cpu, call: &Call) -> Reply {
         }
         return Reply { hr: 0, data: export(pointer, call.from, call.iid.clone()).to_le_bytes().to_vec() };
     }
-    let object = EXPORTS.lock().unwrap().as_ref().and_then(|m| m.get(&call.object)).cloned();
+    let object = EXPORTS.locked().as_ref().and_then(|m| m.get(&call.object)).cloned();
     let Some(object) = object.filter(|o| o.owner == call.from && o.tid == crate::cur().tid) else {
         return Reply { hr: DISCONNECTED, data: vec![] };
     };
@@ -305,7 +306,7 @@ fn serve(cpu: &mut koji::Cpu, call: &Call) -> Reply {
         },
         3 | 4 => {
             let value = refcall(cpu, object.pointer, if call.op == 3 { 1 } else { 2 });
-            let mut exports = EXPORTS.lock().unwrap();
+            let mut exports = EXPORTS.locked();
             if let Some(exports) = exports.as_mut() {
                 if call.op == 3 { if let Some(o) = exports.get_mut(&call.object) { o.refs += 1; } }
                 else if let Some(o) = exports.get_mut(&call.object) { o.refs -= 1; if o.refs == 0 { exports.remove(&call.object); } }
@@ -347,10 +348,10 @@ static METHOD_TRAPS: Mutex<Option<HashMap<u32, u16>>> = Mutex::new(None);
 fn request(proxy: &Proxy, op: u32) -> Call {
     Call { from: crate::pid(), to: proxy.pid, tid: proxy.tid, op, object: proxy.object, ..Default::default() }
 }
-fn proxy(p: u32) -> Option<Proxy> { PROXIES.lock().unwrap().as_ref().and_then(|m| m.get(&p)).cloned() }
+fn proxy(p: u32) -> Option<Proxy> { PROXIES.locked().as_ref().and_then(|m| m.get(&p)).cloned() }
 fn make_proxy(cpu: &mut koji::Cpu, pid: u32, tid: u32, object: u32, iid: &[u8]) -> Result<u32, u32> {
     let info = interface(cpu, iid)?;
-    let cached = VTABLES.lock().unwrap().iter().find(|(g, _)| g == iid).map(|(_, p)| *p);
+    let cached = VTABLES.locked().iter().find(|(g, _)| g == iid).map(|(_, p)| *p);
     let vt = match cached {
         Some(v) => v,
         None => {
@@ -361,14 +362,14 @@ fn make_proxy(cpu: &mut koji::Cpu, pid: u32, tid: u32, object: u32, iid: &[u8]) 
             for slot in 3..info.count {
                 let bytes = info.abi[&(slot as u16)];
                 let trap = api::host_fn(&format!("COM proxy {}::{slot}", text(iid)), proxy_method, bytes);
-                METHOD_TRAPS.lock().unwrap().get_or_insert_with(HashMap::new).insert(trap, slot as u16);
+                METHOD_TRAPS.locked().get_or_insert_with(HashMap::new).insert(trap, slot as u16);
                 wp(v + slot * ps(), trap);
             }
-            VTABLES.lock().unwrap().push((iid.to_vec(), v)); v
+            VTABLES.locked().push((iid.to_vec(), v)); v
         }
     };
     let p = mem::heap_alloc(ps(), true); wp(p, vt);
-    PROXIES.lock().unwrap().get_or_insert_with(HashMap::new).insert(p, Proxy { pid, tid, object, info, refs: 1 });
+    PROXIES.locked().get_or_insert_with(HashMap::new).insert(p, Proxy { pid, tid, object, info, refs: 1 });
     Ok(p)
 }
 fn proxy_qi(c: &mut Ctx) -> u32 {
@@ -381,13 +382,13 @@ fn proxy_qi(c: &mut Ctx) -> u32 {
     let mut call = request(&proxy, 2); call.iid = iid.clone();
     let reply = call_remote(c.cpu, call);
     if reply.hr != 0 { return reply.hr; }
-    let Some(id) = reply.data.get(..4).map(|b| u32::from_le_bytes(b.try_into().unwrap())) else { return BAD_DATA };
+    let Some(id) = kome::le::u32_at(&reply.data, 0) else { return BAD_DATA };
     match make_proxy(c.cpu, proxy.pid, proxy.tid, id, &iid) { Ok(p) => { wp(out, p); 0 }, Err(hr) => hr }
 }
 fn proxy_ref(cpu: &mut koji::Cpu, this: u32, add: bool) -> u32 {
     let Some(proxy) = proxy(this) else { return 0 };
     let reply = call_remote(cpu, request(&proxy, if add { 3 } else { 4 }));
-    let mut proxies = PROXIES.lock().unwrap();
+    let mut proxies = PROXIES.locked();
     let Some(map) = proxies.as_mut() else { return 0 };
     let Some(p) = map.get_mut(&this) else { return 0 };
     if add { p.refs += 1; } else { p.refs -= 1; }
@@ -405,7 +406,7 @@ fn stack_args(stack: u32) -> Option<usize> {
 fn proxy_release(c: &mut Ctx) -> u32 { let this = c.a(0); proxy_ref(c.cpu, this, false) }
 fn proxy_method(c: &mut Ctx) -> u32 {
     let Some(proxy) = proxy(c.a(0)) else { return DISCONNECTED };
-    let Some(slot) = METHOD_TRAPS.lock().unwrap().as_ref().and_then(|m| m.get(&c.trap)).copied() else { return NOTIMPL };
+    let Some(slot) = METHOD_TRAPS.locked().as_ref().and_then(|m| m.get(&c.trap)).copied() else { return NOTIMPL };
     let Some(method) = proxy.info.methods.get(&slot) else { return NOTIMPL };
     let Some(n) = stack_args(method.stack as u32) else { return BAD_DATA };
     let mut args = Vec::new();
@@ -492,7 +493,7 @@ pub(crate) fn create(cpu: &mut koji::Cpu, clsid: u32, iid: u32, out: crate::api:
     let (class, iid) = (wire(clsid), wire(iid));
     let target = match class_for(cpu, &class, context) { Ok(c) => c, Err(hr) => return hr };
     if target.pid == crate::pid() {
-        let Some((factory, _)) = FACTORIES.lock().unwrap().as_ref().and_then(|f| f.get(&target.cookie)).copied() else { return CLASSNOTREG };
+        let Some((factory, _)) = FACTORIES.locked().as_ref().and_then(|f| f.get(&target.cookie)).copied() else { return CLASSNOTREG };
         let p_own = mem::Scratch::new(16, true);
         let p = p_own.get(); mem::write(p, &iid);
         let hr = crate::call(cpu, rp(rp(factory) + 3 * ps()), &crate::api::words![factory, 0, p, out]); drop(p_own); return hr;
@@ -503,7 +504,7 @@ pub(crate) fn create(cpu: &mut koji::Cpu, clsid: u32, iid: u32, out: crate::api:
     let reply = call_remote(cpu, Call { from: crate::pid(), to: target.pid, tid: target.tid,
         class: text(&class), iid: iid.clone(), ..Default::default() });
     if reply.hr != 0 { return reply.hr; }
-    let Some(object) = reply.data.get(..4).map(|b| u32::from_le_bytes(b.try_into().unwrap())) else { return BAD_DATA };
+    let Some(object) = kome::le::u32_at(&reply.data, 0) else { return BAD_DATA };
     match make_proxy(cpu, target.pid, target.tid, object, &iid) { Ok(p) => { out.put(p); 0 }, Err(hr) => hr }
 }
 fn CoRegisterClassObject(c: &mut Ctx) -> u32 {
@@ -514,14 +515,14 @@ fn CoRegisterClassObject(c: &mut Ctx) -> u32 {
     crate::process::watch();
     let cookie = NEXT_COOKIE.fetch_add(1, Ordering::Relaxed);
     refcall(c.cpu, object, 1);
-    FACTORIES.lock().unwrap().get_or_insert_with(HashMap::new).insert(cookie, (object, crate::cur().tid));
+    FACTORIES.locked().get_or_insert_with(HashMap::new).insert(cookie, (object, crate::cur().tid));
     kern::with(|k| { k.com.classes.insert(text(&class), Class { pid: crate::pid(), tid: crate::cur().tid,
         cookie, flags, suspended: flags & 4 != 0 }); k.changed(); });
     REGISTERED.store(true, Ordering::Relaxed); w32(out, cookie); 0
 }
 fn CoRevokeClassObject(c: &mut Ctx) -> u32 {
     let cookie = c.a(0);
-    let object = FACTORIES.lock().unwrap().as_mut().and_then(|m| m.remove(&cookie));
+    let object = FACTORIES.locked().as_mut().and_then(|m| m.remove(&cookie));
     let Some((object, _)) = object else { return 0x8007_0057 };
     kern::with(|k| { k.com.classes.retain(|_, r| !(r.pid == crate::pid() && r.cookie == cookie)); k.changed(); });
     refcall(c.cpu, object, 2); 0
@@ -589,17 +590,17 @@ mod tests {
     /// forgotten once some DLL registers that IID
     #[test]
     fn interfaces_are_added_once() {
-        let base = INTERFACES.lock().unwrap().len();
+        let base = INTERFACES.locked().len();
         for _ in 0..5 {
             add_interfaces(vec![iface(0xa1, 4), iface(0xa2, 5)]);
         }
         add_interfaces(vec![iface(0xa1, 9)]);
-        let l = INTERFACES.lock().unwrap();
+        let l = INTERFACES.locked();
         assert_eq!(l.len(), base + 2);
         assert_eq!(l.iter().find(|i| i.iid == [0xa1; 16]).unwrap().count, 4);
         drop(l);
-        MISSES.lock().unwrap().insert(vec![0xa3; 16]);
+        MISSES.locked().insert(vec![0xa3; 16]);
         add_interfaces(vec![iface(0xa3, 3)]);
-        assert!(!MISSES.lock().unwrap().contains(&[0xa3; 16][..]));
+        assert!(!MISSES.locked().contains(&[0xa3; 16][..]));
     }
 }

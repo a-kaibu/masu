@@ -3,6 +3,7 @@
 
 #![allow(non_snake_case)]
 
+use kome::locks::{Lock as _, Rw as _};
 use crate::hresult::CO_E_NOTINITIALIZED;
 use crate::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
@@ -543,7 +544,7 @@ fn shiina_installed() {
     if DONE.load(Ordering::Relaxed) {
         return;
     }
-    let Some(exe) = crate::pe::MODULES.read().unwrap().iter().find(|m| !m.dll).map(|m| m.path.clone()) else { return };
+    let Some(exe) = crate::pe::MODULES.r().iter().find(|m| !m.dll).map(|m| m.path.clone()) else { return };
     DONE.store(true, Ordering::Relaxed);
     let Some((dir, inis)) = crate::shiina::inis(&exe) else { return };
     let Some(key) = inis.iter().find_map(|i| {
@@ -723,7 +724,7 @@ pub fn reg_put(path: &str, name: &str, ty: u32, data: Vec<u8>) {
             at = if at.is_empty() { part.to_string() } else { format!("{at}\\{part}") };
             m.entry(at.clone()).or_default().ours = true;
         }
-        let k = m.get_mut(&path).unwrap();
+        let k = m.entry(path.clone()).or_default();
         let lname = name.to_lowercase();
         match k.values.iter_mut().find(|v| v.0.to_lowercase() == lname) {
             Some(v) => {
@@ -1365,8 +1366,7 @@ fn version_resource(path: &str) -> Option<Vec<u8>> {
     let full = crate::files::full_path(path).to_lowercase();
     let name = full.rsplit('\\').next().unwrap_or("").to_string();
     let base = crate::pe::MODULES
-        .read()
-        .unwrap()
+        .r()
         .iter()
         .find(|m| m.path.to_lowercase() == full || (!path.contains('\\') && m.name == name))
         .map(|m| m.base);
@@ -1420,7 +1420,7 @@ pub(crate) fn file_version(path: &str) -> Option<(u32, u32, Vec<u16>)> {
     let v = file_resource_of(&host, 16)?;
     let v = &v[..];
     let at = v.windows(4).position(|w| w == [0xbd, 0x04, 0xef, 0xfe])?;
-    let d = |k: usize| v.get(at + k..at + k + 4).map(|b| u32::from_le_bytes(b.try_into().unwrap()));
+    let d = |k: usize| kome::le::u32_at(&v, at + k);
     let (ms, ls) = (d(8)?, d(12)?);
     let key: Vec<u8> = "Translation".encode_utf16().flat_map(u16::to_le_bytes).collect();
     let mut langs = Vec::new();
@@ -1582,7 +1582,7 @@ fn VerQueryValueW(c: &mut Ctx) -> u32 {
 /// repeated initialization is S_FALSE, and drag and drop needs both
 static COM: Mutex<Option<HashMap<u32, (u32, u32)>>> = Mutex::new(None);
 fn com<R>(f: impl FnOnce(&mut (u32, u32)) -> R) -> R {
-    f(COM.lock().unwrap().get_or_insert_with(HashMap::default).entry(crate::cur().tid).or_default())
+    f(COM.locked().get_or_insert_with(HashMap::default).entry(crate::cur().tid).or_default())
 }
 /// Whether the current thread has COM (or WinRT, RoInitialize) initialized.
 pub fn com_initialized() -> bool {
@@ -1741,7 +1741,7 @@ fn dx_container(path: &str) -> u32 {
     static V: std::sync::OnceLock<u32> = std::sync::OnceLock::new();
     let vt = *V.get_or_init(|| {
         let m: &[(crate::api::Handler, u32)] = &[
-            (dx_qi, 12),
+            (crate::com::qi_self, 12),
             (dx_addref, 4),
             (dx_addref, 4),
             (dxc_num_children, 8),
@@ -1759,16 +1759,11 @@ fn dx_container(path: &str) -> u32 {
     });
     let o = mem::heap_alloc(2 * mem::ps(), true);
     mem::wp(o, vt);
-    DX_NODES.lock().unwrap().get_or_insert_with(HashMap::default).insert(o, path.to_string());
+    DX_NODES.locked().get_or_insert_with(HashMap::default).insert(o, path.to_string());
     o
 }
 fn dx_path(o: u32) -> String {
-    DX_NODES.lock().unwrap().get_or_insert_with(HashMap::default).get(&o).cloned().unwrap_or_default()
-}
-fn dx_qi(c: &mut Ctx) -> u32 {
-    let c = &mut c.args::<crate::api::outs::iface::IUnknown::QueryInterface>();
-    c.out::<2>().put(c.a::<0>());
-    0
+    DX_NODES.locked().get_or_insert_with(HashMap::default).get(&o).cloned().unwrap_or_default()
 }
 fn dx_addref(_: &mut Ctx) -> u32 {
     1
@@ -1856,7 +1851,7 @@ fn dxc_get_prop(c: &mut Ctx) -> u32 {
 fn dxdiag_provider() -> u32 {
     static V: std::sync::OnceLock<u32> = std::sync::OnceLock::new();
     let vt = *V.get_or_init(|| {
-        let m: &[(crate::api::Handler, u32)] = &[(dx_qi, 12), (dx_addref, 4), (dx_addref, 4), (dxp_initialize, 8), (dxp_root, 8)];
+        let m: &[(crate::api::Handler, u32)] = &[(crate::com::qi_self, 12), (dx_addref, 4), (dx_addref, 4), (dxp_initialize, 8), (dxp_root, 8)];
         let v = mem::heap_alloc(mem::ps() * m.len() as u32, true);
         for (i, (f, b)) in m.iter().enumerate() {
             mem::wp(v + mem::ps() * i as u32, crate::api::host_fn(&format!("IDxDiagProvider::{i}"), *f, *b));
@@ -2081,11 +2076,7 @@ fn CoTaskMemFree(c: &mut Ctx) -> u32 {
 fn malloc_obj() -> u32 {
     static O: std::sync::OnceLock<u32> = std::sync::OnceLock::new();
     *O.get_or_init(|| {
-        fn qi(c: &mut Ctx) -> u32 {
-            let c = &mut c.args::<crate::api::outs::iface::IUnknown::QueryInterface>();
-            c.out::<2>().put(c.a::<0>());
-            0
-        }
+        use crate::com::qi_self as qi;
         fn one(_: &mut Ctx) -> u32 {
             1
         }
@@ -2539,8 +2530,8 @@ fn DoDragDrop(c: &mut Ctx) -> u32 {
         let pt = Arg::Pt(x, y);
         let at = crate::user::prop_at(x, y, DROP_PROP);
         if hr == 0 || hr == DRAGDROP_S_DROP {
-            if cur.is_some() && cur != at {
-                method(c, cur.unwrap().1, 5, &[]);
+            if let Some((_, target)) = cur.filter(|_| cur != at) {
+                method(c, target, 5, &[]);
                 cur = None;
             }
             if cur.is_none() {
@@ -2940,9 +2931,8 @@ fn real_str(f: f64, digits: usize) -> String {
     if f == 0.0 {
         return if f.is_sign_negative() { "-0".into() } else { "0".into() };
     }
-    let e = format!("{:.*e}", digits - 1, f);
-    let (m, x) = e.split_once('e').unwrap();
-    let x: i32 = x.parse().unwrap();
+    let (m, x) = kome::num::sci(f, digits - 1);
+    let m = m.as_str();
     if x < -(digits as i32) || x >= digits as i32 {
         let m = if m.contains('.') { m.trim_end_matches('0').trim_end_matches('.') } else { m };
         return format!("{m}E{}{:02}", if x < 0 { '-' } else { '+' }, x.abs());
@@ -3478,8 +3468,8 @@ fn sh_get_file_info(c: &mut Ctx, wide: bool) -> u32 {
         // 'PE' and the subsystem's Windows version for a GUI program, 'PE' alone for a console one
         let Some(host) = crate::files::resolve(&name) else { return 0 };
         let Ok(b) = kura::fs::read(&host) else { return 0 };
-        let r32b = |o: usize| b.get(o..o + 4).map_or(0, |x| u32::from_le_bytes(x.try_into().unwrap()));
-        let r16b = |o: usize| b.get(o..o + 2).map_or(0, |x| u16::from_le_bytes(x.try_into().unwrap()) as u32);
+        let r32b = |o: usize| kome::le::u32_at(&b, o).unwrap_or(0);
+        let r16b = |o: usize| kome::le::u16_at(&b, o).map_or(0, |v| v as u32);
         if r16b(0) != 0x5a4d {
             return 0;
         }
@@ -3762,7 +3752,8 @@ fn sh_browse_for_folder(c: &mut Ctx, wide: bool) -> u32 {
     static PROC: std::sync::OnceLock<u32> = std::sync::OnceLock::new();
     let proc_ = *PROC.get_or_init(|| crate::api::host_fn("browse_dlgproc", browse_dlgproc, 16));
     let r = crate::user::hidden_dialog(c, owner, proc_, lparam);
-    let b = BROWSE.with(|b| b.borrow_mut().pop()).unwrap();
+    // (the push above: a dialog nested in this one pops its own)
+    let Some(b) = BROWSE.with(|b| b.borrow_mut().pop()) else { return 0 };
     eprintln!("sake: SHBrowseForFolder: {}", if r == 1 { b.sel.as_str() } else { "(cancelled)" });
     if r != 1 {
         return 0;
@@ -3825,7 +3816,7 @@ fn DragQueryFileW(_: &mut Ctx) -> u32 {
 fn CommandLineToArgvW(c: &mut Ctx) -> u32 {
     let s = String::from_utf16_lossy(&wstr(c.a(0)));
     // (an empty line: the program's own path)
-    let args = if s.is_empty() { vec![crate::pe::MODULES.read().unwrap().iter().find(|m| !m.dll).map_or_default(|m| m.path.clone())] } else { crate::process::argv(&s) };
+    let args = if s.is_empty() { vec![crate::pe::MODULES.r().iter().find(|m| !m.dll).map_or_default(|m| m.path.clone())] } else { crate::process::argv(&s) };
     let n = args.len() as u32;
     let size: u32 = 4 * (n + 1) + args.iter().map(|a| 2 * (a.encode_utf16().count() as u32 + 1)).sum::<u32>();
     let p = mem::heap_alloc(size, true);
@@ -3992,8 +3983,8 @@ fn mm_arm(id: u32, at: std::time::Instant) {
 }
 
 fn mm_fire(c: &mut Ctx, id: u32, at: std::time::Instant) {
-    let Some(t) = TIMERS.lock().unwrap().iter().find(|x| x.0 == id).map(|x| x.1.clone()) else { return };
-    let gone = || TIMERS.lock().unwrap().retain(|x| x.0 != id);
+    let Some(t) = TIMERS.locked().iter().find(|x| x.0 == id).map(|x| x.1.clone()) else { return };
+    let gone = || TIMERS.locked().retain(|x| x.0 != id);
     if t.stop.load(Ordering::Relaxed) {
         return gone();
     }
@@ -4017,13 +4008,13 @@ fn timeSetEvent(c: &mut Ctx) -> u32 {
     let (delay, _res, proc_, user, flags) = (c.a(0), c.a(1), c.a(2), c.a(3), c.a(4));
     let id = NEXT_TIMER.fetch_add(1, Ordering::Relaxed);
     let t = Arc::new(MmTimer { delay, proc_, user, flags, stop: AtomicBool::new(false) });
-    TIMERS.lock().unwrap().push((id, t));
+    TIMERS.locked().push((id, t));
     mm_arm(id, std::time::Instant::now() + Duration::from_millis(delay.max(1) as u64));
     id
 }
 fn timeKillEvent(c: &mut Ctx) -> u32 {
     let id = c.a(0);
-    match TIMERS.lock().unwrap().iter().find(|x| x.0 == id) {
+    match TIMERS.locked().iter().find(|x| x.0 == id) {
         Some((_, t)) => {
             t.stop.store(true, Ordering::Relaxed);
         }
@@ -4031,7 +4022,7 @@ fn timeKillEvent(c: &mut Ctx) -> u32 {
     }
     // (not running now: it goes at once; a callback running drops it when it returns)
     if crate::pool::MM_TIMERS.cancel(crate::pool::key::MM | id as u64) {
-        TIMERS.lock().unwrap().retain(|x| x.0 != id);
+        TIMERS.locked().retain(|x| x.0 != id);
     }
     0
 }
@@ -4655,7 +4646,7 @@ impl PublicRsa {
         if b.len() < 20 || b[..4] != [6, 2, 0, 0] {
             return Err(bad);
         }
-        let word = |i| u32::from_le_bytes(b[i..i + 4].try_into().unwrap());
+        let word = |i| kome::le::u32_at(b, i).unwrap_or(0);
         let (alg, magic, bits, exponent) = (word(4), word(8), word(12), word(16));
         if !matches!(alg, 0x2400 | 0xa400) {
             return Err(0x8009_0008); // NTE_BAD_ALGID
@@ -4685,7 +4676,7 @@ impl PublicRsa {
     fn private_blob(&self) -> Result<Vec<u8>, u32> {
         if !self.exportable { return Err(crate::cng::NTE_BAD_KEY_STATE); }
         let full = self.key.to_blob(crate::cng::Blob::FullPrivate, self.bits)?;
-        let e = u32::from_le_bytes(full[8..12].try_into().unwrap()) as usize;
+        let e = kome::le::u32_at(&full, 8).ok_or(crate::cng::NTE_BAD_DATA)? as usize;
         let n = self.bits as usize / 8; let half = n / 2;
         let mut result = self.blob.clone(); result[0] = 7; result[8..12].copy_from_slice(&0x3241_5352u32.to_le_bytes());
         let mut at = 24 + e + n;
@@ -4727,7 +4718,7 @@ fn CryptImportKey(c: &mut Ctx) -> u32 {
     match PublicRsa::from_blob(&mem::bytes(c.a::<1>(), c.a::<2>())) {
         Ok(key) => {
             let id = NEXT_HASH.fetch_add(1, Ordering::Relaxed);
-            RSA_KEYS.lock().unwrap().get_or_insert_with(HashMap::default).insert(id, key);
+            RSA_KEYS.locked().get_or_insert_with(HashMap::default).insert(id, key);
             c.out::<5>().put(id);
             1
         }
@@ -4744,7 +4735,7 @@ fn CryptExportKey(c: &mut Ctx) -> u32 {
     if !matches!(c.a(2), 6 | 7) {
         return crypto_result(Err(0x8009_000a)); // NTE_BAD_TYPE
     }
-    let g = RSA_KEYS.lock().unwrap();
+    let g = RSA_KEYS.locked();
     let Some(k) = g.as_ref().and_then(|m| m.get(&c.a(0))) else {
         return crypto_result(Err(0x8009_0003)); // NTE_BAD_KEY
     };
@@ -4767,12 +4758,12 @@ fn CryptVerifySignatureA(c: &mut Ctx) -> u32 {
     if c.a(5) & !1 != 0 {
         return crypto_result(Err(crate::cng::NTE_BAD_FLAGS));
     }
-    let keys = RSA_KEYS.lock().unwrap();
+    let keys = RSA_KEYS.locked();
     let Some(k) = keys.as_ref().and_then(|m| m.get(&c.a(3))) else {
         return crypto_result(Err(0x8009_0003));
     };
     let (alg, digest) = {
-        let mut hashes = HASHES.lock().unwrap();
+        let mut hashes = HASHES.locked();
         let Some((h, done)) = hashes.as_mut().and_then(|m| m.get_mut(&c.a(0))) else {
             return crypto_result(Err(0x8009_0002)); // NTE_BAD_HASH
         };
@@ -4817,7 +4808,7 @@ fn add_rsa(provider: u32, spec: u32, flags: Option<u32>, out: crate::api::Out) -
     let key = match flags { Some(f) => crate::capi::generate(provider, spec, f), None => crate::capi::user_key(provider, spec) };
     match key.and_then(|k| PublicRsa::generated(k, spec)) {
         Ok(key) => { let id = NEXT_HASH.fetch_add(1, Ordering::Relaxed);
-            RSA_KEYS.lock().unwrap().get_or_insert_with(HashMap::default).insert(id, key); out.put(id); 1 },
+            RSA_KEYS.locked().get_or_insert_with(HashMap::default).insert(id, key); out.put(id); 1 },
         Err(e) => crypto_result(Err(e)),
     }
 }
@@ -4832,10 +4823,10 @@ fn CryptGetUserKey(c: &mut Ctx) -> u32 {
 fn CryptSignHashA(c: &mut Ctx) -> u32 {
     if c.a(5) == 0 { return crypto_result(Err(87)); }
     if c.a(3) & !1 != 0 { return crypto_result(Err(crate::cng::NTE_BAD_FLAGS)); }
-    let provider = HASH_PROVIDERS.lock().unwrap().as_ref().and_then(|m| m.get(&c.a(0))).copied();
+    let provider = HASH_PROVIDERS.locked().as_ref().and_then(|m| m.get(&c.a(0))).copied();
     let Some(provider) = provider else { return crypto_result(Err(0x8009_0002)); };
     let key = match crate::capi::user_key(provider, c.a(1)) { Ok(k) => k, Err(e) => return crypto_result(Err(e)) };
-    let (hash, digest) = { let mut g = HASHES.lock().unwrap();
+    let (hash, digest) = { let mut g = HASHES.locked();
         let Some((h, done)) = g.as_mut().and_then(|m| m.get_mut(&c.a(0))) else { return crypto_result(Err(0x8009_0002)); };
         *done = true; h.digest()
     };
@@ -4866,14 +4857,14 @@ fn CryptCreateHash(c: &mut Ctx) -> u32 {
         }
     };
     let id = NEXT_HASH.fetch_add(1, Ordering::Relaxed);
-    HASHES.lock().unwrap().get_or_insert_with(HashMap::default).insert(id, (h, false));
-    HASH_PROVIDERS.lock().unwrap().get_or_insert_with(HashMap::default).insert(id, c.a::<0>());
+    HASHES.locked().get_or_insert_with(HashMap::default).insert(id, (h, false));
+    HASH_PROVIDERS.locked().get_or_insert_with(HashMap::default).insert(id, c.a::<0>());
     c.out::<4>().put(id);
     1
 }
 fn CryptHashData(c: &mut Ctx) -> u32 {
     let data = &mem::bytes(c.a(1), c.a(2));
-    let mut g = HASHES.lock().unwrap();
+    let mut g = HASHES.locked();
     let Some((h, done)) = g.get_or_insert_with(HashMap::default).get_mut(&c.a(0)) else {
         crate::k32::last_error(87);
         return 0;
@@ -4891,7 +4882,7 @@ fn CryptHashData(c: &mut Ctx) -> u32 {
 }
 fn CryptGetHashParam(c: &mut Ctx) -> u32 {
     let (h, param, out, plen) = (c.a(0), c.a(1), c.a(2), c.a(3));
-    let mut g = HASHES.lock().unwrap();
+    let mut g = HASHES.locked();
     let Some((hs, done)) = g.get_or_insert_with(HashMap::default).get_mut(&h) else {
         crate::k32::last_error(87);
         return 0;
@@ -4921,8 +4912,8 @@ fn CryptGetHashParam(c: &mut Ctx) -> u32 {
     1
 }
 fn CryptDestroyHash(c: &mut Ctx) -> u32 {
-    if let Some(m) = HASH_PROVIDERS.lock().unwrap().as_mut() { m.remove(&c.a(0)); }
-    let ok = HASHES.lock().unwrap().get_or_insert_with(HashMap::default).remove(&c.a(0)).is_some();
+    if let Some(m) = HASH_PROVIDERS.locked().as_mut() { m.remove(&c.a(0)); }
+    let ok = HASHES.locked().get_or_insert_with(HashMap::default).remove(&c.a(0)).is_some();
     if !ok {
         crate::k32::last_error(87);
     }
@@ -4977,7 +4968,7 @@ fn CryptDeriveKey(c: &mut Ctx) -> u32 {
         return 0;
     }
     let digest = {
-        let g = HASHES.lock().unwrap();
+        let g = HASHES.locked();
         match g.as_ref().and_then(|m| m.get(&hash)) {
             Some((Hasher::Md5(x), _)) => x.clone().finalize().0.to_vec(),
             Some((Hasher::Sha1(x), _)) => x.clone().finish().to_vec(),
@@ -4998,7 +4989,7 @@ fn CryptDeriveKey(c: &mut Ctx) -> u32 {
         key.resize(16, 0);
     }
     let id = NEXT_HASH.fetch_add(1, Ordering::Relaxed);
-    KEYS.lock().unwrap().get_or_insert_with(HashMap::default).insert(id, Rc4::new(key, bits));
+    KEYS.locked().get_or_insert_with(HashMap::default).insert(id, Rc4::new(key, bits));
     out.put(id);
     1
 }
@@ -5006,7 +4997,7 @@ fn CryptDeriveKey(c: &mut Ctx) -> u32 {
 fn rc4_call(c: &mut Ctx) -> u32 {
     let (key, fin, data, plen) = (c.a(0), c.a(2) != 0, c.a(4), c.a(5));
     let n = r32(plen);
-    let mut g = KEYS.lock().unwrap();
+    let mut g = KEYS.locked();
     let Some(k) = g.get_or_insert_with(HashMap::default).get_mut(&key) else {
         crate::k32::last_error(87);
         return 0;
@@ -5034,8 +5025,8 @@ fn CryptEncrypt(c: &mut Ctx) -> u32 {
     rc4_call(c)
 }
 fn CryptDestroyKey(c: &mut Ctx) -> u32 {
-    let rsa = RSA_KEYS.lock().unwrap().as_mut().is_some_and(|m| m.remove(&c.a(0)).is_some());
-    let ok = rsa || KEYS.lock().unwrap().get_or_insert_with(HashMap::default).remove(&c.a(0)).is_some();
+    let rsa = RSA_KEYS.locked().as_mut().is_some_and(|m| m.remove(&c.a(0)).is_some());
+    let ok = rsa || KEYS.locked().get_or_insert_with(HashMap::default).remove(&c.a(0)).is_some();
     if !ok {
         crate::k32::last_error(87);
     }
@@ -5051,8 +5042,8 @@ fn CryptGetKeyParam(c: &mut Ctx) -> u32 {
     if c.a(4) != 0 {
         return crypto_result(Err(crate::cng::NTE_BAD_FLAGS));
     }
-    let rsa = RSA_KEYS.lock().unwrap().as_ref().and_then(|m| m.get(&key)).map(|k| (k.alg, k.bits, k.bits));
-    let rc4 = || KEYS.lock().unwrap().get_or_insert_with(HashMap::default).get(&key).map(|k| (0x6801, 0, k.bits));
+    let rsa = RSA_KEYS.locked().as_ref().and_then(|m| m.get(&key)).map(|k| (k.alg, k.bits, k.bits));
+    let rc4 = || KEYS.locked().get_or_insert_with(HashMap::default).get(&key).map(|k| (0x6801, 0, k.bits));
     let Some((alg, block, bits)) = rsa.or_else(rc4) else {
         crate::k32::last_error(87);
         return 0;
@@ -5554,7 +5545,7 @@ fn sspi_init() {
 /// The A or W function table (made once; Windows' is static too).
 fn sspi_table(wide: bool) -> u32 {
     static TABLES: Mutex<[u32; 2]> = Mutex::new([0; 2]);
-    let mut t = TABLES.lock().unwrap();
+    let mut t = TABLES.locked();
     if t[wide as usize] == 0 {
         let ps = mem::ps();
         let p = mem::heap_alloc(ps * (1 + SSPI_TABLE.len() as u32), true);

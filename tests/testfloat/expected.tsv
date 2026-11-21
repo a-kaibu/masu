@@ -1,4 +1,4 @@
-# instruction	rounding	passing	cases  (crates/koji/tests/testfloat.rs; TF_UPDATE=1 rewrites)
+# instruction	rounding	passing	cases  (crates/koji/tests/testfloat.rs; MASU_UPDATE_GOLDEN=1 rewrites)
 addps	down	46464	46464
 addps	near	46464	46464
 addps	up	46464	46464

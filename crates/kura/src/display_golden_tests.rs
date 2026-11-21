@@ -22,12 +22,7 @@ impl Rng {
 }
 
 fn fnv(h: &mut u64, v: &[u32]) {
-    for &x in v {
-        for b in x.to_le_bytes() {
-            *h ^= u64::from(b);
-            *h = h.wrapping_mul(0x100_0000_01b3);
-        }
-    }
+    *h = kome::golden::Fnv(*h).words(v.iter().copied()).get();
 }
 
 fn session(seed: u64) -> String {

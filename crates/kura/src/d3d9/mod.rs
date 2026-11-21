@@ -12,6 +12,7 @@ pub mod d3d8;
 pub mod device;
 pub mod format;
 pub mod gpu;
+pub mod query;
 pub mod stateblock;
 #[cfg(test)]
 pub(crate) mod trace_tests;
@@ -49,6 +50,12 @@ mod tss_temp_tests;
 mod cube_tests;
 #[cfg(test)]
 mod ex_tests;
+#[cfg(test)]
+mod tex_tests;
+#[cfg(test)]
+mod dev_tests;
+#[cfg(test)]
+mod query_tests;
 #[cfg(test)]
 mod caps8_tests;
 #[cfg(test)]
@@ -128,7 +135,7 @@ pub enum Data {
     Decl(device::Decl),
     Shader(device::ShaderObj),
     StateBlock(Box<stateblock::Block>),
-    Query(u32),
+    Query(query::Query),
     Other,
 }
 
@@ -329,14 +336,17 @@ impl D3d {
                 }
             }
             Data::StateBlock(sb) => device::unbind_all(self, &device::state_binds(&sb.st)),
+            Data::Query(q) => q.forget(),
             _ => {}
         }
     }
 }
 
-fn with<R>(f: impl FnOnce(&mut D3d) -> R) -> R {
+/// `f`'s HRESULT; D3DERR_NOTAVAILABLE before vnhost_d3d9_init (a d3d9.dll whose start did not
+/// register its tables).
+fn with(f: impl FnOnce(&mut D3d) -> u32) -> u32 {
     let mut g = D3D.lock().unwrap_or_else(|e| e.into_inner());
-    f(g.as_mut().expect("d3d9 not initialized"))
+    g.as_mut().map_or(D3DERR_NOTAVAILABLE, f)
 }
 
 #[unsafe(no_mangle)]
@@ -421,7 +431,7 @@ pub unsafe extern "C" fn vnhost_d3d9_call(id: u32, args: *const u32, calls: *con
     let t0 = stats::on().then(std::time::Instant::now);
     let (r, after) = {
         let mut g = D3D.lock().unwrap_or_else(|e| e.into_inner());
-        let d = g.as_mut().expect("d3d9 not initialized");
+        let Some(d) = g.as_mut() else { return D3DERR_NOTAVAILABLE };
         d.calls = calls;
         if !d.deferred_free.is_empty() {
             let (done, keep): (Vec<_>, Vec<_>) = d.deferred_free.drain(..).partition(|&(_, g)| gpu::is_done(g));

@@ -24,7 +24,7 @@ const MODES: [Mode; 5] = [Mode::I32, Mode::I32X80, Mode::I32Cached, Mode::I64, M
 
 fn hash_exit(h: &mut Fnv, e: Exit) {
     match e {
-        Exit::Continue => h.u8(0),
+        Exit::Continue => { h.u8(0); }
         Exit::Trap(a) => {
             h.u8(1);
             h.u32(a);
@@ -34,16 +34,16 @@ fn hash_exit(h: &mut Fnv, e: Exit) {
             h.u32(f.addr);
             h.u8(u8::from(f.write));
         }
-        Exit::DivideError => h.u8(3),
-        Exit::InvalidOpcode => h.u8(4),
+        Exit::DivideError => { h.u8(3); }
+        Exit::InvalidOpcode => { h.u8(4); }
         Exit::Interrupt(n) => {
             h.u8(5);
             h.u8(n);
         }
-        Exit::Syscall => h.u8(6),
-        Exit::Halt => h.u8(7),
-        Exit::SingleStep => h.u8(8),
-        Exit::SimdException => h.u8(9),
+        Exit::Syscall => { h.u8(6); }
+        Exit::Halt => { h.u8(7); }
+        Exit::SingleStep => { h.u8(8); }
+        Exit::SimdException => { h.u8(9); }
     }
 }
 

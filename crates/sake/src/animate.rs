@@ -29,8 +29,8 @@ fn chunks(b: &[u8]) -> Vec<([u8; 4], &[u8])> {
     let mut out = Vec::new();
     let mut at = 0usize;
     while at + 8 <= b.len() {
-        let id: [u8; 4] = b[at..at + 4].try_into().unwrap();
-        let n = kome::le::u32_at(b, at + 4).unwrap() as usize;
+        let (Some(id), Some(n)) = (kome::le::bytes_at::<4>(b, at), kome::le::u32_at(b, at + 4)) else { break };
+        let n = n as usize;
         let Some(data) = b.get(at + 8..(at + 8).saturating_add(n)) else { break };
         out.push((id, data));
         at = at + 8 + n + n % 2;
@@ -223,7 +223,7 @@ struct Anim {
 
 static ANIMS: Mutex<Option<HashMap<u32, Anim>>> = Mutex::new(None);
 fn with_anim<R>(h: u32, f: impl FnOnce(&mut Anim) -> R) -> Option<R> {
-    ANIMS.lock().unwrap().get_or_insert_with(HashMap::default).get_mut(&h).map(f)
+    ANIMS.locked().get_or_insert_with(HashMap::default).get_mut(&h).map(f)
 }
 const TIMER_ID: u32 = 0x414e;
 
@@ -268,7 +268,7 @@ fn play(c: &mut Ctx, h: u32, repeat: i32, from: u32, to: u32) -> u32 {
 
 fn open(c: &mut Ctx, h: u32, inst: u32, name: u32, wide: bool) -> u32 {
     stop(c, h);
-    ANIMS.lock().unwrap().get_or_insert_with(HashMap::default).remove(&h);
+    ANIMS.locked().get_or_insert_with(HashMap::default).remove(&h);
     if name == 0 {
         invalidate(h, None, true);
         return 1;
@@ -293,7 +293,7 @@ fn open(c: &mut Ctx, h: u32, inst: u32, name: u32, wide: bool) -> u32 {
     }
     let _ = parent;
     let count = clip.count;
-    ANIMS.lock().unwrap().get_or_insert_with(HashMap::default).insert(h, Anim { clip, frame: 0, from: 0, to: 0, repeat: 0, playing: false });
+    ANIMS.locked().get_or_insert_with(HashMap::default).insert(h, Anim { clip, frame: 0, from: 0, to: 0, repeat: 0, playing: false });
     invalidate(h, None, true);
     if style & 4 != 0 && count > 1 {
         play(c, h, -1, 0, 0xffff);
@@ -312,7 +312,7 @@ fn paint(c: &mut Ctx, h: u32) {
         brush = crate::gdi::solid_brush(0xf0f0f0);
     }
     crate::gdi::fill_rect_brush(dc, Rect { l: 0, t: 0, r: w, b: hh }, brush);
-    let shown = ANIMS.lock().unwrap().get_or_insert_with(HashMap::default).get(&h).and_then(|a| {
+    let shown = ANIMS.locked().get_or_insert_with(HashMap::default).get(&h).and_then(|a| {
         let t = (style & 2 != 0).then(|| a.clip.frames.as_ref().and_then(|f| f.first()).map(|f0| f0[(a.clip.h as usize - 1) * a.clip.w as usize])).flatten();
         let bg = t.map(|t| (t, crate::gdi::brush_color(brush).unwrap_or(0xf0f0f0)));
         Some((frame_pixels(&a.clip, a.frame as usize, bg)?, a.clip.w, a.clip.h))
@@ -384,7 +384,7 @@ pub(super) fn proc_fn(c: &mut Ctx) -> u32 {
         0x14 => 1,
         0x2 => {
             stop(c, h);
-            ANIMS.lock().unwrap().get_or_insert_with(HashMap::default).remove(&h);
+            ANIMS.locked().get_or_insert_with(HashMap::default).remove(&h);
             def_proc(c, msg_wide())
         }
         _ => def_proc(c, msg_wide()),

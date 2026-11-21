@@ -5,20 +5,7 @@
 
 use iced_x86::{Decoder, DecoderOptions, Mnemonic};
 use koji::flags::*;
-use koji::{step, Cpu, Exit, Fault, Memory};
-
-struct Vecmem(Vec<u8>);
-impl Memory for Vecmem {
-    fn read8(&mut self, a: u32) -> Result<u8, Fault> {
-        self.0.get(a as usize).copied().ok_or(Fault { addr: a, write: false })
-    }
-    fn write8(&mut self, a: u32, v: u8) -> Result<(), Fault> {
-        match self.0.get_mut(a as usize) {
-            Some(b) => { *b = v; Ok(()) }
-            None => Err(Fault { addr: a, write: true }),
-        }
-    }
-}
+use koji::{step, Cpu, Exit, Flat as Vecmem};
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default)]

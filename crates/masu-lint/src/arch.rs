@@ -46,6 +46,8 @@ pub enum Rule {
     BooleanArg,
     TypedRegisters,
     NtdllOwnCrt,
+    Utf8OneDecoder,
+    MessageOneFormatter,
     RustLints,
     BinDeadPub,
     HandBitWidth,
@@ -57,7 +59,7 @@ pub enum Rule {
 }
 
 impl Rule {
-    pub const ALL: [Rule; 37] = [
+    pub const ALL: [Rule; 39] = [
         Rule::BuildOutput,
         Rule::HresultCopy,
         Rule::KomeCopy,
@@ -87,6 +89,8 @@ impl Rule {
         Rule::BooleanArg,
         Rule::TypedRegisters,
         Rule::NtdllOwnCrt,
+        Rule::Utf8OneDecoder,
+        Rule::MessageOneFormatter,
         Rule::RustLints,
         Rule::BinDeadPub,
         Rule::HandBitWidth,
@@ -129,6 +133,8 @@ impl Rule {
             Rule::BooleanArg => "boolean-arg",
             Rule::TypedRegisters => "typed-registers",
             Rule::NtdllOwnCrt => "ntdll-own-crt",
+            Rule::Utf8OneDecoder => "utf8-one-decoder",
+            Rule::MessageOneFormatter => "message-one-formatter",
             Rule::RustLints => "rust-lints",
             Rule::BinDeadPub => "bin-dead-pub",
             Rule::HandBitWidth => "hand-bit-width",
@@ -145,7 +151,7 @@ impl Rule {
         match self {
             Rule::BuildOutput => "no build output in git (a target/ directory, a compiled or packed file outside vendor/ and testdata/): build artifacts never go to GitHub; 99c0d6d6 committed three masu stubs under crates/masu/target",
             Rule::HresultCopy => "sake's HRESULTs live in sake::hresult only (DRY rework 2026-11-15): `use crate::hresult::*` instead of a second `const E_FAIL`",
-            Rule::KomeCopy => "conversions, little-endian readers, GUIDs and lock traits live in kome only (95e48ed5, kome::guid): use kome::num / kome::le / kome::guid / kome::locks (a GUID in guest memory: mem::array::<16>, mem::write), not a copy of your own",
+            Rule::KomeCopy => "conversions, little-endian readers, GUIDs, FNV-1a and lock traits live in kome only (95e48ed5, kome::guid): use kome::num / kome::le / kome::guid / kome::golden::Fnv / kome::locks (a GUID in guest memory: mem::array::<16>, mem::write), not a copy of your own",
             Rule::GoldenEnv => "one golden switch, MASU_UPDATE_GOLDEN, read by kome::golden only: another *_UPDATE_GOLDEN/BLESS name is a golden MASU_UPDATE_GOLDEN=1 leaves stale",
             Rule::DeadApi => "removed stays removed: sake::mem's safe borrows (slice, guest_mut, view, view_mut, guest, in_guest, guest_range; mem::bytes / mem::update copy) and api's untyped out-parameter paths (to_callee, a_at, out_at, put64; api::words!, typed Args)",
             Rule::UntypedWayBack => "a guest address is a value (mem::r32(ga(a) + 4), no reader/writer methods on Ga), and api::Args has no Deref to Ctx (it let c.a(i) read an out-parameter as a word)",
@@ -170,6 +176,8 @@ impl Rule {
             Rule::DepthGuard => "the depth limits on recursion over game and file input stay (regress::DEPTH_GUARDS; review b00/b04/b07: damaged traces, MSI conditions, shaders, .x files nesting without end blew the stack): keep the const and the check against it; a new limit is added to the list",
             Rule::BooleanArg => "a BOOLEAN parameter is its low byte (2026-11-20, RtlAnsiStringToUnicodeString read c.a(2) != 0): read it with c.boolean(i); win32.rs BOOLEAN_ARGS lists them",
             Rule::TypedRegisters => "koji's registers are named, not numbered (2026-11-20, Farcall comparison): Cpu::regs/hi are Gprs indexed by Gpr (EAX..EDI), sreg/sbase Segs indexed by Seg, Cpu::gpr takes a Reg64; write the register's name (koji::EBX, Seg::Ss, Reg64::R8), not Gpr::ALL[3] or values()[3], and give Gprs/Segs no index, conversion or public field that takes a number",
+            Rule::Utf8OneDecoder => "sake decodes UTF-8 by one rule, Windows' (RtlUTF8ToUnicodeN: a wrong second byte is swallowed with its lead into one U+FFFD, not Unicode's maximal subparts; 2026-11-21, MultiByteToWideChar had its own): only rtlstr.rs splits bytes with utf8_chunks; elsewhere call crate::rtlstr::utf8_units",
+            Rule::MessageOneFormatter => "kernel32's FormatMessage formats as kernelbase does, with ntdll's RtlFormatMessageEx rule (2026-11-21: fmtmsg.rs had a printf and a line wrapper of its own and failed 328 of Wine's format_msg checks; one formatter makes both right): fmtmsg.rs calls rtlfmt::format and no printf",
             Rule::NtdllOwnCrt => "ntdll's C runtime is not msvcrt's (ASCII / Latin-1 tables, no base check in _itoa, wrapping atoi; 2026-11-20): each function win32.rs NTDLL_OWN_CRT lists keeps an implement(\"ntdll\", ..) of its own, else find_impl answers with msvcrt's",
             Rule::OutEscape => "a LockWord's or an Object's key() names a lock or one of sake's objects, it is no guest address (review 2026-11-17, 06dc4bf2): it is not the address of mem's readers and writers or of ga()/Ga::from (a value written into memory is fine); take the lock through LockWord::atomic, the object through its table",
             Rule::RustLints => "every crate's Cargo.toml sets [lints.rust] raw_borrows_via_references (Rust 1.99, 2026-11-21): `&x as *const T` makes a reference first, with its aliasing rules; write `&raw const x` / `&raw mut x`, Box::as_ptr, .addr()",
@@ -214,6 +222,8 @@ impl Rule {
             Rule::BooleanArg => crate::win32::boolean_arg(tree),
             Rule::TypedRegisters => typed_registers(tree),
             Rule::NtdllOwnCrt => crate::win32::ntdll_own_crt(tree),
+            Rule::Utf8OneDecoder => crate::win32::utf8_one_decoder(tree),
+            Rule::MessageOneFormatter => crate::win32::message_one_formatter(tree),
             Rule::RustLints => modern::rust_lints(tree),
             Rule::BinDeadPub => modern::bin_dead_pub(tree),
             Rule::HandBitWidth => modern::hand_bit_width(tree),
@@ -326,6 +336,9 @@ pub const KOME_FNS: [&str; 18] = [
     "guid", "guid_string", "fmt_guid", "guid_at", "read_guid", "put_guid",
 ];
 
+/// FNV-1a 64's prime written out: a hand-rolled copy of kome::golden::Fnv (25 of them, 2026-11-20)
+static FNV_PRIME: LazyLock<Option<Regex>> = LazyLock::new(|| rx(r"(?i)\b0x0*100_?0000_?01b3\b|\b1099511628211\b"));
+
 fn kome_copy(tree: &Tree) -> Hits {
     let files: Vec<Rel> = tree.rs(&["crates/"]).into_iter().filter(|f| !f.as_str().starts_with("crates/kome/")).collect();
     let mut out = Hits::new();
@@ -336,10 +349,21 @@ fn kome_copy(tree: &Tree) -> Hits {
         out.extend(it.byte_readers.iter().map(|(n, l)| (f.clone(), *l, format!("fn {n}: a number from bytes at an offset (kome::le::u32_at, u16_be_at...)"))));
         out.extend(it.traits.iter().filter(|(n, _)| n == "Lock" || n == "Rw").map(|(n, l)| (f.clone(), *l, format!("trait {n}"))));
     }
+    if let Some(prime) = FNV_PRIME.as_ref() {
+        // (tests too: most of the copies were in golden and snapshot tests)
+        let all: Vec<Rel> = tree.paths().iter().filter(|p| p.is_rust() && p.as_str().starts_with("crates/") && !p.as_str().starts_with("crates/kome/") && !p.as_str().starts_with("crates/masu-lint/")).cloned().collect();
+        for f in &all {
+            let src = tree.code(f, true);
+            out.extend(prime.find_iter(&src).map(|m| (f.clone(), line_of(&src, m.start()), "FNV-1a's prime: kome::golden::Fnv (bytes, words, u64...)".to_owned())));
+        }
+    }
     out
 }
 
 static GOLDEN_ANY: LazyLock<Option<Regex>> = LazyLock::new(|| rx(r"\b[A-Z0-9_]*(?:UPDATE_GOLDEN|BLESS|UPDATE_SNAPSHOTS?|REGEN(?:ERATE)?_GOLDEN|UPDATE_EXPECT)[A-Z0-9_]*\b"));
+/// an env read whose name says "rewrite the expected file" (PIN_RECORD, SST_UPDATE, MASU_REGEN):
+/// a second golden switch under another word
+static GOLDEN_READ: LazyLock<Option<Regex>> = LazyLock::new(|| rx(r#"var(?:_os)?\(\s*"([A-Z0-9_]*(?:_|\b)(?:UPDATE|RECORD|REGEN|REWRITE|BLESS|RERECORD))""#));
 static GOLDEN_FILES: LazyLock<Option<Regex>> = LazyLock::new(|| rx(r"\.(rs|py|sh|mjs|js|ts|yml|yaml|toml)$"));
 pub const GOLDEN_HOME: &str = "crates/kome/src/golden.rs";
 
@@ -356,6 +380,15 @@ fn golden_env(tree: &Tree) -> Hits {
         for m in any.find_iter(&src) {
             if m.as_str() != "MASU_UPDATE_GOLDEN" {
                 out.push((p.clone(), line_of(&src, m.start()), m.as_str().to_owned()));
+            }
+        }
+        if p.is_rust()
+            && let Some(read) = GOLDEN_READ.as_ref()
+        {
+            for c in read.captures_iter(&src) {
+                if let Some(m) = c.get(1) {
+                    out.push((p.clone(), line_of(&src, m.start()), format!("{} switches a golden rewrite: kome::golden::updating() (MASU_UPDATE_GOLDEN)", m.as_str())));
+                }
             }
         }
         if p.is_rust() && s != GOLDEN_HOME {
@@ -513,7 +546,14 @@ fn release_build_only(tree: &Tree) -> Hits {
 }
 
 /// what must stay in place: (file, text, why)
-pub const REQUIRED: [(&str, &str, &str); 13] = [
+pub const REQUIRED: [(&str, &str, &str); 21] = [
+    ("crates/kura/src/d3d9/device.rs", "                send_gamma(Some(&r));", "a full-screen Direct3D 9 device's SetGammaRamp reaches the display (it was answered S_OK and dropped; 2026-11-21)"),
+    ("crates/kura/src/d3d9/device.rs", "                    let (hr, bytes) = q.get_data(if a(1) == 0 { 0 } else { a(2) }, a(3));", "IDirect3DQuery9::GetData answers what the page measured (it wrote 1000 samples and TRUE at once; 2026-11-21)"),
+    ("crates/kura/src/render/d3d.rs", "                    self.query_end(a(1), QueryEnd::of_word(a(2)));", "queries are measured on the page's GPU (occlusion and timestamp query sets, render/d3d/query.rs)"),
+    ("crates/kura/src/d3d11/mod.rs", "    if matches!(m, 12 | 13 | 20 | 21 | 38..=42 | 46..=48 | 50..=54 | 57 | 132) && predicated_off(d, st) {", "SetPredication turns rendering off by the predicate's measured answer (draws were never predicated; 2026-11-21)"),
+    ("crates/kura/src/render/mod.rs", "@group(0) @binding(3) var ramp: texture_2d<f32>;", "the screen is drawn through the display's gamma ramp (GAMMA)"),
+    ("crates/kura/src/d3d9/device.rs", "    pub dirty: [Option<[u32; 6]>; 6],", "a Direct3D 9 texture keeps its dirty regions: UpdateTexture copies only them, as Windows (a lock with D3DLOCK_NO_DIRTY_UPDATE is not copied; 2026-11-21)"),
+    ("crates/kura/src/d3d9/device.rs", "    make_bound_mips(d);", "a D3DUSAGE_AUTOGENMIPMAP texture's levels are made from its top before a draw reads them (they were never made; 2026-11-21)"),
     ("crates/kura/src/d3d9/device.rs", "    pub sub: Sub,", "a Direct3D 9 surface names its part of the page texture as a Sub (level and cube face together): a bare level drew every face of a render target cube on layer 0 (2026-11-20)"),
     ("tests/host-tests.sh", "export MASU_OUTS_STRICT=1", "release-build host tests fail on a 32-bit write into a pointer-sized out-parameter (2026-11-16)"),
     ("crates/sake/src/lib.rs", "mod outptr_audit;", "every handler of a function with pointer-sized out-parameters takes its typed Args"),
@@ -522,6 +562,7 @@ pub const REQUIRED: [(&str, &str, &str); 13] = [
     (API, "```compile_fail", "an out-parameter is not a word"),
     (".github/workflows/ci.yml", "cargo run -q --release -p masu-lint -- arch", "this lint runs on every push, before the build"),
     (".github/workflows/ci.yml", "cargo run -q --release -p masu-lint -- ratchet", "the lint ratchet runs on every push"),
+    (".github/workflows/ci.yml", "cargo run -q --release -p masu-lint -- dup", "copied functions and tables are found on every push (2026-11-21)"),
     (".cargo/config.toml", "global-min-publish-age", "a crate version published less than the cooldown ago is not picked when the lock file changes (Rust 1.100, 2026-11-21): a hijacked release is usually yanked within days"),
     ("crates/kura/src/d3d9/gpu.rs", "fn retire(q: &mut Queue, mut b: Batch)", "a batch the page is done with is the next open one (2026-11-21: growing every batch from nothing was 60% of draw)"),
     (MEM, "impl Drop for Scratch", "a Scratch frees its guest block when dropped (2026-11-21)"),

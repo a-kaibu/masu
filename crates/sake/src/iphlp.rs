@@ -12,6 +12,7 @@
 
 #![allow(non_snake_case)]
 
+use kome::locks::{Lock as _, Rw as _};
 use crate::api::{implement, Ctx};
 use crate::k32::last_error;
 use crate::mem::{self, ps, r16, r32, w16, w32, w64, w8, wp};
@@ -64,42 +65,48 @@ impl Iface {
 
 /// The interfaces, in the order Windows lists adapters (the loopback last)
 pub fn ifaces() -> &'static [Iface] {
-    static IF: [Iface; 2] = [
-        Iface {
-            index: 2,
-            luid_index: 32769,
-            ty: 6,
-            // {5341d8c2-6b3e-4a2f-9a50-6f2e0d1c7b21}
-            guid: [0xc2, 0xd8, 0x41, 0x53, 0x3e, 0x6b, 0x2f, 0x4a, 0x9a, 0x50, 0x6f, 0x2e, 0x0d, 0x1c, 0x7b, 0x21],
-            alias: "Ethernet",
-            descr: "sake Virtual Ethernet Adapter",
-            mac: &[0x02, 0x00, 0x4c, 0x4f, 0x4f, 0x50],
-            mtu: 1500,
-            speed: 0,
-            up: false,
-            v4: None,
-            v6: None,
-            metric: 25,
-        },
-        Iface {
-            index: 1,
-            luid_index: 0,
-            ty: 24,
-            // {f8e3a1c0-5a5b-11ee-8000-000000000001}
-            guid: [0xc0, 0xa1, 0xe3, 0xf8, 0x5b, 0x5a, 0xee, 0x11, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01],
-            alias: "Loopback Pseudo-Interface 1",
-            descr: "Software Loopback Interface 1",
-            mac: &[],
-            mtu: u32::MAX,
-            speed: 1_073_741_824,
-            up: true,
-            v4: Some(([127, 0, 0, 1], 8)),
-            v6: Some(([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1], 128)),
-            metric: 75,
-        },
-    ];
-    &IF
+    &IFACES
 }
+
+/// The loopback interface (IFACES' last).
+fn loopback() -> &'static Iface {
+    &IFACES[1]
+}
+
+static IFACES: [Iface; 2] = [
+    Iface {
+        index: 2,
+        luid_index: 32769,
+        ty: 6,
+        // {5341d8c2-6b3e-4a2f-9a50-6f2e0d1c7b21}
+        guid: [0xc2, 0xd8, 0x41, 0x53, 0x3e, 0x6b, 0x2f, 0x4a, 0x9a, 0x50, 0x6f, 0x2e, 0x0d, 0x1c, 0x7b, 0x21],
+        alias: "Ethernet",
+        descr: "sake Virtual Ethernet Adapter",
+        mac: &[0x02, 0x00, 0x4c, 0x4f, 0x4f, 0x50],
+        mtu: 1500,
+        speed: 0,
+        up: false,
+        v4: None,
+        v6: None,
+        metric: 25,
+    },
+    Iface {
+        index: 1,
+        luid_index: 0,
+        ty: 24,
+        // {f8e3a1c0-5a5b-11ee-8000-000000000001}
+        guid: [0xc0, 0xa1, 0xe3, 0xf8, 0x5b, 0x5a, 0xee, 0x11, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01],
+        alias: "Loopback Pseudo-Interface 1",
+        descr: "Software Loopback Interface 1",
+        mac: &[],
+        mtu: u32::MAX,
+        speed: 1_073_741_824,
+        up: true,
+        v4: Some(([127, 0, 0, 1], 8)),
+        v6: Some(([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1], 128)),
+        metric: 75,
+    },
+];
 
 fn by_index(i: u32) -> Option<&'static Iface> {
     ifaces().iter().find(|f| f.index == i)
@@ -319,12 +326,11 @@ fn GetIfTable2Ex(c: &mut Ctx) -> u32 {
 
 fn GetIpAddrTable(c: &mut Ctx) -> u32 {
     let (buf, size) = (c.a(0), c.a(1));
-    let v: Vec<&Iface> = sorted().into_iter().filter(|f| f.v4.is_some()).collect();
+    let v: Vec<(&Iface, ([u8; 4], u8))> = sorted().into_iter().filter_map(|f| f.v4.map(|a| (f, a))).collect();
     table(buf, size, 4 + 24 * v.len() as u32, |b| {
         w32(b, v.len() as u32);
-        for (i, f) in v.iter().enumerate() {
+        for (i, &(f, (a, len))) in v.iter().enumerate() {
             let r = b + 4 + 24 * i as u32;
-            let (a, len) = f.v4.unwrap();
             mem::write(r, &a);
             w32(r + 4, f.index);
             w32(r + 8, v4_mask(len));
@@ -344,7 +350,7 @@ struct Route {
 
 /// The routes of the model: the loopback interface's local, broadcast and multicast routes
 fn routes(family: u32) -> Vec<Route> {
-    let lo = by_index(1).unwrap();
+    let lo = loopback();
     let mut v = Vec::new();
     if family != AF_INET6 {
         for (d, l) in [([127, 0, 0, 0], 8), ([127, 0, 0, 1], 32), ([127, 255, 255, 255], 32), ([224, 0, 0, 0], 4), ([255, 255, 255, 255], 32)] {
@@ -366,7 +372,7 @@ fn routes(family: u32) -> Vec<Route> {
 const ROUTE_METRIC: u32 = 256;
 
 fn fill_forward_row(r: u32, rt: &Route) {
-    let dest = u32::from_le_bytes(rt.dest[..4].try_into().unwrap());
+    let dest = kome::le::u32_at(&rt.dest, 0).unwrap_or(0);
     w32(r, dest);
     w32(r + 4, v4_mask(rt.len));
     w32(r + 8, 0); // dwForwardPolicy
@@ -535,18 +541,16 @@ fn put_port(p: u32, port: u16) {
     mem::write(p, &[(port >> 8) as u8, port as u8, 0, 0]);
 }
 fn addr16(a: &crate::ws2name::Addr) -> [u8; 16] {
-    let mut b = [0; 16];
-    if a.ip.len() == 16 {
-        b.copy_from_slice(&a.ip);
+    match a.ip {
+        crate::ws2name::Ip::V6(b) => b,
+        crate::ws2name::Ip::V4(_) => [0; 16],
     }
-    b
 }
 fn addr4(a: &crate::ws2name::Addr) -> [u8; 4] {
-    let mut b = [0; 4];
-    if a.ip.len() == 4 {
-        b.copy_from_slice(&a.ip);
+    match a.ip {
+        crate::ws2name::Ip::V4(b) => b,
+        crate::ws2name::Ip::V6(_) => [0; 4],
     }
-    b
 }
 
 /// The rows of a table: this family's sockets of that kind, which `class_ok` keeps, in
@@ -555,8 +559,8 @@ fn conn_rows(tcp: bool, v6: bool, keep: impl Fn(&crate::ws2::ConnRow) -> bool) -
     let af = if v6 { AF_INET6 } else { AF_INET };
     let mut v: Vec<_> = crate::ws2::conn_rows().into_iter().filter(|r| r.tcp == tcp && r.af == af && keep(r)).collect();
     let key = |r: &crate::ws2::ConnRow| {
-        let rem = r.remote.clone().unwrap_or(crate::ws2name::Addr { ip: vec![0; if v6 { 16 } else { 4 }], port: 0, flow: 0, scope: 0 });
-        (r.local.ip.clone(), r.local.port, rem.ip, rem.port)
+        let rem = r.remote.clone().unwrap_or(crate::ws2name::Addr { ip: if v6 { crate::ws2name::Ip::V6([0; 16]) } else { crate::ws2name::Ip::V4([0; 4]) }, port: 0, flow: 0, scope: 0 });
+        (r.local.ip, r.local.port, rem.ip, rem.port)
     };
     v.sort_by_key(key);
     v
@@ -564,7 +568,8 @@ fn conn_rows(tcp: bool, v6: bool, keep: impl Fn(&crate::ws2::ConnRow) -> bool) -
 
 /// Writes one row
 fn put_row(p: u32, tcp: bool, v6: bool, k: RowKind, r: &crate::ws2::ConnRow) {
-    let none = crate::ws2name::Addr { ip: Vec::new(), port: 0, flow: 0, scope: 0 };
+    // (no remote end: zeros in either family's row)
+    let none = crate::ws2name::Addr { ip: crate::ws2name::Ip::V4([0; 4]), port: 0, flow: 0, scope: 0 };
     let rem = r.remote.as_ref().unwrap_or(&none);
     let pid = crate::pid();
     match (tcp, v6) {
@@ -682,7 +687,7 @@ fn owner_module(c: &mut Ctx, pid_at: u32) -> u32 {
         // TCPIP_OWNER_MODULE_INFO_BASIC only
         return ERROR_INVALID_PARAMETER;
     }
-    let path = crate::pe::MODULES.read().unwrap().iter().find(|m| !m.dll).map_or_default(|m| m.path.clone());
+    let path = crate::pe::MODULES.r().iter().find(|m| !m.dll).map_or_default(|m| m.path.clone());
     let name = path.rsplit('\\').next().unwrap_or(&path).to_string();
     let w = |s: &str| s.encode_utf16().chain([0]).flat_map(|u| u.to_le_bytes()).collect::<Vec<u8>>();
     let (nw, pw) = (w(&name), w(&path));
@@ -726,12 +731,11 @@ fn fill_if_table(b: u32) -> u32 {
     4 + 860 * v.len() as u32
 }
 fn fill_addr_table(b: u32) -> u32 {
-    let v: Vec<&Iface> = sorted().into_iter().filter(|f| f.v4.is_some()).collect();
+    let v: Vec<(&Iface, ([u8; 4], u8))> = sorted().into_iter().filter_map(|f| f.v4.map(|a| (f, a))).collect();
     if b != 0 {
         w32(b, v.len() as u32);
-        for (i, f) in v.iter().enumerate() {
+        for (i, &(f, (a, len))) in v.iter().enumerate() {
             let r = b + 4 + 24 * i as u32;
-            let (a, len) = f.v4.unwrap();
             mem::write(r, &a);
             w32(r + 4, f.index);
             w32(r + 8, v4_mask(len));
@@ -1261,10 +1265,11 @@ fn GetBestRoute(c: &mut Ctx) -> u32 {
         .into_iter()
         .filter(|r| {
             let m = v4_mask(r.len);
-            u32::from_le_bytes(r.dest[..4].try_into().unwrap()) & m == d & m
+            kome::le::u32_at(&r.dest, 0).is_some_and(|x| x & m == d & m)
         })
-        .max_by_key(|r| r.len)
-        .unwrap();
+        .max_by_key(|r| r.len);
+    // (127/8 reaches every address `reaches` lets through)
+    let Some(rt) = rt else { return ERROR_NETWORK_UNREACHABLE };
     mem::write(out, &[0; 56]);
     fill_forward_row(out, &rt);
     NO_ERROR
@@ -1305,7 +1310,7 @@ fn GetBestRoute2(c: &mut Ctx) -> u32 {
     let dest = if fam == AF_INET { vec![127, 0, 0, 0] } else { a.clone() };
     fill_forward_row2(row, &Route { iface: f, dest, len });
     // the best source: the interface's address, as a SOCKADDR_INET
-    let ad = addrs(fam).into_iter().find(|x| x.iface.index == f.index).unwrap();
+    let Some(ad) = addrs(fam).into_iter().find(|x| x.iface.index == f.index) else { return ERROR_NETWORK_UNREACHABLE };
     mem::write(src, &[0; 28]);
     w16(src, fam as u16);
     mem::write(if fam == AF_INET { src + 4 } else { src + 8 }, &ad.a);
@@ -1722,20 +1727,20 @@ fn NotifyChange(c: &mut Ctx) -> u32 {
     }
     wp(ov, 0x103); // STATUS_PENDING in Internal
     wp(ov + crate::mem::ps(), 0);
-    PENDING.lock().unwrap().push((ov, h));
+    PENDING.locked().push((ov, h));
     crate::k32::last_error(ERROR_IO_PENDING);
     ERROR_IO_PENDING
 }
 /// The handle of a pending NotifyAddrChange / NotifyRouteChange closed: its wait goes (a later
 /// CancelIPChangeNotify would complete on whatever handle has that number by then)
 pub fn forget(h: u32) {
-    PENDING.lock().unwrap().retain(|&(_, x)| x != h);
+    PENDING.locked().retain(|&(_, x)| x != h);
 }
 
 /// CancelIPChangeNotify(overlapped): the pending wait ends with STATUS_CANCELLED
 fn CancelIPChangeNotify(c: &mut Ctx) -> u32 {
     let ov = c.a(0);
-    let mut p = PENDING.lock().unwrap();
+    let mut p = PENDING.locked();
     let Some(i) = p.iter().position(|&(o, _)| o == ov && ov != 0) else { return 0 };
     let (_, h) = p.remove(i);
     drop(p);
@@ -1939,12 +1944,12 @@ fn Netbios(c: &mut Ctx) -> u32 {
         // NRC_ENVNOTDEF (0x34) is for an existing adapter that has not been reset.
         _ if lana >= adapters.len() => 0x23, // NRC_BRIDGE: invalid LANA
         0x32 => { // NCBRESET: no live sessions exist in this model.
-            let mut reset = RESET.lock().unwrap();
+            let mut reset = RESET.locked();
             if !reset.contains(&lana) { reset.push(lana); }
             0
         }
         0x33 => { // NCBASTAT: only a query for this adapter's local status.
-            if !RESET.lock().unwrap().contains(&lana) { 0x34 }
+            if !RESET.locked().contains(&lana) { 0x34 }
             else if mem::r8(ncb + call_off) != b'*' { 0x17 }
             else if buffer == 0 || capacity < 60 { 1 }
             else {
@@ -2288,9 +2293,9 @@ mod issue88 {
         for _ in 0..50 {
             assert_eq!(crate::test_guest::call(NotifyChange, &[hp, ov]), ERROR_IO_PENDING);
             let h = r32(hp);
-            assert!(PENDING.lock().unwrap().iter().any(|&(_, x)| x == h));
+            assert!(PENDING.locked().iter().any(|&(_, x)| x == h));
             assert!(crate::obj::close(h));
-            assert!(!PENDING.lock().unwrap().iter().any(|&(_, x)| x == h));
+            assert!(!PENDING.locked().iter().any(|&(_, x)| x == h));
             assert_eq!(crate::test_guest::call(CancelIPChangeNotify, &[ov]), 0);
         }
         mem::heap_free(hp);

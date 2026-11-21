@@ -134,7 +134,7 @@ FRNDINT, FPREM1 and FUCOMIP/FCOMIP.
 - `crates/koji/tests/testfloat.rs` runs every case (level 1: 6.6 M) through the interpreter in
   each rounding mode (MXCSR.RC or the x87 control word) and compares the result and MXCSR's
   exception flags; `tests/testfloat/expected.tsv` has the passing count per instruction and
-  mode (all of them, 2026-11-07). `TF_FILTER`, `TF_SHOW=<n>`, `TF_LEVEL=2`, `TF_UPDATE=1`.
+  mode (all of them, 2026-11-07). `TF_FILTER`, `TF_SHOW=<n>`, `TF_LEVEL=2`, `MASU_UPDATE_GOLDEN=1`.
 - `tools/jit32test testfloat` runs a sample of each instruction's cases (TF_N per mode) as
   translated loops (several cases per program; the 32-bit JIT's modes), against TestFloat.
 - Not compared: the x87's exception flags (koji keeps none), and two x87 behaviours SoftFloat

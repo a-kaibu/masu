@@ -13,13 +13,7 @@ use std::collections::{HashMap, VecDeque};
 use std::ffi::c_int;
 use std::sync::Mutex;
 
-#[derive(Clone, Copy, Default, PartialEq, Debug)]
-struct Rect {
-    l: i32,
-    t: i32,
-    r: i32,
-    b: i32,
-}
+use kome::rect::Rect;
 
 
 /// A count as a C int (saturating; display's counts are of windows and pixels of one screen).
@@ -42,30 +36,6 @@ impl Surface {
     fn word(self) -> u32 {
         let [a, b, c, d, ..] = self.0.to_le_bytes();
         u32::from_le_bytes([a, b, c, d])
-    }
-}
-
-impl Rect {
-    fn w(&self) -> i32 {
-        self.r - self.l
-    }
-    fn h(&self) -> i32 {
-        self.b - self.t
-    }
-    fn empty(&self) -> bool {
-        self.l >= self.r || self.t >= self.b
-    }
-    fn and(&self, o: &Rect) -> Rect {
-        Rect { l: self.l.max(o.l), t: self.t.max(o.t), r: self.r.min(o.r), b: self.b.min(o.b) }
-    }
-    fn or(&self, o: &Rect) -> Rect {
-        if self.empty() {
-            return *o;
-        }
-        if o.empty() {
-            return *self;
-        }
-        Rect { l: self.l.min(o.l), t: self.t.min(o.t), r: self.r.max(o.r), b: self.b.max(o.b) }
     }
 }
 

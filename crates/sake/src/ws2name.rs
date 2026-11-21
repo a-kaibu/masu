@@ -7,6 +7,7 @@
 //! machine's name (which has only its loopback addresses), and everything else is
 //! WSAHOST_NOT_FOUND, as on a Windows machine without a connection.
 
+use kome::locks::Lock as _;
 use crate::api::{implement, Ctx};
 use crate::mem::{self, ps, r16, r32, w16, w32, w8, wp};
 use crate::netaddr;
@@ -34,10 +35,26 @@ pub const WSASERVICE_NOT_FOUND: u32 = 10108;
 /// This machine's DNS name (GetComputerName's)
 pub const HOSTNAME: &str = "SAKE";
 
-/// A socket address: 4 or 16 address bytes, the port in host order, the IPv6 flow and scope
+/// An address's bytes: IPv4 or IPv6
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub enum Ip {
+    V4([u8; 4]),
+    V6([u8; 16]),
+}
+
+impl Ip {
+    pub fn bytes(&self) -> &[u8] {
+        match self {
+            Ip::V4(a) => a,
+            Ip::V6(a) => a,
+        }
+    }
+}
+
+/// A socket address: its IPv4 or IPv6 address, the port in host order, the IPv6 flow and scope
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Addr {
-    pub ip: Vec<u8>,
+    pub ip: Ip,
     pub port: u16,
     pub flow: u32,
     pub scope: u32,
@@ -45,13 +62,13 @@ pub struct Addr {
 
 impl Addr {
     pub fn v4(ip: [u8; 4], port: u16) -> Addr {
-        Addr { ip: ip.to_vec(), port, flow: 0, scope: 0 }
+        Addr { ip: Ip::V4(ip), port, flow: 0, scope: 0 }
     }
     pub fn v6(ip: [u8; 16], port: u16) -> Addr {
-        Addr { ip: ip.to_vec(), port, flow: 0, scope: 0 }
+        Addr { ip: Ip::V6(ip), port, flow: 0, scope: 0 }
     }
     pub fn is_v6(&self) -> bool {
-        self.ip.len() == 16
+        matches!(self.ip, Ip::V6(_))
     }
     pub fn family(&self) -> u32 {
         if self.is_v6() { AF_INET6 } else { AF_INET }
@@ -60,14 +77,15 @@ impl Addr {
         if self.is_v6() { 28 } else { 16 }
     }
     pub fn any(&self) -> bool {
-        self.ip.iter().all(|&b| b == 0)
+        self.ip.bytes().iter().all(|&b| b == 0)
     }
     /// the IPv4 address inside an IPv4-mapped IPv6 one (::ffff:a.b.c.d), or of an IPv4 one
     pub fn as_v4(&self) -> Option<[u8; 4]> {
-        if !self.is_v6() {
-            return Some(self.ip[..4].try_into().unwrap());
+        match self.ip {
+            Ip::V4(a) => Some(a),
+            Ip::V6([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xff, 0xff, a, b, c, d]) => Some([a, b, c, d]),
+            Ip::V6(_) => None,
         }
-        (self.ip[..10].iter().all(|&b| b == 0) && self.ip[10] == 0xff && self.ip[11] == 0xff).then(|| self.ip[12..].try_into().unwrap())
     }
     pub fn mapped(v4: [u8; 4], port: u16) -> Addr {
         let mut ip = [0u8; 16];
@@ -79,7 +97,7 @@ impl Addr {
     pub fn loopback(&self) -> bool {
         match self.as_v4() {
             Some(a) => a[0] == 127,
-            None => self.ip[..15].iter().all(|&b| b == 0) && self.ip[15] == 1,
+            None => self.ip == Ip::V6(std::net::Ipv6Addr::LOCALHOST.octets()),
         }
     }
     /// SOCKADDR_IN / SOCKADDR_IN6 bytes
@@ -87,20 +105,20 @@ impl Addr {
         let mut v = vec![0u8; self.size() as usize];
         v[..2].copy_from_slice(&(self.family() as u16).to_le_bytes());
         v[2..4].copy_from_slice(&self.port.to_be_bytes());
-        if self.is_v6() {
-            v[4..8].copy_from_slice(&self.flow.to_le_bytes());
-            v[8..24].copy_from_slice(&self.ip);
-            v[24..28].copy_from_slice(&self.scope.to_le_bytes());
-        } else {
-            v[4..8].copy_from_slice(&self.ip);
+        match &self.ip {
+            Ip::V6(a) => {
+                v[4..8].copy_from_slice(&self.flow.to_le_bytes());
+                v[8..24].copy_from_slice(a);
+                v[24..28].copy_from_slice(&self.scope.to_le_bytes());
+            }
+            Ip::V4(a) => v[4..8].copy_from_slice(a),
         }
         v
     }
     pub fn text(&self) -> String {
-        if self.is_v6() {
-            netaddr::v6_text(self.ip.as_slice().try_into().unwrap(), self.scope, self.port.to_be())
-        } else {
-            netaddr::v4_text(self.ip.as_slice().try_into().unwrap(), self.port.to_be())
+        match &self.ip {
+            Ip::V6(a) => netaddr::v6_text(a, self.scope, self.port.to_be()),
+            Ip::V4(a) => netaddr::v4_text(*a, self.port.to_be()),
         }
     }
 }
@@ -123,7 +141,7 @@ pub fn read_sa(p: u32, len: u32) -> Result<Addr, u32> {
                 return Err(WSAEFAULT);
             }
             let scope = if len >= 28 { r32(p + 24) } else { 0 };
-            Ok(Addr { ip: mem::bytes(p + 8, 16), port: u16::from_be(r16(p + 2)), flow: r32(p + 4), scope })
+            Ok(Addr { ip: Ip::V6(mem::array::<16>(p + 8)), port: u16::from_be(r16(p + 2)), flow: r32(p + 4), scope })
         }
         _ => Err(WSAEAFNOSUPPORT),
     }
@@ -188,8 +206,8 @@ fn inet_addr(c: &mut Ctx) -> u32 {
     }
     let r = netaddr::v4_parse(&s, false, true, false);
     // (the text may end in any isspace() character)
-    match (r.ok, s.get(r.end).copied().unwrap_or(0)) {
-        (true, 0 | 9..=13 | 0x20) => u32::from_le_bytes(r.addr.unwrap()),
+    match (r.ok, r.addr, s.get(r.end).copied().unwrap_or(0)) {
+        (true, Some(a), 0 | 9..=13 | 0x20) => u32::from_le_bytes(a),
         _ => u32::MAX,
     }
 }
@@ -199,13 +217,13 @@ static BUFS: Mutex<Option<HashMap<(u32, u8), u32>>> = Mutex::new(None);
 /// a per-thread buffer that a function returns (inet_ntoa's, hostent, ...), `size` bytes
 fn thread_buf(kind: u8, size: u32) -> u32 {
     let tid = crate::cur().tid;
-    let mut g = BUFS.lock().unwrap();
+    let mut g = BUFS.locked();
     *g.get_or_insert_with(HashMap::default).entry((tid, kind)).or_insert_with(|| mem::heap_alloc(size, true))
 }
 
 /// A thread ends (k32::exit_thread): its buffers go back to the heap
 pub fn thread_exit(tid: u32) {
-    let gone: Vec<u32> = match BUFS.lock().unwrap().as_mut() {
+    let gone: Vec<u32> = match BUFS.locked().as_mut() {
         Some(m) => {
             let keys: Vec<_> = m.keys().filter(|k| k.0 == tid).copied().collect();
             keys.iter().filter_map(|k| m.remove(k)).collect()
@@ -255,8 +273,8 @@ fn pton(c: &mut Ctx, wide: bool) -> u32 {
     match af {
         AF_INET => {
             let r = netaddr::v4_parse(&s, true, true, false);
-            if r.ok {
-                mem::write(out, &r.addr.unwrap());
+            if let (true, Some(a)) = (r.ok, r.addr) {
+                mem::write(out, &a);
             }
             pton_ret(r.ok && s.get(r.end).is_none(), wide)
         }
@@ -310,7 +328,7 @@ fn string_to_address(c: &mut Ctx, wide: bool) -> u32 {
                 return err(WSAEFAULT);
             }
             let r = netaddr::v4_parse(&s, false, false, true);
-            if !r.ok {
+            let (true, Some(a)) = (r.ok, r.addr) else {
                 // (a failure still zeroes the sockaddr and leaves what was parsed of the address)
                 if sa != 0 {
                     mem::write(sa, &[0; 16]);
@@ -319,8 +337,8 @@ fn string_to_address(c: &mut Ctx, wide: bool) -> u32 {
                     }
                 }
                 return err(WSAEINVAL);
-            }
-            Addr::v4(r.addr.unwrap(), u16::from_be(r.port))
+            };
+            Addr::v4(a, u16::from_be(r.port))
         }
         AF_INET6 => {
             if (r32(lenp) as i32) < 28 {
@@ -336,7 +354,7 @@ fn string_to_address(c: &mut Ctx, wide: bool) -> u32 {
                 }
                 return err(WSAEINVAL);
             }
-            Addr { ip: ip.to_vec(), port: u16::from_be(r.port), flow: 0, scope: r.scope }
+            Addr { ip: Ip::V6(ip), port: u16::from_be(r.port), flow: 0, scope: r.scope }
         }
         _ => return err(WSAEINVAL),
     };
@@ -870,8 +888,9 @@ pub fn punycode(label: &str) -> Option<String> {
         out.push('-');
     }
     let (mut n, mut delta, mut bias, mut h) = (128u32, 0u32, 72u32, basic);
+    // (each round codes the least code point not yet coded: one is left while h < cps.len())
     while (h as usize) < cps.len() {
-        let m = *cps.iter().filter(|&&c| c >= n).min().unwrap();
+        let m = *cps.iter().filter(|&&c| c >= n).min()?;
         delta = delta.checked_add((m - n).checked_mul(h + 1)?)?;
         n = m;
         for &c in &cps {
@@ -906,8 +925,8 @@ pub fn punycode(label: &str) -> Option<String> {
 fn literal(name: &str) -> Option<Addr> {
     let u: Vec<u16> = name.encode_utf16().collect();
     let r = netaddr::v4_parse(&u, false, false, false);
-    if r.ok && !name.contains(':') {
-        return Some(Addr::v4(r.addr.unwrap(), 0));
+    if let (true, Some(a), false) = (r.ok, r.addr, name.contains(':')) {
+        return Some(Addr::v4(a, 0));
     }
     let mut a = [0u8; 16];
     let r = netaddr::v6_parse(&u, &mut a, true, false);
@@ -927,12 +946,12 @@ fn hosts(name: &str) -> Option<Vec<Addr>> {
     static CACHE: Mutex<Option<(u64, std::sync::Arc<Vec<(Addr, Vec<String>)>>)>> = Mutex::new(None);
     let path = crate::files::to_host("C:\\windows\\system32\\drivers\\etc\\hosts");
     let stamp = kura::fs::stamp(&path);
-    let cached = CACHE.lock().unwrap().as_ref().filter(|c| stamp != 0 && c.0 == stamp).map(|c| c.1.clone());
+    let cached = CACHE.locked().as_ref().filter(|c| stamp != 0 && c.0 == stamp).map(|c| c.1.clone());
     let table = match cached {
         Some(t) => t,
         None => {
             let t = std::sync::Arc::new(std::fs::read(&path).map_or_default(|b| hosts_parse(&b)));
-            *CACHE.lock().unwrap() = Some((stamp, t.clone()));
+            *CACHE.locked() = Some((stamp, t.clone()));
             t
         }
     };
@@ -1016,7 +1035,7 @@ fn host_by_name(p: u32) -> u32 {
     let name = if p == 0 { HOSTNAME.to_string() } else { cstr_lossy(p) };
     match resolve(&name) {
         Some(v) => {
-            let v4: Vec<Vec<u8>> = v.iter().filter(|a| !a.is_v6()).map(|a| a.ip.clone()).collect();
+            let v4: Vec<Vec<u8>> = v.iter().filter(|a| !a.is_v6()).map(|a| a.ip.bytes().to_vec()).collect();
             if v4.is_empty() {
                 last(WSANO_DATA);
                 return 0;
@@ -1058,13 +1077,13 @@ fn host_by_addr(a: u32, len: u32, af: u32) -> u32 {
         last(WSAEFAULT);
         return 0;
     }
-    let ip = mem::bytes(a, want);
-    let addr = Addr { ip: ip.clone(), port: 0, flow: 0, scope: 0 };
+    let ip = if want == 4 { Ip::V4(mem::array::<4>(a)) } else { Ip::V6(mem::array::<16>(a)) };
+    let addr = Addr { ip, port: 0, flow: 0, scope: 0 };
     if !addr.loopback() {
         last(WSAHOST_NOT_FOUND);
         return 0;
     }
-    hostent(HOSTNAME, af, &[ip])
+    hostent(HOSTNAME, af, &[ip.bytes().to_vec()])
 }
 
 // ---- getaddrinfo ----
@@ -1147,7 +1166,9 @@ pub fn addrinfo(node: Option<&str>, service: Option<&str>, h: &Hints) -> Result<
     for mut a in addrs {
         if h.family != AF_UNSPEC && a.family() != h.family {
             if h.family == AF_INET6 && h.flags & AI_V4MAPPED != 0 && !a.is_v6() {
-                a = Addr::mapped(a.ip[..4].try_into().unwrap(), 0);
+                if let Ip::V4(v4) = a.ip {
+                    a = Addr::mapped(v4, 0);
+                }
             } else {
                 continue;
             }
@@ -1356,7 +1377,7 @@ fn getnameinfo(c: &mut Ctx, wide: bool) -> u32 {
         let numeric = {
             let mut x = a.clone();
             x.port = 0;
-            if x.is_v6() { netaddr::v6_text(x.ip.as_slice().try_into().unwrap(), x.scope, 0) } else { x.text() }
+            if let Ip::V6(v6) = &x.ip { netaddr::v6_text(v6, x.scope, 0) } else { x.text() }
         };
         let name = if flags & NI_NUMERICHOST != 0 {
             numeric

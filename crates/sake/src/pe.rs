@@ -1,5 +1,6 @@
 //! PE images: mapping, relocations, imports, exports, resources, TLS.
 
+use kome::locks::{Lock as _, Rw as _};
 use crate::HashMap;
 use std::sync::{Mutex, RwLock};
 
@@ -59,7 +60,7 @@ struct LoaderGuard;
 impl Drop for LoaderGuard {
     fn drop(&mut self) {
         let me = std::thread::current().id();
-        let mut l = LOADER.lock().unwrap();
+        let mut l = LOADER.locked();
         if l.0 == Some(me) && l.1 > 0 {
             l.1 -= 1;
             if l.1 == 0 {
@@ -71,13 +72,13 @@ impl Drop for LoaderGuard {
 }
 fn loader_lock() -> LoaderGuard {
     let me = std::thread::current().id();
-    let mut l = LOADER.lock().unwrap();
+    let mut l = LOADER.locked();
     if l.0 == Some(me) {
         l.1 += 1;
         return LoaderGuard;
     }
     while l.1 != 0 {
-        l = LOADER_FREE.wait(l).unwrap();
+        l = kome::locks::wait(&LOADER_FREE, l);
     }
     *l = (Some(me), 1);
     LoaderGuard
@@ -87,7 +88,7 @@ fn loader_lock() -> LoaderGuard {
 /// thread start would wait forever.
 pub fn loader_thread_exit() {
     let me = std::thread::current().id();
-    let mut l = LOADER.lock().unwrap();
+    let mut l = LOADER.locked();
     if l.0 == Some(me) {
         *l = (None, 0);
         LOADER_FREE.notify_all();
@@ -96,19 +97,19 @@ pub fn loader_thread_exit() {
 
 /// (a data-file module's handle is its base | 1 or | 2)
 pub fn by_base(base: u32) -> Option<usize> {
-    MODULES.read().unwrap().iter().position(|m| m.base == base & !3)
+    MODULES.r().iter().position(|m| m.base == base & !3)
 }
 
 /// The module loaded from the file at Windows path `path` (a path-qualified LoadLibrary is
 /// matched by the whole path: same-named DLLs of different folders are different modules, as
 /// Ren'Py 6.99/7's renpy\\gl\\gldraw.pyd and renpy\\angle\\gldraw.pyd).
 pub fn by_path(path: &str) -> Option<u32> {
-    MODULES.read().unwrap().iter().find(|m| !m.redirected && m.path.eq_ignore_ascii_case(path)).map(|m| m.base)
+    MODULES.r().iter().find(|m| !m.redirected && m.path.eq_ignore_ascii_case(path)).map(|m| m.base)
 }
 
 pub fn by_name(name: &str) -> Option<u32> {
     let n = name.rsplit(['\\', '/']).next().unwrap_or(name);
-    MODULES.read().unwrap().iter().find(|m| !m.redirected && name_matches(&m.name, n)).map(|m| m.base)
+    MODULES.r().iter().find(|m| !m.redirected && name_matches(&m.name, n)).map(|m| m.base)
 }
 /// Whether module name `m` (lower case) is base name `n` in any case, or `n` is it without ".dll"
 /// (by_name without a lower-cased copy per call: nt.rs and every thread start ask it).
@@ -120,7 +121,7 @@ fn name_matches(m: &str, n: &str) -> bool {
 /// read lock may name another module by the time the write lock is had: a data file freed
 /// on another thread shifts the list).
 fn with_mut<R>(base: u32, f: impl FnOnce(&mut Module) -> R) -> Option<R> {
-    MODULES.write().unwrap().iter_mut().find(|m| m.base == base & !3).map(f)
+    MODULES.w().iter_mut().find(|m| m.base == base & !3).map(f)
 }
 
 /// The module a bare DLL name stands for in the active activation context: Some(the
@@ -129,16 +130,16 @@ fn with_mut<R>(base: u32, f: impl FnOnce(&mut Module) -> R) -> Option<R> {
 pub fn sxs_module(name: &str) -> Option<(u32, String)> {
     let path = crate::actctx::redirect_dll(name)?;
     crate::files::resolve(&path)?;
-    let b = MODULES.read().unwrap().iter().find(|m| m.path.eq_ignore_ascii_case(&path)).map(|m| m.base).unwrap_or(0);
+    let b = MODULES.r().iter().find(|m| m.path.eq_ignore_ascii_case(&path)).map(|m| m.base).unwrap_or(0);
     Some((b, path))
 }
 
 pub fn containing(a: u32) -> Option<u32> {
-    MODULES.read().unwrap().iter().find(|m| a >= m.base && a < m.base + m.size).map(|m| m.base)
+    MODULES.r().iter().find(|m| a >= m.base && a < m.base + m.size).map(|m| m.base)
 }
 
 pub fn with<R>(base: u32, f: impl FnOnce(&Module) -> R) -> Option<R> {
-    MODULES.read().unwrap().iter().find(|m| m.base == base & !3).map(f)
+    MODULES.r().iter().find(|m| m.base == base & !3).map(f)
 }
 
 /// How many of a section's bytes come from the file (at PointerToRawData; the rest of it is
@@ -173,7 +174,7 @@ pub fn load_datafile(data: &[u8], path: &str) -> Option<u32> {
     }
     mem::protect(base, size, 0x02);
     let (rva, _) = pe.dir(data, 2);
-    MODULES.write().unwrap().push(Module {
+    MODULES.w().push(Module {
         base,
         size,
         entry: 0,
@@ -196,7 +197,7 @@ pub fn load_datafile(data: &[u8], path: &str) -> Option<u32> {
 
 /// FreeLibrary of a data-file module: unmapped once the last reference goes
 pub fn free_datafile(base: u32) {
-    let mut v = MODULES.write().unwrap();
+    let mut v = MODULES.w();
     let Some(i) = v.iter().position(|m| m.base == base && m.name.is_empty() && !m.hle) else { return };
     v[i].refs = v[i].refs.saturating_sub(1);
     if v[i].refs == 0 {
@@ -213,7 +214,7 @@ pub fn free_datafile(base: u32) {
 pub fn free_library(cpu: &mut Cpu, base: u32) -> bool {
     let _g = loader_lock();
     let gone = {
-        let mut v = MODULES.write().unwrap();
+        let mut v = MODULES.w();
         let Some(i) = v.iter().position(|m| m.base == base & !3) else { return false };
         // (the process's exe is the first image that is no DLL; another exe LoadLibrary
         // mapped goes like a DLL)
@@ -234,7 +235,7 @@ pub fn free_library(cpu: &mut Cpu, base: u32) -> bool {
 fn unload(cpu: &mut Cpu, base: u32) {
     // (not yet initialized: no DllMain to tell)
     let fresh = {
-        let mut p = PENDING.lock().unwrap();
+        let mut p = PENDING.locked();
         let had = p.contains(&base);
         p.retain(|&b| b != base);
         had
@@ -251,7 +252,7 @@ fn unload(cpu: &mut Cpu, base: u32) {
         tls_callbacks(cpu, base, 0);
     }
     let (deps, tls) = {
-        let mut v = MODULES.write().unwrap();
+        let mut v = MODULES.w();
         let Some(i) = v.iter().position(|m| m.base == base) else { return };
         let m = v.remove(i);
         (m.deps, m.tls)
@@ -267,7 +268,7 @@ fn unload(cpu: &mut Cpu, base: u32) {
     }
     for d in deps {
         let last = {
-            let mut v = MODULES.write().unwrap();
+            let mut v = MODULES.w();
             match v.iter_mut().find(|m| m.base == d && !m.pinned) {
                 Some(m) => {
                     m.refs = m.refs.saturating_sub(1);
@@ -290,7 +291,7 @@ pub fn is_file_dll(base: u32) -> bool {
 /// GetModuleHandleEx without GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT: a reference more
 /// (or, PIN, never unloaded).
 pub fn add_reference(base: u32, pin: bool) {
-    let mut v = MODULES.write().unwrap();
+    let mut v = MODULES.w();
     if let Some(m) = v.iter_mut().find(|m| m.base == base & !3) {
         if pin {
             m.pinned = true;
@@ -304,7 +305,7 @@ pub fn add_reference(base: u32, pin: bool) {
 /// gets UNLOAD_DLL; LoadLibrary loads it again: LOAD_DLL). Its image stays mapped, as
 /// pointers into it (its exports' thunks) stay good.
 pub fn free_hle(base: u32) {
-    let mut v = MODULES.write().unwrap();
+    let mut v = MODULES.w();
     let Some(m) = v.iter_mut().find(|m| m.base == base && m.hle && m.dll) else { return };
     if m.refs == 0 {
         return;
@@ -706,7 +707,7 @@ pub fn load(data: Vec<u8>, path: &str, resolve: &mut dyn FnMut(&str, Import) -> 
         let k = mem::ps();
         Tls { start: r32(t), end: r32(t + k), index_addr: r32(t + 2 * k), callbacks: r32(t + 3 * k), zero_fill: r32(t + 4 * k), index: 0 }
     });
-    MODULES.write().unwrap().push(Module {
+    MODULES.w().push(Module {
         base,
         size,
         entry: if entry_rva != 0 { base + entry_rva } else { 0 },
@@ -765,7 +766,7 @@ pub fn load(data: Vec<u8>, path: &str, resolve: &mut dyn FnMut(&str, Import) -> 
     }
     // (each DLL file imported from holds a reference of this module's)
     {
-        let mut v = MODULES.write().unwrap();
+        let mut v = MODULES.w();
         deps.retain(|&b| v.iter().any(|m| m.base == b && m.dll && !m.hle));
         for m in v.iter_mut().filter(|m| deps.contains(&m.base)) {
             m.refs += 1;
@@ -1027,7 +1028,7 @@ pub fn top_seh_handler() -> u32 {
 /// the headers finds an image).
 pub fn hle_module(dll: &str) -> u32 {
     let name = format!("{}.dll", crate::api::dll_key(dll));
-    let find = || MODULES.read().unwrap().iter().find(|m| m.name == name).map(|m| m.base);
+    let find = || MODULES.r().iter().find(|m| m.name == name).map(|m| m.base);
     if let Some(b) = find() {
         return b;
     }
@@ -1147,7 +1148,7 @@ pub fn hle_module(dll: &str) -> u32 {
         }
     }
     mem::protect(base, size, 0x20);
-    MODULES.write().unwrap().push(Module {
+    MODULES.w().push(Module {
         base,
         size,
         entry: 0,
@@ -1180,7 +1181,7 @@ static LDR: Mutex<(u32, Vec<(u32, u32)>)> = Mutex::new((0, Vec::new()));
 pub const LDR_REDIRECTED: u32 = 0x1000_0000;
 
 fn ldr_data() -> u32 {
-    let mut g = LDR.lock().unwrap();
+    let mut g = LDR.locked();
     if g.0 == 0 {
         let peb = crate::PEB.load(std::sync::atomic::Ordering::Relaxed);
         if peb == 0 {
@@ -1223,11 +1224,11 @@ fn ustr_at(at: u32, s: &str) {
 
 /// The program's own image
 pub fn exe_base() -> u32 {
-    MODULES.read().unwrap().iter().find(|m| !m.dll).map(|m| m.base).unwrap_or(0)
+    MODULES.r().iter().find(|m| !m.dll).map(|m| m.base).unwrap_or(0)
 }
 /// The modules on the loader's lists, in load order
 pub fn ldr_bases() -> Vec<u32> {
-    LDR.lock().unwrap().1.iter().map(|x| x.0).collect()
+    LDR.locked().1.iter().map(|x| x.0).collect()
 }
 
 /// Lists module `base` (just added to MODULES) at the end of the loader's lists.
@@ -1256,14 +1257,14 @@ fn ldr_add(base: u32) {
     ustr_at(e + basen, path.rsplit('\\').next().unwrap_or(&path));
     w32(e + flags, 0x4 | if redirected { LDR_REDIRECTED } else { 0 });
     w16(e + count, 1);
-    LDR.lock().unwrap().1.push((base, e));
+    LDR.locked().1.push((base, e));
     crate::dbg::dll_loaded(base);
 }
 
 /// Takes module `base` out of the loader's three lists.
 fn ldr_remove(base: u32) {
     let e = {
-        let mut l = LDR.lock().unwrap();
+        let mut l = LDR.locked();
         let Some(i) = l.1.iter().position(|x| x.0 == base) else { return };
         l.1.remove(i).1
     };
@@ -1283,7 +1284,7 @@ fn ldr_remove(base: u32) {
 
 /// A module's flags or path changed after it was listed.
 pub fn ldr_update(base: u32) {
-    let Some(e) = LDR.lock().unwrap().1.iter().find(|x| x.0 == base).map(|x| x.1) else { return };
+    let Some(e) = LDR.locked().1.iter().find(|x| x.0 == base).map(|x| x.1) else { return };
     let Some((path, redirected)) = with(base, |m| (m.path.clone(), m.redirected)) else { return };
     let ps = mem::ps();
     let (full, basen, flags) = if ps == 8 { (72, 88, 104) } else { (36, 44, 52) };
@@ -1315,12 +1316,12 @@ fn find_dll_file(dll: &str) -> Option<(String, String)> {
         }
         return crate::files::resolve(&w).filter(|h| !system_dir || !wine_builtin(h)).map(|h| (h, w));
     }
-    let exe_dir = MODULES.read().unwrap().iter().find(|m| !m.dll).map(|m| m.path.rsplit_once('\\').map_or_default(|x| x.0.to_string()));
+    let exe_dir = MODULES.r().iter().find(|m| !m.dll).map(|m| m.path.rsplit_once('\\').map_or_default(|x| x.0.to_string()));
     let mut dirs: Vec<String> = exe_dir.into_iter().collect();
-    dirs.extend(DLL_DIRS.lock().unwrap().iter().cloned());
+    dirs.extend(DLL_DIRS.locked().iter().cloned());
     dirs.push(crate::files::cwd().trim_end_matches('\\').to_string());
     // the folders of DLLs loaded by path (LOAD_WITH_ALTERED_SEARCH_PATH finds their dependencies there)
-    for m in MODULES.read().unwrap().iter().filter(|m| m.dll && !m.hle) {
+    for m in MODULES.r().iter().filter(|m| m.dll && !m.hle) {
         if let Some((d, _)) = m.path.rsplit_once('\\') && !dirs.iter().any(|x| x.eq_ignore_ascii_case(d)) {
             dirs.push(d.to_string());
         }
@@ -1522,7 +1523,7 @@ fn load_dll_file(dll: &str) -> Result<u32, String> {
     crate::vorbis_hook::patch(base, with(base, |m| m.size).unwrap_or(0));
     crate::unity6::patch(&win, base, with(base, |m| m.size).unwrap_or(0));
     tls_module(base);
-    PENDING.lock().unwrap().push(base);
+    PENDING.locked().push(base);
     Ok(base)
 }
 
@@ -1600,13 +1601,14 @@ pub fn load_exe(_cpu: &mut Cpu, host: &str, win: &str) -> Result<u32, String> {
 /// next), and a block in every running thread (Windows since Vista: a thread that already ran
 /// gets one too, not only the loading thread and those started later).
 fn tls_module(base: u32) {
-    let mut mods = MODULES.write().unwrap();
-    let Some(t) = mods.iter_mut().find(|m| m.base == base).and_then(|m| m.tls.as_mut()) else { return };
-    let Some(index) = tls_index_take(&mut TLS_FREE.lock().unwrap(), &TLS_NEXT, tls_capacity()) else {
+    let mut mods = MODULES.w();
+    let Some(m) = mods.iter_mut().find(|m| m.base == base) else { return };
+    let Some(t) = m.tls.as_mut() else { return };
+    let Some(index) = tls_index_take(&mut TLS_FREE.locked(), &TLS_NEXT, tls_capacity()) else {
         // (more modules with TLS loaded at once than the array holds: none rather than a write
         // past the TEB; the DLL's thread-local variables fault)
         eprintln!("sake: no TLS index left for the module at {base:#x} ({} in use)", tls_capacity());
-        mods.iter_mut().find(|m| m.base == base).unwrap().tls = None;
+        m.tls = None;
         return;
     };
     t.index = index;
@@ -1653,7 +1655,7 @@ fn tls_unload(t: &Tls) {
     for (_, teb, _) in crate::k32::thread_list() {
         tls_block_free(teb, t);
     }
-    TLS_FREE.lock().unwrap().push(t.index);
+    TLS_FREE.locked().push(t.index);
 }
 
 /// A thread ends (k32::exit_thread, before its TEB goes): out of the running threads, and its
@@ -1661,7 +1663,7 @@ fn tls_unload(t: &Tls) {
 pub fn thread_tls_exit(teb: u32) {
     let _g = loader_lock();
     crate::k32::tls_thread_exit(teb);
-    let tls: Vec<Tls> = MODULES.read().unwrap().iter().filter_map(|m| m.tls).collect();
+    let tls: Vec<Tls> = MODULES.r().iter().filter_map(|m| m.tls).collect();
     for t in &tls {
         tls_block_free(teb, t);
     }
@@ -1686,7 +1688,7 @@ pub fn init_dlls(cpu: &mut Cpu) {
     static EXE_DONE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
     loop {
         let next = {
-            let mut p = PENDING.lock().unwrap();
+            let mut p = PENDING.locked();
             if p.is_empty() {
                 None
             } else {
@@ -1707,7 +1709,7 @@ pub fn init_dlls(cpu: &mut Cpu) {
         }
     }
     if !EXE_DONE.swap(true, std::sync::atomic::Ordering::Relaxed) {
-        let exe = MODULES.read().unwrap().iter().find(|m| !m.dll).map(|m| m.base);
+        let exe = MODULES.r().iter().find(|m| !m.dll).map(|m| m.base);
         if let Some(b) = exe {
             tls_callbacks(cpu, b, 1);
         }
@@ -1718,7 +1720,7 @@ pub fn init_dlls(cpu: &mut Cpu) {
 pub fn thread_attach(cpu: &mut Cpu) {
     let _g = loader_lock();
     let mods: Vec<(u32, Option<Tls>, u32, bool)> =
-        MODULES.read().unwrap().iter().map(|m| (m.base, m.tls, m.entry, m.dll && !m.hle)).collect();
+        MODULES.r().iter().map(|m| (m.base, m.tls, m.entry, m.dll && !m.hle)).collect();
     let teb = crate::cur().teb;
     for (_, t, _, _) in &mods {
         if let Some(t) = t {
@@ -1739,7 +1741,7 @@ mod unload_tests {
     use proptest::prelude::*;
 
     fn fake(base: u32, refs: u32, deps: Vec<u32>) {
-        MODULES.write().unwrap().push(Module {
+        MODULES.w().push(Module {
             base,
             size: 0x1000,
             entry: 0,
@@ -1780,7 +1782,7 @@ mod unload_tests {
         add_reference(p, true);
         assert!(free_library(&mut cpu, p) && free_library(&mut cpu, p));
         assert_eq!(refs(p), Some(1));
-        MODULES.write().unwrap().retain(|m| m.base != p);
+        MODULES.w().retain(|m| m.base != p);
     }
 
     proptest! {
@@ -1799,7 +1801,7 @@ mod unload_tests {
                 }
             }
             // (a failed case before may have left its modules)
-            MODULES.write().unwrap().retain(|m| m.base >> 24 != 0x7b || (m.base >> 16) & 0xff != salt);
+            MODULES.w().retain(|m| m.base >> 24 != 0x7b || (m.base >> 16) & 0xff != salt);
             // all loaded once by the program, their imports counted: one count per DLL, as
             // Windows keeps (a FreeLibrary too many takes an importer's reference)
             let mut n = [0u32; 5];
@@ -1835,7 +1837,7 @@ mod unload_tests {
                     prop_assert_eq!(refs(base(k)), live[k].then_some(n[k]), "dll {} after {:?}", k, (load, i));
                 }
             }
-            MODULES.write().unwrap().retain(|m| m.base >> 24 != 0x7b || (m.base >> 16) & 0xff != salt);
+            MODULES.w().retain(|m| m.base >> 24 != 0x7b || (m.base >> 16) & 0xff != salt);
         }
     }
 }
@@ -1879,9 +1881,9 @@ mod loader_tests {
         // (exiting without holding it changes nothing)
         let held = loader_lock();
         std::thread::spawn(loader_thread_exit).join().unwrap();
-        assert_eq!(LOADER.lock().unwrap().1, 1);
+        assert_eq!(LOADER.locked().1, 1);
         drop(held);
-        assert_eq!(*LOADER.lock().unwrap(), (None, 0));
+        assert_eq!(*LOADER.locked(), (None, 0));
     }
 }
 
@@ -2015,7 +2017,7 @@ mod stack_tests {
 #[allow(non_snake_case)]
 fn LdrFindEntryForAddress(c: &mut crate::api::Ctx) -> u32 {
     let Some(b) = containing(c.a(0)) else { return 0xc000_0135 };
-    let Some(e) = LDR.lock().unwrap().1.iter().find(|x| x.0 == b).map(|x| x.1) else { return 0xc000_0135 };
+    let Some(e) = LDR.locked().1.iter().find(|x| x.0 == b).map(|x| x.1) else { return 0xc000_0135 };
     mem::putp(c.a(1), e);
     0
 }
@@ -2070,18 +2072,18 @@ mod path_tests {
     /// the path finds only the module of that file; the bare name, a module of that name.
     #[test]
     fn same_named_modules_are_told_apart_by_path() {
-        MODULES.write().unwrap().push(fake(0x7f10_0000, A));
+        MODULES.w().push(fake(0x7f10_0000, A));
         assert_eq!(by_path(B), None, "the gl gldraw.pyd is not the angle one");
         assert_eq!(by_name(B), Some(0x7f10_0000), "(by_name matches base names only)");
-        MODULES.write().unwrap().push(fake(0x7f20_0000, B));
+        MODULES.w().push(fake(0x7f20_0000, B));
         assert_eq!(by_path(A), Some(0x7f10_0000));
         assert_eq!(by_path(B), Some(0x7f20_0000));
         assert_eq!(by_path(&B.to_ascii_uppercase()), Some(0x7f20_0000));
         assert!(matches!(by_name("pathtest_gldraw.pyd"), Some(0x7f10_0000 | 0x7f20_0000)));
         // (a redirected module is found through its activation context only)
-        MODULES.write().unwrap().iter_mut().find(|m| m.base == 0x7f20_0000).unwrap().redirected = true;
+        MODULES.w().iter_mut().find(|m| m.base == 0x7f20_0000).unwrap().redirected = true;
         assert_eq!(by_path(B), None);
-        MODULES.write().unwrap().retain(|m| m.base != 0x7f10_0000 && m.base != 0x7f20_0000);
+        MODULES.w().retain(|m| m.base != 0x7f10_0000 && m.base != 0x7f20_0000);
     }
 
     proptest! {
@@ -2091,11 +2093,11 @@ mod path_tests {
         fn by_path_is_the_whole_path_without_case(dir in "[a-zA-Z0-9_]{1,8}", other in "[a-zA-Z0-9_]{1,8}", flips in proptest::collection::vec(any::<bool>(), 64)) {
             let p = format!("C:\\pt_{dir}\\pathprop.dll");
             let base = 0x7f30_0000;
-            MODULES.write().unwrap().push(fake(base, &p));
+            MODULES.w().push(fake(base, &p));
             let spelled: String = p.chars().zip(flips.iter().cycle()).map(|(c, f)| if *f { c.to_ascii_uppercase() } else { c.to_ascii_lowercase() }).collect();
             let found = by_path(&spelled);
             let elsewhere = by_path(&format!("C:\\pt_{other}\\pathprop.dll"));
-            MODULES.write().unwrap().retain(|m| m.base != base);
+            MODULES.w().retain(|m| m.base != base);
             prop_assert_eq!(found, Some(base));
             prop_assert_eq!(elsewhere, if dir.eq_ignore_ascii_case(&other) { Some(base) } else { None });
         }
@@ -2397,7 +2399,7 @@ mod review_tests {
         let _g = crate::test_guest::enter();
         let bases: Vec<u32> = Vec::<_>::from_fn(8, |_| std::thread::spawn(|| hle_module("review_race_dll"))).into_iter().map(|t| t.join().unwrap()).collect();
         assert!(bases.iter().all(|&b| b == bases[0] && b != 0), "{bases:x?}");
-        assert_eq!(MODULES.read().unwrap().iter().filter(|m| m.name == "review_race_dll.dll").count(), 1);
+        assert_eq!(MODULES.r().iter().filter(|m| m.name == "review_race_dll.dll").count(), 1);
     }
 }
 

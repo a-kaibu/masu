@@ -2,6 +2,7 @@
 //! (the events in order, as the HTML media element's), the frame's letterboxing. The COM side
 //! and Windows' answers: tests/winref/probes/mfengine.c.
 
+use kome::locks::Lock as _;
 use super::*;
 use proptest::prelude::*;
 
@@ -433,16 +434,16 @@ proptest! {
 fn test_engine(thread: bool) -> u32 {
     let b = object(0, 1);
     // (a block let go by an earlier test may come back)
-    RETIRED.lock().unwrap().retain(|&x| x != b);
+    RETIRED.locked().retain(|&x| x != b);
     let e = Engine { refs: 1, st: State::default(), notify: 0, shut: false, src: None, movie: false, ticked: None, category: 0, role: 0, thread, frames: Frames::default() };
-    ENGINES.lock().unwrap().get_or_insert_with(HashMap::new).insert(b, e);
+    ENGINES.locked().get_or_insert_with(HashMap::new).insert(b, e);
     b
 }
 fn retired(b: u32) -> usize {
-    RETIRED.lock().unwrap().iter().filter(|&&x| x == b).count()
+    RETIRED.locked().iter().filter(|&&x| x == b).count()
 }
 fn live(b: u32) -> bool {
-    ENGINES.lock().unwrap().get_or_insert_with(HashMap::new).contains_key(&b)
+    ENGINES.locked().get_or_insert_with(HashMap::new).contains_key(&b)
 }
 
 #[test]
@@ -512,7 +513,7 @@ proptest! {
             engine(b, |e| { e.refs = 0; e.thread = false; e.shut = true; });
             retire(b);
         }
-        RETIRED.lock().unwrap().retain(|&x| x != b);
+        RETIRED.locked().retain(|&x| x != b);
     }
 }
 

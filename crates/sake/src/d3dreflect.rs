@@ -6,6 +6,7 @@
 
 #![allow(non_snake_case)]
 
+use kome::locks::Lock as _;
 use std::sync::Mutex;
 
 use crate::api::Ctx;
@@ -164,7 +165,7 @@ fn gstr(s: &str) -> u32 {
 fn vt(which: u8) -> u32 {
     use crate::api::Handler;
     static V: Mutex<[u32; 8]> = Mutex::new([0; 8]);
-    let mut v = V.lock().unwrap();
+    let mut v = V.locked();
     if v[which as usize] == 0 {
         let k = 4 * mem::ps() / 4;
         let _ = k;
@@ -230,7 +231,7 @@ fn vt(which: u8) -> u32 {
 
 /// A guest object {vtable, refs, index}.
 fn new_obj(which: u8, o: Obj) -> u32 {
-    let id = OBJS.lock().unwrap().add(o) as u32;
+    let id = OBJS.locked().add(o) as u32;
     let p = mem::heap_alloc(24, true);
     mem::wp(p, vt(which));
     w32(p + 8, 1);
@@ -294,7 +295,7 @@ fn parse_type(b: &[u8], at: usize, sm5: bool, fl: u8, depth: u32, budget: &mut u
         let name = gstr(&cstr_at(b, kome::le::u32_at(b, m).unwrap_or(0) as usize));
         let mt = parse_type(b, kome::le::u32_at(b, m + 4).unwrap_or(0) as usize, sm5, fl, depth + 1, budget);
         let off = kome::le::u32_at(b, m + 8).unwrap_or(0);
-        if let Some(Obj::Type(x)) = OBJS.lock().unwrap().get_mut(r32(mt + 12) as usize) {
+        if let Some(Obj::Type(x)) = OBJS.locked().get_mut(r32(mt + 12) as usize) {
             x.offset = off;
         }
         t.members.push((name, mt));
@@ -378,7 +379,7 @@ fn parse(code: &[u8], fl: u8) -> Option<Refl> {
                 let v = VarR { name_p: gstr(&vname), name: vname, offset: kome::le::u32_at(b, va + 4).unwrap_or(0), size: kome::le::u32_at(b, va + 8).unwrap_or(0), flags: kome::le::u32_at(b, va + 12).unwrap_or(0), ty };
                 cb.vars.push(new_obj(2 + fl, Obj::Var(v, cb_obj)));
             }
-            if let Some(o) = OBJS.lock().unwrap().get_mut(r32(cb_obj + 12) as usize) {
+            if let Some(o) = OBJS.locked().get_mut(r32(cb_obj + 12) as usize) {
                 *o = Obj::Cb(cb);
             }
             r.cbs.push(cb_obj);
@@ -415,7 +416,7 @@ fn reflect(code: &[u8], fl: u8, out: crate::api::Out) -> u32 {
 }
 
 fn with_refl<T>(c: &Ctx, f: impl FnOnce(&Refl) -> T) -> Option<T> {
-    match &OBJS.lock().unwrap()[id(c)] {
+    match &OBJS.locked()[id(c)] {
         Obj::Refl(r) => Some(f(r)),
         _ => None,
     }
@@ -436,7 +437,7 @@ fn refl_release(c: &mut Ctx) -> u32 {
     let before = r32(o + 8);
     let n = before.saturating_sub(1);
     w32(o + 8, n);
-    if before == 1 && matches!(OBJS.lock().unwrap()[id(c)], Obj::Refl(_)) {
+    if before == 1 && matches!(OBJS.locked()[id(c)], Obj::Refl(_)) {
         free_tree(o);
     }
     n
@@ -452,7 +453,7 @@ fn free_tree(root: u32) {
     let mut strs = vec![];
     let mut blocks = vec![];
     {
-        let mut g = OBJS.lock().unwrap();
+        let mut g = OBJS.locked();
         while let Some(o) = todo.pop() {
             if o == 0 || blocks.contains(&o) {
                 continue;
@@ -528,11 +529,11 @@ static NULLS: Mutex<[u32; 8]> = Mutex::new([0; 8]);
 /// Whether `p` is a dummy: its GetDesc fails (E_FAIL), and a dummy type's member type name is
 /// "$Invalid" (reflection.c)
 fn is_dummy(p: u32) -> bool {
-    p != 0 && NULLS.lock().unwrap().contains(&p)
+    p != 0 && NULLS.locked().contains(&p)
 }
 
 fn null_obj(which: u8) -> u32 {
-    let mut n = NULLS.lock().unwrap();
+    let mut n = NULLS.locked();
     if n[which as usize] == 0 {
         let o = match which & 3 {
             1 => Obj::Cb(CbR { name: String::new(), name_p: 0, ty: 0, size: 0, flags: 0, vars: Vec::new() }),
@@ -551,7 +552,7 @@ fn refl_cb_index(c: &mut Ctx) -> u32 {
 fn refl_cb_name(c: &mut Ctx) -> u32 {
     let n = crate::k32::arg_str(c.a(1), false);
     let cbs = with_refl(c, |r| r.cbs.clone()).unwrap_or_default();
-    let g = OBJS.lock().unwrap();
+    let g = OBJS.locked();
     for o in cbs {
         if let Obj::Cb(cb) = &g[r32(o + 12) as usize] && cb.name == n {
             return o;
@@ -631,7 +632,7 @@ fn refl_patch(_c: &mut Ctx) -> u32 {
 fn refl_var_name(c: &mut Ctx) -> u32 {
     let n = crate::k32::arg_str(c.a(1), false);
     let cbs = with_refl(c, |r| r.cbs.clone()).unwrap_or_default();
-    let g = OBJS.lock().unwrap();
+    let g = OBJS.locked();
     for o in cbs {
         if let Obj::Cb(cb) = &g[r32(o + 12) as usize] {
             for &v in &cb.vars {
@@ -668,7 +669,7 @@ fn cb_desc(c: &mut Ctx) -> u32 {
     if out == 0 {
         return 0x8000_4005;
     }
-    let g = OBJS.lock().unwrap();
+    let g = OBJS.locked();
     let Obj::Cb(cb) = &g[id(c)] else { return 0x8000_4005 };
     if cb.name_p == 0 {
         return 0x8000_4005;
@@ -680,7 +681,7 @@ fn cb_desc(c: &mut Ctx) -> u32 {
 }
 fn cb_var_index(c: &mut Ctx) -> u32 {
     let i = c.a(1) as usize;
-    let g = OBJS.lock().unwrap();
+    let g = OBJS.locked();
     let r = match &g[id(c)] {
         Obj::Cb(cb) => cb.vars.get(i).copied(),
         _ => None,
@@ -690,7 +691,7 @@ fn cb_var_index(c: &mut Ctx) -> u32 {
 }
 fn cb_var_name(c: &mut Ctx) -> u32 {
     let n = crate::k32::arg_str(c.a(1), false);
-    let g = OBJS.lock().unwrap();
+    let g = OBJS.locked();
     let mut r = None;
     if let Obj::Cb(cb) = &g[id(c)] {
         for &v in &cb.vars {
@@ -708,7 +709,7 @@ fn var_desc(c: &mut Ctx) -> u32 {
     if out == 0 {
         return 0x8000_4005;
     }
-    let g = OBJS.lock().unwrap();
+    let g = OBJS.locked();
     let Obj::Var(v, _) = &g[id(c)] else { return 0x8000_4005 };
     if v.name_p == 0 {
         return 0x8000_4005;
@@ -724,7 +725,7 @@ fn var_desc10(c: &mut Ctx) -> u32 {
     if out == 0 {
         return 0x8000_4005;
     }
-    let g = OBJS.lock().unwrap();
+    let g = OBJS.locked();
     let Obj::Var(v, _) = &g[id(c)] else { return 0x8000_4005 };
     if v.name_p == 0 {
         return 0x8000_4005;
@@ -735,7 +736,7 @@ fn var_desc10(c: &mut Ctx) -> u32 {
     0
 }
 fn var_type(c: &mut Ctx) -> u32 {
-    let g = OBJS.lock().unwrap();
+    let g = OBJS.locked();
     let t = match &g[id(c)] {
         Obj::Var(v, _) => v.ty,
         _ => 0,
@@ -744,7 +745,7 @@ fn var_type(c: &mut Ctx) -> u32 {
     if t == 0 { null_obj(3 + flavor(c)) } else { t }
 }
 fn var_buffer(c: &mut Ctx) -> u32 {
-    let g = OBJS.lock().unwrap();
+    let g = OBJS.locked();
     let b = match &g[id(c)] {
         Obj::Var(_, b) => *b,
         _ => 0,
@@ -758,7 +759,7 @@ fn type_desc(c: &mut Ctx) -> u32 {
     if out == 0 || is_dummy(c.a(0)) {
         return 0x8000_4005;
     }
-    let g = OBJS.lock().unwrap();
+    let g = OBJS.locked();
     let Obj::Type(t) = &g[id(c)] else { return 0x8000_4005 };
     let f = [
         (false, t.class),
@@ -780,7 +781,7 @@ fn type_desc10(c: &mut Ctx) -> u32 {
     if out == 0 || is_dummy(c.a(0)) {
         return 0x8000_4005;
     }
-    let g = OBJS.lock().unwrap();
+    let g = OBJS.locked();
     let Obj::Type(t) = &g[id(c)] else { return 0x8000_4005 };
     let f = [(false, t.class), (false, t.ty), (false, t.rows), (false, t.cols), (false, t.elems), (false, t.members.len() as u32), (false, t.offset)];
     drop(g);
@@ -789,7 +790,7 @@ fn type_desc10(c: &mut Ctx) -> u32 {
 }
 fn type_member(c: &mut Ctx) -> u32 {
     let i = c.a(1) as usize;
-    let g = OBJS.lock().unwrap();
+    let g = OBJS.locked();
     let r = match &g[id(c)] {
         Obj::Type(t) => t.members.get(i).map(|m| m.1),
         _ => None,
@@ -799,7 +800,7 @@ fn type_member(c: &mut Ctx) -> u32 {
 }
 fn type_member_name(c: &mut Ctx) -> u32 {
     let n = crate::k32::arg_str(c.a(1), false);
-    let g = OBJS.lock().unwrap();
+    let g = OBJS.locked();
     let r = match &g[id(c)] {
         Obj::Type(t) => t.members.iter().find(|m| mem::cstr(m.0) == n.as_bytes()).map(|m| m.1),
         _ => None,
@@ -811,13 +812,13 @@ fn type_member_tname(c: &mut Ctx) -> u32 {
     let i = c.a(1) as usize;
     if is_dummy(c.a(0)) {
         static INVALID: Mutex<u32> = Mutex::new(0);
-        let mut p = INVALID.lock().unwrap();
+        let mut p = INVALID.locked();
         if *p == 0 {
             *p = gstr("$Invalid");
         }
         return *p;
     }
-    let g = OBJS.lock().unwrap();
+    let g = OBJS.locked();
     match &g[id(c)] {
         Obj::Type(t) => t.members.get(i).map_or(0, |m| m.0),
         _ => 0,
@@ -970,15 +971,15 @@ mod review_tests {
         let code = compiled();
         let out_own = mem::Scratch::new(8, true);
         let out = out_own.get();
-        let before = OBJS.lock().unwrap().live();
+        let before = OBJS.locked().live();
         for _ in 0..20 {
             assert_eq!(reflect(&code, 0, crate::api::Out::at(out)), 0);
             let r = r32(out);
-            assert!(OBJS.lock().unwrap().live() > before + 4);
+            assert!(OBJS.locked().live() > before + 4);
             assert_eq!(call(refl_add_ref, &[r]), 2);
             assert_eq!(call(refl_release, &[r]), 1);
             assert_eq!(call(refl_release, &[r]), 0);
-            assert_eq!(OBJS.lock().unwrap().live(), before);
+            assert_eq!(OBJS.locked().live(), before);
         }
         drop(out_own);
     }
@@ -1000,15 +1001,15 @@ mod review_tests {
         }
         let out_own = mem::Scratch::new(8, true);
         let out = out_own.get();
-        let before = OBJS.lock().unwrap().live();
+        let before = OBJS.locked().live();
         let t0 = std::time::Instant::now();
         assert_eq!(reflect(&code, 0, crate::api::Out::at(out)), 0);
         assert!(t0.elapsed().as_secs() < 5);
-        let made = OBJS.lock().unwrap().live() - before;
+        let made = OBJS.locked().live() - before;
         assert!(made <= MAX_TYPES as usize + 16, "{made} objects");
         let refl = r32(out);
         assert_eq!(call(refl_release, &[refl]), 0);
-        assert_eq!(OBJS.lock().unwrap().live(), before);
+        assert_eq!(OBJS.locked().live(), before);
         // (the freed object's id now names nothing: its methods answer E_FAIL / nothing)
         let fake_own = mem::Scratch::new(24, true);
         let fake = fake_own.get();

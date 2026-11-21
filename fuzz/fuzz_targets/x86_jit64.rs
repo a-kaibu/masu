@@ -15,13 +15,21 @@
 
 use koji::flags::STATUS;
 use koji::jit::{self, wasm::Module as JitModule};
-use koji::{Cpu, Exit, Fault, Memory};
+use koji::{Cpu, Exit};
 use libfuzzer_sys::fuzz_target;
+use masu_fuzz::x86::{converge, engine, Wasm, Window, HI, LO};
 use std::cell::UnsafeCell;
 use std::collections::HashMap;
 use std::sync::atomic::Ordering::Relaxed;
 use std::sync::OnceLock;
 use wasmtime::*;
+
+/// (as kura's interp_write: the interpreter's store into the code)
+fn wrote(a: u32) {
+    if a < CODE_END.load(Relaxed) {
+        REWROTE.store(true, Relaxed);
+    }
+}
 
 const CPU_AT: u32 = 0x1000;
 const HASH_AT: u32 = 0x4000; // 512 entries
@@ -29,8 +37,6 @@ const HASH_N: u32 = 512;
 const RING_AT: u32 = 0x8000;
 /// a bit per 4 KB page with translated code (Cpu::jit_code_pages, addresses below 128 MB)
 const PAGES_AT: u32 = 0xc000;
-const LO: u32 = 0x10_0000;
-const HI: u32 = 0x14_0000;
 const CODE_MAX: usize = 1024;
 const RSP0: u32 = 0x13_0000;
 /// hops (and backward jumps) per dispatcher call
@@ -44,40 +50,7 @@ fn pattern(a: u32) -> u8 {
     (a.wrapping_mul(0x9e37_79b1) >> 24) as u8
 }
 
-struct Window(Vec<u8>);
-impl Memory for Window {
-    fn read8(&mut self, a: u32) -> Result<u8, Fault> {
-        if (LO..HI).contains(&a) { Ok(self.0[(a - LO) as usize]) } else { Err(Fault { addr: a, write: false }) }
-    }
-    fn write8(&mut self, a: u32, v: u8) -> Result<(), Fault> {
-        if (LO..HI).contains(&a) {
-            self.0[(a - LO) as usize] = v;
-            Ok(())
-        } else {
-            Err(Fault { addr: a, write: true })
-        }
-    }
-}
-
 /// The wasm memory's window as guest memory (the `step` helper's and the translator's view).
-struct Wasm<'a>(&'a [UnsafeCell<u8>]);
-impl Memory for Wasm<'_> {
-    fn read8(&mut self, a: u32) -> Result<u8, Fault> {
-        if (LO..HI).contains(&a) { Ok(unsafe { *self.0[a as usize].get() }) } else { Err(Fault { addr: a, write: false }) }
-    }
-    fn write8(&mut self, a: u32, v: u8) -> Result<(), Fault> {
-        if (LO..HI).contains(&a) {
-            // (as kura's interp_write: the interpreter's store into the code)
-            if a < CODE_END.load(Relaxed) {
-                REWROTE.store(true, Relaxed);
-            }
-            unsafe { *self.0[a as usize].get() = v };
-            Ok(())
-        } else {
-            Err(Fault { addr: a, write: true })
-        }
-    }
-}
 
 /// The code's end (it starts at LO), and whether the interpreter wrote into it.
 static CODE_END: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
@@ -91,17 +64,6 @@ fn cpu_in(mem: &[UnsafeCell<u8>], at: u32) -> &mut Cpu {
 struct Host {
     mem: SharedMemory,
     exit: Option<Exit>,
-}
-
-fn engine() -> &'static (Engine, Module) {
-    static E: OnceLock<(Engine, Module)> = OnceLock::new();
-    E.get_or_init(|| {
-        let mut c = Config::new();
-        c.wasm_threads(true).shared_memory(true).wasm_simd(true).wasm_tail_call(true).cranelift_opt_level(OptLevel::None);
-        let e = Engine::new(&c).unwrap();
-        let d = Module::new(&e, jit::dispatch::module()).unwrap();
-        (e, d)
-    })
 }
 
 fn same(a: &Cpu, b: &Cpu, status: bool) -> bool {
@@ -174,7 +136,7 @@ fuzz_target!(|data: &[u8]| {
             let d = mem.data();
             let cpu = cpu_in(d, at);
             let ip = (cpu.eip, cpu.rip_hi);
-            match koji::step(cpu, &mut Wasm(d)) {
+            match koji::step(cpu, &mut Wasm(d, wrote)) {
                 // (as kura's vnhost_jit_step: it rewrote the code, POPF set TF or another
                 // MXCSR mode: the region leaves)
                 Exit::Continue if REWROTE.load(Relaxed) => 2,
@@ -250,7 +212,7 @@ fuzz_target!(|data: &[u8]| {
         if !entries.contains_key(&eip) {
             if !tried.insert(eip) {
                 // (refused before: the interpreter's)
-                match koji::step(c, &mut Wasm(d)) {
+                match koji::step(c, &mut Wasm(d, wrote)) {
                     Exit::Continue => continue,
                     e => {
                         store.data_mut().exit = Some(e);
@@ -259,7 +221,7 @@ fuzz_target!(|data: &[u8]| {
                 }
             }
             let mut m = JitModule::default();
-            let Some(region) = jit::long::translate_region64(&mut m, &mut Wasm(d), &[eip as u64], (HI, HI + 16), |a, _| (LO..end).contains(&a)) else { continue };
+            let Some(region) = jit::long::translate_region64(&mut m, &mut Wasm(d, wrote), &[eip as u64], (HI, HI + 16), |a, _| (LO..end).contains(&a)) else { continue };
             let bytes = m.finish();
             if let Err(e) = wasmparser::Validator::new_with_features(features).validate_all(&bytes) {
                 panic!("the JIT made invalid wasm for {:02x?} at {eip:#x}: {e}", code);
@@ -308,7 +270,7 @@ fuzz_target!(|data: &[u8]| {
                 // a miss (translated at the top) or an instruction left to the interpreter
                 let c = cpu_in(d, CPU_AT);
                 if entries.contains_key(&c.eip) {
-                    match koji::step(c, &mut Wasm(d)) {
+                    match koji::step(c, &mut Wasm(d, wrote)) {
                         Exit::Continue => {}
                         e => {
                             store.data_mut().exit = Some(e);
@@ -333,7 +295,7 @@ fuzz_target!(|data: &[u8]| {
     let mut first: Option<(Cpu, Vec<u8>)> = None;
     for _ in 0..STEPS {
         if cpu.eip == got.eip && same(&cpu, &got, false) && window.0 == got_mem {
-            if jit_exit.is_some() || converge(&cpu, &window.0, &got, &got_mem) {
+            if jit_exit.is_some() || converge(&cpu, &window.0, &got, &got_mem, same) {
                 return;
             }
         }
@@ -372,20 +334,3 @@ fuzz_target!(|data: &[u8]| {
         memdiff
     );
 });
-
-/// Runs both states on in the interpreter (up to 64 instructions, or to where either stops):
-/// whether they end the same. Status flags that differ and were read make the runs part.
-fn converge(a: &Cpu, am: &[u8], b: &Cpu, bm: &[u8]) -> bool {
-    let (mut a, mut b) = (a.clone(), b.clone());
-    let (mut am, mut bm) = (Window(am.to_vec()), Window(bm.to_vec()));
-    for _ in 0..64 {
-        let (x, y) = (koji::step(&mut a, &mut am), koji::step(&mut b, &mut bm));
-        if x != y {
-            return false;
-        }
-        if x != Exit::Continue {
-            return same(&a, &b, false) && am.0 == bm.0;
-        }
-    }
-    a.eip == b.eip && same(&a, &b, false) && am.0 == bm.0
-}

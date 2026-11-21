@@ -10,6 +10,7 @@
 //!
 //! The exports are cdecl and unversioned (ubrk_open, not ubrk_open_64).
 
+use kome::locks::Lock as _;
 use crate::api::{implement, Ctx};
 use crate::mem::{self, ps, r16, r32, w32, w64, wp};
 use crate::HashMap;
@@ -154,7 +155,7 @@ impl Brk {
 static BRKS: Mutex<Option<HashMap<u32, Brk>>> = Mutex::new(None);
 
 fn with<R>(b: u32, f: impl FnOnce(&mut Brk) -> R) -> Option<R> {
-    BRKS.lock().unwrap().get_or_insert_with(HashMap::default).get_mut(&b).map(f)
+    BRKS.locked().get_or_insert_with(HashMap::default).get_mut(&b).map(f)
 }
 
 fn failed(status: u32) -> bool {
@@ -292,7 +293,7 @@ fn ubrk_open(c: &mut Ctx) -> u32 {
         fail(status, warn as u32);
     }
     let h = mem::heap_alloc(16, true);
-    BRKS.lock().unwrap().get_or_insert_with(HashMap::default).insert(h, b);
+    BRKS.locked().get_or_insert_with(HashMap::default).insert(h, b);
     h
 }
 /// ubrk_setText(bi, const UChar *, int32_t, UErrorCode *)
@@ -327,7 +328,7 @@ fn ubrk_setUText(c: &mut Ctx) -> u32 {
 fn ubrk_close(c: &mut Ctx) -> u32 {
     let c = &mut c.args::<crate::api::outs::ubrk_close>();
     let b = c.out::<0>();
-    if BRKS.lock().unwrap().get_or_insert_with(HashMap::default).remove(&b.object().key()).is_some() {
+    if BRKS.locked().get_or_insert_with(HashMap::default).remove(&b.object().key()).is_some() {
         mem::heap_free(b.object().key());
     }
     0

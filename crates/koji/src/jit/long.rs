@@ -206,7 +206,7 @@ enum Flags {
 
 struct Block {
     start: u64,
-    ins: Vec<Instruction>,
+    ins: super::Insns,
     /// reads the status flags before writing all of them (or may: passes them on)
     flags_in: bool,
     /// the leaf's copy it is in (NONE: the function's own; else found in the copies' index)
@@ -2753,7 +2753,8 @@ fn jump_table_in<M: Memory>(mem: &mut M, ins: &[Instruction], n: Option<(Registe
         },
     };
     let Some((ireg, n)) = n else { return Vec::new() };
-    let near = |t: u64| t.abs_diff(ins.last().unwrap().ip()) <= 0x10_0000;
+    let Some(last) = ins.last() else { return Vec::new() };
+    let near = |t: u64| t.abs_diff(last.ip()) <= 0x10_0000;
     #[derive(Clone, Copy)]
     enum V {
         Const(u64),
@@ -2764,7 +2765,6 @@ fn jump_table_in<M: Memory>(mem: &mut M, ins: &[Instruction], n: Option<(Registe
     }
     let mut vals: Vec<(Register, V)> = Vec::new();
     let get = |vals: &Vec<(Register, V)>, r: Register| vals.iter().rev().find(|v| v.0 == r.full_register()).map(|v| v.1);
-    let last = ins.last().unwrap();
     // the table's address of a memory operand [base + ireg*scale + disp]
     let table = |vals: &Vec<(Register, V)>, i: &Instruction, scale: u32| -> Option<u64> {
         // (SS: an rbp or rsp base's default, flat in long mode as DS)
@@ -2800,7 +2800,7 @@ fn jump_table_in<M: Memory>(mem: &mut M, ins: &[Instruction], n: Option<(Registe
             // (the base not set in the block either: the function's one value for it, as the
             // table's base: MinGW's `movsxd rax, [rbp+rax*4]; add rax, rbp; jmp rax` with rbp
             // set once at the function's start, an interpreter's switch, cpu.exe script)
-            Add if i.op1_kind() == OpKind::Register && dst.is_some() => match (get(&vals, dst.unwrap()), get(&vals, i.op1_register()).or_else(|| outer_const(i.op1_register()))) {
+            Add if i.op1_kind() == OpKind::Register && let Some(d) = dst => match (get(&vals, d), get(&vals, i.op1_register()).or_else(|| outer_const(i.op1_register()))) {
                 (Some(V::Entry(t, s)), Some(V::Const(b))) | (Some(V::Const(b)), Some(V::Entry(t, s))) => Some(V::Target(t, s, b)),
                 _ => None,
             },
@@ -2893,7 +2893,7 @@ fn split_blocks(blocks: &mut [Block], index: &BTreeMap<u64, usize>, copy_index: 
             LeafCopy(_) => copy_index.contains_key(&(copy, a)),
         };
         if let Some(cut) = b.ins.iter().skip(1).position(|i| inside(i.ip())) {
-            b.ins.truncate(cut + 1);
+            b.ins.keep_through(cut);
         }
     }
 }
@@ -2976,7 +2976,7 @@ fn structure64(blocks: &[Block], (index, copy_index): (&BTreeMap<u64, usize>, &B
     let mut succ: Vec<Vec<usize>> = alloc::vec![Vec::new(); n + groups.len() + 1];
     let tnode: BTreeMap<usize, usize> = group_of.iter().map(|(&k, &g)| (k, n + g)).collect();
     for (k, b) in blocks.iter().enumerate() {
-        let last = b.ins.last().unwrap();
+        let last = b.ins.last();
         let near = last.op0_kind() == OpKind::NearBranch64;
         // (in a leaf's copy, its jumps go to the copy's blocks)
         let own = b.copy;
@@ -3017,7 +3017,7 @@ fn structure64(blocks: &[Block], (index, copy_index): (&BTreeMap<u64, usize>, &B
     let l0 = super::structure::from_succ(succ.clone(), 0, &[]);
     let rets: Vec<usize> = blocks
         .iter()
-        .filter_map(|b| b.ins.last())
+        .map(|b| b.ins.last())
         .filter(|l| matches!(l.flow_control(), FlowControl::Call | FlowControl::IndirectCall))
         .filter_map(|l| find(l.next_ip()))
         .collect();
@@ -3128,7 +3128,13 @@ fn emit_side64(g: &mut Gen<'_>, side: &[(usize, usize, bool)]) {
         let l = match side.iter().find(|s| s.0 == k) {
             Some(&(e, next, last)) => match (last, g.fwd[next]) {
                 (false, Some(p)) => g.depth - p,
-                _ => lo32(finals.iter().position(|f| f.0 == e).unwrap()),
+                _ => match finals.iter().position(|f| f.0 == e) {
+                    Some(f) => lo32(f),
+                    None => {
+                        g.bad = true;
+                        0
+                    }
+                },
             },
             None => g.depth - own,
         };
@@ -3168,7 +3174,7 @@ fn emit_block64<M: Memory>(g: &mut Gen<'_>, mem: &mut M, k: usize, count: &mut u
     g.fresh = None;
     let start = lo32(blocks[k].start);
     if super::fresh_at(start) {
-        let end = list.last().unwrap().next_ip();
+        let end = list.last().next_ip();
         let mut b = alloc::vec![0u8; us(end.wrapping_sub(blocks[k].start))];
         if !b.is_empty() && mem.fetch(start, &mut b) == b.len() {
             g.ins = list[0];
@@ -3187,11 +3193,11 @@ fn emit_block64<M: Memory>(g: &mut Gen<'_>, mem: &mut M, k: usize, count: &mut u
     }
     if open {
         // fell through (block size cap, a trap address, an undecodable instruction)
-        let next = list.last().unwrap().next_ip();
+        let next = list.last().next_ip();
         g.goto(next);
     }
     if super::LAYOUT.load(core::sync::atomic::Ordering::Relaxed) {
-        let l = list.last().unwrap();
+        let l = list.last();
         layout.push_str(&alloc::format!("{:#x} {} {:?} {:#x}\n", blocks[k].start, list.len(), l.mnemonic(), if l.op0_kind() == OpKind::NearBranch64 { l.near_branch64() } else { 0 }));
     }
 }
@@ -3251,7 +3257,15 @@ fn emit_table64(g: &mut Gen<'_>, targets: &[u64], hi: u32) {
 /// (the hash table's block number) to the entry's label.
 fn emit_entries64(g: &mut Gen<'_>, entries: &[usize]) {
     let n = g.blocks.len();
-    let label = |g: &Gen<'_>, k: usize| g.depth - g.fwd[k].or(g.fwd[entries[0]]).expect("an entry's label");
+    // (no label open for the entry: the structure's emit should have made one; the region is
+    // not made)
+    let label = |g: &mut Gen<'_>, k: usize| match g.fwd[k].or(g.fwd[entries[0]]) {
+        Some(p) => g.depth - p,
+        None => {
+            g.bad = true;
+            0
+        }
+    };
     g.c.get(L_BLK).op(0x0e);
     super::wasm::uleb(&mut g.c.b, lo64(n));
     let first = label(g, entries[0]);
@@ -3356,13 +3370,12 @@ fn translate_seen64<M: Memory>(module: &mut Module, mem: &mut M, roots: &[u64], 
         if !roots.contains(&a) && !accept(lo32(a), sure) {
             continue;
         }
-        let ins = decode(mem, a, trap);
-        if ins.is_empty() {
+        let Some(ins) = super::Insns::new(decode(mem, a, trap)) else {
             if a == entry {
                 return None;
             }
             continue;
-        }
+        };
         total += ins.len();
         if fnm {
             // (registers set to an address in the function: the only value each takes in it,
@@ -3386,7 +3399,7 @@ fn translate_seen64<M: Memory>(module: &mut Module, mem: &mut M, roots: &[u64], 
                 }
             }
         }
-        let last = *ins.last().unwrap();
+        let last = *ins.last();
         match last.flow_control() {
             FlowControl::UnconditionalBranch | FlowControl::ConditionalBranch if last.op0_kind() == OpKind::NearBranch64 => {
                 todo.push((last.near_branch64(), false));
@@ -3450,7 +3463,7 @@ fn translate_seen64<M: Memory>(module: &mut Module, mem: &mut M, roots: &[u64], 
         blocks.push(Block { start: a, ins, flags_in: true, copy: LeafCopy::NONE });
     }
     // (the hinted calls' operands, then the other calls through them)
-    let hinted: Vec<(CallOperand, u64)> = leaf_calls.iter().filter_map(|&(site, f, _)| blocks.iter().filter_map(|b| b.ins.last()).find(|l| l.ip() == site && l.flow_control() == FlowControl::IndirectCall).map(|l| (CallOperand::of(l), f))).collect();
+    let hinted: Vec<(CallOperand, u64)> = leaf_calls.iter().filter_map(|&(site, f, _)| blocks.iter().map(|b| b.ins.last()).find(|l| l.ip() == site && l.flow_control() == FlowControl::IndirectCall).map(|l| (CallOperand::of(l), f))).collect();
     for (site, next, op) in unhinted {
         if let Some(&(_, f)) = hinted.iter().find(|h| h.0 == op).filter(|_| op != CallOperand::Other && leaf_calls.len() < MAX_COPIES) {
             leaf_calls.push((site, f, next));
@@ -3473,11 +3486,11 @@ fn translate_seen64<M: Memory>(module: &mut Module, mem: &mut M, roots: &[u64], 
             if part.iter().any(|b| b.start == a) {
                 continue;
             }
-            let ins = decode(mem, a, trap);
-            let Some(last) = ins.last().copied() else {
+            let Some(ins) = super::Insns::new(decode(mem, a, trap)) else {
                 whole = false;
                 break;
             };
+            let last = *ins.last();
             if !accept(low_half(a), true) {
                 whole = false;
                 break;
@@ -3537,7 +3550,7 @@ fn translate_seen64<M: Memory>(module: &mut Module, mem: &mut M, roots: &[u64], 
     let n = lo32(blocks.len());
     let mut returns: Vec<u64> = blocks
         .iter()
-        .filter_map(|b| b.ins.last())
+        .map(|b| b.ins.last())
         // (a function's: none, its leaves' copies know where they go back to)
         .filter(|_| !fnm)
         .filter(|l| l.flow_control() == FlowControl::Call && l.op0_kind() == OpKind::NearBranch64 && index.contains_key(&l.near_branch64()) && index.contains_key(&l.next_ip()))
@@ -3673,7 +3686,7 @@ fn translate_seen64<M: Memory>(module: &mut Module, mem: &mut M, roots: &[u64], 
     }
     let starts = entries.iter().map(|&k| (lo32(blocks[k].start), lo32(k))).collect();
     let code: Vec<(u32, u32)> = blocks.iter().map(|b| {
-        let end = b.ins.last().unwrap().next_ip();
+        let end = b.ins.last().next_ip();
         (lo32(b.start), lo32(end - b.start))
     })
     // (the thunks' own bytes: the calls depend on them too, for page checks)
@@ -3706,15 +3719,6 @@ mod tests {
     /// goes far, and with `and ecx, 3` the first four only.
     #[test]
     fn jump_table_bounded_by_its_own_block() {
-        struct Img(Vec<u8>);
-        impl Memory for Img {
-            fn read8(&mut self, a: u32) -> Result<u8, crate::Fault> {
-                a.checked_sub(0x1000).and_then(|o| self.0.get(o as usize).copied()).ok_or(crate::Fault { addr: a, write: false })
-            }
-            fn write8(&mut self, a: u32, _: u8) -> Result<(), crate::Fault> {
-                Err(crate::Fault { addr: a, write: true })
-            }
-        }
         let decode = |code: &[u8]| -> Vec<Instruction> { Decoder::with_ip(64, code, 0x1000, DecoderOptions::NONE).into_iter().collect() };
         // the table at 0x1100: offsets of 0x1040 0x1050 0x1060 0x1070 0x1080, then one 16 MB away
         let mut img = alloc::vec![0u8; 0x200];
@@ -3733,7 +3737,7 @@ mod tests {
         img[..code.len()].copy_from_slice(code);
         let ins = decode(code);
         assert_eq!(index_bound(&ins), Some((Register::RCX, 256, 0)));
-        assert_eq!(jump_table(&mut Img(img.clone()), &ins, None), alloc::vec![0x1040, 0x1050, 0x1060, 0x1070, 0x1080]);
+        assert_eq!(jump_table(&mut crate::Rom::<0x1000>(img.clone()), &ins, None), alloc::vec![0x1040, 0x1050, 0x1060, 0x1070, 0x1080]);
         // and ecx, 3 after it: four
         #[rustfmt::skip]
         let code2: &[u8] = &[
@@ -3745,7 +3749,7 @@ mod tests {
         img2[..code2.len()].copy_from_slice(code2);
         let ins2 = decode(code2);
         assert_eq!(index_bound(&ins2), Some((Register::RCX, 4, 1)));
-        assert_eq!(jump_table(&mut Img(img2), &ins2, None), alloc::vec![0x1040, 0x1050, 0x1060, 0x1070]);
+        assert_eq!(jump_table(&mut crate::Rom::<0x1000>(img2), &ins2, None), alloc::vec![0x1040, 0x1050, 0x1060, 0x1070]);
         // the index changed after its bound: no table
         #[rustfmt::skip]
         let code3: &[u8] = &[
@@ -3756,7 +3760,7 @@ mod tests {
         let mut img3 = img;
         img3[..code3.len()].copy_from_slice(code3);
         let ins3 = decode(code3);
-        assert!(jump_table(&mut Img(img3), &ins3, None).is_empty());
+        assert!(jump_table(&mut crate::Rom::<0x1000>(img3), &ins3, None).is_empty());
     }
 
     /// MinGW's switch with the table's base set once at the function's start (`lea rbp,
@@ -3765,15 +3769,6 @@ mod tests {
     /// value for rbp, or when the block sets rbp itself (cpu.exe script's interpreter).
     #[test]
     fn jump_table_relative_to_a_base_the_function_set() {
-        struct Img(Vec<u8>);
-        impl Memory for Img {
-            fn read8(&mut self, a: u32) -> Result<u8, crate::Fault> {
-                a.checked_sub(0x1000).and_then(|o| self.0.get(usize::try_from(o).ok()?).copied()).ok_or(crate::Fault { addr: a, write: false })
-            }
-            fn write8(&mut self, a: u32, _: u8) -> Result<(), crate::Fault> {
-                Err(crate::Fault { addr: a, write: true })
-            }
-        }
         let mut img = alloc::vec![0u8; 0x200];
         for (k, t) in [-0xc0i32, -0xb0, -0x40, 0x20].iter().enumerate() {
             img[0x100 + 4 * k..0x104 + 4 * k].copy_from_slice(&t.to_le_bytes());
@@ -3784,14 +3779,14 @@ mod tests {
         let n = Some((Register::RAX, 4));
         let mut outer = BTreeMap::new();
         outer.insert(Register::RBP, Some(0x1100u64));
-        assert_eq!(jump_table_in(&mut Img(img.clone()), &ins, n, &outer), alloc::vec![0x1040, 0x1050, 0x10c0, 0x1120]);
-        assert!(jump_table_in(&mut Img(img.clone()), &ins, n, &BTreeMap::new()).is_empty());
+        assert_eq!(jump_table_in(&mut crate::Rom::<0x1000>(img.clone()), &ins, n, &outer), alloc::vec![0x1040, 0x1050, 0x10c0, 0x1120]);
+        assert!(jump_table_in(&mut crate::Rom::<0x1000>(img.clone()), &ins, n, &BTreeMap::new()).is_empty());
         outer.insert(Register::RBP, None);
-        assert!(jump_table_in(&mut Img(img.clone()), &ins, n, &outer).is_empty());
+        assert!(jump_table_in(&mut crate::Rom::<0x1000>(img.clone()), &ins, n, &outer).is_empty());
         // (rbp set in the block: not the function's value)
         outer.insert(Register::RBP, Some(0x1100u64));
         let ins2 = decode(&[0x48, 0x89, 0xdd, 0x48, 0x63, 0x44, 0x85, 0x00, 0x48, 0x01, 0xe8, 0xff, 0xe0]); // mov rbp, rbx; ...
-        assert!(jump_table_in(&mut Img(img), &ins2, n, &outer).is_empty());
+        assert!(jump_table_in(&mut crate::Rom::<0x1000>(img), &ins2, n, &outer).is_empty());
     }
 
     /// Lua 5.4's dispatch at the end of every opcode, `mov eax, ebx; and eax, 0x7f;
@@ -3800,15 +3795,6 @@ mod tests {
     /// or the function's value for it is not known.
     #[test]
     fn jump_table_through_a_register_the_function_set() {
-        struct Img(Vec<u8>);
-        impl Memory for Img {
-            fn read8(&mut self, a: u32) -> Result<u8, crate::Fault> {
-                a.checked_sub(0x1000).and_then(|o| self.0.get(o as usize).copied()).ok_or(crate::Fault { addr: a, write: false })
-            }
-            fn write8(&mut self, a: u32, _: u8) -> Result<(), crate::Fault> {
-                Err(crate::Fault { addr: a, write: true })
-            }
-        }
         let mut img = alloc::vec![0u8; 0x200];
         for (k, t) in [0x1040u64, 0x1050, 0x1060, 0x900_0000].iter().enumerate() {
             img[0x100 + 8 * k..0x108 + 8 * k].copy_from_slice(&t.to_le_bytes());
@@ -3819,28 +3805,19 @@ mod tests {
         assert_eq!(index_bound(&ins), Some((Register::RAX, 128, 1)));
         let mut outer = BTreeMap::new();
         outer.insert(Register::R13, Some(0x1100u64));
-        assert_eq!(jump_table_in(&mut Img(img.clone()), &ins, None, &outer), alloc::vec![0x1040, 0x1050, 0x1060]);
-        assert!(jump_table_in(&mut Img(img.clone()), &ins, None, &BTreeMap::new()).is_empty());
+        assert_eq!(jump_table_in(&mut crate::Rom::<0x1000>(img.clone()), &ins, None, &outer), alloc::vec![0x1040, 0x1050, 0x1060]);
+        assert!(jump_table_in(&mut crate::Rom::<0x1000>(img.clone()), &ins, None, &BTreeMap::new()).is_empty());
         outer.insert(Register::R13, None);
-        assert!(jump_table_in(&mut Img(img.clone()), &ins, None, &outer).is_empty());
+        assert!(jump_table_in(&mut crate::Rom::<0x1000>(img.clone()), &ins, None, &outer).is_empty());
         // (r13 set in the block: its own value counts, unknown here)
         outer.insert(Register::R13, Some(0x1100u64));
         let ins2 = decode(&[0x4d, 0x89, 0xe5, 0x89, 0xd8, 0x83, 0xe0, 0x7f, 0x41, 0xff, 0x64, 0xc5, 0x00]); // mov r13, r12; ...
-        assert!(jump_table_in(&mut Img(img), &ins2, None, &outer).is_empty());
+        assert!(jump_table_in(&mut crate::Rom::<0x1000>(img), &ins2, None, &outer).is_empty());
     }
 
     /// A straight run of `ops` (indices into a few memory-heavy x64 instructions), then RET, at
     /// 0x1000: wasm grows fast with these.
-    struct Heavy(Vec<u8>);
-    impl Memory for Heavy {
-        fn read8(&mut self, a: u32) -> Result<u8, crate::Fault> {
-            a.checked_sub(0x1000).and_then(|o| self.0.get(usize::try_from(o).ok()?).copied()).ok_or(crate::Fault { addr: a, write: false })
-        }
-        fn write8(&mut self, a: u32, _: u8) -> Result<(), crate::Fault> {
-            Err(crate::Fault { addr: a, write: true })
-        }
-    }
-    fn heavy(ops: &[u8]) -> Heavy {
+    fn heavy(ops: &[u8]) -> crate::Rom<0x1000> {
         const INS: [&[u8]; 5] = [
             &[0x48, 0x89, 0x94, 0xc8, 0x34, 0x12, 0x00, 0x00], // mov [rax+rcx*8+0x1234], rdx
             &[0x48, 0x8b, 0x84, 0xca, 0x78, 0x56, 0x00, 0x00], // mov rax, [rdx+rcx*8+0x5678]
@@ -3850,7 +3827,7 @@ mod tests {
         ];
         let mut v: Vec<u8> = ops.iter().flat_map(|&k| INS[usize::from(k) % INS.len()].iter().copied()).collect();
         v.push(0xc3);
-        Heavy(v)
+        crate::Rom::<0x1000>(v)
     }
 
     proptest::proptest! {
@@ -3895,15 +3872,6 @@ mod tests {
     /// of the layout; regions too when structured. (debugging text: LAYOUT)
     #[test]
     fn blocks_end_where_another_starts() {
-        struct Img(Vec<u8>);
-        impl Memory for Img {
-            fn read8(&mut self, a: u32) -> Result<u8, crate::Fault> {
-                a.checked_sub(0x1000).and_then(|o| self.0.get(o as usize).copied()).ok_or(crate::Fault { addr: a, write: false })
-            }
-            fn write8(&mut self, a: u32, _: u8) -> Result<(), crate::Fault> {
-                Err(crate::Fault { addr: a, write: true })
-            }
-        }
         #[rustfmt::skip]
         let code: Vec<u8> = [
             &[0xb9, 0xe8, 3, 0, 0][..],     // 0: mov ecx, 1000
@@ -3916,7 +3884,7 @@ mod tests {
             &[0xc3],                        // 22: ret
         ].concat();
         super::super::LAYOUT.store(true, Relaxed);
-        let r = translate_function64(&mut Module::default(), &mut Img(code), 0x1000, (0, 0), 1000, |_, _| true).unwrap();
+        let r = translate_function64(&mut Module::default(), &mut crate::Rom::<0x1000>(code), 0x1000, (0, 0), 1000, |_, _| true).unwrap();
         let lines: Vec<&str> = r.layout.lines().collect();
         for (start, n) in [(0x1000, 1), (0x1005, 2), (0x100a, 1), (0x100e, 3)] {
             let want = alloc::format!("{start:#x} {n} ");
@@ -4168,15 +4136,6 @@ mod tests {
     /// `call rsi`; the copies are no entries and stay in the layout. No hints: no copy.
     #[test]
     fn each_inline_call_has_its_own_copy_of_the_leaf() {
-        struct Img(Vec<u8>);
-        impl Memory for Img {
-            fn read8(&mut self, a: u32) -> Result<u8, crate::Fault> {
-                a.checked_sub(0x1000).and_then(|o| self.0.get(usize::try_from(o).ok()?).copied()).ok_or(crate::Fault { addr: a, write: false })
-            }
-            fn write8(&mut self, a: u32, _: u8) -> Result<(), crate::Fault> {
-                Err(crate::Fault { addr: a, write: true })
-            }
-        }
         let mut code = alloc::vec![0x90u8; 0x60];
         let mut put = |at: usize, b: &[u8]| code.iter_mut().skip(at).zip(b).for_each(|(d, s)| *d = *s);
         put(0, &[0xb9, 0xe8, 3, 0, 0]); // mov ecx, 1000
@@ -4190,13 +4149,13 @@ mod tests {
         put(0x40, &[0x48, 0x83, 0xc2, 0x01, 0xf6, 0xc2, 0x01, 0x74, 0x04, 0x48, 0x83, 0xc3, 0x01, 0xc3]);
         super::super::LAYOUT.store(true, Relaxed);
         let hint = |a: u64| (a == 0x1005).then_some(0x1040);
-        let r = translate_function64_with(&mut Module::default(), &mut Img(code.clone()), 0x1000, &[], (0, 0), 1000, &hint, |_, _| true).unwrap();
+        let r = translate_function64_with(&mut Module::default(), &mut crate::Rom::<0x1000>(code.clone()), 0x1000, &[], (0, 0), 1000, &hint, |_, _| true).unwrap();
         let at = |r: &Region, a: u32| r.code.iter().filter(|c| c.0 == a).count();
         assert_eq!((at(&r, 0x1040), at(&r, 0x1049), at(&r, 0x104d)), (2, 2, 2), "{}", r.layout);
         assert!(r.starts.iter().all(|s| s.0 < 0x1040), "{:x?}", r.starts);
         assert!(!r.layout.contains("out of the layout"), "{}", r.layout);
         assert_eq!(r.sites, alloc::vec![0x1005, 0x1007, 0x1009]);
-        let none = translate_function64_with(&mut Module::default(), &mut Img(code), 0x1000, &[], (0, 0), 1000, &|_| None, |_, _| true).unwrap();
+        let none = translate_function64_with(&mut Module::default(), &mut crate::Rom::<0x1000>(code), 0x1000, &[], (0, 0), 1000, &|_| None, |_, _| true).unwrap();
         assert_eq!(at(&none, 0x1040), 0);
     }
 }

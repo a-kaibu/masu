@@ -72,7 +72,7 @@ static PASS_OUT: Mutex<u64> = Mutex::new(0);
 fn run_pass(c: &mut Ctx) -> u32 {
     let mut out = vec![0f32; STEP * 2];
     pass(c, &mut out);
-    let h = out.iter().flat_map(|x| x.to_bits().to_le_bytes()).fold(0xcbf2_9ce4_8422_2325u64, |h, b| (h ^ u64::from(b)).wrapping_mul(0x100_0000_01b3));
+    let h = kome::golden::Fnv::new().words(out.iter().map(|x| x.to_bits())).get();
     *PASS_OUT.lock().unwrap_or_else(|e| e.into_inner()) = h;
     0
 }

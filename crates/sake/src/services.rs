@@ -1,6 +1,7 @@
 //! User-mode own-process services. Configuration lives in the guest registry;
 //! process ownership, status and control requests live in the shared kernel.
 #![allow(non_snake_case)]
+use kome::locks::Lock as _;
 use std::collections::HashMap;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
@@ -16,7 +17,7 @@ struct Handles {
 }
 static HANDLES: Mutex<Option<Handles>> = Mutex::new(None);
 fn handles<R>(f: impl FnOnce(&mut Handles) -> R) -> R {
-    f(HANDLES.lock().unwrap().get_or_insert_with(Handles::default))
+    f(HANDLES.locked().get_or_insert_with(Handles::default))
 }
 fn fail(error: u32) -> u32 {
     if crate::env_on!("SAKE_TRACE_SERVICES") { eprintln!("sake: SCM error {error}"); }
@@ -31,7 +32,7 @@ fn ensure(name: &str) -> Result<(), u32> {
     }
     let p = path(&key);
     let number = |name| crate::misc::registry_value(&p, name).and_then(|(ty, b)|
-        (ty == 4 && b.len() == 4).then(|| u32::from_le_bytes(b.try_into().unwrap())));
+        (ty == 4).then_some(b).and_then(|b| <[u8; 4]>::try_from(b.as_slice()).ok()).map(u32::from_le_bytes));
     let ty = number("Type").ok_or(1060u32)?;
     let start = number("Start").unwrap_or(3);
     let image = crate::misc::registry_string(&p, "ImagePath").ok_or(1060u32)?;
@@ -270,7 +271,7 @@ fn QueryServiceConfigW(c: &mut Ctx) -> u32 { query_config(c, true) }
 struct Active { name: String, main: u32, wide: bool, handler: u32, extended: bool, context: u32, token: u32 }
 static ACTIVE: Mutex<Option<Active>> = Mutex::new(None);
 fn main_thread(c: &mut Ctx) -> u32 {
-    let (name, main, wide) = { let a = ACTIVE.lock().unwrap(); let a = a.as_ref().unwrap(); (a.name.clone(), a.main, a.wide) };
+    let Some((name, main, wide)) = ACTIVE.locked().as_ref().map(|a| (a.name.clone(), a.main, a.wide)) else { return 0 };
     let Some(s) = kern::with(|k| k.services.get(&name).cloned()).0 else { return 0 };
     let args: Vec<String> = std::iter::once(s.name).chain(s.args).collect();
     let argv_own = mem::Scratch::new((args.len() as u32 + 1) * mem::ps(), true);
@@ -300,7 +301,7 @@ fn dispatcher(c: &mut Ctx, wide: bool) -> u32 {
     }
     if main == 0 { return fail(1083); }
     {
-        let mut active = ACTIVE.lock().unwrap();
+        let mut active = ACTIVE.locked();
         if active.is_some() { return fail(1056); }
         *active = Some(Active { name: name.clone(), main, wide, handler: 0, extended: false, context: 0, token: 0 });
     }
@@ -309,12 +310,12 @@ fn dispatcher(c: &mut Ctx, wide: bool) -> u32 {
         if s.pid != crate::pid() { return false; }
         s.connected = true; k.changed(); true
     }).0;
-    if !connected { *ACTIVE.lock().unwrap() = None; return fail(1063); }
+    if !connected { *ACTIVE.locked() = None; return fail(1063); }
     let entry = crate::api::host_fn("service main thread", main_thread, 4);
     let thread = obj::new_thread_obj(0);
     if crate::spawn_gated(entry, 0, 0x100000, thread, false) == 0 {
         obj::close(thread);
-        *ACTIVE.lock().unwrap() = None;
+        *ACTIVE.locked() = None;
         return fail(8);
     }
     loop {
@@ -329,9 +330,7 @@ fn dispatcher(c: &mut Ctx, wide: bool) -> u32 {
             }
         });
         if let Some((id, code)) = work.1 {
-            let (handler, extended, context) = {
-                let active = ACTIVE.lock().unwrap(); let a = active.as_ref().unwrap(); (a.handler, a.extended, a.context)
-            };
+            let (handler, extended, context) = ACTIVE.locked().as_ref().map_or((0, false, 0), |a| (a.handler, a.extended, a.context));
             let result = if handler == 0 { 1061 } else if extended {
                 crate::call(c.cpu, handler, &[code, 0, 0, context])
             } else { crate::call(c.cpu, handler, &[code]); 0 };
@@ -342,14 +341,14 @@ fn dispatcher(c: &mut Ctx, wide: bool) -> u32 {
     // active record alive until the guest thread has completed.
     obj::wait(&[thread], false, u32::MAX, None);
     obj::close(thread);
-    if let Some(a) = ACTIVE.lock().unwrap().take() && a.token != 0 { obj::close(a.token); }
+    if let Some(a) = ACTIVE.locked().take() && a.token != 0 { obj::close(a.token); }
     1
 }
 fn StartServiceCtrlDispatcherA(c: &mut Ctx) -> u32 { dispatcher(c, false) }
 fn StartServiceCtrlDispatcherW(c: &mut Ctx) -> u32 { dispatcher(c, true) }
 fn register(c: &mut Ctx, wide: bool, extended: bool) -> u32 {
     let requested = string(c.a(0), wide);
-    let mut active = ACTIVE.lock().unwrap();
+    let mut active = ACTIVE.locked();
     let Some(a) = active.as_mut() else { return fail(1063) };
     if !requested.eq_ignore_ascii_case(&a.name) { return fail(1083); }
     if c.a(1) == 0 { return fail(87); }
@@ -363,7 +362,7 @@ fn RegisterServiceCtrlHandlerExA(c: &mut Ctx) -> u32 { register(c, false, true) 
 fn RegisterServiceCtrlHandlerExW(c: &mut Ctx) -> u32 { register(c, true, true) }
 fn SetServiceStatus(c: &mut Ctx) -> u32 {
     let name = {
-        let active = ACTIVE.lock().unwrap();
+        let active = ACTIVE.locked();
         let Some(a) = active.as_ref().filter(|a| a.token != 0 && a.token == c.a(0)) else { return fail(6) };
         a.name.clone()
     };

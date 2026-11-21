@@ -220,18 +220,12 @@ crates/kura/src/d3d11/mod.rs	unsafe_op_in_unsafe_fn	(d.calls().client_rect)(hwnd
 crates/kura/src/d3d11/mod.rs	unsafe_op_in_unsafe_fn	(d.calls().client_rect)(hwnd, rect.as_mut_ptr());
 crates/kura/src/d3d11/mod.rs	unsafe_op_in_unsafe_fn	(d.calls().client_rect)(hwnd, rect.as_mut_ptr());
 crates/kura/src/d3d11/mod.rs	unsafe_op_in_unsafe_fn	(std::slice::from_raw_parts(gc::<u8>(a(3)), us(a(2))).to_vec(), 0)
-crates/kura/src/d3d11/mod.rs	unsafe_op_in_unsafe_fn	*(gc::<u32>(p).add(i))
-crates/kura/src/d3d11/mod.rs	unsafe_op_in_unsafe_fn	*(gc::<u32>(p).add(i))
 crates/kura/src/d3d11/mod.rs	unsafe_op_in_unsafe_fn	*(gp::<u16>(p + lo32(i) * 2)) = c;
 crates/kura/src/d3d11/mod.rs	unsafe_op_in_unsafe_fn	*(gp::<u16>(p + lo32(i) * 2)) = c;
-crates/kura/src/d3d11/mod.rs	unsafe_op_in_unsafe_fn	*(gp::<u32>(p).add(i)) = v;
-crates/kura/src/d3d11/mod.rs	unsafe_op_in_unsafe_fn	*(gp::<u32>(p).add(i)) = v;
 crates/kura/src/d3d11/mod.rs	unsafe_op_in_unsafe_fn	*v = *args.add(i * 2);
 crates/kura/src/d3d11/mod.rs	unsafe_op_in_unsafe_fn	*v = *args.add(i * 2);
 crates/kura/src/d3d11/mod.rs	unsafe_op_in_unsafe_fn	*v = rd(desc, k);
 crates/kura/src/d3d11/mod.rs	unsafe_op_in_unsafe_fn	0 => query_interface(d, this, iface, a(1), a(2)),
-crates/kura/src/d3d11/mod.rs	unsafe_op_in_unsafe_fn	0 | 5 => wr(a(2), 0, 1),
-crates/kura/src/d3d11/mod.rs	unsafe_op_in_unsafe_fn	1 => wr(a(2), 0, 1000),
 crates/kura/src/d3d11/mod.rs	unsafe_op_in_unsafe_fn	10 | 26 => set_slots(d, &mut st.samplers[usize::from(m == 10)], a(1), a(2), a(3)),
 crates/kura/src/d3d11/mod.rs	unsafe_op_in_unsafe_fn	106 => get_slots(d, &st.uavs[1], a(1), a(2), a(3)),
 crates/kura/src/d3d11/mod.rs	unsafe_op_in_unsafe_fn	11 => set_one(d, &mut st.vs, a(1)),
@@ -248,7 +242,6 @@ crates/kura/src/d3d11/mod.rs	unsafe_op_in_unsafe_fn	20 => draw(d, st, true, a(1)
 crates/kura/src/d3d11/mod.rs	unsafe_op_in_unsafe_fn	21 => draw(d, st, false, a(1), a(2), a(3), 0, a(4)),
 crates/kura/src/d3d11/mod.rs	unsafe_op_in_unsafe_fn	23 | 60 | 64 | 69 => set_one(d, &mut st.shaders[stage_of(m) - 2], a(1)),
 crates/kura/src/d3d11/mod.rs	unsafe_op_in_unsafe_fn	27 => deferred::create(d, a(1), a(2)),
-crates/kura/src/d3d11/mod.rs	unsafe_op_in_unsafe_fn	3 => wr(a(2), 0, 1_000_000_000),
 crates/kura/src/d3d11/mod.rs	unsafe_op_in_unsafe_fn	32 | 61 | 65 | 70 => set_slots(d, &mut st.samplers[stage_of(m)], a(1), a(2), a(3)),
 crates/kura/src/d3d11/mod.rs	unsafe_op_in_unsafe_fn	34..=36 => private_data(d, m - 30, this, a),
 crates/kura/src/d3d11/mod.rs	unsafe_op_in_unsafe_fn	4..=6 => return private_data(d, m, this, a),
@@ -521,7 +514,6 @@ crates/kura/src/d3d11/mod.rs	unsafe_op_in_unsafe_fn	std::ptr::copy_nonoverlappin
 crates/kura/src/d3d11/mod.rs	unsafe_op_in_unsafe_fn	std::ptr::write_bytes(gp::<u8>(a(1)), 0, 12);
 crates/kura/src/d3d11/mod.rs	unsafe_op_in_unsafe_fn	std::ptr::write_bytes(gp::<u8>(a(2)), 0, 4 * us(a(3)));
 crates/kura/src/d3d11/mod.rs	unsafe_op_in_unsafe_fn	std::ptr::write_bytes(gp::<u8>(a(2)), 0, us(a(3)));
-crates/kura/src/d3d11/mod.rs	unsafe_op_in_unsafe_fn	std::ptr::write_bytes(gp::<u8>(a(2)), 0, us(a(3)));
 crates/kura/src/d3d11/mod.rs	unsafe_op_in_unsafe_fn	std::ptr::write_bytes(gp::<u8>(a(3)), 0, 4 * us(a(1)));
 crates/kura/src/d3d11/mod.rs	unsafe_op_in_unsafe_fn	std::ptr::write_bytes(gp::<u8>(mem), 0, us(size));
 crates/kura/src/d3d11/mod.rs	unsafe_op_in_unsafe_fn	std::ptr::write_bytes(gp::<u8>(mem), 0, us(size));
@@ -538,7 +530,6 @@ crates/kura/src/d3d11/mod.rs	unsafe_op_in_unsafe_fn	upload_texture(t, sub, us(rd
 crates/kura/src/d3d11/mod.rs	unsafe_op_in_unsafe_fn	upload_texture(t, sub, us(rdp(init, 0)), rd(init + ptr(), 0), rd(init + ptr(), 1), None);
 crates/kura/src/d3d11/mod.rs	unsafe_op_in_unsafe_fn	upload_texture(t, sub, us(rdp(init, 0)), rd(init + ptr(), 0), rd(init + ptr(), 1), None);
 crates/kura/src/d3d11/mod.rs	unsafe_op_in_unsafe_fn	upload_texture(t, sub, us(rdp(init, 0)), rd(init + ptr(), 0), rd(init + ptr(), 1), None);
-crates/kura/src/d3d11/mod.rs	unsafe_op_in_unsafe_fn	wr(a(1), 0, *t);
 crates/kura/src/d3d11/mod.rs	unsafe_op_in_unsafe_fn	wr(a(1), 0, 0);
 crates/kura/src/d3d11/mod.rs	unsafe_op_in_unsafe_fn	wr(a(1), 0, 0);
 crates/kura/src/d3d11/mod.rs	unsafe_op_in_unsafe_fn	wr(a(1), 0, 0);
@@ -569,14 +560,12 @@ crates/kura/src/d3d11/mod.rs	unsafe_op_in_unsafe_fn	wr(a(2), 0, 1);
 crates/kura/src/d3d11/mod.rs	unsafe_op_in_unsafe_fn	wr(a(2), 0, 1);
 crates/kura/src/d3d11/mod.rs	unsafe_op_in_unsafe_fn	wr(a(2), 0, 15 << 16 | 1179);
 crates/kura/src/d3d11/mod.rs	unsafe_op_in_unsafe_fn	wr(a(2), 0, bits.unwrap_or(0));
-crates/kura/src/d3d11/mod.rs	unsafe_op_in_unsafe_fn	wr(a(2), 0, lo32(stamp));
 crates/kura/src/d3d11/mod.rs	unsafe_op_in_unsafe_fn	wr(a(2), 0, lo32(v.len()));
 crates/kura/src/d3d11/mod.rs	unsafe_op_in_unsafe_fn	wr(a(2), 0, st.ib.1);
 crates/kura/src/d3d11/mod.rs	unsafe_op_in_unsafe_fn	wr(a(2), 0, st.predicate.1);
 crates/kura/src/d3d11/mod.rs	unsafe_op_in_unsafe_fn	wr(a(2), 0, st.stencil_ref);
 crates/kura/src/d3d11/mod.rs	unsafe_op_in_unsafe_fn	wr(a(2), 1, 30 << 16);
 crates/kura/src/d3d11/mod.rs	unsafe_op_in_unsafe_fn	wr(a(2), 1, bits.unwrap_or(0));
-crates/kura/src/d3d11/mod.rs	unsafe_op_in_unsafe_fn	wr(a(2), 1, lo32(stamp >> 32));
 crates/kura/src/d3d11/mod.rs	unsafe_op_in_unsafe_fn	wr(a(2), 7, 0);
 crates/kura/src/d3d11/mod.rs	unsafe_op_in_unsafe_fn	wr(a(2), i, st.blend_factor[i].to_bits());
 crates/kura/src/d3d11/mod.rs	unsafe_op_in_unsafe_fn	wr(a(2), k * words + i, v);
@@ -866,8 +855,6 @@ crates/kura/src/d3d9/device.rs	unsafe_op_in_unsafe_fn	*p.add(1068).cast::<u32>()
 crates/kura/src/d3d9/device.rs	unsafe_op_in_unsafe_fn	*p.add(1068).cast::<u32>() = 0x1c82;
 crates/kura/src/d3d9/device.rs	unsafe_op_in_unsafe_fn	*p.add(1088).cast::<u32>() = 0x5642_4e56;
 crates/kura/src/d3d9/device.rs	unsafe_op_in_unsafe_fn	*p.add(1088).cast::<u32>() = 0x5642_4e56;
-crates/kura/src/d3d9/device.rs	unsafe_op_in_unsafe_fn	*p.add(c * 256 + i) = (i * 257) as u16;
-crates/kura/src/d3d9/device.rs	unsafe_op_in_unsafe_fn	*p.add(c * 256 + i) = (i * 257) as u16;
 crates/kura/src/d3d9/device.rs	unsafe_op_in_unsafe_fn	*p.add(i) = *reg;
 crates/kura/src/d3d9/device.rs	unsafe_op_in_unsafe_fn	*p.add(i) = *reg;
 crates/kura/src/d3d9/device.rs	unsafe_op_in_unsafe_fn	*p.add(us(i)) = *x;
@@ -1038,7 +1025,6 @@ crates/kura/src/d3d9/device.rs	unsafe_op_in_unsafe_fn	set_bound(d, s, old);
 crates/kura/src/d3d9/device.rs	unsafe_op_in_unsafe_fn	set_bound(d, t, old);
 crates/kura/src/d3d9/device.rs	unsafe_op_in_unsafe_fn	set_bound(d, vb, old);
 crates/kura/src/d3d9/device.rs	unsafe_op_in_unsafe_fn	std::ptr::copy(gc::<u8>(sp), gp::<u8>(dp), us(row));
-crates/kura/src/d3d9/device.rs	unsafe_op_in_unsafe_fn	std::ptr::copy(gc::<u8>(xm), gp::<u8>(ym), us(len));
 crates/kura/src/d3d9/device.rs	unsafe_op_in_unsafe_fn	std::ptr::copy_nonoverlapping(CAPS.as_ptr(), gp::<u32>(a(1)), CAPS.len());
 crates/kura/src/d3d9/device.rs	unsafe_op_in_unsafe_fn	std::ptr::copy_nonoverlapping(a(1) as *const i32, dev.st.scissor.as_mut_ptr(), 4);
 crates/kura/src/d3d9/device.rs	unsafe_op_in_unsafe_fn	std::ptr::copy_nonoverlapping(c.as_ptr(), gp::<f32>(a(2)), 4);
@@ -1064,13 +1050,10 @@ crates/kura/src/d3d9/device.rs	unsafe_op_in_unsafe_fn	std::ptr::copy_nonoverlapp
 crates/kura/src/d3d9/device.rs	unsafe_op_in_unsafe_fn	std::ptr::copy_nonoverlapping(p.as_ptr(), gp::<u8>(a(2)), 1024);
 crates/kura/src/d3d9/device.rs	unsafe_op_in_unsafe_fn	std::ptr::copy_nonoverlapping(regs[start..].as_ptr(), p, n);
 crates/kura/src/d3d9/device.rs	unsafe_op_in_unsafe_fn	std::ptr::copy_nonoverlapping(s.code.as_ptr(), gp::<u32>(a(1)), s.code.len());
-crates/kura/src/d3d9/device.rs	unsafe_op_in_unsafe_fn	std::ptr::write_bytes(gp::<u8>(a(1)), 0, us(n));
 crates/kura/src/d3d9/device.rs	unsafe_op_in_unsafe_fn	std::ptr::write_bytes(p, 0, 1100);
 crates/kura/src/d3d9/device.rs	unsafe_op_in_unsafe_fn	std::slice::from_raw_parts_mut(gp::<u32>(mem + y * pitch), us(dw)).fill(0xff00_0000);
 crates/kura/src/d3d9/device.rs	unsafe_op_in_unsafe_fn	surface_call(d, 12, s, &|i| if i == 1 { a(2) } else { 0 }, after)
 crates/kura/src/d3d9/device.rs	unsafe_op_in_unsafe_fn	unlock_surface(d, s)
-crates/kura/src/d3d9/device.rs	unsafe_op_in_unsafe_fn	update_surface(d, sa, 0, sb, 0);
-crates/kura/src/d3d9/device.rs	unsafe_op_in_unsafe_fn	update_surface(d, sa, 0, sb, 0);
 crates/kura/src/d3d9/device.rs	unsafe_op_in_unsafe_fn	upload(d, s, [0, 0, w, h]);
 crates/kura/src/d3d9/device.rs	unsafe_op_in_unsafe_fn	upload(d, s, r);
 crates/kura/src/d3d9/device.rs	unsafe_op_in_unsafe_fn	upload(d, t, [dx, dy, dx + w, dy + h]);
@@ -1082,8 +1065,6 @@ crates/kura/src/d3d9/device.rs	unsafe_op_in_unsafe_fn	wr(a(1) + 8 + ptr(), 0, de
 crates/kura/src/d3d9/device.rs	unsafe_op_in_unsafe_fn	wr(a(1), 0, 0);
 crates/kura/src/d3d9/device.rs	unsafe_op_in_unsafe_fn	wr(a(1), 0, 0);
 crates/kura/src/d3d9/device.rs	unsafe_op_in_unsafe_fn	wr(a(1), 0, 1);
-crates/kura/src/d3d9/device.rs	unsafe_op_in_unsafe_fn	wr(a(1), 0, 1);
-crates/kura/src/d3d9/device.rs	unsafe_op_in_unsafe_fn	wr(a(1), 0, 1000);
 crates/kura/src/d3d9/device.rs	unsafe_op_in_unsafe_fn	wr(a(1), 0, dev.st.fvf);
 crates/kura/src/d3d9/device.rs	unsafe_op_in_unsafe_fn	wr(a(1), 0, p);
 crates/kura/src/d3d9/device.rs	unsafe_op_in_unsafe_fn	wr(a(1), 1, 1);
@@ -1577,7 +1558,6 @@ crates/kura/src/snap.rs	borrow_as_ptr	&VNHOST_SNAP
 crates/kura/src/snap.rs	masu-leak	None => Box::leak(Box::new(Part {
 crates/kura/src/usage.rs	undocumented_unsafe_blocks	unsafe { atexit(at_exit) };
 crates/kura/src/vfs.rs	borrow_as_ptr	let p = crate::wrap::load_idle(|| vnvm_fetch(c.as_ptr(), &mut len));
-crates/kura/src/vfs.rs	masu-from_raw_parts	let h: Hash = std::slice::from_raw_parts(hash, 16).try_into().unwrap();
 crates/kura/src/vfs.rs	masu-from_raw_parts	let text = String::from_utf8_lossy(std::slice::from_raw_parts(text, len)).into_owned();
 crates/kura/src/vfs.rs	masu-from_raw_parts	let v = std::slice::from_raw_parts(p, len).to_vec();
 crates/kura/src/vfs.rs	masu-wire_tree	fs.load_tree(root, &format!("vnvm-tree\t2\t64\nf\t644\t0\tbig\t{size}\t{h}:{size}\n"));
@@ -1617,7 +1597,7 @@ crates/kura/src/vfs.rs	unsafe_op_in_unsafe_fn	*len = out.at;
 crates/kura/src/vfs.rs	unsafe_op_in_unsafe_fn	*len = out.len();
 crates/kura/src/vfs.rs	unsafe_op_in_unsafe_fn	*out = v;
 crates/kura/src/vfs.rs	unsafe_op_in_unsafe_fn	let data = Vec::from_raw_parts(data, len, len);
-crates/kura/src/vfs.rs	unsafe_op_in_unsafe_fn	let h: Hash = std::slice::from_raw_parts(hash, 16).try_into().unwrap();
+crates/kura/src/vfs.rs	unsafe_op_in_unsafe_fn	let h: Hash = std::ptr::read(hash.cast::<Hash>());
 crates/kura/src/vfs.rs	unsafe_op_in_unsafe_fn	let p = libc::malloc(out.len().max(1)) as *mut u8;
 crates/kura/src/vfs.rs	unsafe_op_in_unsafe_fn	let p = libc::malloc(size.max(1)) as *mut u8;
 crates/kura/src/vfs.rs	unsafe_op_in_unsafe_fn	let roots = CStr::from_ptr(roots).to_string_lossy().into_owned();
@@ -1680,7 +1660,7 @@ crates/kura/src/video.rs	unsafe_op_in_unsafe_fn	let [b, g, r] = px_ref(t, out, *
 crates/kura/src/video.rs	unsafe_op_in_unsafe_fn	let [b, g, r] = px_ref(t, out, *yr.add(x), *ur.add(k), *vr.add(k));
 crates/kura/src/video.rs	unsafe_op_in_unsafe_fn	let [b, g, r] = px_ref(t, out, *yr.add(x), *ur.add(k), *vr.add(k));
 crates/kura/src/video.rs	unsafe_op_in_unsafe_fn	let [b, g, r] = px_ref(t, out, *yr.add(x), *ur.add(k), *vr.add(k));
-crates/kura/src/video.rs	unsafe_op_in_unsafe_fn	let l = &*layout;
+crates/kura/src/video.rs	unsafe_op_in_unsafe_fn	let layout: [[u32; 7]; 2] = std::ptr::read(layout.cast());
 crates/kura/src/video.rs	unsafe_op_in_unsafe_fn	let o = row.add(x * 4);
 crates/kura/src/video.rs	unsafe_op_in_unsafe_fn	let o = row.add(x * 4);
 crates/kura/src/video.rs	unsafe_op_in_unsafe_fn	let out = std::slice::from_raw_parts_mut(out, words);

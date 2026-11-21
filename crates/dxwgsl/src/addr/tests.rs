@@ -90,12 +90,7 @@ fn flags_of_modes() {
     }
 }
 
-fn valid(w: &str) {
-    let m = naga::front::wgsl::parse_str(w).unwrap_or_else(|e| panic!("{}\n{w}", e.emit_to_string(w)));
-    naga::valid::Validator::new(naga::valid::ValidationFlags::all(), naga::valid::Capabilities::all())
-        .validate(&m)
-        .unwrap_or_else(|e| panic!("{e:?}\n{w}"));
-}
+use crate::valid_wgsl as valid;
 
 #[test]
 fn shaders_with_border_are_valid_wgsl() {

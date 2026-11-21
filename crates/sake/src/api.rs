@@ -756,13 +756,6 @@ impl Ctx<'_> {
         }
         f64::from_bits(self.q(i))
     }
-    /// The float argument `i` (x64: XMM `i`; x86: slot `i`).
-    pub fn fl(&self, i: u32) -> f32 {
-        if crate::mem::x64() {
-            return f32::from_bits(kome::num::lo32(self.xmm(i)));
-        }
-        f32::from_bits(self.a(i))
-    }
     /// Where an object passed by value as argument `i` is: x64 passes one bigger than 8 bytes
     /// by address (the argument), x86 copies it onto the stack (from slot `i` on).
     pub fn byval(&self, i: u32) -> u32 {

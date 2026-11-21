@@ -53,6 +53,50 @@ pub const RESOLVE: u32 = 32; // dst dst_level dst_layer src src_layer: ResolveSu
 /// the render pipelines made of it go first (DESTROY_PIPELINE).
 pub const DESTROY_SHADER: u32 = 33; // id
 pub const DESTROY_PIPELINE: u32 = 34; // id (CREATE_PIPELINE's or CREATE_PIPELINE2's)
+/// The display's gamma ramp (a full-screen Direct3D 9 swap chain's SetGammaRamp, DXGI
+/// SetGammaControl): 3 x 256 u16 (red, green, blue) at blob_offset, or blob_offset u32::MAX for
+/// none (the identity). The screen is drawn through it.
+pub const GAMMA: u32 = 35; // blob_offset
+/// Direct3D's queries (render/d3d/query.rs): occlusion query `ticket` counts the samples the
+/// draws after QUERY_BEGIN let through; QUERY_END ends `ticket` (a `QueryEnd` word) there. The
+/// page hands each ticket's value back (`vnhost_d3d9_query_done`).
+pub const QUERY_BEGIN: u32 = 36; // ticket
+pub const QUERY_END: u32 = 37; // ticket kind
+
+/// What a QUERY_END ends.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum QueryEnd {
+    /// an occlusion query (QUERY_BEGIN's): its samples
+    Occlusion,
+    /// an event: done (1) once the GPU did what came before
+    Event,
+    /// the GPU's time (ns) when it gets here
+    Timestamp,
+}
+
+impl QueryEnd {
+    pub fn word(self) -> u32 {
+        match self {
+            QueryEnd::Occlusion => 0,
+            QueryEnd::Event => 1,
+            QueryEnd::Timestamp => 2,
+        }
+    }
+    pub fn of_word(w: u32) -> Option<QueryEnd> {
+        [QueryEnd::Occlusion, QueryEnd::Event, QueryEnd::Timestamp].into_iter().find(|k| k.word() == w)
+    }
+}
+
+/// What the page said of a query ticket.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Answer {
+    /// on its way
+    Pending,
+    Done(u64),
+    /// nothing runs it: no page draws (node), or the ticket is not this run's (a state saved
+    /// with it on its way)
+    Unrun,
+}
 
 /// Texture formats on the page.
 pub const FMT_BGRA8: u32 = 0;
@@ -158,6 +202,9 @@ struct Queue {
     generation: u64,
     /// batches up to this one are done (the page ran them, or nobody will)
     done: u64,
+    /// query tickets given out and not forgotten: None while on their way
+    tickets: HashMap<u32, Option<u64>>,
+    next_ticket: u32,
 }
 
 static QUEUE: Mutex<Option<Queue>> = Mutex::new(None);
@@ -184,6 +231,8 @@ fn queue(g: &mut Option<Queue>) -> &mut Queue {
         readbacks_dropped: Vec::new(),
         generation: 0,
         done: 0,
+        tickets: HashMap::new(),
+        next_ticket: 0,
     })
 }
 
@@ -574,6 +623,79 @@ pub unsafe extern "C" fn vnhost_d3d9_poll(out: *mut [u32; 6]) -> u32 {
     });
     WAKE.notify_all();
     r
+}
+
+/// A new query ticket (on its way until the page answers it, `query_done`).
+pub fn query_ticket() -> u32 {
+    with(|q| {
+        loop {
+            q.next_ticket = q.next_ticket.wrapping_add(1);
+            if q.next_ticket != 0 && !q.tickets.contains_key(&q.next_ticket) {
+                break;
+            }
+        }
+        q.tickets.insert(q.next_ticket, None);
+        q.next_ticket
+    })
+}
+
+/// (tests) The tickets given out and not forgotten.
+#[cfg(test)]
+pub fn tickets_live() -> usize {
+    with(|q| q.tickets.len())
+}
+
+/// Ticket `t` is not asked about any more (its query issued again, or released).
+pub fn query_forget(t: u32) {
+    with(|q| q.tickets.remove(&t));
+}
+
+/// What the page said of ticket `t`.
+pub fn query_answer(t: u32) -> Answer {
+    with(|q| match q.tickets.get(&t) {
+        _ if q.last_poll.is_none() => Answer::Unrun,
+        None => Answer::Unrun,
+        Some(None) => Answer::Pending,
+        Some(Some(v)) => Answer::Done(*v),
+    })
+}
+
+/// Waits for the page's answer of ticket `t` (Pending: the page gave up or stalled, 10 s
+/// without finishing a batch, as `wait_readback`).
+pub fn query_wait(t: u32) -> Answer {
+    flush();
+    #[cfg(test)]
+    pump();
+    let mut g = QUEUE.lock().unwrap_or_else(|e| e.into_inner());
+    let mut deadline = now() + 10000.0;
+    let mut done = g.as_ref().map_or(0, |q| q.done);
+    loop {
+        let q = queue(&mut g);
+        match q.tickets.get(&t) {
+            _ if q.last_poll.is_none() => return Answer::Unrun,
+            None => return Answer::Unrun,
+            Some(Some(v)) => return Answer::Done(*v),
+            Some(None) => {}
+        }
+        if q.done != done {
+            done = q.done;
+            deadline = now() + 10000.0;
+        }
+        if now() >= deadline || !page_attached(q) {
+            return Answer::Pending;
+        }
+        g = WAKE.wait_timeout(g, Duration::from_millis(5)).unwrap_or_else(|e| e.into_inner()).0;
+    }
+}
+
+/// The page: ticket `t`'s value is `lo | hi << 32` (render/d3d/query.rs).
+pub fn query_done(t: u32, lo: u32, hi: u32) {
+    with(|q| {
+        if let Some(v) = q.tickets.get_mut(&t) {
+            *v = Some(u64::from(lo) | u64::from(hi) << 32);
+        }
+    });
+    WAKE.notify_all();
 }
 
 /// The page wrote the pixels of readback `id`.

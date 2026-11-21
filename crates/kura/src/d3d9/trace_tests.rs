@@ -4,6 +4,8 @@
 //!
 //! `MASU_TRACE_DIR=dir` writes `dir/d3d9-<seed>/ComTrace.tla`; `MASU_TRACE_SEEDS=n` (default 20).
 
+use super::draw_tests::call;
+use kome::locks::Lock as _;
 use super::*;
 use std::fmt::Write as _;
 use std::sync::Mutex;
@@ -28,7 +30,7 @@ impl Rng {
 static ARENA: Mutex<(u32, u32)> = Mutex::new((0, 0));
 
 pub(crate) unsafe extern "C" fn alloc(n: u32) -> *mut u8 {
-    let mut a = ARENA.lock().unwrap();
+    let mut a = ARENA.locked();
     if a.0 == 0 {
         let size = 512 << 20;
         let p = libc::mmap(std::ptr::null_mut(), size, libc::PROT_READ | libc::PROT_WRITE, libc::MAP_PRIVATE | libc::MAP_ANONYMOUS | libc::MAP_32BIT, -1, 0);
@@ -243,11 +245,17 @@ pub(crate) fn seeds() -> u64 {
     std::env::var("MASU_TRACE_SEEDS").ok().and_then(|s| s.parse().ok()).unwrap_or(20)
 }
 
+thread_local! {
+    /// the page `attach_page` made last (tests look at what it holds)
+    pub(crate) static PAGE: std::cell::RefCell<Option<std::rc::Rc<std::cell::RefCell<crate::render::d3d::D3d>>>> = const { std::cell::RefCell::new(None) };
+}
+
 /// The page's executor (render/d3d.rs) on a fresh model of WebGPU (render/model.rs), run in this
 /// thread whenever the guest waits for it (and at gpu::pump).
 pub(crate) fn attach_page() {
     crate::render::model::reset();
     let page = std::rc::Rc::new(std::cell::RefCell::new(crate::render::d3d::D3d::new()));
+    PAGE.with(|p| *p.borrow_mut() = Some(page.clone()));
     let pg = page.clone();
     gpu::set_pump(Some(Box::new(move || {
         while gpu::run_next(|c, data, blob| {
@@ -256,20 +264,15 @@ pub(crate) fn attach_page() {
             for t in crate::render::model::with(|m| m.finish_maps()) {
                 d.mapped(t, true);
             }
+            for t in crate::render::model::with(|m| std::mem::take(&mut m.done_tokens)) {
+                d.gpu_done(t, 0.0);
+            }
         }) {}
     })));
 }
 
 /// (one test at a time drives the global tables)
 pub(crate) static SERIAL: Mutex<()> = Mutex::new(());
-
-fn call(iface: u32, m: u32, args: &[u32]) -> u32 {
-    // (the guest's arguments are on its stack, with the caller's frame after them: the
-    // Direct3D 8 methods that forward to Direct3D 9 read 10 words whatever the method takes)
-    let mut a = args.to_vec();
-    a.resize(a.len().max(16), 0);
-    unsafe { vnhost_d3d9_call(iface << 8 | m, a.as_ptr(), &CALLS) }
-}
 
 fn out() -> u32 {
     unsafe { alloc(16) as u32 }
@@ -280,7 +283,7 @@ fn rd(p: u32) -> u32 {
 }
 
 fn with<R>(f: impl FnOnce(&mut D3d) -> R) -> R {
-    f(D3D.lock().unwrap().as_mut().unwrap())
+    f(D3D.locked().as_mut().unwrap())
 }
 
 fn id(addr: u32) -> u32 {

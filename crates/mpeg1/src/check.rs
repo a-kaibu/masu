@@ -15,7 +15,7 @@ pub struct Decoded {
 }
 
 pub fn fnv(h: u64, d: &[u8]) -> u64 {
-    d.iter().fold(h, |h, &b| (h ^ u64::from(b)).wrapping_mul(0x100000001b3))
+    kome::golden::Fnv(h).bytes(d).get()
 }
 
 /// Demux and decode `data` fed in the slices `cuts` gives (each a length, then the rest).
@@ -50,8 +50,8 @@ pub fn decode(data: &[u8], cuts: &[usize]) -> Decoded {
                 }
             }
             let size = (f.width, f.height);
-            let h = v.header().expect("a picture without a sequence header");
-            assert_eq!(size, (h.width, h.height));
+            // (a picture comes after a sequence header, of its size)
+            assert_eq!(v.header().map(|h| (h.width, h.height)), Some(size));
             out.pictures.push((size.0, size.1, x));
         }
         while a.decode() {

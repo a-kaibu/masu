@@ -288,7 +288,7 @@ struct Filter {
 static FILTERS: Mutex<Option<HashMap<u32, Filter>>> = Mutex::new(None);
 
 fn fwith<R>(b: u32, f: impl FnOnce(&mut Filter) -> R) -> Option<R> {
-    FILTERS.lock().unwrap_or_else(|e| e.into_inner()).get_or_insert_with(HashMap::new).get_mut(&b).map(f)
+    kome::locks::with_entry(&FILTERS, &b, f)
 }
 
 /// The filter and word of an interface pointer of ours.
@@ -1544,7 +1544,7 @@ struct VnvFeed {
 static VNVS: Mutex<Option<HashMap<u32, VnvFeed>>> = Mutex::new(None);
 
 fn vwith<R>(b: u32, f: impl FnOnce(&mut VnvFeed) -> R) -> Option<R> {
-    VNVS.lock().unwrap_or_else(|e| e.into_inner()).get_or_insert_with(HashMap::new).get_mut(&b).map(f)
+    kome::locks::with_entry(&VNVS, &b, f)
 }
 
 /// A new Vnv filter for the movie graph block `graph` plays (`w` x `h` at `rate` frames per
@@ -1875,7 +1875,7 @@ static SAMPLES: Mutex<Option<HashMap<u32, Sample>>> = Mutex::new(None);
 static ALLOCS: Mutex<Option<HashMap<u32, (u32, Vec<u32>)>>> = Mutex::new(None);
 
 fn swith<R>(s: u32, f: impl FnOnce(&mut Sample) -> R) -> Option<R> {
-    SAMPLES.lock().unwrap_or_else(|e| e.into_inner()).get_or_insert_with(HashMap::new).get_mut(&s).map(f)
+    kome::locks::with_entry(&SAMPLES, &s, f)
 }
 fn allocator(dec: u32) -> u32 {
     let mut g = ALLOCS.lock().unwrap_or_else(|e| e.into_inner());
@@ -2148,7 +2148,7 @@ struct Pipe {
 static PIPES: Mutex<Option<HashMap<u32, Pipe>>> = Mutex::new(None);
 
 fn pwith<R>(b: u32, f: impl FnOnce(&mut Pipe) -> R) -> Option<R> {
-    PIPES.lock().unwrap_or_else(|e| e.into_inner()).get_or_insert_with(HashMap::new).get_mut(&b).map(f)
+    kome::locks::with_entry(&PIPES, &b, f)
 }
 
 /// The splitter in graph `g` (the graph's IFilterGraph pointer, as JoinFilterGraph gave it).

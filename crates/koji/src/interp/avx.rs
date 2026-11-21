@@ -327,15 +327,13 @@ impl<'a, M: Memory> X<'a, M> {
         self.swap_halves_of(used);
         // a shared XMM operand goes in a register the instruction doesn't name (its number may
         // also be a YMM operand's, whose upper half is in that register now)
-        let mut free = (0..16).filter(|f| used & 1 << f == 0);
+        // (at most 5 operands named: 11 of the 16 free at least, for at most 4 shared)
+        let free = (0..16).filter(|f| used & 1 << f == 0);
         let mut moved: [Option<(usize, u128)>; 4] = [None; 4];
-        for (i, r) in shared.iter().enumerate() {
-            if let Some(r) = r {
-                let f = free.next().unwrap();
-                moved[i] = Some((f, self.cpu.xmm(f)));
-                self.cpu.set_xmm(f, snap[*r][0]);
-                hi.set_op_register(lo32(i), Register::XMM0 + lo32(f));
-            }
+        for ((i, r), f) in shared.iter().enumerate().filter_map(|(i, r)| Some((i, (*r)?))).zip(free) {
+            moved[i] = Some((f, self.cpu.xmm(f)));
+            self.cpu.set_xmm(f, snap[r][0]);
+            hi.set_op_register(lo32(i), Register::XMM0 + lo32(f));
         }
         let e = self.run_keep_h(&hi);
         for (f, v) in moved.iter().flatten() {

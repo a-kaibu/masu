@@ -84,7 +84,7 @@ impl Progress {
 
 static BARS: Mutex<Option<HashMap<u32, Progress>>> = Mutex::new(None);
 fn with_bar<R>(h: u32, f: impl FnOnce(&mut Progress) -> R) -> R {
-    f(BARS.lock().unwrap().get_or_insert_with(HashMap::default).entry(h).or_default())
+    f(BARS.locked().get_or_insert_with(HashMap::default).entry(h).or_default())
 }
 
 fn paint(c: &mut Ctx, h: u32) {
@@ -171,7 +171,7 @@ pub(super) fn proc_fn(c: &mut Ctx) -> u32 {
         }
         0x14 => 1,
         0x2 => {
-            BARS.lock().unwrap().get_or_insert_with(HashMap::default).remove(&h);
+            BARS.locked().get_or_insert_with(HashMap::default).remove(&h);
             def_proc(c, msg_wide())
         }
         _ => def_proc(c, msg_wide()),

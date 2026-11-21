@@ -12,6 +12,7 @@
 pub mod d2d;
 pub mod d3d10;
 mod deferred;
+pub mod query;
 pub mod check;
 mod clear;
 pub mod format;
@@ -30,6 +31,8 @@ mod bind_tests;
 mod cb1_tests;
 #[cfg(test)]
 mod draw_tests;
+#[cfg(test)]
+mod query_tests;
 #[cfg(test)]
 mod deferred_tests;
 #[cfg(test)]
@@ -363,7 +366,7 @@ pub enum Data {
     /// state objects: their description's dwords
     State(Vec<u32>),
     /// (type, state: 0 never begun or ended, 1 between Begin and End, 2 ended; timestamp)
-    Query(u32, u32, u64),
+    Query(query::Query),
     /// ID3DDeviceContextState: the context state it holds while another one is current
     CtxState(Option<Box<State>>),
     /// a deferred context: its state and the list it records
@@ -416,7 +419,8 @@ pub struct State {
     depth: u32,
     stencil_ref: u32,
     raster: u32,
-    /// SetPredication (predicate, value): kept for GetPredication, draws are not predicated
+    /// SetPredication (predicate, value): rendering is off while the predicate's answer is
+    /// value (`predicated_off`)
     predicate: (u32, u32),
     /// how many viewports and scissor rects RSSet* gave (RSGet* report them)
     nviewports: u32,
@@ -434,8 +438,8 @@ pub struct D11 {
     made10: bool,
     /// the feature level the device was last made at (GetFeatureLevel, which shaders it takes)
     level: u32,
-    /// (queries' End count: their timestamps)
-    ticks: u64,
+    /// PIPELINE_STATISTICS counts of what the device sent the page (d3d11/query.rs)
+    stats: query::Stats,
     vtbls: Vec<u32>,
     pub objs: HashMap<u32, Obj>,
     next: u32,
@@ -492,33 +496,14 @@ fn trace2() -> bool {
     *V.get_or_init(|| std::env::var("MASU_D3D_TRACE").as_deref() == Ok("2"))
 }
 
-unsafe fn rd(p: u32, i: usize) -> u32 {
-    *(gc::<u32>(p).add(i))
-}
-
-/// (a 32-bit value: crate::outs reports it at one of the call's pointer-sized out-parameters)
-unsafe fn wr(p: u32, i: usize, v: u32) {
-    if p != 0 {
-        crate::outs::wrote32(p.wrapping_add(kome::num::lo32(i).wrapping_mul(4)));
-        // SAFETY: wr's own contract: dword i at p is the caller's guest memory
-        unsafe { wr_word(p, i, v) };
-    }
-}
-
-/// (wr unchecked: a half of a pointer-sized value, wrp)
-unsafe fn wr_word(p: u32, i: usize, v: u32) {
-    if p != 0 {
-        *(gp::<u32>(p).add(i)) = v;
-    }
-}
-
 unsafe fn rdf(p: u32, i: usize) -> f32 {
     f32::from_bits(rd(p, i))
 }
 
 /// Size of the guest's pointers (and HWNDs, SIZE_Ts): 8 for 64-bit programs.
 /// Guest addresses are below 4G either way.
-use crate::d3d9::device::ptr;
+// (the guest-memory words d3d9 reads and writes, the same for d3d11)
+use crate::d3d9::device::{ptr, rd, wr, wrp};
 use crate::guest::{gc, gp};
 
 /// Pointer `i` of an array of pointers.
@@ -526,14 +511,6 @@ unsafe fn rdp(p: u32, i: usize) -> u32 {
     rd(p, i * us(ptr() / 4))
 }
 
-unsafe fn wrp(p: u32, i: usize, v: u32) {
-    // SAFETY: wrp's own contract: pointer i of the array at p is the caller's guest memory
-    unsafe { wr_word(p, i * us(ptr() / 4), v) };
-    if ptr() == 8 {
-        // SAFETY: (its upper half, in the same pointer)
-        unsafe { wr_word(p, i * 2 + 1, 0) };
-    }
-}
 
 /// DXGI_SWAP_CHAIN_DESC as 15 dwords in its 32-bit layout (OutputWindow at 11)
 unsafe fn swap_desc(desc: u32) -> [u32; 15] {
@@ -800,7 +777,8 @@ impl D11 {
                 // (the reference new_swapchain took)
                 self.release(s.device);
             }
-            Data::Factory | Data::Adapter(_) | Data::Output | Data::Device | Data::Context | Data::Layout(_) | Data::State(_) | Data::Query(..) | Data::CtxState(_) | Data::Other => {}
+            Data::Factory | Data::Adapter(_) | Data::Output | Data::Device | Data::Context | Data::Layout(_) | Data::State(_) | Data::CtxState(_) | Data::Other => {}
+            Data::Query(q) => q.forget(),
         }
     }
 }
@@ -817,7 +795,7 @@ pub unsafe fn init(vtbls: *const u32, count: u32) -> u32 {
                 ten_faces: false,
                 level: 0xb000,
                 made10: false,
-                ticks: 0,
+                stats: [0; 11],
                 vtbls: v,
                 objs: HashMap::new(),
                 next: 0,
@@ -2359,7 +2337,8 @@ unsafe fn device_call(d: &mut D11, m: u32, this: u32, a: &dyn Fn(usize) -> u32) 
             if a(2) == 0 {
                 return S_FALSE;
             }
-            let o = d.new_obj(IF_QUERY, Data::Query(t, 0, 0));
+            let Some(kind) = query::Kind::of_type(t) else { return E_INVALIDARG };
+            let o = d.new_obj(IF_QUERY, Data::Query(query::Query::new(kind)));
             wrp(a(2), 0, o);
             S_OK
         }
@@ -2977,28 +2956,14 @@ unsafe fn child_call(d: &mut D11, iface: u32, m: u32, this: u32, a: &dyn Fn(usiz
             0
         }
         // queries: GetDataSize, GetDesc
-        (IF_QUERY, 7, Some(Data::Query(t, ..))) => query_size(*t),
-        (IF_QUERY, 8, Some(Data::Query(t, ..))) => {
-            wr(a(1), 0, *t);
+        (IF_QUERY, 7, Some(Data::Query(q))) => q.kind.data_size(),
+        (IF_QUERY, 8, Some(Data::Query(q))) => {
+            // SAFETY: wr's own contract: GetDesc's D3D11_QUERY_DESC
+            unsafe { wr(a(1), 0, q.kind.type_id()) };
             wr(a(1), 1, 0);
             S_OK
         }
         _ => E_NOTIMPL,
-    }
-}
-
-fn query_size(t: u32) -> u32 {
-    match t {
-        0 => 4,     // EVENT
-        1 => 8,     // OCCLUSION
-        2 => 8,     // TIMESTAMP
-        3 => 16,    // TIMESTAMP_DISJOINT
-        4 => 88,    // PIPELINE_STATISTICS
-        5 => 4,     // OCCLUSION_PREDICATE
-        // SO_OVERFLOW_PREDICATE(_STREAM0..3) at 7, 9, 11, 13, 15; SO_STATISTICS(_STREAM0..3)
-        // at 6, 8, 10, 12, 14
-        7..=15 if t % 2 == 1 => 4,
-        _ => 16,
     }
 }
 
@@ -3101,6 +3066,14 @@ unsafe fn get_one(d: &mut D11, id: u32, out: u32) {
     wrp(out, 0, d.addr_of(id));
 }
 
+/// Whether SetPredication's predicate turns rendering off now: its answer (waited for: the
+/// page measures it) is the value given. A predicate never ended predicates nothing.
+fn predicated_off(d: &D11, st: &State) -> bool {
+    let (p, value) = st.predicate;
+    let Some(Data::Query(q)) = d.objs.get(&p).map(|o| &o.data) else { return false };
+    q.predicate_answer().is_some_and(|r| r == (value != 0))
+}
+
 unsafe fn context_call(d: &mut D11, m: u32, a: &dyn Fn(usize) -> u32, after: &mut After) -> u32 {
     let mut st = std::mem::replace(&mut d.st, default_state());
     let r = context_call2(d, &mut st, m, a, after);
@@ -3109,6 +3082,11 @@ unsafe fn context_call(d: &mut D11, m: u32, a: &dyn Fn(usize) -> u32, after: &mu
 }
 
 unsafe fn context_call2(d: &mut D11, st: &mut State, m: u32, a: &dyn Fn(usize) -> u32, after: &mut After) -> u32 {
+    // (what SetPredication's predicate turns off: draws, dispatches, copies, updates, clears,
+    // resolves, GenerateMips)
+    if matches!(m, 12 | 13 | 20 | 21 | 38..=42 | 46..=48 | 50..=54 | 57 | 132) && predicated_off(d, st) {
+        return 0;
+    }
     match m {
         3 => {
             d.add_ref(d.device);
@@ -3157,45 +3135,23 @@ unsafe fn context_call2(d: &mut D11, st: &mut State, m: u32, a: &dyn Fn(usize) -
         21 => draw(d, st, false, a(1), a(2), a(3), 0, a(4)),
         24 => st.topology = a(1),
         27 | 28 => {
-            // Begin, End: an event or a timestamp has no Begin
+            // Begin, End
             let q = d.id_of(a(1));
-            d.ticks += 1;
-            let now = d.ticks;
-            if let Some(Data::Query(t, state, stamp)) = d.objs.get_mut(&q).map(|o| &mut o.data) {
-                if m == 28 {
-                    *state = 2;
-                    *stamp = now * 1000;
-                } else if !matches!(*t, 0 | 2) {
-                    *state = 1;
-                }
+            let now = d.stats;
+            if let Some(Data::Query(x)) = d.objs.get_mut(&q).map(|o| &mut o.data) {
+                if m == 28 { x.end(&now) } else { x.begin(&now) }
             }
         }
         29 => {
-            // GetData(query, data, size, flags): everything is done at once; the data only once
-            // the query has ended, and only all of it
+            // GetData(query, data, size, flags)
             let q = d.id_of(a(1));
-            let Some(&Data::Query(t, state, stamp)) = d.objs.get(&q).map(|o| &o.data) else { return E_INVALIDARG };
-            if state != 2 {
-                return DXGI_ERROR_INVALID_CALL;
+            let Some(&Data::Query(x)) = d.objs.get(&q).map(|o| &o.data) else { return E_INVALIDARG };
+            let (hr, bytes) = x.get_data(a(2) != 0, a(3), a(4));
+            if !bytes.is_empty() {
+                // SAFETY: the guest's buffer of a(3) bytes (get_data gives a(3) bytes or none)
+                unsafe { std::ptr::copy_nonoverlapping(bytes.as_ptr(), gp::<u8>(a(2)), bytes.len()) };
             }
-            // (no size: only whether it is done; a size: all of it, somewhere)
-            if a(3) == 0 {
-                return S_OK;
-            }
-            if a(2) == 0 || a(3) != query_size(t) {
-                return E_INVALIDARG;
-            }
-            std::ptr::write_bytes(gp::<u8>(a(2)), 0, us(a(3)));
-            match t {
-                0 | 5 => wr(a(2), 0, 1),
-                1 => wr(a(2), 0, 1000),
-                2 => {
-                    wr(a(2), 0, lo32(stamp));
-                    wr(a(2), 1, lo32(stamp >> 32));
-                }
-                3 => wr(a(2), 0, 1_000_000_000),
-                _ => {}
-            }
+            return hr;
         }
         33 | 34 => {
             // OMSetRenderTargets(n, rtvs, dsv) (+ UAVs (start, n, uavs): kept, not drawn with)
@@ -3351,7 +3307,29 @@ unsafe fn context_call2(d: &mut D11, st: &mut State, m: u32, a: &dyn Fn(usize) -
                 dispatch(d, st, x, y, z);
             }
         }
-        38..=40 => {}
+        39 | 40 => {
+            // DrawIndexedInstancedIndirect / DrawInstancedIndirect(args, offset): the counts
+            // from the buffer
+            let n: u32 = if m == 39 { 5 } else { 4 };
+            if let Some(Data::Buffer(b)) = d.objs.get(&d.id_of(a(1))).map(|o| &o.data) && a(2).is_multiple_of(4) && u64::from(a(2)).saturating_add(u64::from(n) * 4) <= u64::from(b.size) {
+                let p = b.mem.saturating_add(a(2));
+                let [c, inst, first, base, first_inst]: [u32; 5] = std::array::from_fn(|i| {
+                    if i >= us(n) {
+                        return 0;
+                    }
+                    // SAFETY: rd's own contract: the buffer's guest memory, `n` words inside it (checked above)
+                    unsafe { rd(p, i) }
+                });
+                if m == 39 {
+                    // SAFETY: draw's own contract: this context's state
+                    unsafe { draw(d, st, true, c, inst, first, base.cast_signed(), first_inst) };
+                } else {
+                    // SAFETY: draw's own contract: this context's state
+                    unsafe { draw(d, st, false, c, inst, first, 0, base) };
+                }
+            }
+        }
+        38 => {}
         72 | 77 => get_slots(d, &st.cbs[usize::from(m == 77)], a(1), a(2), a(3)),
         73 | 84 => get_slots(d, &st.srvs[usize::from(m == 73)], a(1), a(2), a(3)),
         74 => {
@@ -4346,6 +4324,7 @@ unsafe fn draw(d: &mut D11, st: &State, indexed: bool, count: u32, instances: u3
     if count == 0 || instances == 0 || st.vs == 0 {
         return;
     }
+    query::count_draw(&mut d.stats, st.topology, count, instances, st.shaders[0] != 0, st.shaders[1] != 0 && st.shaders[2] != 0);
     // GL_POINTS through ANGLE: its point sprite geometry shader, done as an instance per point
     // (non-indexed, non-instanced point lists; see dxwgsl::translate_point_sprite)
     let sprite = match d.objs.get(&st.shaders[0]).map(|o| &o.data) {
@@ -4740,6 +4719,10 @@ unsafe fn dispatch(d: &mut D11, st: &State, x: u32, y: u32, z: u32) {
         Some(Data::Shader(s)) => s.code.clone(),
         _ => return,
     };
+    if let Ok([tx, ty, tz]) = dxwgsl::thread_group(&code) {
+        let n = |a: u32, b: u32, c: u32| u64::from(a).saturating_mul(u64::from(b)).saturating_mul(u64::from(c));
+        query::count_dispatch(&mut d.stats, n(x, y, z), n(tx, ty, tz));
+    }
     // the texture behind a view: (page texture, page format)
     fn tex_of(d: &D11, v: u32) -> Option<(u32, u32, &View)> {
         let Some(Data::View(vv)) = d.objs.get(&v).map(|o| &o.data) else { return None };

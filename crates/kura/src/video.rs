@@ -7,6 +7,7 @@
 //! of the newest request and copies decoded frames into the stream's slots
 //! (`vnhost_video_begin` / `vnhost_video_ready`); `frame` turns a slot into the guest's pixels.
 
+use kome::locks::Lock as _;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
 use std::sync::{Arc, Condvar, Mutex, OnceLock};
@@ -109,8 +110,7 @@ static DOORBELL: AtomicI32 = AtomicI32::new(0);
 static PAGE: AtomicBool = AtomicBool::new(false);
 
 fn with<R>(f: impl FnOnce(&mut HashMap<u32, Stream>) -> R) -> R {
-    let mut g = STREAMS.lock().unwrap_or_else(|e| e.into_inner());
-    f(g.get_or_insert_with(HashMap::new))
+    kome::locks::with_map(&STREAMS, f)
 }
 
 /// Whether a page decodes (no page under node: the guest keeps its own decoder).
@@ -204,7 +204,7 @@ pub fn put(id: u32, n: u32, bytes: Vec<u8>) {
             chunks.insert(n, bytes);
         }
     });
-    ring();
+    crate::bell::ring(&DOORBELL);
 }
 /// Whether frame `n` (decode order) of such a stream was handed in (and not dropped).
 pub fn has_chunk(id: u32, n: u32) -> bool {
@@ -231,7 +231,7 @@ pub fn frame_exact(id: u32, n: i32, timeout: Duration, f: impl FnOnce(&[[u32; 7]
         let Some(s) = g.get_or_insert_with(HashMap::new).get_mut(&id).filter(|s| !s.closed && !s.failed) else { return false };
         if s.want != n {
             s.want = n;
-            ring();
+            crate::bell::ring(&DOORBELL);
         }
         if let Some(k) = (0..s.slots.len()).find(|&k| !s.slots[k].writing && s.slots[k].frame == n) {
             if s.slots[k].rows < s.h {
@@ -428,17 +428,6 @@ fn release(m: &mut HashMap<u32, Stream>, id: u32) {
 /// Streams dropped since the page last listed them (`release`).
 static GRAVE: Mutex<Vec<Stream>> = Mutex::new(Vec::new());
 
-fn ring() {
-    DOORBELL.fetch_add(1, Ordering::SeqCst);
-    #[cfg(target_os = "emscripten")]
-    unsafe {
-        unsafe extern "C" {
-            fn emscripten_futex_wake(addr: *const std::ffi::c_void, count: i32) -> i32;
-        }
-        emscripten_futex_wake(DOORBELL.as_ptr() as *const std::ffi::c_void, i32::MAX);
-    }
-}
-
 /// How `frame` lays out the guest's pixels (B, G, R, A bytes per pixel).
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub enum Out {
@@ -503,7 +492,7 @@ unsafe fn frame_now(id: u32, n: i32, dst: *mut u8, pitch: usize, w: u32, h: u32,
         let Some(s) = g.get_or_insert_with(HashMap::new).get_mut(&id).filter(|s| !s.closed && !s.failed) else { return false };
         if s.want != n {
             s.want = n;
-            ring();
+            crate::bell::ring(&DOORBELL);
         }
         let late = start.elapsed() > WAIT && (s.shown >= 0 || s.opened.elapsed() > FIRST);
         let ready = |sl: &Slot| !sl.writing && sl.frame >= 0 && if late { sl.frame <= n && sl.frame > s.shown } else { sl.frame == n };
@@ -544,7 +533,7 @@ fn stat(waited: Duration, n: i32, late: bool) {
         return;
     }
     static S: Mutex<(Option<Instant>, u32, Duration, Duration, i32, u32)> = Mutex::new((None, 0, Duration::ZERO, Duration::ZERO, -1, 0));
-    let mut g = S.lock().unwrap();
+    let mut g = S.locked();
     let t0 = *g.0.get_or_insert_with(Instant::now);
     g.1 += 1;
     g.2 += waited;
@@ -1147,13 +1136,13 @@ fn fit_rows(layout: &[[u32; 7]; 2], tracks: u32, w: u32, h: u32, len: usize) -> 
 /// `layout` must hold 14 words.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn vnhost_video_ready(id: u32, buf: u32, layout: *const [u32; 14], ok: u32) {
-    let l = &*layout;
+    // (the same 14 words as two planes' 7: [[u32; 7]; 2] has [u32; 14]'s size and alignment)
+    let layout: [[u32; 7]; 2] = std::ptr::read(layout.cast());
     with(|m| {
         let Some(s) = m.get_mut(&id) else { return };
         let (w, h, tracks) = (s.w, s.h, s.tracks);
         if let Some(sl) = s.slots.iter_mut().find(|sl| sl.writing && !sl.buf.is_empty() && sl.buf.as_ptr() as u32 == buf) {
             sl.writing = false;
-            let layout: [[u32; 7]; 2] = [l[..7].try_into().unwrap(), l[7..].try_into().unwrap()];
             if ok == 0 {
                 sl.frame = -1;
             } else {
@@ -1291,7 +1280,7 @@ mod tests {
                 (f, true)
             })
             .collect();
-        crate::vnv::write(w, h, &[("raw-i420".into(), frames)], None)
+        crate::vnv::write(w, h, &[("raw-i420".into(), frames)], None).unwrap()
     }
 
     #[test]
@@ -1329,9 +1318,9 @@ mod tests {
         let mut d = raw(4, 4, 1, 128, 128);
         let i = info(&d).unwrap();
         let (off, _, _) = i.tracks[0].1[0];
-        d = crate::vnv::write(4, 4, &[("raw-i420".into(), vec![(d[off as usize..off as usize + 20].to_vec(), true)])], None);
+        d = crate::vnv::write(4, 4, &[("raw-i420".into(), vec![(d[off as usize..off as usize + 20].to_vec(), true)])], None).unwrap();
         assert!(open(d).is_none());
-        let two = crate::vnv::write(4, 4, &[("raw-i420".into(), vec![(vec![0; 24], true)]), ("vp09".into(), vec![(vec![0; 3], true)])], None);
+        let two = crate::vnv::write(4, 4, &[("raw-i420".into(), vec![(vec![0; 24], true)]), ("vp09".into(), vec![(vec![0; 3], true)])], None).unwrap();
         assert!(open(two).is_none());
     }
 
@@ -1388,7 +1377,7 @@ mod tests {
             if alpha {
                 tracks.push(("vp09.00.31.08".to_string(), track(0x5a)));
             }
-            let d = crate::vnv::write(32, 16, &tracks, None);
+            let d = crate::vnv::write(32, 16, &tracks, None).unwrap();
             let _fs = crate::vfs::tests::host_files();
             let f = TempVnv::new(&d);
             let (id, i) = open_file(&f.0).unwrap();
@@ -1894,7 +1883,7 @@ mod tests {
         let _fs = crate::vfs::tests::host_files();
         let mib = 1u32 << 20;
         let frames: Vec<(Vec<u8>, bool)> = (0..80).map(|k| (vec![k as u8], k == 0)).collect();
-        let mut d = crate::vnv::write(16, 16, &[("vp09.00.31.08".into(), frames)], None);
+        let mut d = crate::vnv::write(16, 16, &[("vp09.00.31.08".into(), frames)], None).unwrap();
         let i = info(&d).unwrap();
         // (each frame 1 MiB, one after the other in a sparse file past the header)
         let base = d.len() as u32;

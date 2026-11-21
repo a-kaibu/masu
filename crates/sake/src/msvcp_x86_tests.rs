@@ -1,5 +1,6 @@
 //! msvcp140 / msvcp120 for 32-bit programs (#150): the x64 handlers registered under their x86
 //! names, `this` in ECX as argument 0, 64-bit arguments in two slots.
+use kome::locks::Lock as _;
 use proptest::prelude::*;
 
 use crate::api::{self, Ctx};
@@ -90,7 +91,7 @@ fn game_imports_implemented_on_x86() {
 fn every_handler_has_an_x86_name() {
     let _g = test_guest::enter();
     crate::msvcp::init();
-    let mut m: Vec<String> = crate::msvcp::MISSED.lock().unwrap().clone();
+    let mut m: Vec<String> = crate::msvcp::MISSED.locked().clone();
     m.sort();
     m.dedup();
     assert!(m.is_empty(), "{}:\n{}", m.len(), m.join("\n"));
@@ -134,7 +135,7 @@ proptest! {
         prop_assert_eq!(c.q(1), slots[0] as u64 | (slots[1] as u64) << 32);
         prop_assert_eq!(c.z(2), slots[1] as u64);
         prop_assert_eq!(c.d(2).to_bits(), slots[1] as u64 | (slots[2] as u64) << 32);
-        prop_assert_eq!(c.fl(3).to_bits(), slots[2]);
+        prop_assert_eq!(c.f(3).to_bits(), slots[2]);
         prop_assert_eq!(mem::r32(c.byval(1)), slots[0]);
         prop_assert_eq!(c.byval(2), c.byval(1) + 4);
         mem::heap_free(sp);

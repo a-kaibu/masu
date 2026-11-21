@@ -8,33 +8,14 @@
 //! Textures are 16x16 B8G8R8A8 in 4x4 cells, buffers 64 bytes in 16 cells of 4 bytes; every
 //! write paints whole cells with bytes that name it (d3d9/lock_tests.rs).
 
+use super::trace_tests::{call1, each_seed, m, mem, put, rd1};
+use kome::locks::Lock as _;
 use super::*;
 use crate::d3d9::lock_tests::{fill_color, name_of, random_rect, write_bytes};
-use crate::d3d9::trace_tests::{alloc, attach_page, hr, seeds, write_module, Rng, CALLS, SERIAL};
+use crate::d3d9::trace_tests::{alloc, attach_page, hr, write_module, Rng, SERIAL};
 use crate::render::model;
 use std::fmt::Write as _;
 
-fn mem(n: u32) -> u32 {
-    unsafe { alloc(4 * n) as u32 }
-}
-
-fn put(p: u32, v: &[u32]) {
-    for (i, &x) in v.iter().enumerate() {
-        unsafe { *((p + 4 * i as u32) as *mut u32) = x };
-    }
-}
-
-fn rd1(p: u32) -> u32 {
-    unsafe { *(p as *const u32) }
-}
-
-fn call1(id: u32, args: &[u32]) -> u32 {
-    unsafe { call(id, args.as_ptr(), &CALLS) }
-}
-
-fn m(iface: u32, m: u32) -> u32 {
-    iface << 8 | m
-}
 
 /// Resources: 0 a default texture (with a render target view), 1 a staging texture, 2 a
 /// dynamic texture, 3 a staging buffer, 4 a default buffer.
@@ -130,7 +111,7 @@ fn run(seed: u64) {
     assert_eq!(call1(m(IF_DEVICE, 9), &[dev, res[0], 0, o]), 0);
     let rtv = rd1(o);
     let gpu_of = |a: u32| {
-        let g = D11S.lock().unwrap();
+        let g = D11S.locked();
         let d = g.as_ref().unwrap();
         match &d.objs[&d.id_of(a)].data {
             Data::Texture(t) => t.gpu,
@@ -263,7 +244,7 @@ fn run(seed: u64) {
     // references from here)
     let release = |a: u32| {
         let iface = {
-            let g = D11S.lock().unwrap();
+            let g = D11S.locked();
             let d = g.as_ref().unwrap();
             d.objs[&d.id_of(a)].faces.iter().find(|f| f.1 == a).unwrap().0
         };
@@ -354,13 +335,7 @@ fn check(steps: &[Step], seed: u64) {
 
 #[test]
 fn d3d11_map_trace() {
-    let _g = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
-    let vt = mem(256);
-    put(vt, &(1..=256).map(|i| 0x1000 * i).collect::<Vec<_>>());
-    call1(INIT, &[vt, 256]);
-    for seed in 0..seeds() {
-        run(seed);
-    }
+    each_seed(run);
 }
 
 /// A staging texture's first Map: zeros when it was made without data and nothing wrote it

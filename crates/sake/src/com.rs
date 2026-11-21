@@ -309,6 +309,14 @@ fn release(c: &mut Ctx) -> u32 {
     release_obj(c.a(0))
 }
 
+/// QueryInterface of an object that is every interface asked for and counts no references
+/// (singletons, the static objects a stub hands out): itself, S_OK.
+pub fn qi_self(c: &mut Ctx) -> u32 {
+    let c = &mut c.args::<crate::api::outs::iface::IUnknown::QueryInterface>();
+    c.out::<2>().put(c.a::<0>());
+    0
+}
+
 /// Release on `obj` (for objects whose own Release frees more): the references left. At the
 /// last one the object's `on_free` runs and its block goes (after the quarantine).
 pub fn release_obj(this: u32) -> u32 {

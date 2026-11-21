@@ -86,25 +86,9 @@ fn decode_utf16(e: &'static encoding_rs::Encoding, s: &[u8]) -> (Vec<u16>, bool)
     (out, bad)
 }
 
+/// UTF-8 as Windows decodes it: RtlUTF8ToUnicodeN's rules (crate::rtlstr::utf8_units)
 fn utf8_to_w(s: &[u8]) -> (Vec<u16>, bool) {
-    let mut out = Vec::with_capacity(s.len());
-    let mut bad = false;
-    let mut rest = s;
-    while let Some(ch) = rest.utf8_chunks().next() {
-        out.extend(ch.valid().encode_utf16());
-        let inv = ch.invalid();
-        if inv.is_empty() {
-            break;
-        }
-        bad = true;
-        out.push(0xfffd);
-        let mut used = ch.valid().len() + inv.len();
-        if inv == [0xed] && rest.get(used).is_some_and(|b| (0xa0..=0xbf).contains(b)) {
-            used += 1;
-        }
-        rest = &rest[used..];
-    }
-    (out, bad)
+    crate::rtlstr::utf8_units(s)
 }
 
 fn sjis_to_w(s: &[u8]) -> (Vec<u16>, bool) {
@@ -385,7 +369,7 @@ fn to_half(w: &[u16]) -> Vec<u16> {
             // (the marks ゛ ゜ and the brackets keep their full forms: only kana narrow)
             0x30a1..=0x30fc => match (half_of(c), voiced(c)) {
                 (Some(h), _) => out.push(h),
-                (None, Some((b, m))) if half_of(b).is_some() => out.extend([half_of(b).unwrap(), m]),
+                (None, Some((b, m))) if let Some(hb) = half_of(b) => out.extend([hb, m]),
                 _ => out.push(c),
             },
             _ => out.push(c),

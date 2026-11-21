@@ -1735,13 +1735,9 @@ fn bv_is_default(c: &mut Ctx, dest: bool) -> u32 {
     let d = with(base(c, BV), |g| if dest { g.dst.is_none() } else { g.src.is_none() }).unwrap_or(true);
     if d { 0 } else { Hr::False.code() }
 }
+/// GetVideoSize(width, height); also IBasicVideo2::GetPreferredAspectRatio, which answers the
+/// same two numbers (the picture's own size: square pixels)
 fn bv_size(c: &mut Ctx) -> u32 {
-    let v = with(base(c, BV), |g| g.video).unwrap_or_default();
-    put32(c.a(1), v.0.cast_unsigned());
-    put32(c.a(2), v.1.cast_unsigned());
-    0
-}
-fn bv_aspect(c: &mut Ctx) -> u32 {
     let v = with(base(c, BV), |g| g.video).unwrap_or_default();
     put32(c.a(1), v.0.cast_unsigned());
     put32(c.a(2), v.1.cast_unsigned());
@@ -1981,7 +1977,7 @@ fn vtables() -> &'static [u32; NI] {
             (bv_image, 12),
             (is_src, 4),
             (is_dst, 4),
-            (bv_aspect, 12), // IBasicVideo2::GetPreferredAspectRatio
+            (bv_size, 12), // IBasicVideo2::GetPreferredAspectRatio
         ];
         bv.extend(bv_tail);
         // (the same calls, each E_NOINTERFACE)

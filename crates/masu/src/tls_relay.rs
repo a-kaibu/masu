@@ -301,6 +301,7 @@ async fn tunnel(
 
 #[cfg(test)]
 mod tests {
+    use kome::locks::Lock as _;
     use super::*;
     use futures_util::{SinkExt, StreamExt};
     use tokio::net::TcpListener;
@@ -722,7 +723,7 @@ mod tests {
             let mut buf = [0; 16384];
             loop {
                 tokio::select! {
-                    n=bridge.read(&mut buf)=>{let Ok(n)=n else{break};if n==0{break}capture.lock().unwrap().extend_from_slice(&buf[..n]);if ws.send(tungstenite::Message::Binary(buf[..n].to_vec().into())).await.is_err(){break}},
+                    n=bridge.read(&mut buf)=>{let Ok(n)=n else{break};if n==0{break}capture.locked().extend_from_slice(&buf[..n]);if ws.send(tungstenite::Message::Binary(buf[..n].to_vec().into())).await.is_err(){break}},
                     m=ws.next()=>{match m{Some(Ok(tungstenite::Message::Binary(b)))=>{if bridge.write_all(&b).await.is_err(){break}},Some(Ok(tungstenite::Message::Ping(_)|tungstenite::Message::Pong(_)))=>{},_=>break}}
                 }
             }
@@ -776,7 +777,7 @@ mod tests {
                 tls.read_exact(&mut response).await.unwrap();
                 assert_eq!(&response, b"official-response-fixture");
                 assert!(task.await.unwrap());
-                let ciphertext = recorded.lock().unwrap();
+                let ciphertext = recorded.locked();
                 assert!(ciphertext.len() > 21);
                 assert!(!ciphertext
                     .windows(21)

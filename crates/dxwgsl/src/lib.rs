@@ -61,7 +61,7 @@ pub fn translate(code: &[u8], pixel: bool, ps: Option<&[u8]>) -> Result<Wgsl, St
     crate::wgsl::translate(code, pixel, ps)
 }
 
-pub use crate::wgsl::{translate_addr, translate_compute, translate_point_sprite, uav_slots};
+pub use crate::wgsl::{translate_addr, translate_compute, translate_point_sprite, thread_group, uav_slots};
 
 /// The "geometry shader" sake's D3DCompile makes of ANGLE's point sprite geometry shader: this
 /// tag, then the largest point size (f32). The D3D11 device draws points with it as sprites
@@ -72,6 +72,17 @@ pub const POINT_SPRITE_GS: &[u8; 8] = b"SAKEPSGS";
 pub fn point_sprite_gs(code: &[u8]) -> Option<f32> {
     let rest = code.strip_prefix(POINT_SPRITE_GS.as_slice())?;
     Some(f32::from_le_bytes(rest.get(..4)?.try_into().ok()?))
+}
+
+/// WGSL a translator wrote, parsed and validated by naga (as the page's WebGPU will); a panic
+/// shows the error and the code.
+#[cfg(test)]
+pub(crate) fn valid_wgsl(w: &str) -> naga::Module {
+    let m = naga::front::wgsl::parse_str(w).unwrap_or_else(|e| panic!("{}\n{w}", e.emit_to_string(w)));
+    naga::valid::Validator::new(naga::valid::ValidationFlags::all(), naga::valid::Capabilities::all())
+        .validate(&m)
+        .unwrap_or_else(|e| panic!("{e:?}\n{w}"));
+    m
 }
 
 #[cfg(test)]

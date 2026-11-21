@@ -6,8 +6,9 @@ use super::*;
 use crate::test_guest::{snapshot, Rng};
 use std::fmt::Write;
 
+/// FNV-1a of the samples' bits
 fn h(v: &[f32]) -> u64 {
-    v.iter().flat_map(|x| x.to_bits().to_le_bytes()).fold(0xcbf2_9ce4_8422_2325u64, |h, b| (h ^ u64::from(b)).wrapping_mul(0x100_0000_01b3))
+    kome::golden::Fnv::new().words(v.iter().map(|x| x.to_bits())).get()
 }
 
 fn fl(r: &mut Rng, lo: f32, hi: f32) -> f32 {

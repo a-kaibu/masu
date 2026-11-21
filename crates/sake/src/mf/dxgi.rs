@@ -288,6 +288,7 @@ fn mb_set_len(c: &mut Ctx) -> u32 {
     })
     .unwrap_or(Hr::InvalidArg.code())
 }
+/// GetMaxLength(DWORD *); also IMF2DBuffer::GetContiguousLength (the buffer is one contiguous block)
 fn mb_get_max(c: &mut Ctx) -> u32 {
     if c.a(1) == 0 {
         return Hr::Pointer.code();
@@ -398,14 +399,6 @@ fn b2_contiguous(c: &mut Ctx) -> u32 {
     w32(c.a(1), 0);
     0
 }
-/// GetContiguousLength(DWORD *)
-fn b2_length(c: &mut Ctx) -> u32 {
-    if c.a(1) == 0 {
-        return Hr::Pointer.code();
-    }
-    w32(c.a(1), with(c.a(0), |d| d.max).unwrap_or(0));
-    0
-}
 /// ContiguousCopyTo(BYTE *, DWORD): the rows top-down
 fn b2_copy_to(c: &mut Ctx) -> u32 {
     let (dst, n) = (c.a(1), c.a(2));
@@ -461,7 +454,7 @@ fn vtables() -> [u32; 3] {
                     (b2_unlock, 4),
                     (b2_scan0, 12),
                     (b2_contiguous, 8),
-                    (b2_length, 8),
+                    (mb_get_max, 8), // GetContiguousLength: the whole buffer
                     (b2_copy_to, 12),
                     (b2_copy_from, 12),
                 ],

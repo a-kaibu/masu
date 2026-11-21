@@ -85,8 +85,7 @@ pub fn encode(data: &[u8], fmt: u32) -> Result<String, u32> {
     let mut s = String::new();
     match format {
         BASE64 => base64_lines(data, nl, &mut s),
-        BASE64HEADER | BASE64REQUESTHEADER | BASE64X509CRLHEADER => {
-            let l = label(format).unwrap();
+        BASE64HEADER | BASE64REQUESTHEADER | BASE64X509CRLHEADER if let Some(l) = label(format) => {
             s.push_str(&format!("-----BEGIN {l}-----{nl}"));
             base64_lines(data, nl, &mut s);
             s.push_str(&format!("-----END {l}-----{nl}"));

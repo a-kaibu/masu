@@ -224,7 +224,7 @@ pub fn pick_exe(root: &Path, hint: Option<&str>) -> Option<String> {
         return Some(e);
     }
     // (Unity's UnityCrashHandler32/64.exe is bigger than the game's own exe)
-    let tool = regex::Regex::new(r"(?i)unins|setup|install|config|WindowsInstaller|InstMsi|KB[0-9]{6}|vcredist|vc_redist|redist|directx|dxsetup|tool|設定|update|DXWeb|dotnet|CrashHandler|crashpad").unwrap();
+    let tool = lazy_regex::regex!(r"(?i)unins|setup|install|config|WindowsInstaller|InstMsi|KB[0-9]{6}|vcredist|vc_redist|redist|directx|dxsetup|tool|設定|update|DXWeb|dotnet|CrashHandler|crashpad");
     exes.sort_by(|a, b| b.0.cmp(&a.0).then(a.1.cmp(&b.1)));
     // (by the file's name: setup.exe.is/Disk1/BGI.exe is a game)
     exes.into_iter().find(|(_, r)| !tool.is_match(r.rsplit('/').next().unwrap_or(r))).map(|(_, r)| r)
@@ -700,13 +700,11 @@ fn zsfx(job: &Job, src: &Path, out: &Path) -> Result<bool> {
         }
     };
     // sub folders made with MAKESUBDIR: their last path part
-    let sub: Vec<String> = regex::Regex::new(r#"(?m)^Val\d+=.*?MAKESUBDIR,"([^"]*)""#)
-        .unwrap()
+    let sub: Vec<String> = lazy_regex::regex!(r#"(?m)^Val\d+=.*?MAKESUBDIR,"([^"]*)""#)
         .captures_iter(&ini)
         .map(|c| c[1].trim_end_matches('"').rsplit('\\').next().unwrap_or("").to_string())
         .collect();
-    let files: Vec<(String, u64)> = regex::Regex::new(r"(?m)^File\d+=([^,\r\n]*),([^,\r\n]*),[^,\r\n]*,(\d+),")
-        .unwrap()
+    let files: Vec<(String, u64)> = lazy_regex::regex!(r"(?m)^File\d+=([^,\r\n]*),([^,\r\n]*),[^,\r\n]*,(\d+),")
         .captures_iter(&ini)
         .map(|c| {
             let name = if c[2].contains("MAKESUBDIR") && !sub.is_empty() { format!("{}/{}", sub[0], &c[1]) } else { c[1].to_string() };
@@ -853,7 +851,7 @@ fn watch_child(job: &Job, watch: &Path, base: (u64, u64, u64), mut c: Child, nam
 
 /// The lines of a tool's output that tell what failed (else its last lines), at most 20.
 fn failures(log: &str) -> String {
-    let re = regex::Regex::new(r"(?i)error|fail|crc|corrupt|cannot|can't|unexpected|broken|damaged|unsupported").unwrap();
+    let re = lazy_regex::regex!(r"(?i)error|fail|crc|corrupt|cannot|can't|unexpected|broken|damaged|unsupported");
     let lines: Vec<&str> = log.lines().map(str::trim).filter(|l| !l.is_empty()).collect();
     let hit: Vec<&str> = lines.iter().copied().filter(|l| re.is_match(l)).collect();
     let pick = if hit.is_empty() { &lines[lines.len().saturating_sub(5)..] } else { &hit[..] };

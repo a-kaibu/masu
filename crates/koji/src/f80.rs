@@ -33,7 +33,7 @@ fn bits_of(pc: u32) -> u32 {
 
 impl F80 {
     pub fn from_bytes(b: &[u8; 10]) -> F80 {
-        F80 { m: u64::from_le_bytes(b[..8].try_into().unwrap()), se: u16::from_le_bytes([b[8], b[9]]) }
+        F80 { m: u64::from_le_bytes(kome::le::arr::<0, 8, 10>(b)), se: u16::from_le_bytes([b[8], b[9]]) }
     }
     pub fn to_bytes(self) -> [u8; 10] {
         let mut b = [0u8; 10];

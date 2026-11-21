@@ -16,7 +16,8 @@ void main() { gl_Position = gl_Vertex + extra;\n\
    + gl_TextureMatrix[3] * gl_MultiTexCoord3 + vec4(gl_NormalMatrix * gl_Normal, 0.0); }";
 const FS: &str = "varying vec4 v;\nvoid main() { gl_FragColor = v; }";
 
-fn guest(text: &str) -> *const *const c_char {
+/// `text` as glShaderSource takes it: one NUL-terminated string, by a pointer in guest memory.
+pub(super) fn guest(text: &str) -> *const *const c_char {
     unsafe {
         let p = alloc(text.len() as u32 + 1);
         std::ptr::copy_nonoverlapping(text.as_ptr(), p, text.len());
@@ -87,7 +88,7 @@ fn glsl_draws_read_what_gl_reads() {
     glLinkProgram(p);
     glUseProgram(p);
     // which input is which (location -> name)
-    let attribs: Vec<(String, u32)> = GL.lock().unwrap().programs[&p].linked.as_ref().expect("linked").attribs.clone();
+    let attribs: Vec<(String, u32)> = GL.locked().programs[&p].linked.as_ref().expect("linked").attribs.clone();
     for n in ["vn_Vertex", "vn_Color", "vn_Normal", "vn_MultiTexCoord0", "vn_MultiTexCoord3", "vn_MultiTexCoord7", "extra"] {
         assert!(attribs.iter().any(|a| a.0 == n), "no input {n}: {attribs:?}");
     }
@@ -242,7 +243,7 @@ fn glsl_draws_read_what_gl_reads() {
         glActiveTexture(GL_TEXTURE0 + unit);
         glMatrixMode(0x1702);
         unsafe { glLoadMatrixf(t.as_ptr()) };
-        let g = GL.lock().unwrap();
+        let g = GL.locked();
         let c = g.ctxs.get(&ctx).unwrap();
         assert_eq!(builtin_uniform(c, &format!("vn_TM{unit}")).unwrap(), t.to_vec(), "gl_TextureMatrix[{unit}]");
         assert_eq!(builtin_uniform(c, "vn_MV").unwrap(), m.to_vec());

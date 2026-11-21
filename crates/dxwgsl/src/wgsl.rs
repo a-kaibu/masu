@@ -1639,6 +1639,15 @@ pub fn translate_point_sprite(code: &[u8], ps: Option<&[u8]>, max_size: f32) -> 
 /// The typed UAVs a compute shader declares: (slot, dimension as dcl_uav_typed has it (2 1D,
 /// 3 2D, 5 3D, 7 1D array, 8 2D array), return type (1 unorm, 2 snorm, 3 sint, 4 uint, 5
 /// float)).
+/// A compute shader's dcl_thread_group: the threads of one group.
+pub fn thread_group(code: &[u8]) -> R<[u32; 3]> {
+    let (_, p) = parse(code)?;
+    match p.insts.iter().find(|i| i.op == Opcode::DclThreadGroup).map(|i| &i.extra[..]) {
+        Some(&[x, y, z]) => Ok([x, y, z]),
+        _ => Err("no dcl_thread_group".into()),
+    }
+}
+
 pub fn uav_slots(code: &[u8]) -> R<Vec<(u32, u32, u32)>> {
     let (_, p) = parse(code)?;
     Ok(p.insts.iter().filter(|i| i.op == Opcode::DclUavTyped && !i.ops.is_empty()).map(|i| (i.ops[0].reg(), i.ctl & 0x1f, i.extra.first().map_or(5, |r| r & 0xf))).collect())

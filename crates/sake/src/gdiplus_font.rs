@@ -11,6 +11,7 @@
 
 #![allow(non_snake_case)]
 
+use kome::locks::Lock as _;
 use crate::api::{implement, Ctx, Handler};
 use crate::mem::{self, r16, r32, w16, w32};
 use crate::HashMap;
@@ -46,7 +47,7 @@ struct State {
 static STATE: Mutex<Option<State>> = Mutex::new(None);
 
 fn with<R>(f: impl FnOnce(&mut State) -> R) -> R {
-    f(STATE.lock().unwrap().get_or_insert_with(State::default))
+    f(STATE.locked().get_or_insert_with(State::default))
 }
 
 /// The families Windows always has, absent from sake's fonts: (name, built-in face drawn with:

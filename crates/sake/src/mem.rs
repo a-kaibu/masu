@@ -1398,6 +1398,7 @@ pub(crate) unsafe fn rmw32_at(p: usize, f: impl Fn(u32) -> u32) -> u32 {
 
 #[cfg(test)]
 mod tests {
+    use kome::locks::Lock as _;
     use super::{over_reserved_block, rmw32_at, GUEST_TOP};
 
     /// Review A-13: guest sizes near 0xFFFFFFFF in VirtualProtect, VirtualFree(MEM_DECOMMIT) and
@@ -1476,16 +1477,17 @@ mod tests {
     /// (koji addresses memory modulo 4G). The bookkeeping only (no guest memory: native test),
     /// in 0x5000_0000..0x7000_0000, where no other test reserves.
     mod high {
+        use kome::locks::Lock as _;
         use super::super::{find, high_of, reserve, set_high, widen, HIGH, SPACE};
         use proptest::prelude::*;
         use std::sync::atomic::Ordering::Relaxed;
 
         fn forget(base: u32) {
-            let r = SPACE.lock().unwrap().remove(&base).unwrap();
+            let r = SPACE.locked().remove(&base).unwrap();
             if r.hi != 0 {
                 HIGH.fetch_sub(1, Relaxed);
             }
-            super::super::PAGES.lock().unwrap().remove(&base);
+            super::super::PAGES.locked().remove(&base);
         }
 
         proptest! {
@@ -1689,8 +1691,8 @@ mod tests {
         assert!(!in_one_allocation(b + 0x1_fffc, 5));
         assert!(!in_one_allocation(b + 0x2_0000, 1));
         assert!(!in_one_allocation(b - 1, 2));
-        SPACE.lock().unwrap().remove(&b);
-        PAGES.lock().unwrap().remove(&b);
+        SPACE.locked().remove(&b);
+        PAGES.locked().remove(&b);
     }
 
     #[test]

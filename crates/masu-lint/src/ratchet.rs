@@ -110,6 +110,10 @@ pub const ROBUST: [&str; 49] = [
     "mut_mut",
 ];
 pub const GROUPS: [&str; 3] = ["correctness", "suspicious", "perf"];
+/// Lints product code (what `--lib --bins` builds: no cfg(test) code, no tests/, benches/,
+/// examples/) never has, with no baseline and no --raise (2026-11-21: every unwrap and expect
+/// out of it; `?` and a typed error, or a type the assumption is, instead).
+pub const NEVER: [&str; 2] = ["unwrap_used", "expect_used"];
 /// rustc's code for unsafe_op_in_unsafe_fn
 pub const UNSAFE_OP: (&str, &str) = ("E0133", "unsafe_op_in_unsafe_fn");
 pub const PINNED: [&str; 10] = [
@@ -186,13 +190,20 @@ fn clippy_lints(first: bool) -> Vec<String> {
     if first {
         LINTS.iter().map(|l| format!("clippy::{l}")).chain(GROUPS.iter().map(|g| format!("clippy::{g}"))).collect()
     } else {
-        ROBUST.iter().map(|l| format!("clippy::{l}")).chain([UNSAFE_OP.1.to_owned(), "clippy::disallowed_methods".to_owned()]).collect()
+        ROBUST.iter().chain(NEVER.iter()).map(|l| format!("clippy::{l}")).chain([UNSAFE_OP.1.to_owned(), "clippy::disallowed_methods".to_owned()]).collect()
     }
 }
 
-/// clippy's two runs: (LINTS + GROUPS, --all-targets), (ROBUST, libraries and binaries)
-pub fn clippy(repo: &Repo, disallowed: &BTreeMap<String, Option<String>>) -> Result<BTreeSet<Hit>, String> {
+/// What clippy counted: every hit, and the [`NEVER`] ones in product code.
+pub struct Hits {
+    pub all: BTreeSet<Hit>,
+    pub product: BTreeSet<Hit>,
+}
+
+/// clippy's two runs: (LINTS + GROUPS, --all-targets), (ROBUST + NEVER, libraries and binaries)
+pub fn clippy(repo: &Repo, disallowed: &BTreeMap<String, Option<String>>) -> Result<Hits, String> {
     let mut seen = BTreeSet::new();
+    let mut product = BTreeSet::new();
     for (targets, first) in [(&["--all-targets"][..], true), (&["--lib", "--bins"][..], false)] {
         let mut c = std::process::Command::new("cargo");
         c.args(["clippy", "--workspace"]).args(targets).args(["--keep-going", "--message-format=json", "--", "--cap-lints", "warn", "-A", "clippy::all"]);
@@ -208,6 +219,9 @@ pub fn clippy(repo: &Repo, disallowed: &BTreeMap<String, Option<String>>) -> Res
         let out = c.output().map_err(|e| format!("cargo clippy: {e}"))?;
         for line in String::from_utf8_lossy(&out.stdout).lines() {
             if let Some(h) = message(line, disallowed)? {
+                if !first && NEVER.contains(&h.lint.as_str()) {
+                    product.insert(h.clone());
+                }
                 seen.insert(h);
             }
         }
@@ -215,7 +229,7 @@ pub fn clippy(repo: &Repo, disallowed: &BTreeMap<String, Option<String>>) -> Res
             return Err("clippy failed (above)".into());
         }
     }
-    Ok(seen)
+    Ok(Hits { all: seen, product })
 }
 
 /// one line of cargo's JSON: the counted lint it reports, if any
@@ -417,6 +431,11 @@ pub fn count(repo: &Repo, hits: &BTreeSet<Hit>) -> Counts {
     c
 }
 
+/// the (file, lint)s of [`NEVER`] hits in product code, each once
+pub fn never(product: &BTreeSet<Hit>) -> BTreeSet<(Rel, String)> {
+    product.iter().filter(|h| NEVER.contains(&h.lint.as_str())).map(|h| (h.file.clone(), h.lint.clone())).collect()
+}
+
 fn bump<K: Ord>(m: &mut BTreeMap<K, usize>, k: K) {
     let e = m.entry(k).or_default();
     *e = e.saturating_add(1);
@@ -481,12 +500,15 @@ pub struct Paths {
 /// the check, or with `update` the lists written down (only down, but `raise` files as they are)
 pub fn run(repo: &Repo, paths: &Paths, update: bool, raise: &BTreeSet<Rel>) -> Result<String, String> {
     let disallowed = crate::arch::disallowed(&std::fs::read_to_string(repo.conf.join("clippy.toml")).unwrap_or_default());
-    let hits = clippy(repo, &disallowed)?;
+    let Hits { all: hits, product } = clippy(repo, &disallowed)?;
     let now = count(repo, &hits);
     let old = load_counts(&std::fs::read_to_string(&paths.counts).unwrap_or_default());
     let first = !paths.sites.exists();
     let old_sites = load_sites(&std::fs::read_to_string(&paths.sites).unwrap_or_default());
     let mut bad = vec![];
+    for k in never(&product) {
+        bad.push(format!("masu-lint ratchet: {}: clippy::{} in product code: never (`?` and a typed error, or a type that cannot fail; tests and examples may)", k.0, k.1));
+    }
     for (k, n) in &now.files {
         let was = old.get(k).copied().unwrap_or(0);
         if *n > was && !raise.contains(&k.0) {

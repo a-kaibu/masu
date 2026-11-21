@@ -788,7 +788,7 @@ fn check_(m: &[u8], funcs: usize) -> Option<()> {
     // the types and imports the translators write, byte for byte (an import of another type
     // links nowhere: every page's instantiate of the bundle would throw)
     let (types, imports) = (sec(&s, 1)?, sec(&s, 2)?);
-    if !heads().iter().any(|h| h.0 == types && h.1 == imports) {
+    if !heads()?.iter().any(|h| h.0 == types && h.1 == imports) {
         return None;
     }
     let mut p = 0;
@@ -858,14 +858,15 @@ fn check_(m: &[u8], funcs: usize) -> Option<()> {
 
 /// The types and imports sections of the translators' modules ([`super::module_head`]): 32-bit,
 /// long mode.
-fn heads() -> [(Vec<u8>, Vec<u8>); 2] {
-    [false, true].map(|long| {
+fn heads() -> Option<[(Vec<u8>, Vec<u8>); 2]> {
+    let head = |long| {
         let mut m = Module::default();
         super::module_head(&mut m, long);
         let b = m.finish();
-        let s = sections(&b).expect("our own module");
-        (sec(&s, 1).unwrap().to_vec(), sec(&s, 2).unwrap().to_vec())
-    })
+        let s = sections(&b)?;
+        Some((sec(&s, 1)?.to_vec(), sec(&s, 2)?.to_vec()))
+    };
+    Some([head(false)?, head(true)?])
 }
 
 /// A module of `funcs` (exported as "f0", "f1", ... and named `names` if there is one each).
@@ -1046,20 +1047,11 @@ mod tests {
     #[test]
     fn check_takes_translated_modules_only_with_their_types() {
         let code: alloc::vec::Vec<u8> = [0x40, 0x01, 0xc8, 0xc3].to_vec();
-        struct Mem(alloc::vec::Vec<u8>);
-        impl crate::Memory for Mem {
-            fn read8(&mut self, a: u32) -> Result<u8, crate::Fault> {
-                a.checked_sub(0x10_0000).and_then(|i| self.0.get(i as usize).copied()).ok_or(crate::Fault { addr: a, write: false })
-            }
-            fn write8(&mut self, a: u32, _: u8) -> Result<(), crate::Fault> {
-                Err(crate::Fault { addr: a, write: true })
-            }
-        }
         let made = |tweak: &dyn Fn(&mut Module)| {
             let mut m = Module::default();
             super::super::module_head(&mut m, false);
             tweak(&mut m);
-            super::super::translate_region(&mut m, &mut Mem(code.clone()), &[0x10_0000], 16, |_| true).unwrap();
+            super::super::translate_region(&mut m, &mut crate::Rom::<0x10_0000>(code.clone()), &[0x10_0000], 16, |_| true).unwrap();
             (m.finish(), m.funcs.len())
         };
         let (a, n) = made(&|_| {});

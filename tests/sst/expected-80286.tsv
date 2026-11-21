@@ -1,4 +1,4 @@
-# file	passing	tests  (80286 suite; crates/koji/tests/singlestep.rs; SST_UPDATE=1 rewrites)
+# file	passing	tests  (80286 suite; crates/koji/tests/singlestep.rs; MASU_UPDATE_GOLDEN=1 rewrites)
 00	4960	4960
 01	4920	4920
 02	4845	4845

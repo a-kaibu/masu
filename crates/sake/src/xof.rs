@@ -323,21 +323,22 @@ fn binary_into(d: &[u8], float64: bool, t: &mut Vec<Tok>) -> Result<(), u32> {
                 Tok::Int(v, false)
             }
             5 => {
-                let g: Guid = bytes(i, 16).ok_or(PARSEERROR)?.try_into().unwrap();
+                let g: Guid = kome::le::bytes_at(d, i).ok_or(PARSEERROR)?;
                 i += 16;
                 Tok::Guid(g)
             }
             6 | 7 => {
                 let n = dword(i)? as usize;
-                let w = if c == 7 && float64 { 8 } else { 4 };
+                let wide = c == 7 && float64;
+                let w = if wide { 8 } else { 4 };
                 let body = bytes(i + 4, n.checked_mul(w).ok_or(PARSEERROR)?).ok_or(PARSEERROR)?;
                 i += 4 + n * w;
-                for e in body.chunks_exact(w) {
-                    t.push(match (c, w) {
-                        (6, _) => Tok::Int(u32::from_le_bytes(e.try_into().unwrap()), true),
-                        (_, 8) => Tok::Float(f64::from_le_bytes(e.try_into().unwrap()), true),
-                        _ => Tok::Float(f32::from_le_bytes(e.try_into().unwrap()) as f64, true),
-                    });
+                if wide {
+                    t.extend(kome::le::pieces::<8>(body).iter().map(|e| Tok::Float(f64::from_le_bytes(*e), true)));
+                } else if c == 6 {
+                    t.extend(kome::le::pieces::<4>(body).iter().map(|e| Tok::Int(u32::from_le_bytes(*e), true)));
+                } else {
+                    t.extend(kome::le::pieces::<4>(body).iter().map(|e| Tok::Float(f32::from_le_bytes(*e) as f64, true)));
                 }
                 continue;
             }

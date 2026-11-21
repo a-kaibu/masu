@@ -7,6 +7,7 @@
 //! terminated it, and hands its windows the messages other processes posted or sent to them
 //! (crate::user::deliver_remote).
 
+use kome::locks::Rw as _;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use crate::api::Ctx;
@@ -139,7 +140,7 @@ fn find_program(prog: &str, app: bool) -> Result<(String, String), u32> {
     let bare = !name.contains(['\\', '/']);
     let mut tries = Vec::new();
     if bare {
-        let exe = crate::pe::MODULES.read().unwrap().iter().find(|m| !m.dll).map_or_default(|m| m.path.clone());
+        let exe = crate::pe::MODULES.r().iter().find(|m| !m.dll).map_or_default(|m| m.path.clone());
         if let Some((d, _)) = exe.rsplit_once('\\') {
             tries.push(format!("{d}\\{name}"));
         }

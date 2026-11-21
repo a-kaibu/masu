@@ -42,7 +42,38 @@ pub fn call(f: Handler, args: &[u32]) -> u32 {
     drop(sp_own);
     result
 }
+
+/// The object a creating call makes: `f(args.., out)` must return S_OK, and the pointer it put
+/// in `*out` is the answer.
+pub fn made(f: Handler, args: &[u32]) -> u32 {
+    let o = mem::heap_alloc(8, true);
+    let mut a = args.to_vec();
+    a.push(o);
+    assert_eq!(call(f, &a), 0);
+    let p = mem::rp(o);
+    mem::heap_free(o);
+    p
+}
 /// Makes the calling test thread a guest thread (a TEB: last_error, TLS), once per host thread.
+/// `s` NUL-terminated in a new heap block (an LPCSTR argument)
+pub fn astr(s: &str) -> u32 {
+    let p = mem::heap_alloc(kome::num::u32_of(s.len()) + 1, true);
+    for (i, b) in s.bytes().chain([0]).enumerate() {
+        mem::w8(p + kome::num::u32_of(i), b);
+    }
+    p
+}
+
+/// `s` as UTF-16, NUL-terminated, in a new heap block (an LPCWSTR argument)
+pub fn wstr(s: &str) -> u32 {
+    let w: Vec<u16> = s.encode_utf16().chain([0]).collect();
+    let p = mem::heap_alloc(2 * kome::num::u32_of(w.len()), true);
+    for (i, c) in w.iter().enumerate() {
+        mem::w16(p + 2 * kome::num::u32_of(i), *c);
+    }
+    p
+}
+
 pub fn guest_thread() {
     thread_local!(static DONE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) });
     if !DONE.with(|d| d.replace(true)) {

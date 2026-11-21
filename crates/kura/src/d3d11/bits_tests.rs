@@ -6,6 +6,7 @@
 //! texels as the bytes written; the page converts some formats (16-bit UNORM/SNORM to floats,
 //! 5:6:5 and A8 widened, block-compressed ones decoded), which must not show.
 
+use kome::locks::Lock as _;
 use super::*;
 use crate::d3d9::trace_tests::{alloc, attach_page, CALLS, SERIAL};
 use crate::render::model;
@@ -173,7 +174,7 @@ fn random_subs(rng: &mut Rng, s: Shape, fmt: u32) -> Vec<Vec<u8>> {
 #[test]
 fn every_format_and_pair_keeps_the_bits() {
     let _g = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
-    *D11S.lock().unwrap() = None;
+    *D11S.locked() = None;
     let dev = Dev::new();
     let mut rng = Rng(0x9e37_79b9_7f4a_7c15);
     let fmts = formats();
@@ -210,7 +211,7 @@ fn every_format_and_pair_keeps_the_bits() {
 #[test]
 fn every_subresource_keeps_the_bits() {
     let _g = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
-    *D11S.lock().unwrap() = None;
+    *D11S.locked() = None;
     let dev = Dev::new();
     let mut rng = Rng(0x2545_f491_4f6c_dd1d);
     let pairs = [(28, 28), (41, 41), (11, 11), (58, 58), (85, 85), (65, 65), (71, 71), (77, 77), (98, 98), (12, 11), (11, 12), (57, 58), (58, 57), (10, 11), (71, 72)];
@@ -269,7 +270,7 @@ fn every_subresource_keeps_the_bits() {
 #[test]
 fn x_channels_sample_as_one() {
     let _g = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
-    *D11S.lock().unwrap() = None;
+    *D11S.locked() = None;
     let dev = Dev::new();
     let s = Shape(2, 4, 4, 1, 1);
     let data = vec![(0..64u32).map(|i| (i * 37 + 5) as u8).collect::<Vec<u8>>()];
@@ -277,7 +278,7 @@ fn x_channels_sample_as_one() {
         let t = dev.tex(s, f, false, Some(&data));
         assert_ne!(t, 0);
         let g = {
-            let g = D11S.lock().unwrap();
+            let g = D11S.locked();
             let d = g.as_ref().unwrap();
             match &d.objs[&d.id_of(t)].data {
                 Data::Texture(t) => t.gpu,
@@ -303,7 +304,7 @@ fn x_channels_sample_as_one() {
 fn random_regions_move_the_bytes() {
     use proptest::prelude::*;
     let _g = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
-    *D11S.lock().unwrap() = None;
+    *D11S.locked() = None;
     let dev = Dev::new();
     // (source, destination) pairs: page-held, converted, block-compressed, across the ways
     let pairs = [(28u32, 28u32), (28, 30), (41, 41), (11, 11), (12, 11), (11, 12), (58, 57), (85, 85), (65, 65), (71, 72), (77, 77), (98, 99), (2, 3), (10, 11)];
@@ -368,7 +369,7 @@ fn random_regions_move_the_bytes() {
 }
 
 fn gpu_of(t: u32) -> u32 {
-    let g = D11S.lock().unwrap();
+    let g = D11S.locked();
     let d = g.as_ref().unwrap();
     match &d.objs[&d.id_of(t)].data {
         Data::Texture(t) => t.gpu,
@@ -395,7 +396,7 @@ fn page_read(g: u32, word: u32, w: u32, h: u32, req: u32) -> Option<Vec<u8>> {
 #[test]
 fn page_copies_and_readbacks_stay_inside() {
     let _g = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
-    *D11S.lock().unwrap() = None;
+    *D11S.locked() = None;
     let dev = Dev::new();
     let mut rng = Rng(0x1234_5678_9abc_def1);
     // a 4x4 array of 2 layers and 2 levels: layer 0 level 0 to layer 1 level 0 of itself
@@ -498,7 +499,7 @@ fn page_copies_and_readbacks_stay_inside() {
 #[test]
 fn array_view_clears_its_layers() {
     let _g = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
-    *D11S.lock().unwrap() = None;
+    *D11S.locked() = None;
     let dev = Dev::new();
     let s = Shape(2, 4, 4, 5, 1);
     let t = dev.tex_bound(s, 28, 0x28, None);
@@ -530,7 +531,7 @@ fn array_view_clears_its_layers() {
 #[test]
 fn depth_copies_keep_the_bits() {
     let _g = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
-    *D11S.lock().unwrap() = None;
+    *D11S.locked() = None;
     let dev = Dev::new();
     let s = Shape(2, 4, 4, 1, 1);
     let data: Vec<u8> = (0..64u32).map(|i| (i * 37 + 5) as u8).collect();
@@ -627,7 +628,7 @@ fn depth_copies_keep_the_bits() {
 #[test]
 fn depth_copies_the_page_refuses() {
     let _g = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
-    *D11S.lock().unwrap() = None;
+    *D11S.locked() = None;
     let dev = Dev::new();
     let mut rng = Rng(0x00de_e9c0_f1e5_u64);
     let s = Shape(2, 4, 4, 1, 1);
@@ -684,7 +685,7 @@ fn depth_copies_the_page_refuses() {
 #[test]
 fn subresources_hash_as_windows() {
     let _g = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
-    *D11S.lock().unwrap() = None;
+    *D11S.locked() = None;
     let golden = std::fs::read_to_string(format!("{}/../../tests/winref/golden/d3d11copy-32/stdout.txt", env!("CARGO_MANIFEST_DIR"))).unwrap();
     let dev = Dev::new();
     // the probe's subfmts: (source, destination, name, bytes per block, block)
@@ -762,7 +763,7 @@ fn subresources_hash_as_windows() {
 #[test]
 fn a_lost_device_gets_the_kept_bits_and_buffers() {
     let _g = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
-    *D11S.lock().unwrap() = None;
+    *D11S.locked() = None;
     let dev = Dev::new();
     let mut rng = Rng(0x0dd_ba11_5eed);
     let s = Shape(2, 8, 8, 1, 1);
@@ -782,7 +783,7 @@ fn a_lost_device_gets_the_kept_bits_and_buffers() {
     let buf = rd1(o);
     // (a draw would make its page buffer: here as one would)
     {
-        let mut g = D11S.lock().unwrap();
+        let mut g = D11S.locked();
         let d = g.as_mut().unwrap();
         let id = d.id_of(buf);
         assert_ne!(buffer_gpu(d, id), 0);
@@ -808,12 +809,12 @@ fn a_lost_device_gets_the_kept_bits_and_buffers() {
     assert_eq!(page_read(gpu_of(kt), 0, 8, 8, 0x1105_0003).unwrap(), before.0, "a converted format's kept bits");
     assert!(page_read(gpu_of(ht), 0, 8, 8, 0x1105_0004).unwrap().iter().all(|&b| b == 0), "a texture of the guest's bytes: not kept");
     {
-        let g = D11S.lock().unwrap();
+        let g = D11S.locked();
         let d = g.as_ref().unwrap();
         assert!(matches!(&d.objs[&d.id_of(buf)].data, Data::Buffer(b) if b.dirty), "the buffer goes up again");
     }
     crate::render::set_lost_gen(generation);
-    D11S.lock().unwrap().as_mut().unwrap().lost_seen = generation;
+    D11S.locked().as_mut().unwrap().lost_seen = generation;
     call1(m(IF_BUFFER, 2), &[buf]);
     dev.release(kt);
     dev.release(ht);
@@ -828,7 +829,7 @@ fn a_lost_device_gets_the_kept_bits_and_buffers() {
 #[test]
 fn render_targets_read_back_their_bytes() {
     let _g = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
-    *D11S.lock().unwrap() = None;
+    *D11S.locked() = None;
     let dev = Dev::new();
     let mut rng = Rng(0x6a09_e667_f3bc_c908);
     let s = Shape(2, 4, 4, 1, 1);
@@ -911,7 +912,7 @@ fn page_texels_of(g: u32, w: u32, h: u32, bpp: u32, req: u32) -> Vec<u8> {
 
 /// A shader resource view's page texture (the view's own for NV12's chroma).
 fn view_gpu(v: u32) -> u32 {
-    let g = D11S.lock().unwrap();
+    let g = D11S.locked();
     let d = g.as_ref().unwrap();
     match &d.objs[&d.id_of(v)].data {
         Data::View(x) => match &d.objs[&x.res].data {
@@ -929,7 +930,7 @@ fn view_gpu(v: u32) -> u32 {
 #[test]
 fn nv12_planes() {
     let _g = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
-    *D11S.lock().unwrap() = None;
+    *D11S.locked() = None;
     let dev = Dev::new();
     let mut rng = Rng(0x0bad_cafe_1234_5678);
     assert_eq!(format::pitch_rows(103, 6, 4), (6, 6));
@@ -972,7 +973,7 @@ fn nv12_planes() {
         req += 1;
         assert_eq!(page_texels_of(view_gpu(luma), w, h, 1, req), y, "luma of {w}x{h}");
         {
-            let mut g = D11S.lock().unwrap();
+            let mut g = D11S.locked();
             let d = g.as_mut().unwrap();
             let id = d.id_of(chroma);
             buffer_view_sync(d, id);
@@ -985,7 +986,7 @@ fn nv12_planes() {
         put_bytes(p, &up);
         call1(m(IF_CONTEXT, 48), &[dev.ctx, t, 0, 0, p, w, 0]);
         {
-            let mut g = D11S.lock().unwrap();
+            let mut g = D11S.locked();
             let d = g.as_mut().unwrap();
             let id = d.id_of(chroma);
             buffer_view_sync(d, id);
@@ -1013,7 +1014,7 @@ fn nv12_planes() {
 #[test]
 fn nv12_boxes_and_targets() {
     let _g = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
-    *D11S.lock().unwrap() = None;
+    *D11S.locked() = None;
     let dev = Dev::new();
     let mut rng = Rng(0x5eed_0f_0123_4567);
     let (w, h) = (16u32, 8u32);

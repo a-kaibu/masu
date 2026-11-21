@@ -927,10 +927,7 @@ async fn list_logs(dir: &std::path::Path) -> Vec<(String, u64, u64)> {
 
 async fn log_list(State(dir): State<Arc<PathBuf>>) -> Response {
     let list: Vec<serde_json::Value> = list_logs(&dir).await.into_iter().map(|(name, size, time)| serde_json::json!({ "name": name, "size": size, "time": time })).collect();
-    Response::builder()
-        .header(header::CONTENT_TYPE, "application/json")
-        .body(axum::body::Body::from(serde_json::Value::Array(list).to_string()))
-        .unwrap()
+    ([(header::CONTENT_TYPE, HeaderValue::from_static("application/json"))], serde_json::Value::Array(list).to_string()).into_response()
 }
 
 /// What a pre-run needs, and the lock that keeps them one at a time.
@@ -1101,10 +1098,7 @@ async fn games(State(p): State<Arc<Prerun>>) -> Response {
         return StatusCode::INTERNAL_SERVER_ERROR.into_response();
     };
     body.push(']');
-    Response::builder()
-        .header(header::CONTENT_TYPE, "application/json")
-        .body(body.into())
-        .unwrap()
+    ([(header::CONTENT_TYPE, HeaderValue::from_static("application/json"))], body).into_response()
 }
 
 async fn headers(mut req: Request<axum::body::Body>, next: Next) -> Response {
@@ -1498,8 +1492,13 @@ async fn sync_bucket(storage: crate::storage::Storage, store: PathBuf, push_stor
     }
 }
 
-#[tokio::main]
-async fn serve(dirs: &crate::dirs::Dirs, store: PathBuf, args: Resolved) -> anyhow::Result<()> {
+// (the runtime built here, not by #[tokio::main], whose expansion expects: a runtime that does
+// not build is this command's error)
+fn serve(dirs: &crate::dirs::Dirs, store: PathBuf, args: Resolved) -> anyhow::Result<()> {
+    tokio::runtime::Builder::new_multi_thread().enable_all().build()?.block_on(serve_on(dirs, store, args))
+}
+
+async fn serve_on(dirs: &crate::dirs::Dirs, store: PathBuf, args: Resolved) -> anyhow::Result<()> {
     // (before anything can replace it: /api/update)
     let exe = std::env::current_exe()?;
     // (games come only from a bucket: the page fetches their chunks from it itself, never
@@ -1636,6 +1635,7 @@ async fn serve(dirs: &crate::dirs::Dirs, store: PathBuf, args: Resolved) -> anyh
 
 #[cfg(test)]
 mod tests {
+    use kome::locks::Lock as _;
     /// The game listener serves the frame's scripts with the headers a frame of the app's
     /// (cross-origin isolated) page needs, and nothing else: no game's files (those come from
     /// its service worker, web/src/game-sw.ts), no route of the app's.
@@ -1674,7 +1674,7 @@ mod tests {
     fn stuck_threads_print_where_they_wait() {
         if std::env::var_os("MASU_DUMP_CHILD").is_some() {
             let lock = std::sync::Arc::new(std::sync::Mutex::new(()));
-            let held = lock.lock().unwrap();
+            let held = lock.locked();
             let l = lock.clone();
             std::thread::Builder::new()
                 .name("stuck-one".into())
@@ -1754,7 +1754,7 @@ mod tests {
         assert_eq!(hangs.load(SeqCst), 0, "a runtime that runs its tasks");
         // every worker blocked on a lock nobody lets go of
         let lock = Arc::new(std::sync::Mutex::new(()));
-        let held = lock.lock().unwrap();
+        let held = lock.locked();
         for _ in 0..2 {
             let l = lock.clone();
             rt.spawn(async move {

@@ -52,6 +52,42 @@ fn wait_returns_the_guard() {
     });
 }
 
+/// wait_timeout() comes back with the lock: timed out with no notify, not after one.
+#[test]
+fn wait_timeout_says_which() {
+    let (m, cv) = (Mutex::new(false), Condvar::new());
+    let (g, out) = wait_timeout(&cv, m.locked(), std::time::Duration::from_millis(1));
+    assert!(out && !*g);
+    drop(g);
+    std::thread::scope(|s| {
+        let mut g = m.locked();
+        s.spawn(|| {
+            *m.locked() = true;
+            cv.notify_all();
+        });
+        while !*g {
+            let (next, out) = wait_timeout(&cv, g, std::time::Duration::from_secs(60));
+            assert!(!out);
+            g = next;
+        }
+    });
+}
+
+/// wait_timeout() on a lock a panicking thread held panics too.
+#[test]
+fn wait_timeout_poisoned_panics() {
+    let (m, cv) = (Mutex::new(0), Condvar::new());
+    poison(|| {
+        let _g = m.locked();
+        panic!("poison");
+    });
+    let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let g = m.lock().unwrap_or_else(PoisonError::into_inner);
+        let _ = wait_timeout(&cv, g, std::time::Duration::from_millis(1));
+    }));
+    assert!(r.is_err());
+}
+
 proptest! {
     // (the same values as .lock().unwrap() through any sequence of writes from threads)
     #[test]
@@ -71,4 +107,20 @@ proptest! {
         prop_assert_eq!(*a.locked(), want);
         prop_assert_eq!(*b.r(), want);
     }
+}
+
+#[test]
+fn with_map_makes_the_map_once_and_survives_a_poisoned_lock() {
+    static M: Mutex<Option<std::collections::HashMap<u32, u32>>> = Mutex::new(None);
+    super::with_map(&M, |m| m.insert(1, 10));
+    let _ = std::thread::spawn(|| {
+        let _g = M.lock();
+        panic!("poison it");
+    })
+    .join();
+    assert!(M.is_poisoned());
+    assert_eq!(super::with_map(&M, |m| m.get(&1).copied()), Some(10));
+    assert_eq!(super::with_entry(&M, &1, |v| std::mem::replace(v, 11)), Some(10));
+    assert_eq!(super::with_entry(&M, &2, |v| *v), None);
+    assert_eq!(super::with_map(&M, |m| m.len()), 1);
 }

@@ -6,23 +6,8 @@
 #![cfg(all(target_arch = "x86_64", target_os = "linux"))]
 
 use core::arch::asm;
-use koji::{step, Cpu, Exit, Fault, Memory};
-
-struct Flat(Vec<u8>);
-impl Memory for Flat {
-    fn read8(&mut self, a: u32) -> Result<u8, Fault> {
-        self.0.get(a as usize).copied().ok_or(Fault { addr: a, write: false })
-    }
-    fn write8(&mut self, a: u32, v: u8) -> Result<(), Fault> {
-        match self.0.get_mut(a as usize) {
-            Some(b) => {
-                *b = v;
-                Ok(())
-            }
-            None => Err(Fault { addr: a, write: true }),
-        }
-    }
-}
+use koji::{step, Cpu, Exit};
+use koji::Flat;
 
 /// op: 0 faddp, 1 fsubp, 2 fsubrp, 3 fmulp (ST(1) op ST(0), popped); returns the double stored.
 fn host(cw: u16, q: i64, w: i32, op: u32) -> u64 {

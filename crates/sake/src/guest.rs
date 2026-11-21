@@ -40,33 +40,33 @@ pub fn bind_host() {
     if mem::x64() {
         // (x64: the fast paths are in the guest code too, the traps behind them)
         for (slot, dll, name) in [
-            ("host_memmove", "msvcrt", "memmove"),
-            ("host_memset", "msvcrt", "memset"),
-            ("host_realloc", "msvcrt", "realloc"),
-            ("host_malloc", "msvcrt", "malloc"),
-            ("host_free", "msvcrt", "free"),
-            ("host_enter_cs", "kernel32", "EnterCriticalSection"),
-            ("host_tls_get", "kernel32", "TlsGetValue"),
-            ("host_heap_alloc", "kernel32", "HeapAlloc"),
-            ("host_heap_free", "kernel32", "HeapFree"),
+            (slot!(code64, "host_memmove"), "msvcrt", "memmove"),
+            (slot!(code64, "host_memset"), "msvcrt", "memset"),
+            (slot!(code64, "host_realloc"), "msvcrt", "realloc"),
+            (slot!(code64, "host_malloc"), "msvcrt", "malloc"),
+            (slot!(code64, "host_free"), "msvcrt", "free"),
+            (slot!(code64, "host_enter_cs"), "kernel32", "EnterCriticalSection"),
+            (slot!(code64, "host_tls_get"), "kernel32", "TlsGetValue"),
+            (slot!(code64, "host_heap_alloc"), "kernel32", "HeapAlloc"),
+            (slot!(code64, "host_heap_free"), "kernel32", "HeapFree"),
         ] {
-            mem::w64(sym(slot).unwrap(), crate::api::export(dll, name) as u64);
+            mem::w64(slot, crate::api::export(dll, name) as u64);
         }
-        mem::w64(sym("host_cs_wake").unwrap(), crate::api::host_fn("cs_wake64", cs_wake, 0) as u64);
-        mem::w64(sym("slab_table").unwrap(), mem::slab_table() as u64);
+        mem::w64(slot!(code64, "host_cs_wake"), crate::api::host_fn("cs_wake64", cs_wake, 0) as u64);
+        mem::w64(slot!(code64, "slab_table"), mem::slab_table() as u64);
         return;
     }
     // big copies and fills, realloc's other cases: the host's traps; malloc and free: the x86
     // stubs (small blocks from the free lists)
     for (slot, name, stub) in [
-        ("host_memmove", "memmove", false),
-        ("host_memset", "memset", false),
-        ("host_realloc", "realloc", false),
-        ("host_malloc", "malloc", true),
-        ("host_free", "free", true),
+        (slot!(code, "host_memmove"), "memmove", false),
+        (slot!(code, "host_memset"), "memset", false),
+        (slot!(code, "host_realloc"), "realloc", false),
+        (slot!(code, "host_malloc"), "malloc", true),
+        (slot!(code, "host_free"), "free", true),
     ] {
         let trap = crate::api::export("msvcrt", name);
-        mem::w32(sym(slot).unwrap(), if stub { crate::fast::bind("msvcrt", name, trap) } else { trap });
+        mem::w32(slot, if stub { crate::fast::bind("msvcrt", name, trap) } else { trap });
     }
 }
 
@@ -74,6 +74,44 @@ fn cs_wake(c: &mut crate::api::Ctx) -> u32 {
     crate::k32::cs_wake(c.a(0));
     0
 }
+
+/// The address of symbol `name` in `syms` (a build's SYMS), at compile time.
+const fn find(mut syms: &[(&str, u32)], name: &str) -> Option<u32> {
+    while let [(n, a), rest @ ..] = syms {
+        if same(n.as_bytes(), name.as_bytes()) {
+            return Some(*a);
+        }
+        syms = rest;
+    }
+    None
+}
+
+/// `x == y` in a const fn (byte by byte, as slice patterns)
+const fn same(mut x: &[u8], mut y: &[u8]) -> bool {
+    loop {
+        match (x, y) {
+            ([a, xs @ ..], [b, ys @ ..]) if *a == *b => {
+                x = xs;
+                y = ys;
+            }
+            ([], []) => return true,
+            _ => return false,
+        }
+    }
+}
+
+/// The host slot `name` of guest build `code` / `code64`: a symbol the build lacks is a build
+/// error, not a write at a wrong address.
+macro_rules! slot {
+    ($m:ident, $name:literal) => {{
+        const AT: u32 = match find($m::SYMS, $name) {
+            Some(a) => a,
+            None => panic!(concat!("guest: no symbol ", $name)),
+        };
+        AT
+    }};
+}
+use slot;
 
 fn sym(name: &str) -> Option<u32> {
     let syms = if mem::x64() { code64::SYMS } else { code::SYMS };

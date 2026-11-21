@@ -3,6 +3,7 @@
 //! RIDEV_NOLEGACY), and reads the event with GetRawInputData. Unity 2019+ fails its input
 //! initialization (and then crashes) when the registration fails.
 #![allow(non_snake_case)]
+use kome::locks::Lock as _;
 use crate::api::{implement, Ctx};
 use crate::k32::last_error;
 use crate::mem::{self, r16, r32, w32};
@@ -32,7 +33,7 @@ fn header_size() -> u32 {
 /// (target window, 0 for the focus; whether legacy messages are off)
 pub fn registered(mouse: bool) -> Option<(u32, bool)> {
     let usage = if mouse { 2 } else { 6 };
-    REGS.lock().unwrap().iter().find(|r| r.0 == 1 && r.1 == usage).map(|r| (r.3, r.2 & RIDEV_NOLEGACY == RIDEV_NOLEGACY))
+    REGS.locked().iter().find(|r| r.0 == 1 && r.1 == usage).map(|r| (r.3, r.2 & RIDEV_NOLEGACY == RIDEV_NOLEGACY))
 }
 
 fn record(ty: u32, device: u32, body: &[u8]) -> u32 {
@@ -46,7 +47,7 @@ fn record(ty: u32, device: u32, body: &[u8]) -> u32 {
     }
     b.extend_from_slice(&[0; 8][..mem::ps() as usize]); // wParam: RIM_INPUT
     b.extend_from_slice(body);
-    let mut g = EVENTS.lock().unwrap();
+    let mut g = EVENTS.locked();
     g.0 = g.0.wrapping_add(4) | 0x4000_0000;
     let h = g.0;
     g.1.push_back((h, b));
@@ -101,7 +102,7 @@ fn RegisterRawInputDevices(c: &mut Ctx) -> u32 {
             (r16(d), r16(d + 2), r32(d + 4), mem::rp(d + 8))
         })
         .collect();
-    let mut regs = REGS.lock().unwrap();
+    let mut regs = REGS.locked();
     for (page, usage, flags, hwnd) in entries {
         if crate::env_on!("SAKE_TRACE_INPUT") {
             eprintln!("sake input: raw registration page {page:x} usage {usage:x} flags {flags:x} window {hwnd:x}");
@@ -121,7 +122,7 @@ fn GetRegisteredRawInputDevices(c: &mut Ctx) -> u32 {
         last_error(87);
         return u32::MAX;
     }
-    let regs = REGS.lock().unwrap();
+    let regs = REGS.locked();
     let have = regs.len() as u32;
     if p == 0 || r32(pn) < have {
         w32(pn, have);
@@ -231,7 +232,7 @@ fn GetRawInputData(c: &mut Ctx) -> u32 {
         last_error(87);
         return u32::MAX;
     }
-    let g = EVENTS.lock().unwrap();
+    let g = EVENTS.locked();
     if crate::env_on!("SAKE_TRACE_INPUT") {
         eprintln!("sake input: GetRawInputData {h:x} {cmd:x} known {}", g.1.iter().any(|(x, _)| *x == h));
     }
@@ -303,10 +304,10 @@ mod review_b09_tests {
         assert_eq!(crate::k32::get_last_error(), 998);
         assert!(t.elapsed().as_secs() < 2);
         assert_eq!(call(RegisterRawInputDevices, &[p, 1, size]), 1);
-        assert!(REGS.lock().unwrap().iter().any(|r| (r.0, r.1) == (1, 2)));
+        assert!(REGS.locked().iter().any(|r| (r.0, r.1) == (1, 2)));
         w32(p + 4, RIDEV_REMOVE);
         assert_eq!(call(RegisterRawInputDevices, &[p, 1, size]), 1);
-        assert!(!REGS.lock().unwrap().iter().any(|r| (r.0, r.1) == (1, 2)));
+        assert!(!REGS.locked().iter().any(|r| (r.0, r.1) == (1, 2)));
         drop(p_own);
     }
 

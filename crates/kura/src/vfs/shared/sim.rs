@@ -68,7 +68,7 @@ impl Sim {
         let lower = first.add(Data::File(Content::Lower { size: 10, chunks: Arc::new(vec![Some([3; 16]), None]), starts: Arc::new(vec![0, 4, 10]) }), 0o644, 0);
         if let Some(Data::Dir(ch)) = first.data_mut(root) { ch.insert("lower".into(), lower); }
         first.dirt.on = true;
-        first.sync_in(&m);
+        assert_eq!(first.sync_in(&m), Ok(()));
         assert!(first.sync_out(&mut m));
         Sim { m, ps: vec![first, Fs::default(), Fs::default()], root, lower, handles: vec![vec![]; 3] }
     }
@@ -81,7 +81,7 @@ impl Sim {
         let fs = &mut self.ps[p];
         let handles = &mut self.handles[p];
         fs.dirt.on = true;
-        fs.sync_in(&self.m);
+        fs.sync_in(&self.m).map_err(|e| format!("process {p}: {e:?}"))?;
         for o in batch {
             match o {
                 Op::Put(n, d) => fs.put_file(&name(*n), d.clone(), *n as i64),
@@ -89,7 +89,7 @@ impl Sim {
                 Op::Size(n, s) => if let Some(ino) = fs.walk(root, &name(*n)[1..]) { let _ = fs.set_upper_size(ino, *s as u64); },
                 Op::Open(n) => if let Some(ino) = fs.walk(root, &name(*n)[1..]).or(if *n == 11 { Some(lower) } else { None }) { handles.push(fs.new_handle(ino, 0)); },
                 Op::Close(i) => if !handles.is_empty() { let k = *i as usize % handles.len(); let h = handles.remove(k); fs.close_handle(h); },
-                Op::Unlink(n) => { let path = name(*n); let (dir, base) = path[1..].split_once('/').unwrap(); if let Some(d) = fs.walk(root, dir) { fs.unlink_name(d, base); } }
+                Op::Unlink(n) => { let path = name(*n); if let Some((dir, base)) = path[1..].split_once('/') && let Some(d) = fs.walk(root, dir) { fs.unlink_name(d, base); } }
                 Op::Mkdir(n) => { fs.mkdir_p(root, &format!("d{}/sub{n}", n % 3)); }
             }
         }
@@ -99,7 +99,7 @@ impl Sim {
         let want = self.ps[p].shared_snapshot();
         for q in 0..self.ps.len() {
             let fs = &mut self.ps[q];
-            fs.sync_in(&self.m);
+            fs.sync_in(&self.m).map_err(|e| format!("process {q} after {batch:?} by {p}: {e:?}"))?;
             if fs.shared_snapshot() != want { return Err(format!("process {q} after {batch:?} by {p}")); }
             for h in &self.handles[q] { if fs.node(fs.handles[h].ino).is_none() { return Err(format!("process {q}: handle {h} lost its node")); } }
             let mut free = fs.free.clone(); free.sort();

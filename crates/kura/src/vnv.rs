@@ -182,13 +182,13 @@ fn too_big(end: u64) -> std::io::Result<()> {
 }
 
 /// A `.vnv` of `tracks` (cut to the shortest one's frames), in memory (tests and small movies;
-/// panics past 4 GiB).
-pub fn write(w: u32, h: u32, tracks: &[Track], trailer: Option<&Trailer>) -> Vec<u8> {
+/// Err past 4 GiB).
+pub fn write(w: u32, h: u32, tracks: &[Track], trailer: Option<&Trailer>) -> std::io::Result<Vec<u8>> {
     let n = tracks.iter().map(|t| t.1.len()).min().unwrap_or(0);
     let sizes: Vec<Vec<(u32, bool)>> = tracks.iter().map(|t| t.1[..n].iter().map(|(f, k)| (f.len() as u32, *k)).collect()).collect();
     let index: Vec<(&str, &[(u32, bool)])> = tracks.iter().zip(&sizes).map(|(t, s)| (t.0.as_str(), &s[..])).collect();
     let mut out = Vec::new();
-    let end = write_head(&mut out, w, h, &index).expect("a .vnv in memory under 4 GiB");
+    let end = write_head(&mut out, w, h, &index)?;
     for (_, frames) in tracks {
         for (f, _) in &frames[..n] {
             out.extend_from_slice(f);
@@ -197,9 +197,9 @@ pub fn write(w: u32, h: u32, tracks: &[Track], trailer: Option<&Trailer>) -> Vec
     debug_assert_eq!(out.len() as u64, end);
     if let Some(t) = trailer {
         out.extend_from_slice(&t.audio);
-        write_tail(&mut out, t.rate, t.duration, end, t.audio.len() as u64).expect("a .vnv in memory under 4 GiB");
+        write_tail(&mut out, t.rate, t.duration, end, t.audio.len() as u64)?;
     }
-    out
+    Ok(out)
 }
 
 #[cfg(test)]
@@ -218,7 +218,7 @@ mod tests {
         #[test]
         fn round_trip(w in 1u32..=8192, h in 1u32..=8192, t in tracks(), rate in (1u32.., 1u32..), duration: u64, audio in prop::collection::vec(any::<u8>(), 0..64), with_trailer: bool) {
             let tr = Trailer { rate, duration, audio: audio.clone() };
-            let d = write(w, h, &t, with_trailer.then_some(&tr));
+            let d = write(w, h, &t, with_trailer.then_some(&tr)).unwrap();
             let i = info(&d).unwrap();
             let n = t.iter().map(|x| x.1.len()).min().unwrap();
             prop_assert_eq!((i.w, i.h, i.tracks.len(), i.frames() as usize), (w, h, t.len(), n));
@@ -271,7 +271,7 @@ mod tests {
         #[test]
         fn truncated(t in tracks(), cut in 0usize..400) {
             let tr = Trailer { rate: (30, 1), duration: 10_000_000, audio: vec![7; 20] };
-            let d = write(64, 48, &t, Some(&tr));
+            let d = write(64, 48, &t, Some(&tr)).unwrap();
             let c = &d[..cut.min(d.len())];
             if let Some(i) = info(c) {
                 if c.len() < d.len() {
@@ -292,7 +292,7 @@ mod tests {
         #[test]
         fn read_through(t in tracks(), with_trailer: bool) {
             let tr = Trailer { rate: (30, 1), duration: 5, audio: vec![1, 2, 3] };
-            let d = write(16, 16, &t, with_trailer.then_some(&tr));
+            let d = write(16, 16, &t, with_trailer.then_some(&tr)).unwrap();
             let mut reads = 0;
             let mut at = |o: u64, b: &mut [u8]| {
                 reads += 1;
@@ -322,13 +322,13 @@ mod tests {
     #[test]
     fn trailer_fields() {
         let tr = Trailer { rate: (30000, 1001), duration: 0x1_0000_0005, audio: b"OggS".to_vec() };
-        let d = write(2, 2, &[("raw-i420".into(), vec![(vec![0; 6], true)])], Some(&tr));
+        let d = write(2, 2, &[("raw-i420".into(), vec![(vec![0; 6], true)])], Some(&tr)).unwrap();
         let i = info(&d).unwrap();
         assert_eq!(i.rate, Some((30000, 1001)));
         assert_eq!(i.duration, 0x1_0000_0005);
         assert_eq!(&d[i.audio.unwrap().0..][..4], b"OggS");
         // a zero rate is no movie
-        let bad = write(2, 2, &[("raw-i420".into(), vec![])], Some(&Trailer { rate: (0, 1), duration: 0, audio: vec![] }));
+        let bad = write(2, 2, &[("raw-i420".into(), vec![])], Some(&Trailer { rate: (0, 1), duration: 0, audio: vec![] })).unwrap();
         assert!(info(&bad).is_none());
         // (odd sizes padded to even: 4x4 luma, two 2x2 chroma planes)
         assert_eq!(raw_size(3, 3), 24);
