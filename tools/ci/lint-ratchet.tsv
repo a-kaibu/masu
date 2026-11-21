@@ -1934,7 +1934,7 @@ file	crates/sake/src/w16.rs	as_conversions	146
 file	crates/sake/src/w16.rs	cast_possible_truncation	38
 file	crates/sake/src/w16.rs	cast_possible_wrap	1
 file	crates/sake/src/w16.rs	expect_used	5
-file	crates/sake/src/w16.rs	indexing_slicing	37
+file	crates/sake/src/w16.rs	indexing_slicing	35
 file	crates/sake/src/w16.rs	let_underscore_must_use	1
 file	crates/sake/src/w16.rs	undocumented_unsafe_blocks	2
 file	crates/sake/src/w16.rs	unwrap_in_result	5

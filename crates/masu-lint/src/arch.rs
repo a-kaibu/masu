@@ -37,6 +37,7 @@ pub enum Rule {
     StoreDeletion,
     EscapeComment,
     ConstantHandler,
+    ConstantMethod,
     ArcTryUnwrap,
     ArcCount,
     CatchUnwindAbort,
@@ -47,7 +48,7 @@ pub enum Rule {
 }
 
 impl Rule {
-    pub const ALL: [Rule; 27] = [
+    pub const ALL: [Rule; 28] = [
         Rule::BuildOutput,
         Rule::HresultCopy,
         Rule::KomeCopy,
@@ -68,6 +69,7 @@ impl Rule {
         Rule::StoreDeletion,
         Rule::EscapeComment,
         Rule::ConstantHandler,
+        Rule::ConstantMethod,
         Rule::ArcTryUnwrap,
         Rule::ArcCount,
         Rule::CatchUnwindAbort,
@@ -100,6 +102,7 @@ impl Rule {
             Rule::StoreDeletion => "store-deletion",
             Rule::EscapeComment => "escape-comment",
             Rule::ConstantHandler => "constant-handler",
+            Rule::ConstantMethod => "constant-method",
             Rule::ArcTryUnwrap => "arc-try-unwrap",
             Rule::ArcCount => "arc-count",
             Rule::CatchUnwindAbort => "catch-unwind-abort",
@@ -132,6 +135,7 @@ impl Rule {
             Rule::StoreDeletion => "retired bucket objects must pass through gc before physical deletion",
             Rule::EscapeComment => "no comment excuses code from Windows' behavior (user rule 2026-11-20): implement what Windows does instead of writing the shortcut down; \"not supported\" / an approximation / ignored flags pass only with Windows' evidence in the same comment (winref, a golden, MEASURED, Wine's tests, the spec)",
             Rule::ConstantHandler => "a sake handler that ignores its arguments and returns a constant is an empty success unless its doc names the Windows answer it is (winref, a golden, MEASURED, Wine's tests): implement the call, or cite the evidence (user rule 2026-11-20)",
+            Rule::ConstantMethod => "a Direct3D object's method (kura d3d9/d3d11, sake's d3d9 glue) that does nothing and answers a constant (an empty arm, S_OK, 0, E_NOTIMPL) says beside it which Windows answer that is (winref, a golden, MEASURED, Wine's tests, the spec); otherwise it is a method to implement (user rule 2026-11-20; ClearUnorderedAccessView* and ClearView were silent no-ops)",
             Rule::ArcTryUnwrap => "no Arc::try_unwrap (Arc audit 2026-11-20, mf release_data): two last holders letting go at once both get Err and neither runs the last-one-out step; Arc::into_inner, or better a Drop that does that step (mf::source::Data)",
             Rule::ArcCount => "a decision on Arc::strong_count / weak_count holds only while nobody can clone or drop one meanwhile (Arc audit 2026-11-20): each such site is a known site saying which lock makes it so (saves NameLocks, storage gate: the map lock every clone is made under); else let a Drop or Arc::into_inner decide",
             Rule::CatchUnwindAbort => "sake.wasm is built with panic=abort, so catch_unwind in a crate it links never catches (82cdd0d0: naga's GLSL panic ended the game through a catch_unwind; review 2026-11-14 P1-7): return a Result, or check the input before the call",
@@ -165,6 +169,7 @@ impl Rule {
             Rule::StoreDeletion => boundaries::check(self, tree, boundaries::STORAGE),
             Rule::EscapeComment => crate::escape::escape_comment(tree),
             Rule::ConstantHandler => crate::escape::constant_handler(tree),
+            Rule::ConstantMethod => crate::escape::constant_method(tree),
             Rule::ArcTryUnwrap => arc_use(tree, &["try_unwrap"]),
             Rule::ArcCount => arc_use(tree, &["strong_count", "weak_count"]),
             Rule::CatchUnwindAbort => regress::catch_unwind_abort(tree),

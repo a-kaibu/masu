@@ -254,6 +254,14 @@ fn fixture(r: Rule) -> Fixture {
             )],
             mutate: ("crates/sake/src/k32.rs", |t| Some(t + "\nfn Regression(_c: &mut Ctx) -> u32 {\n    1\n}\n")),
         },
+        Rule::ConstantMethod => Fixture {
+            bad: &[("crates/kura/src/d3d11/x.rs", "fn f(m: u32) -> u32 {\n    match m {\n        49 | 51 => {}\n        // GetData\n        7 => S_OK,\n        _ => 0,\n    }\n}\n")],
+            good: &[(
+                "crates/kura/src/d3d11/x.rs",
+                "fn f(m: u32, a: u32) -> u32 {\n    match m {\n        // SetMarkerInt: annotations, which Windows' runtime drops without a tool attached (documented)\n        141 => {}\n        12 => S_OK, // AddRef as Windows (winref d3d11api)\n        13 => a,\n        _ => E_NOTIMPL,\n    }\n}\n",
+            )],
+            mutate: ("crates/kura/src/d3d11/mod.rs", |t| Some(t + "\nfn regression(m: u32) -> u32 {\n    match m {\n        51 | 52 => {}\n        _ => 1,\n    }\n}\n")),
+        },
         Rule::ArcTryUnwrap => Fixture {
             bad: &[
                 ("crates/sake/src/mf/x.rs", "fn f(d: Arc<Data>) { if let Ok(d) = Arc::try_unwrap(d) { release(d); } }\n"),
@@ -366,6 +374,9 @@ fn the_new_rules_find_each_spelling_alone() {
     }
     // (two numbered registers in each made-up file, the untyped lib.rs's five ways back)
     assert_eq!(Rule::TypedRegisters.check(&Tree::made_up(fixture(Rule::TypedRegisters).bad)).len(), 9);
+    // (both silent arms of the bad file: the empty one and the S_OK one whose comment above
+    // names the method, not Windows' answer)
+    assert_eq!(Rule::ConstantMethod.check(&Tree::made_up(fixture(Rule::ConstantMethod).bad)).len(), 2);
     // (and every site in the bad files, not only the first: w8(ga(key)) is two)
     // (a copy of a number conversion, a lock trait, a GUID builder, a guest GUID reader and a
     // big-endian byte reader)

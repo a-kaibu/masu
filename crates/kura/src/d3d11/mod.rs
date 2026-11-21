@@ -13,6 +13,7 @@ pub mod d2d;
 pub mod d3d10;
 mod deferred;
 pub mod check;
+mod clear;
 pub mod format;
 mod hazards;
 pub mod names;
@@ -3330,7 +3331,17 @@ unsafe fn context_call2(d: &mut D11, st: &mut State, m: u32, a: &dyn Fn(usize) -
             st.so = so;
             hazards::after_buffers(d, st);
         }
-        49 | 51 | 52 | 55 => {}
+        // ClearUnorderedAccessViewUint(view, values[4]), ClearUnorderedAccessViewFloat(view,
+        // values[4]): the whole view
+        51 | 52 => {
+            let v = d.id_of(a(1));
+            // SAFETY: rd's own contract: the caller's array of four values
+            let vals: [u32; 4] = std::array::from_fn(|i| unsafe { rd(a(2), i) });
+            let vals = if m == 51 { clear::Values::Uint(vals) } else { clear::Values::Float(vals.map(f32::from_bits)) };
+            // SAFETY: clear_view_texels' own contract: a view of this device
+            unsafe { clear_view_texels(d, v, vals, &[]) };
+        }
+        49 | 55 => {}
         41 => dispatch(d, st, a(1), a(2), a(3)),
         42 => {
             // DispatchIndirect(args, offset): the group counts from the buffer
@@ -3465,7 +3476,26 @@ unsafe fn context_call2(d: &mut D11, st: &mut State, m: u32, a: &dyn Fn(usize) -
         }
         131 => swap_state(d, st, a(1), a(2)),
         58 => deferred::execute(d, st, a(1), a(2), after),
-        132 => {} // ClearView
+        // ClearView(view, color[4], rects, n): a render target or unordered access view, in
+        // rectangles of the view (none or NULL: all of it), the color as a Float clear's
+        // (D3D11.1 functional spec, ClearView)
+        132 => {
+            let v = d.id_of(a(1));
+            // SAFETY: rd's own contract: the caller's color of four floats
+            let c: [u32; 4] = std::array::from_fn(|i| unsafe { rd(a(2), i) });
+            let n = us(a(4).min(4096));
+            let rect = |i: usize, k: usize| {
+                // SAFETY: rd's own contract: the caller's array of `n` D3D11_RECTs
+                unsafe { rd(a(3), i.saturating_mul(4).saturating_add(k)) }.cast_signed()
+            };
+            let rects: Vec<[i32; 4]> = if a(3) != 0 { (0..n).map(|i| std::array::from_fn(|k| rect(i, k))).collect() } else { Vec::new() };
+            if rects.is_empty() && matches!(d.objs.get(&v).map(|o| o.iface), Some(IF_RTV)) {
+                // SAFETY: context_call2's own contract: ClearRenderTargetView(view, color)
+                return unsafe { context_call2(d, st, 50, &|i| if i == 1 { a(1) } else { a(2) }, after) };
+            }
+            // SAFETY: clear_view_texels' own contract: a view of this device
+            unsafe { clear_view_texels(d, v, clear::Values::Float(c.map(f32::from_bits)), &rects) };
+        }
         // ID3D11DeviceContext2: tiled resources and annotations
         134..=139 | 141..=143 => {}
         140 => return 0, // IsAnnotationEnabled
@@ -3536,6 +3566,46 @@ fn view_target(d: &D11, v: u32) -> Option<(u32, u32, u32)> {
     let Some(Data::View(v)) = d.objs.get(&v).map(|o| &o.data) else { return None };
     let Some(Data::Texture(t)) = d.objs.get(&v.res).map(|o| &o.data) else { return None };
     Some((t.gpu, v.mip, v.layer))
+}
+
+/// A clear of a render target or unordered access view of a texture by its texels: each of
+/// `rects` (left top right bottom, cut to the view's level; none: all of it) of every layer
+/// (3D slice) the view has, as UpdateSubresource of the texel `clear::texel` makes would write
+/// them. A view of no texture, a format of no such texel: nothing.
+unsafe fn clear_view_texels(d: &mut D11, v: u32, vals: clear::Values, rects: &[[i32; 4]]) {
+    let Some(Data::View(view)) = d.objs.get(&v).map(|o| &o.data) else { return };
+    let (res, fmt, mip, layer, layers) = (view.res, view.fmt, view.mip, view.layer, view.layers.max(1));
+    if view.buf.is_some() {
+        return;
+    }
+    let Some(texel) = clear::texel(fmt, vals) else { return };
+    let Some(Data::Texture(t)) = d.objs.get_mut(&res).map(|o| &mut o.data) else { return };
+    if mip >= t.mips.max(1) {
+        return;
+    }
+    let (lw, lh) = ((t.w >> mip).max(1), (t.h >> mip).max(1));
+    let whole = [[0, 0, lw.cast_signed(), lh.cast_signed()]];
+    let rects = if rects.is_empty() { &whole[..] } else { rects };
+    for r in rects {
+        let (x0, y0) = (r[0].clamp(0, lw.cast_signed()).cast_unsigned(), r[1].clamp(0, lh.cast_signed()).cast_unsigned());
+        let (x1, y1) = (r[2].clamp(0, lw.cast_signed()).cast_unsigned(), r[3].clamp(0, lh.cast_signed()).cast_unsigned());
+        if x1 <= x0 || y1 <= y0 {
+            continue;
+        }
+        let (w, h) = (x1.saturating_sub(x0), y1.saturating_sub(y0));
+        let row = texel.repeat(us(w));
+        let bytes = row.repeat(us(h));
+        let pitch = lo32(row.len());
+        for l in layer..layer.saturating_add(layers) {
+            // (3D: slice l of the level; arrays: subresource of the level in layer l)
+            let (sub, bx) = if t.dim == 3 { (mip, [x0, y0, l, x1, y1, l.saturating_add(1)]) } else { (mip.saturating_add(l.saturating_mul(t.mips.max(1))), [x0, y0, 0, x1, y1, 1]) };
+            t.clean.clear();
+            t.pristine = false;
+            // SAFETY: upload_texture's own contract: `bytes` holds the box's rows, `pitch` apart
+            unsafe { upload_texture(t, sub, bytes.as_ptr().expose_provenance(), pitch, pitch.saturating_mul(h), Some(bx)) };
+        }
+    }
+    d.targets = None;
 }
 
 /// How many array layers (3D slices) a view covers (1 at least).

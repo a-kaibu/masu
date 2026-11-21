@@ -331,3 +331,74 @@ fn a_uav_read_keeps_its_copy_and_sees_every_change() {
     assert!(checked > 20, "{checked}");
     d.done();
 }
+
+/// What a clear of an 8x8 view does to its texels, as clear::texel says, through the context
+/// (ClearUnorderedAccessViewUint 51, ClearUnorderedAccessViewFloat 52, ClearView 132 with
+/// rectangles or none) and read back from the page.
+#[derive(Clone, Debug)]
+enum ClearOp {
+    Uint([u32; 4]),
+    Float([f32; 4]),
+    View([f32; 4], Vec<[i32; 4]>),
+}
+
+fn clear_op() -> impl proptest::strategy::Strategy<Value = ClearOp> {
+    use proptest::prelude::*;
+    let val = prop_oneof![Just(0.0f32), Just(1.0), Just(0.5), Just(-1.0), Just(2.0), -1.5f32..1.5];
+    let rect = (-2i32..10, -2i32..10, -2i32..10, -2i32..10).prop_map(|(a, b, c, d)| [a, b, c, d]);
+    prop_oneof![
+        any::<[u32; 4]>().prop_map(ClearOp::Uint),
+        proptest::array::uniform4(val.clone()).prop_map(ClearOp::Float),
+        (proptest::array::uniform4(val), proptest::collection::vec(rect, 0..3)).prop_map(|(c, r)| ClearOp::View(c, r)),
+    ]
+}
+
+proptest::proptest! {
+    #![proptest_config(proptest::prelude::ProptestConfig { cases: 256, ..proptest::prelude::ProptestConfig::default() })]
+    #[test]
+    fn clears_write_the_documented_texels(fmt in proptest::prelude::prop_oneof![proptest::prelude::Just(RGBA8), proptest::prelude::Just(42u32), proptest::prelude::Just(41u32), proptest::prelude::Just(30u32)], ops in proptest::collection::vec(clear_op(), 1..6)) {
+        let _g = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+        let mut d = Dev::new();
+        let out = d.tex(fmt, 0x88, &PATTERN(3));
+        let mut want = d.read(out);
+        let uav = d.uav(out);
+        for op in &ops {
+            let (vals, rects): (clear::Values, Vec<[i32; 4]>) = match op {
+                ClearOp::Uint(u) => {
+                    let p = mem(4);
+                    put(p, u);
+                    d.cc(51, &[uav, p]);
+                    (clear::Values::Uint(*u), vec![])
+                }
+                ClearOp::Float(f) => {
+                    let p = mem(4);
+                    put(p, &f.map(f32::to_bits));
+                    d.cc(52, &[uav, p]);
+                    (clear::Values::Float(*f), vec![])
+                }
+                ClearOp::View(f, r) => {
+                    let p = mem(4);
+                    put(p, &f.map(f32::to_bits));
+                    let rp = mem(4 * r.len().max(1) as u32);
+                    put(rp, &r.iter().flatten().map(|x| x.cast_unsigned()).collect::<Vec<_>>());
+                    d.cc(132, &[uav, p, if r.is_empty() { 0 } else { rp }, r.len() as u32]);
+                    (clear::Values::Float(*f), if r.is_empty() { vec![[0, 0, 8, 8]] } else { r.clone() })
+                }
+            };
+            let rects = if rects.is_empty() { vec![[0, 0, 8, 8]] } else { rects };
+            if let Some(t) = clear::texel(fmt, vals) {
+                let v = u32::from_le_bytes([t[0], t[1], t[2], t[3]]);
+                for r in &rects {
+                    for y in r[1].max(0)..r[3].min(8) {
+                        for x in r[0].max(0)..r[2].min(8) {
+                            want[(y * 8 + x) as usize] = v;
+                        }
+                    }
+                }
+            }
+        }
+        let got = d.read(out);
+        proptest::prop_assert_eq!(got, want, "format {} after {:?}", fmt, ops);
+        d.done();
+    }
+}
