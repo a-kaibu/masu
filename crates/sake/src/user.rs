@@ -1679,7 +1679,7 @@ fn control_proc_fn(c: &mut Ctx) -> u32 {
                 0x87 => return 0x89,
                 _ => {
                     let changed = with(|s| {
-                        let w = s.wins.get_mut(&h).unwrap();
+                        let Some(w) = s.wins.get_mut(&h) else { return false };
                         // (ES_READONLY: typing changes nothing)
                         if w.style & 0x800 != 0 {
                             return false;
@@ -2463,7 +2463,7 @@ fn create_window(c: &mut Ctx, wide: bool) -> u32 {
         let k = &s.classes[ci];
         let has_menu = !child && menu_bar(&s.menus, menu, 0);
         let rect = Rect { l: x, t: y, r: x + cx, b: y + cy };
-        let w = Window {
+        let mut w = Window {
             class: ci,
             proc_: k.proc_,
             style: style & !0x1000_0000,
@@ -2491,11 +2491,11 @@ fn create_window(c: &mut Ctx, wide: bool) -> u32 {
             scroll: Default::default(),
             base: Base::of_class(&k.name),
         };
+        resize_surface(&mut w);
         s.wins.insert(h, w);
         if child && let Some(p) = s.wins.get_mut(&parent) {
             p.children.push(h);
         }
-        resize_surface(s.wins.get_mut(&h).unwrap());
         Some((h, s.classes[ci].name.clone(), s.classes[ci].unicode, s.classes[ci].proc_))
     });
     let Some((h, cname, class_wide, class_proc)) = made else {
@@ -3314,7 +3314,9 @@ fn SetParent(c: &mut Ctx) -> u32 {
             n.children.push(h);
         }
         if p == 0 || p == DESKTOP {
-            resize_surface(s.wins.get_mut(&h).unwrap());
+            if let Some(w) = s.wins.get_mut(&h) {
+                resize_surface(w);
+            }
             update_display(s, h);
         } else if old == 0 || old == DESKTOP {
             // a top-level window made a child leaves the screen's windows: it is drawn in its
@@ -4361,11 +4363,10 @@ fn take_msg(hwnd: u32, lo: u32, hi: u32, remove: bool) -> Option<Msg> {
     with(|s| {
         let q = s.queues.entry(me).or_default();
         if let Some(i) = q.posted.iter().position(|m| matches(m, hwnd, lo, hi)) {
-            return Some(if remove { q.posted.remove(i).unwrap() } else { q.posted[i] });
+            return if remove { q.posted.remove(i) } else { q.posted.get(i).copied() };
         }
         if let Some(i) = q.input.iter().position(|m| matches(m, hwnd, lo, hi)) {
-            let m = if remove { q.input.remove(i).unwrap() } else { q.input[i] };
-            return Some(m);
+            return if remove { q.input.remove(i) } else { q.input.get(i).copied() };
         }
         if let Some(code) = q.quit && (lo == 0 && hi == 0 || (lo..=hi).contains(&0x12)) {
             if remove {
@@ -4389,7 +4390,7 @@ fn take_msg(hwnd: u32, lo: u32, hi: u32, remove: bool) -> Option<Msg> {
         // timers
         if lo == 0 && hi == 0 || (lo..=hi).contains(&0x113) {
             let now = Instant::now();
-            let q = s.queues.get_mut(&me).unwrap();
+            let q = s.queues.entry(me).or_default();
             if let Some(t) = q.timers.iter_mut().filter(|t| t.due <= now && (hwnd == 0 || t.hwnd == hwnd)).min_by_key(|t| t.due) {
                 let m = Msg { hwnd: t.hwnd, msg: 0x113, w: t.id, l: t.proc_, time: now_ms(), x: 0, y: 0 };
                 if remove {
@@ -4400,12 +4401,12 @@ fn take_msg(hwnd: u32, lo: u32, hi: u32, remove: bool) -> Option<Msg> {
         }
         // TrackMouseEvent's hover (generated like a timer's message, then posted)
         if remove {
-            let q = s.queues.get_mut(&me).unwrap();
+            let q = s.queues.entry(me).or_default();
             let (t, e) = crate::mousetrack::tick(q.track, track_ms());
             q.track = t;
             if let Some(e) = e {
                 track_post(s, e);
-                let q = s.queues.get_mut(&me).unwrap();
+                let q = s.queues.entry(me).or_default();
                 if let Some(i) = q.posted.iter().position(|m| matches(m, hwnd, lo, hi)) {
                     return q.posted.remove(i);
                 }
@@ -6557,6 +6558,11 @@ pub(crate) fn destroy_menu(menus: &mut HashMap<u32, Menu>, h: u32) {
 }
 /// The menu and index of `item` in menu `h`: by position, or by command in `h` and then in
 /// its popups, depth first (as Windows: GetMenuState(menu bar, id in a popup) finds it).
+/// The item `locate` finds.
+fn locate_mut(menus: &mut HashMap<u32, Menu>, h: u32, item: u32, by_pos: bool) -> Option<&mut MenuItem> {
+    let (h, i) = locate(menus, h, item, by_pos)?;
+    menus.get_mut(&h)?.items.get_mut(i)
+}
 fn locate(menus: &HashMap<u32, Menu>, h: u32, item: u32, by_pos: bool) -> Option<(u32, usize)> {
     fn walk(menus: &HashMap<u32, Menu>, h: u32, item: u32, depth: u32) -> Option<(u32, usize)> {
         let m = menus.get(&h)?;
@@ -6681,8 +6687,7 @@ fn set_menu_item_info(c: &mut Ctx, wide: bool) -> u32 {
     let (h, item, by_pos, p) = (c.a(0), c.a(1), c.a(2) != 0, c.a(3));
     let (mask, it) = read_mii(p, wide);
     with(|s| {
-        let Some((h, i)) = locate(&s.menus, h, item, by_pos) else { return 0 };
-        let x = &mut s.menus.get_mut(&h).unwrap().items[i];
+        let Some(x) = locate_mut(&mut s.menus, h, item, by_pos) else { return 0 };
         if mask & 0x101 != 0 {
             x.flags = it.flags;
         }
@@ -6783,10 +6788,9 @@ fn GetMenuStringW(c: &mut Ctx) -> u32 {
 }
 fn modify_flags(h: u32, item: u32, flags: u32, set: u32, clear: u32) -> u32 {
     with(|s| {
-        let Some((h, i)) = locate(&s.menus, h, item, flags & 0x400 != 0) else { return 0xffff_ffff };
-        let m = s.menus.get_mut(&h).unwrap();
-        let old = m.items[i].flags;
-        m.items[i].flags = (old & !clear) | set;
+        let Some(x) = locate_mut(&mut s.menus, h, item, flags & 0x400 != 0) else { return 0xffff_ffff };
+        let old = x.flags;
+        x.flags = (old & !clear) | set;
         old & (set | clear)
     })
 }
@@ -6813,11 +6817,8 @@ fn EnableMenuItem(c: &mut Ctx) -> u32 {
 fn DeleteMenu(c: &mut Ctx) -> u32 {
     let (h, item, f) = (c.a(0), c.a(1), c.a(2));
     with(|s| {
-        match locate(&s.menus, h, item, f & 0x400 != 0) {
-            Some((h, i)) => {
-                s.menus.get_mut(&h).unwrap().items.remove(i);
-                1
-            }
+        match locate(&s.menus, h, item, f & 0x400 != 0).and_then(|(h, i)| s.menus.get_mut(&h).map(|m| m.items.remove(i))) {
+            Some(_) => 1,
             None => 0,
         }
     })

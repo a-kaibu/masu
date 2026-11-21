@@ -28,6 +28,7 @@ pub struct Seg {
     pub size: u32,
 }
 
+#[derive(Default)]
 struct St {
     ldt: u32,
     segs: Vec<Option<Seg>>,
@@ -62,8 +63,9 @@ enum Conv {
 
 static ST: Mutex<Option<St>> = Mutex::new(None);
 
+/// `f` on the selectors and heaps (made by `start`; none before it: no LDT, no segments)
 fn with<R>(f: impl FnOnce(&mut St) -> R) -> R {
-    f(ST.locked().as_mut().expect("w16 state"))
+    f(ST.locked().get_or_insert_with(St::default))
 }
 
 /// The running program (one task).
@@ -80,8 +82,10 @@ pub struct Task {
 
 pub static TASK: OnceLock<Task> = OnceLock::new();
 
+/// The program `start` loaded (before it: none, an empty task).
 pub fn task() -> &'static Task {
-    TASK.get().expect("w16 task")
+    static NONE: Task = Task { path: String::new(), hinst: 0, psp: 0, env: 0, segs: Vec::new(), file: Vec::new(), ne: 0, cmd_show: 0 };
+    TASK.get().unwrap_or(&NONE)
 }
 
 static ON: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
@@ -100,7 +104,7 @@ pub fn is_ne(path: &str) -> bool {
     if f.read_exact(&mut h).is_err() || &h[..2] != b"MZ" {
         return false;
     }
-    let o = u32::from_le_bytes(h[0x3c..0x40].try_into().unwrap()) as u64;
+    let o = u64::from(kome::le::u32::<0x3c, 0x40>(&h));
     let mut sig = [0u8; 2];
     f.seek(SeekFrom::Start(o)).is_ok() && f.read_exact(&mut sig).is_ok() && &sig == b"NE"
 }
@@ -305,8 +309,8 @@ pub fn global_realloc(sel: u16, size: u32, zero: bool) -> u16 {
     if n_new != n_old {
         // (the selectors must stay consecutive: a new handle)
         let s = global_alloc(size, zero);
-        if s != 0 {
-            crate::mem::copy(sel_base(s).unwrap().0, b, old.min(size));
+        if let Some((nb, _)) = sel_base(s) {
+            crate::mem::copy(nb, b, old.min(size));
             global_free(sel);
         }
         return s;
@@ -373,7 +377,7 @@ pub fn local_realloc(ds: u16, off: u16, size: u16, zero: bool) -> u16 {
     if n == 0 {
         return 0;
     }
-    let b = sel_base(ds).unwrap().0;
+    let Some((b, _)) = sel_base(ds) else { return 0 };
     crate::mem::copy(b + n as u32, b + off as u32, old.min(size) as u32);
     local_free(ds, off);
     n
@@ -422,7 +426,9 @@ pub fn call32_with(cpu: &mut Cpu, f: Handler, args: &[u32], trap: u32) -> (u32, 
 
 /// Calls sake's 32-bit `dll!name` with `args`.
 pub fn call32(cpu: &mut Cpu, func: &str, args: &[u32]) -> u32 {
-    let (dll, name) = func.split_once('!').unwrap();
+    let Some((dll, name)) = func.split_once('!') else {
+        crate::fatal(cpu, &format!("w16: {func}: not a dll!name"));
+    };
     let Some(f) = api::find_impl(dll, name) else {
         crate::fatal(cpu, &format!("w16: no 32-bit {func}"));
     };
@@ -547,7 +553,8 @@ fn spec_line(module: &str, ord: u16) -> Option<(String, Conv, Vec<u8>, Option<u3
             if f.len() < 4 {
                 continue;
             }
-            let ord: u16 = f[1].parse().unwrap();
+            // (every line's ordinal is a number: specs16_lines_parse)
+            let Ok(ord) = f[1].parse::<u16>() else { continue };
             let (conv, args, eq) = match f[3] {
                 "=" => (Conv::Stub, vec![], f.get(4).and_then(|v| parse_num(v))),
                 "stub" => (Conv::Stub, vec![], None),
@@ -1070,7 +1077,7 @@ pub fn export_ordinal(d: &[u8], ne: usize, name: &str) -> Option<u16> {
         None
     };
     let res = ne + kome::le::u16_at(d, ne + 0x26).unwrap_or(0) as usize;
-    let nonres = u32::from_le_bytes(d.get(ne + 0x2c..ne + 0x30)?.try_into().unwrap()) as usize;
+    let nonres = kome::le::u32_at(d, ne + 0x2c)? as usize;
     scan(res, true).or_else(|| if nonres != 0 { scan(nonres, true) } else { None })
 }
 
@@ -1149,8 +1156,8 @@ pub fn load_dll(name: &str) -> Result<u16, u16> {
     if d.len() < 0x40 || &d[..2] != b"MZ" {
         return Err(11);
     }
-    let ne = u32::from_le_bytes(d[0x3c..0x40].try_into().unwrap()) as usize;
-    if d.get(ne..ne + 2) != Some(b"NE") {
+    let ne = kome::le::u32_at(&d, 0x3c).map_or(usize::MAX, |v| v as usize);
+    if d.get(ne..ne.saturating_add(2)) != Some(b"NE") {
         return Err(11);
     }
     let h = |o: usize| kome::le::u16_at(&d, ne + o).unwrap_or(0);
@@ -1282,7 +1289,7 @@ pub fn free_library(cpu: &mut Cpu, h: u16) {
 /// Loads the program and starts it.
 pub fn start(cpu: &mut Cpu, exe: &str, wpath: &str, args: &[String]) -> ! {
     ON.store(true, std::sync::atomic::Ordering::Relaxed);
-    let ldt = crate::mem::alloc(4 * NSEL).expect("w16 ldt");
+    let Some(ldt) = crate::mem::alloc(4 * NSEL) else { crate::fatal(cpu, "w16: no room for the LDT") };
     let thunk_base = TRAP;
     {
         let mut segs = Vec::with_capacity(NSEL as usize);
@@ -1293,16 +1300,16 @@ pub fn start(cpu: &mut Cpu, exe: &str, wpath: &str, args: &[String]) -> ! {
     with(|s| s.thunk = thunk);
     cpu.ldt = ldt;
     // scratch areas
-    let s32 = crate::mem::alloc(0x40000).expect("w16 scratch");
+    let Some(s32) = crate::mem::alloc(0x40000) else { crate::fatal(cpu, "w16: no room for the scratch area") };
     SCR32.with(|s| s.set(s32 + 0x40000));
-    let s16 = crate::mem::alloc(0x10000).expect("w16 scratch16");
+    let Some(s16) = crate::mem::alloc(0x10000) else { crate::fatal(cpu, "w16: no room for the 16-bit scratch area") };
     let s16sel = sel_alloc(s16, 0x10000);
     SCR16.with(|s| s.set((s16sel, s16, 0xfff0)));
     crate::w16api::init();
     *EXE_DIR.locked() = wpath.rsplit_once('\\').map_or(String::new(), |(d, _)| format!("{d}\\"));
 
     let d = kura::fs::read(exe).unwrap_or_default();
-    let ne = d.get(0x3c..0x40).map_or(0, |b| u32::from_le_bytes(b.try_into().unwrap()) as usize);
+    let ne = kome::le::u32_at(&d, 0x3c).map_or(0, |v| v as usize);
     let h = |o: usize| kome::le::u16_at(&d, ne + o).unwrap_or(0);
     let (autodata, heap, mut stack) = (h(0x0e), h(0x10), h(0x12));
     let (ip, cs, mut sp, ss) = (h(0x14), h(0x16), h(0x18), h(0x1a));
@@ -1329,13 +1336,13 @@ pub fn start(cpu: &mut Cpu, exe: &str, wpath: &str, args: &[String]) -> ! {
     });
     // PSP and environment
     let env = global_alloc(0x400, true);
-    let eb = sel_base(env).unwrap().0;
+    let Some((eb, _)) = sel_base(env) else { crate::fatal(cpu, "w16: no room for the environment") };
     let mut ev = b"PATH=C:\\WINDOWS\0WINDIR=C:\\WINDOWS\0\0\x01\0".to_vec();
     ev.extend_from_slice(wpath.as_bytes());
     ev.push(0);
     crate::mem::write(eb, &ev);
     let psp = global_alloc(0x100, true);
-    let pb = sel_base(psp).unwrap().0;
+    let Some((pb, _)) = sel_base(psp) else { crate::fatal(cpu, "w16: no room for the PSP") };
     w16(pb, 0x20cd);
     w16(pb + 0x2c, env);
     let tail = args.join(" ");
@@ -1371,6 +1378,21 @@ pub fn start(cpu: &mut Cpu, exe: &str, wpath: &str, args: &[String]) -> ! {
 mod ne_tests {
     use super::*;
     use proptest::prelude::*;
+
+    /// Every spec line spec_line reads names a module, a numeric ordinal and a name.
+    #[test]
+    fn specs16_lines_parse() {
+        let mut n = 0;
+        for l in include_str!("specs16.txt").lines() {
+            let f: Vec<&str> = l.split_whitespace().collect();
+            if f.len() >= 4 {
+                assert!(f[1].parse::<u16>().is_ok(), "{l}");
+                assert!(spec_line(f[0], f[1].parse().unwrap()).is_some(), "{l}");
+                n += 1;
+            }
+        }
+        assert!(n > 100);
+    }
 
     /// An NE header at 0 with entry `bundles` (count, type: 0 none, 0xff movable, else the
     /// segment) and the names (name, ordinal) split between the resident and nonresident tables.

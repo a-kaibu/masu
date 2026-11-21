@@ -541,18 +541,16 @@ fn put_port(p: u32, port: u16) {
     mem::write(p, &[(port >> 8) as u8, port as u8, 0, 0]);
 }
 fn addr16(a: &crate::ws2name::Addr) -> [u8; 16] {
-    let mut b = [0; 16];
-    if a.ip.len() == 16 {
-        b.copy_from_slice(&a.ip);
+    match a.ip {
+        crate::ws2name::Ip::V6(b) => b,
+        crate::ws2name::Ip::V4(_) => [0; 16],
     }
-    b
 }
 fn addr4(a: &crate::ws2name::Addr) -> [u8; 4] {
-    let mut b = [0; 4];
-    if a.ip.len() == 4 {
-        b.copy_from_slice(&a.ip);
+    match a.ip {
+        crate::ws2name::Ip::V4(b) => b,
+        crate::ws2name::Ip::V6(_) => [0; 4],
     }
-    b
 }
 
 /// The rows of a table: this family's sockets of that kind, which `class_ok` keeps, in
@@ -561,8 +559,8 @@ fn conn_rows(tcp: bool, v6: bool, keep: impl Fn(&crate::ws2::ConnRow) -> bool) -
     let af = if v6 { AF_INET6 } else { AF_INET };
     let mut v: Vec<_> = crate::ws2::conn_rows().into_iter().filter(|r| r.tcp == tcp && r.af == af && keep(r)).collect();
     let key = |r: &crate::ws2::ConnRow| {
-        let rem = r.remote.clone().unwrap_or(crate::ws2name::Addr { ip: vec![0; if v6 { 16 } else { 4 }], port: 0, flow: 0, scope: 0 });
-        (r.local.ip.clone(), r.local.port, rem.ip, rem.port)
+        let rem = r.remote.clone().unwrap_or(crate::ws2name::Addr { ip: if v6 { crate::ws2name::Ip::V6([0; 16]) } else { crate::ws2name::Ip::V4([0; 4]) }, port: 0, flow: 0, scope: 0 });
+        (r.local.ip, r.local.port, rem.ip, rem.port)
     };
     v.sort_by_key(key);
     v
@@ -570,7 +568,8 @@ fn conn_rows(tcp: bool, v6: bool, keep: impl Fn(&crate::ws2::ConnRow) -> bool) -
 
 /// Writes one row
 fn put_row(p: u32, tcp: bool, v6: bool, k: RowKind, r: &crate::ws2::ConnRow) {
-    let none = crate::ws2name::Addr { ip: Vec::new(), port: 0, flow: 0, scope: 0 };
+    // (no remote end: zeros in either family's row)
+    let none = crate::ws2name::Addr { ip: crate::ws2name::Ip::V4([0; 4]), port: 0, flow: 0, scope: 0 };
     let rem = r.remote.as_ref().unwrap_or(&none);
     let pid = crate::pid();
     match (tcp, v6) {

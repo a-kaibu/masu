@@ -651,11 +651,12 @@ pub fn fuzz_cache(dir: &std::path::Path, data: &[u8]) {
                 let mut bytes = b"[S]\r\n".to_vec();
                 bytes.extend(&data[i..i + n]);
                 i += n;
-                std::fs::write(&f, &bytes).unwrap();
+                // (a directory the harness cannot write: nothing more to check)
+                let Ok(()) = std::fs::write(&f, &bytes) else { return };
                 if op % 6 == 3 {
                     back -= 1;
                     let t = std::time::SystemTime::now() - std::time::Duration::from_secs(back);
-                    std::fs::File::options().write(true).open(&f).unwrap().set_modified(t).unwrap();
+                    let Ok(()) = std::fs::File::options().write(true).open(&f).and_then(|h| h.set_modified(t)) else { return };
                 }
             }
             4 => {
