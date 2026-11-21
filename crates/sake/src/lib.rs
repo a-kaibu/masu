@@ -166,6 +166,7 @@ pub mod icu;
 pub mod dnsrec;
 pub mod eventlog;
 pub mod ntstr;
+pub mod ntcrt;
 pub mod smalldlls;
 pub mod security;
 pub mod lsa;
@@ -1081,6 +1082,7 @@ pub fn main(exe: &str, args: &[String]) -> ! {
     icu::init();
     eventlog::init();
     ntstr::init();
+    ntcrt::init();
     security::init();
     lsa::init();
     actctx::init();

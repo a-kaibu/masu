@@ -45,6 +45,7 @@ pub enum Rule {
     DepthGuard,
     BooleanArg,
     TypedRegisters,
+    NtdllOwnCrt,
 }
 
 impl Rule {
@@ -77,6 +78,7 @@ impl Rule {
         Rule::DepthGuard,
         Rule::BooleanArg,
         Rule::TypedRegisters,
+        Rule::NtdllOwnCrt,
     ];
 
     /// the name a site list and a message use
@@ -110,6 +112,7 @@ impl Rule {
             Rule::DepthGuard => "depth-guard",
             Rule::BooleanArg => "boolean-arg",
             Rule::TypedRegisters => "typed-registers",
+            Rule::NtdllOwnCrt => "ntdll-own-crt",
         }
     }
 
@@ -143,6 +146,7 @@ impl Rule {
             Rule::DepthGuard => "the depth limits on recursion over game and file input stay (regress::DEPTH_GUARDS; review b00/b04/b07: damaged traces, MSI conditions, shaders, .x files nesting without end blew the stack): keep the const and the check against it; a new limit is added to the list",
             Rule::BooleanArg => "a BOOLEAN parameter is its low byte (2026-11-20, RtlAnsiStringToUnicodeString read c.a(2) != 0): read it with c.boolean(i); win32.rs BOOLEAN_ARGS lists them",
             Rule::TypedRegisters => "koji's registers are named, not numbered (2026-11-20, Farcall comparison): Cpu::regs/hi are Gprs indexed by Gpr (EAX..EDI), sreg/sbase Segs indexed by Seg, Cpu::gpr takes a Reg64; write the register's name (koji::EBX, Seg::Ss, Reg64::R8), not Gpr::ALL[3] or values()[3], and give Gprs/Segs no index, conversion or public field that takes a number",
+            Rule::NtdllOwnCrt => "ntdll's C runtime is not msvcrt's (ASCII / Latin-1 tables, no base check in _itoa, wrapping atoi; 2026-11-20): each function win32.rs NTDLL_OWN_CRT lists keeps an implement(\"ntdll\", ..) of its own, else find_impl answers with msvcrt's",
             Rule::OutEscape => "a LockWord's or an Object's key() names a lock or one of sake's objects, it is no guest address (review 2026-11-17, 06dc4bf2): it is not the address of mem's readers and writers or of ga()/Ga::from (a value written into memory is fine); take the lock through LockWord::atomic, the object through its table",
         }
     }
@@ -177,6 +181,7 @@ impl Rule {
             Rule::DepthGuard => regress::depth_guard(tree),
             Rule::BooleanArg => crate::win32::boolean_arg(tree),
             Rule::TypedRegisters => typed_registers(tree),
+            Rule::NtdllOwnCrt => crate::win32::ntdll_own_crt(tree),
         };
         hits.into_iter().map(|(file, line, what)| Finding { rule: self, file, line, what }).collect()
     }
