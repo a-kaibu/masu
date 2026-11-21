@@ -341,6 +341,7 @@ async fn favorites(State(Api { db, .. }): State<Api>) -> Result<Json<Vec<String>
 
 #[cfg(test)]
 mod tests {
+    use kome::locks::Lock as _;
     use super::*;
     use axum::body::{to_bytes, Body};
     use axum::http::Request;
@@ -424,7 +425,7 @@ mod tests {
         let fetch: Fetcher = {
             let (seen, gate) = (seen.clone(), gate.clone());
             Arc::new(move |id: &str| {
-                seen.lock().unwrap().push(id.to_string());
+                seen.locked().push(id.to_string());
                 gate.wait();
                 Ok(Fetched { info: info("アネモイ"), cover: Some((b"\xff\xd8jpeg".to_vec(), "image/jpeg".into())) })
             })
@@ -441,7 +442,7 @@ mod tests {
         tokio::task::spawn_blocking(move || gate.wait()).await.unwrap();
         let done = settled(&app, "anemoi").await;
         assert_eq!(done["state"], "ok", "{done}");
-        assert_eq!(*seen.lock().unwrap(), ["egs:35435"]);
+        assert_eq!(*seen.locked(), ["egs:35435"]);
         let g = listed(&db);
         assert_eq!(g["meta"]["title"], "アネモイ");
         assert_eq!(g["meta"]["brand"], "Key");
@@ -460,7 +461,7 @@ mod tests {
         let fetch: Fetcher = {
             let calls = calls.clone();
             Arc::new(move |_: &str| {
-                *calls.lock().unwrap() += 1;
+                *calls.locked() += 1;
                 anyhow::bail!("unreachable")
             })
         };
@@ -478,7 +479,7 @@ mod tests {
         assert!(s.is_client_error());
         let (s, _, _) = call(&app, "GET", "/api/library/anemoi/cover", None).await;
         assert_eq!(s, StatusCode::NOT_FOUND);
-        assert_eq!(*calls.lock().unwrap(), 0, "nothing fetched");
+        assert_eq!(*calls.locked(), 0, "nothing fetched");
         assert_eq!(state(&app, "anemoi").await, serde_json::Value::Null);
         std::fs::remove_dir_all(dir).unwrap();
     }
@@ -496,7 +497,7 @@ mod tests {
         ]));
         let fetch: Fetcher = {
             let next = next.clone();
-            Arc::new(move |_: &str| next.lock().unwrap().pop().unwrap())
+            Arc::new(move |_: &str| next.locked().pop().unwrap())
         };
         let app = router_with(db.clone(), fetch);
         let put = |url: &'static str| {
@@ -561,8 +562,8 @@ mod tests {
         let fetch: Fetcher = {
             let (seen, gate) = (seen.clone(), gate.clone());
             Arc::new(move |id: &str| {
-                let first = seen.lock().unwrap().is_empty();
-                seen.lock().unwrap().push(id.to_string());
+                let first = seen.locked().is_empty();
+                seen.locked().push(id.to_string());
                 if first {
                     gate.wait();
                 }
@@ -576,17 +577,17 @@ mod tests {
         }
         // (the first is inside fetch: no second one started meanwhile)
         for _ in 0..50 {
-            if !seen.lock().unwrap().is_empty() {
+            if !seen.locked().is_empty() {
                 break;
             }
             tokio::time::sleep(std::time::Duration::from_millis(10)).await;
         }
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-        assert_eq!(*seen.lock().unwrap(), ["vndb:v1"]);
+        assert_eq!(*seen.locked(), ["vndb:v1"]);
         tokio::task::spawn_blocking(move || gate.wait()).await.unwrap();
         let done = settled(&app, "anemoi").await;
         assert_eq!((done["state"].as_str(), done["url"].as_str()), (Some("ok"), Some("https://vndb.org/v20")), "{done}");
-        assert_eq!(*seen.lock().unwrap(), ["vndb:v1", "vndb:v20"]);
+        assert_eq!(*seen.locked(), ["vndb:v1", "vndb:v20"]);
         assert_eq!(listed(&db)["meta"]["title"], "vndb:v20");
         std::fs::remove_dir_all(dir).unwrap();
     }
@@ -601,8 +602,8 @@ mod tests {
         let fetch: Fetcher = {
             let n = n.clone();
             Arc::new(move |_: &str| {
-                *n.lock().unwrap() += 1;
-                if *n.lock().unwrap() == 1 {
+                *n.locked() += 1;
+                if *n.locked() == 1 {
                     panic!("boom");
                 }
                 Ok(Fetched { info: info("二回目"), cover: None })

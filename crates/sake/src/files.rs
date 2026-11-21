@@ -3,6 +3,7 @@
 //! Z:\ is the host root (as in Wine), C:\ is SAKE_C (default /tmp/sake-c). Names are
 //! matched without case when the exact one is missing.
 
+use kome::locks::Lock as _;
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::sync::Mutex;
 
@@ -24,16 +25,16 @@ impl Drop for File {
     fn drop(&mut self) {
         // (closing the handle releases its byte-range locks)
         let me = self.lock_owner();
-        let mut locks = LOCKS.lock().unwrap();
+        let mut locks = LOCKS.locked();
         if !locks.is_empty() {
             locks.release(me);
         }
         drop(locks);
         if self.share != 0 {
-            OPEN.lock().unwrap().retain(|o| o.0 != self.share);
+            OPEN.locked().retain(|o| o.0 != self.share);
         }
         if self.delete.load(std::sync::atomic::Ordering::Relaxed) {
-            DELETE_ON_CLOSE.lock().unwrap().retain(|p| *p != self.path);
+            DELETE_ON_CLOSE.locked().retain(|p| *p != self.path);
             let _ = kura::fs::remove_file(&self.path);
         }
     }
@@ -71,7 +72,7 @@ impl File {
         if self.dir || self.delete.swap(true, std::sync::atomic::Ordering::Relaxed) {
             return;
         }
-        let mut l = DELETE_ON_CLOSE.lock().unwrap();
+        let mut l = DELETE_ON_CLOSE.locked();
         static AT_EXIT: std::sync::Once = std::sync::Once::new();
         AT_EXIT.call_once(|| unsafe {
             libc::atexit(delete_at_exit);
@@ -116,7 +117,7 @@ fn access_bits(access: u32) -> u32 {
 /// this one does not share what that one has.
 fn share_conflict(host: &str, want: u32, share: u32) -> bool {
     let key = host.to_lowercase();
-    OPEN.lock().unwrap().iter().any(|o| o.1 == key && (want & !o.3 & 7 != 0 || o.2 & !share & 7 != 0))
+    OPEN.locked().iter().any(|o| o.1 == key && (want & !o.3 & 7 != 0 || o.2 & !share & 7 != 0))
 }
 
 /// Whether some handle keeps `host` from being deleted or renamed (opened without FILE_SHARE_DELETE).
@@ -171,7 +172,7 @@ pub fn missing(w: &str) -> u32 {
 pub static ATTRS: Mutex<Vec<(String, u32)>> = Mutex::new(Vec::new());
 pub fn set_attrs(host: &str, a: u32) {
     let key = host.to_lowercase();
-    let mut t = ATTRS.lock().unwrap();
+    let mut t = ATTRS.locked();
     t.retain(|x| x.0 != key);
     if a & 0x7 != 0 {
         t.push((key, a & 0x27));
@@ -179,7 +180,7 @@ pub fn set_attrs(host: &str, a: u32) {
 }
 pub fn extra_attrs(host: &str) -> u32 {
     let key = host.to_lowercase();
-    ATTRS.lock().unwrap().iter().find(|x| x.0 == key).map_or(0, |x| x.1)
+    ATTRS.locked().iter().find(|x| x.0 == key).map_or(0, |x| x.1)
 }
 
 /// SetFileTime's last write times (the host files keep the host's own): host path in lower case
@@ -189,7 +190,7 @@ static TIMES: Mutex<Vec<(String, u64, u64)>> = Mutex::new(Vec::new());
 pub fn set_write_time(host: &str, ft: u64) {
     let key = host.to_lowercase();
     let now = kura::fs::metadata(host).ok().and_then(|m| m.modified().ok()).map_or(0, filetime);
-    let mut t = TIMES.lock().unwrap();
+    let mut t = TIMES.locked();
     t.retain(|x| x.0 != key);
     t.push((key, ft, now));
 }
@@ -197,7 +198,7 @@ pub fn set_write_time(host: &str, ft: u64) {
 pub fn write_time(host: &str, m: &kura::fs::Metadata) -> u64 {
     let real = m.modified().map_or(0, filetime);
     let key = host.to_lowercase();
-    TIMES.lock().unwrap().iter().find(|x| x.0 == key && x.2 == real).map_or(real, |x| x.1)
+    TIMES.locked().iter().find(|x| x.0 == key && x.2 == real).map_or(real, |x| x.1)
 }
 /// A file's index (BY_HANDLE_FILE_INFORMATION): the host's inode, kept by renames, else a hash
 /// of its host path.
@@ -216,7 +217,7 @@ pub struct Find {
 static CWD: Mutex<String> = Mutex::new(String::new());
 
 pub fn cwd() -> String {
-    let c = CWD.lock().unwrap();
+    let c = CWD.locked();
     if c.is_empty() {
         "C:\\".into()
     } else {
@@ -229,7 +230,7 @@ pub fn set_cwd(d: &str) {
     if !s.ends_with('\\') {
         s.push('\\');
     }
-    *CWD.lock().unwrap() = s;
+    *CWD.locked() = s;
 }
 
 fn c_root() -> String {
@@ -550,7 +551,7 @@ pub fn open_shared(w: &str, access: u32, disposition: u32, share: Option<u32>) -
                 Some(s) => {
                     static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
                     let id = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                    OPEN.lock().unwrap().push((id, host.to_lowercase(), access_bits(access), s));
+                    OPEN.locked().push((id, host.to_lowercase(), access_bits(access), s));
                     id
                 }
                 None => 0,
@@ -580,7 +581,7 @@ fn left(f: &mut kura::fs::File) -> usize {
 
 impl File {
     pub fn read_into(&self, dst: u32, n: u32) -> u32 {
-        let mut f = self.f.lock().unwrap();
+        let mut f = self.f.locked();
         // SAFETY: the closure only reads the host file into the buffer, touching no guest memory;
         // the program handed the buffer to this read (another thread of its writing it meanwhile
         // would race on Windows too).
@@ -601,25 +602,25 @@ impl File {
     /// The buffer grows with what is read, so a large `n` (fread's "the rest of the file"
     /// 0x7fffffff) costs what the file holds, not `n` bytes of zeros.
     pub fn read_vec(&self, n: usize) -> Vec<u8> {
-        let mut f = self.f.lock().unwrap();
+        let mut f = self.f.locked();
         let mut buf = Vec::with_capacity(n.min(left(&mut f)));
         let _ = (&mut *f).take(n as u64).read_to_end(&mut buf);
         buf
     }
     /// The bytes from the file pointer to the end (0 past it).
     pub fn remaining(&self) -> usize {
-        left(&mut self.f.lock().unwrap())
+        left(&mut self.f.locked())
     }
     pub fn write_bytes(&self, b: &[u8]) -> u32 {
-        let mut f = self.f.lock().unwrap();
+        let mut f = self.f.locked();
         f.write_all(b).map_or(0, |_| b.len() as u32)
     }
     pub fn write_from(&self, src: u32, n: u32) -> u32 {
-        let mut f = self.f.lock().unwrap();
+        let mut f = self.f.locked();
         f.write_all(&crate::mem::bytes(src, n)).map_or(0, |()| n)
     }
     pub fn seek(&self, pos: SeekFrom) -> Option<u64> {
-        self.f.lock().unwrap().seek(pos).ok()
+        self.f.locked().seek(pos).ok()
     }
     /// ReadFile's read with an OVERLAPPED: from `start` (io_start; None: the file pointer),
     /// under one lock so another thread's seek on the handle can't come between. A handle
@@ -628,7 +629,7 @@ impl File {
     /// that starts at or after the end (STATUS_END_OF_FILE: ReadFile fails with
     /// ERROR_HANDLE_EOF when it was given an OVERLAPPED).
     pub fn read_at(&self, start: Option<SeekFrom>, keep: bool, buf: &mut [u8]) -> Result<usize, ()> {
-        let mut f = self.f.lock().unwrap();
+        let mut f = self.f.locked();
         let was = f.stream_position().unwrap_or(0);
         if let Some(s) = start && f.seek(s).is_err() {
             return Err(());
@@ -649,7 +650,7 @@ impl File {
     /// FILE_WRITE_TO_END_OF_FILE; None: the file pointer), under one lock; past the end the
     /// gap reads as zeros. `keep`: as read_at. The bytes written (0: it failed).
     pub fn write_at(&self, start: Option<SeekFrom>, keep: bool, b: &[u8]) -> u32 {
-        let mut f = self.f.lock().unwrap();
+        let mut f = self.f.locked();
         let was = f.stream_position().unwrap_or(0);
         if let Some(s) = start && f.seek(s).is_err() {
             return 0;
@@ -661,7 +662,7 @@ impl File {
         w
     }
     pub fn size(&self) -> u64 {
-        self.f.lock().unwrap().metadata().map_or(0, |m| m.len())
+        self.f.locked().metadata().map_or(0, |m| m.len())
     }
 }
 

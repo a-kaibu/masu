@@ -124,13 +124,13 @@ impl MediaType {
         MediaType { head, format }
     }
     fn major(&self) -> Guid {
-        self.head[0..16].try_into().unwrap()
+        kome::le::bytes_at(&self.head, 0).unwrap_or_default()
     }
     fn sub(&self) -> Guid {
-        self.head[16..32].try_into().unwrap()
+        kome::le::bytes_at(&self.head, 16).unwrap_or_default()
     }
     fn formattype(&self) -> Guid {
-        self.head[44..60].try_into().unwrap()
+        kome::le::bytes_at(&self.head, 44).unwrap_or_default()
     }
     /// into a caller's AM_MEDIA_TYPE: its format block a copy of ours (CoTaskMemAlloc'd)
     fn write(&self, p: u32) {
@@ -148,7 +148,7 @@ impl MediaType {
     /// the picture size its VIDEOINFOHEADER(2) gives
     pub fn size(&self) -> (i32, i32) {
         let bih = if self.formattype() == FORMAT_VIDEOINFO2 { 72 } else { 48 };
-        let at = |o: usize| self.format.get(bih + o..bih + o + 4).map_or(0, |b| i32::from_le_bytes(b.try_into().unwrap()));
+        let at = |o: usize| kome::le::u32_at(&self.format, bih + o).map_or(0, u32::cast_signed);
         (at(4), at(8).abs())
     }
 }

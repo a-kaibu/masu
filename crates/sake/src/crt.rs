@@ -4,6 +4,7 @@
 
 #![allow(non_snake_case)]
 
+use kome::locks::Lock as _;
 use crate::HashMap;
 use std::io::SeekFrom;
 use std::sync::{Arc, Mutex, OnceLock};
@@ -110,20 +111,90 @@ fn errno_of(e: i32) {
 // ---------------------------------------------------------------------------------------------
 // data exports
 
-static DATA: Mutex<Option<HashMap<String, u32>>> = Mutex::new(None);
+/// msvcrt's data exports: variables (or tables) a program reads by address
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Var {
+    AdjustFdiv,
+    Fmode,
+    Commode,
+    Argc,
+    Argv,
+    Wargv,
+    Environ,
+    Wenviron,
+    Initenv,
+    Winitenv,
+    Acmdln,
+    Wcmdln,
+    Osver,
+    Winver,
+    Winmajor,
+    Winminor,
+    MbCurMax,
+    Pctype,
+    Pwctype,
+    Timezone,
+    Daylight,
+    Dstbias,
+    Tzname,
+    Mbctype,
+    Huge,
+    Iob,
+}
+
+impl Var {
+    pub const ALL: [Var; 26] = [Var::AdjustFdiv, Var::Fmode, Var::Commode, Var::Argc, Var::Argv, Var::Wargv, Var::Environ, Var::Wenviron, Var::Initenv, Var::Winitenv, Var::Acmdln, Var::Wcmdln, Var::Osver, Var::Winver, Var::Winmajor, Var::Winminor, Var::MbCurMax, Var::Pctype, Var::Pwctype, Var::Timezone, Var::Daylight, Var::Dstbias, Var::Tzname, Var::Mbctype, Var::Huge, Var::Iob];
+    /// its export name
+    pub fn name(self) -> &'static str {
+        match self {
+            Var::AdjustFdiv => "_adjust_fdiv",
+            Var::Fmode => "_fmode",
+            Var::Commode => "_commode",
+            Var::Argc => "__argc",
+            Var::Argv => "__argv",
+            Var::Wargv => "__wargv",
+            Var::Environ => "_environ",
+            Var::Wenviron => "_wenviron",
+            Var::Initenv => "__initenv",
+            Var::Winitenv => "__winitenv",
+            Var::Acmdln => "_acmdln",
+            Var::Wcmdln => "_wcmdln",
+            Var::Osver => "_osver",
+            Var::Winver => "_winver",
+            Var::Winmajor => "_winmajor",
+            Var::Winminor => "_winminor",
+            Var::MbCurMax => "__mb_cur_max",
+            Var::Pctype => "_pctype",
+            Var::Pwctype => "_pwctype",
+            Var::Timezone => "_timezone",
+            Var::Daylight => "_daylight",
+            Var::Dstbias => "_dstbias",
+            Var::Tzname => "_tzname",
+            Var::Mbctype => "_mbctype",
+            Var::Huge => "_HUGE",
+            Var::Iob => "_iob",
+        }
+    }
+    /// the data export of that name
+    pub fn of(name: &str) -> Option<Var> {
+        Var::ALL.into_iter().find(|v| v.name() == name)
+    }
+}
+
+static DATA: Mutex<Option<HashMap<&'static str, u32>>> = Mutex::new(None);
 
 /// The address of msvcrt's data export `name`, if it is one.
 pub fn data(name: &str) -> Option<u32> {
-    const NAMES: &[&str] = &["_adjust_fdiv", "_fmode", "_commode", "__argc", "__argv", "__wargv", "_environ", "_wenviron",
-        "__initenv", "__winitenv", "_acmdln", "_wcmdln", "_osver", "_winver", "_winmajor", "_winminor", "__mb_cur_max",
-        "_pctype", "_pwctype", "_timezone", "_daylight", "_dstbias", "_tzname", "_mbctype", "_HUGE", "_iob"];
-    if !NAMES.contains(&name) {
-        return None;
-    }
-    let mut g = DATA.lock().unwrap();
+    Var::of(name).map(var_at)
+}
+
+/// The address of msvcrt's data export `v` (made at the first ask).
+pub fn var_at(v: Var) -> u32 {
+    let name = v.name();
+    let mut g = DATA.locked();
     let m = g.get_or_insert_with(HashMap::default);
     if let Some(&a) = m.get(name) {
-        return Some(a);
+        return a;
     }
     let a = match name {
         "_iob" => iob(),
@@ -158,8 +229,8 @@ pub fn data(name: &str) -> Option<u32> {
         "_winminor" => var(1),
         _ => var(0),
     };
-    m.insert(name.to_string(), a);
-    Some(a)
+    m.insert(name, a);
+    a
 }
 
 /// crtdll.dll's data exports: msvcrt's under their `_dll` names (`_osmajor_dll` is
@@ -179,7 +250,7 @@ pub fn crtdll_data(name: &str) -> Option<u32> {
         "_daylight_dll" => "_daylight",
         "_basemajor_dll" | "_baseminor_dll" | "_cpumode_dll" | "_osmode_dll" => {
             static OWN: Mutex<Option<HashMap<String, u32>>> = Mutex::new(None);
-            return Some(*OWN.lock().unwrap().get_or_insert_with(HashMap::default).entry(name.into()).or_insert_with(|| var(0)));
+            return Some(*OWN.locked().get_or_insert_with(HashMap::default).entry(name.into()).or_insert_with(|| var(0)));
         }
         n => n.trim_suffix("_dll"),
     };
@@ -272,7 +343,7 @@ const CP1252_CTYPE: [u16; 128] = [
 /// The user locale's ctype table (EOF first), once a code page.
 fn user_ctype_table(cp: u32) -> u32 {
     static T: Mutex<Vec<(u32, u32)>> = Mutex::new(Vec::new());
-    let mut g = T.lock().unwrap();
+    let mut g = T.locked();
     if let Some(&(_, t)) = g.iter().find(|x| x.0 == cp) {
         return t;
     }
@@ -310,7 +381,7 @@ fn string_array(words: Vec<Vec<u8>>, unit: u32) -> u32 {
 /// (argc, argv) parsed from the command line, as the CRT does.
 fn args() -> (u32, u32) {
     static A: Mutex<(u32, u32)> = Mutex::new((0, 0));
-    let mut g = A.lock().unwrap();
+    let mut g = A.locked();
     if g.1 == 0 {
         let words = split_words(&cstr(crate::k32::cmdline().0));
         *g = (words.len() as u32, string_array(words, 1));
@@ -321,7 +392,7 @@ fn args() -> (u32, u32) {
 /// (argc, wargv) parsed from the wide command line.
 fn wargs() -> (u32, u32) {
     static A: Mutex<(u32, u32)> = Mutex::new((0, 0));
-    let mut g = A.lock().unwrap();
+    let mut g = A.locked();
     if g.1 == 0 {
         let words = split_wwords(&mem::wstr(crate::k32::cmdline().1));
         let n = words.len() as u32;
@@ -365,22 +436,22 @@ fn _initterm_e(c: &mut Ctx) -> u32 {
 static ATEXIT: Mutex<Vec<u32>> = Mutex::new(Vec::new());
 
 fn _onexit(c: &mut Ctx) -> u32 {
-    ATEXIT.lock().unwrap().push(c.a(0));
+    ATEXIT.locked().push(c.a(0));
     c.a(0)
 }
 fn atexit(c: &mut Ctx) -> u32 {
-    ATEXIT.lock().unwrap().push(c.a(0));
+    ATEXIT.locked().push(c.a(0));
     0
 }
 /// __dllonexit(func, &begin, &end): a DLL's own table; we keep them all in one list.
 fn __dllonexit(c: &mut Ctx) -> u32 {
-    ATEXIT.lock().unwrap().push(c.a(0));
+    ATEXIT.locked().push(c.a(0));
     c.a(0)
 }
 fn exit(c: &mut Ctx) -> u32 {
     let code = c.a(0);
     loop {
-        let Some(f) = ATEXIT.lock().unwrap().pop() else { break };
+        let Some(f) = ATEXIT.locked().pop() else { break };
         c.call(f, &[]);
     }
     unsafe { libc::exit(code as i32) }
@@ -396,57 +467,57 @@ fn __getmainargs(c: &mut Ctx) -> u32 {
     let (argc, argv) = args();
     w32(c.a(0), argc);
     wp(c.a(1), argv);
-    wp(c.a(2), rp(data("_environ").unwrap()));
+    wp(c.a(2), rp(var_at(Var::Environ)));
     0
 }
 fn __set_app_type(_: &mut Ctx) -> u32 {
     0
 }
 fn __p__fmode(_: &mut Ctx) -> u32 {
-    data("_fmode").unwrap()
+    var_at(Var::Fmode)
 }
 fn __p__commode(_: &mut Ctx) -> u32 {
-    data("_commode").unwrap()
+    var_at(Var::Commode)
 }
 fn __p___argc(_: &mut Ctx) -> u32 {
-    data("__argc").unwrap()
+    var_at(Var::Argc)
 }
 fn __p___argv(_: &mut Ctx) -> u32 {
-    data("__argv").unwrap()
+    var_at(Var::Argv)
 }
 fn __p___wargv(_: &mut Ctx) -> u32 {
-    data("__wargv").unwrap()
+    var_at(Var::Wargv)
 }
 fn __p__wcmdln(_: &mut Ctx) -> u32 {
-    data("_wcmdln").unwrap()
+    var_at(Var::Wcmdln)
 }
 fn __p__wenviron(_: &mut Ctx) -> u32 {
-    data("_wenviron").unwrap()
+    var_at(Var::Wenviron)
 }
 fn __wgetmainargs(c: &mut Ctx) -> u32 {
     let (argc, argv) = wargs();
     w32(c.a(0), argc);
     wp(c.a(1), argv);
-    wp(c.a(2), rp(data("_wenviron").unwrap()));
+    wp(c.a(2), rp(var_at(Var::Wenviron)));
     0
 }
 fn __p__environ(_: &mut Ctx) -> u32 {
-    data("_environ").unwrap()
+    var_at(Var::Environ)
 }
 fn __p___initenv(_: &mut Ctx) -> u32 {
-    data("__initenv").unwrap()
+    var_at(Var::Initenv)
 }
 fn __p__acmdln(_: &mut Ctx) -> u32 {
-    data("_acmdln").unwrap()
+    var_at(Var::Acmdln)
 }
 fn __p___mb_cur_max(_: &mut Ctx) -> u32 {
-    data("__mb_cur_max").unwrap()
+    var_at(Var::MbCurMax)
 }
 fn ___mb_cur_max_func(_: &mut Ctx) -> u32 {
-    r32(data("__mb_cur_max").unwrap())
+    r32(var_at(Var::MbCurMax))
 }
 fn __pctype_func(_: &mut Ctx) -> u32 {
-    r32(data("_pctype").unwrap())
+    r32(var_at(Var::Pctype))
 }
 /// The CRT's control word (_MCW_EM | _MCW_RC | _MCW_PC | _MCW_IC bits) over the guest's own
 /// x87 control word and MXCSR: x86 sets and reports the x87 one (and the SSE rounding and
@@ -2321,7 +2392,7 @@ static FILES: Mutex<Option<HashMap<u32, Arc<Mutex<Stream>>>>> = Mutex::new(None)
 
 fn iob() -> u32 {
     let p = mem::heap_alloc(file_size() * 20, true);
-    let mut g = FILES.lock().unwrap();
+    let mut g = FILES.locked();
     let m = g.get_or_insert_with(HashMap::default);
     for i in 0..3 {
         // (sake's stdin reads nothing: at its end, but feof says so only once read)
@@ -2332,7 +2403,7 @@ fn iob() -> u32 {
 }
 
 fn with_file<R>(fp: u32, f: impl FnOnce(&mut Stream) -> R) -> Option<R> {
-    let s = FILES.lock().unwrap().get_or_insert_with(HashMap::default).get(&fp).cloned()?;
+    let s = FILES.locked().get_or_insert_with(HashMap::default).get(&fp).cloned()?;
     let mut g = s.lock().unwrap_or_else(|e| e.into_inner());
     Some(f(&mut g))
 }
@@ -2370,7 +2441,7 @@ fn new_stream_of(f: Arc<File>, fd: u32, mode: &[u8]) -> u32 {
     let fp = mem::heap_alloc(file_size(), true);
     let mut st = Stream::new(fp, Some(f), fd, mode_flag(mode), false);
     st.text = text_mode(mode);
-    FILES.lock().unwrap().get_or_insert_with(HashMap::default).insert(fp, Arc::new(Mutex::new(st)));
+    FILES.locked().get_or_insert_with(HashMap::default).insert(fp, Arc::new(Mutex::new(st)));
     fp
 }
 /// _get_stream_buffer_pointers(stream, &base, &ptr, &cnt): the FILE's buffer fields (UCRT
@@ -2426,7 +2497,7 @@ fn rename(c: &mut Ctx) -> u32 {
 }
 fn fclose(c: &mut Ctx) -> u32 {
     let fp = c.a(0);
-    let had = FILES.lock().unwrap().get_or_insert_with(HashMap::default).remove(&fp);
+    let had = FILES.locked().get_or_insert_with(HashMap::default).remove(&fp);
     if let Some(s) = had {
         let fd = s.lock().unwrap_or_else(|e| e.into_inner()).fd;
         if fd > 2 {
@@ -2620,7 +2691,7 @@ fn find_next(c: &mut Ctx, kind: (bool, bool, bool)) -> u32 {
         _ => None,
     });
     let Some(f) = f else { return u32::MAX };
-    let mut f = f.lock().unwrap();
+    let mut f = f.locked();
     if f.at >= f.entries.len() {
         set_errno(2);
         return u32::MAX;
@@ -2765,7 +2836,7 @@ fn _configthreadlocale(_: &mut Ctx) -> u32 {
     2
 }
 fn ___mb_cur_max_l_func(_: &mut Ctx) -> u32 {
-    r32(data("__mb_cur_max").unwrap())
+    r32(var_at(Var::MbCurMax))
 }
 
 fn wcsncmp(c: &mut Ctx) -> u32 {
@@ -2780,7 +2851,7 @@ pub(crate) fn getenv(c: &mut Ctx) -> u32 {
     let name = cstr(c.a(0));
     let Some(v) = io::env_get(&a2s(&name)) else { return 0 };
     let bytes = crate::text::s2a(&v);
-    let mut g = VALS.lock().unwrap();
+    let mut g = VALS.locked();
     let m = g.get_or_insert_with(HashMap::default);
     // (an unchanged value keeps its pointer: two libraries reading TEMP both keep theirs)
     if let Some(&p) = m.get(&name.to_ascii_uppercase()) {
@@ -3231,7 +3302,7 @@ fn __acrt_iob_func(c: &mut Ctx) -> u32 {
 fn _create_locale(c: &mut Ctx) -> u32 {
     static LOC: Mutex<[u32; 2]> = Mutex::new([0; 2]);
     let ucrt = is_ucrt(c);
-    let mut cache = LOC.lock().unwrap();
+    let mut cache = LOC.locked();
     if cache[ucrt as usize] == 0 {
         cache[ucrt as usize] = make_locale(locale_layout(ucrt, ps()));
     }
@@ -3392,14 +3463,14 @@ fn strnlen(c: &mut Ctx) -> u32 {
 // ucrtbase / vcruntime140 (VC++ 2015+): startup, onexit tables, std::exception, time
 
 fn _set_fmode(c: &mut Ctx) -> u32 {
-    w32(data("_fmode").unwrap(), c.a(0));
+    w32(var_at(Var::Fmode), c.a(0));
     0
 }
 fn _get_initial_narrow_environment(_: &mut Ctx) -> u32 {
-    r32(data("_environ").unwrap())
+    r32(var_at(Var::Environ))
 }
 fn _get_initial_wide_environment(_: &mut Ctx) -> u32 {
-    rp(data("_wenviron").unwrap())
+    rp(var_at(Var::Wenviron))
 }
 fn ucrt_zero(_: &mut Ctx) -> u32 {
     0
@@ -3463,7 +3534,7 @@ fn _execute_onexit_table(c: &mut Ctx) -> u32 {
 }
 fn _cexit(c: &mut Ctx) -> u32 {
     loop {
-        let Some(f) = ATEXIT.lock().unwrap().pop() else { break };
+        let Some(f) = ATEXIT.locked().pop() else { break };
         c.call(f, &[]);
     }
     0
@@ -3851,9 +3922,8 @@ fn ecvt_digits(v: f64, n: usize) -> (Vec<u8>, i32) {
         d.resize(n, b'0');
         return (d, 1);
     }
-    let s = format!("{:.*e}", n - 1, v.abs());
-    let (m, e) = s.split_once('e').unwrap();
-    (m.bytes().filter(|b| b.is_ascii_digit()).collect(), e.parse::<i32>().unwrap() + 1)
+    let (m, exp) = kome::num::sci(v.abs(), n - 1);
+    (m.bytes().filter(|b| b.is_ascii_digit()).collect(), exp + 1)
 }
 fn cvt_out(c: &mut Ctx, d: &[u8], dec: i32, neg: bool, pdec: u32, psign: u32) -> u32 {
     let b = cvt_buf();
@@ -3915,7 +3985,8 @@ fn _gcvt(c: &mut Ctx) -> u32 {
     while d.len() > 1 && d.last() == Some(&b'0') {
         d.pop();
     }
-    let d = String::from_utf8(d).unwrap();
+    // (ASCII: digits, or msvcrt's "1#INF" / "1#QNAN")
+    let d: String = d.iter().map(|&b| char::from(b)).collect();
     if v == 0.0 {
         s.push_str("0.");
     } else if dec < -1 || dec > n as i32 {
@@ -4691,6 +4762,7 @@ mod libm_sse2_tests {
 /// a model of msvcrt's fread (binary as is, text with CR LF as LF and Ctrl-Z as the end)
 #[cfg(test)]
 mod fread_tests {
+    use kome::locks::Lock as _;
     use super::{fread_to, new_stream, with_file, File};
     use crate::mem;
     use proptest::prelude::*;
@@ -4710,7 +4782,7 @@ mod fread_tests {
         new_stream(f, mode)
     }
     fn close(fp: u32) {
-        super::FILES.lock().unwrap().as_mut().unwrap().remove(&fp);
+        super::FILES.locked().as_mut().unwrap().remove(&fp);
         mem::heap_free(fp);
     }
     /// msvcrt's text-mode translation of a whole file

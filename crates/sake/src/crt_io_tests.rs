@@ -353,14 +353,14 @@ mod env_copies {
             let _g = enter();
             guest_thread();
             // (the first environ, as main's envp and __initenv hold it)
-            let init = rp(crate::crt::data("__initenv").unwrap());
+            let init = rp(crate::crt::var_at(crate::crt::Var::Initenv));
             let init_strs = strings(init);
             let mut prev: Option<u32> = None;
             for (n, v) in ops {
                 let name = ["SAKE_A", "SAKE_B", "SAKE_C", "SAKE_D"][n];
                 put(&format!("{name}={}", ["", "1", "two", "three3"][v]));
-                let arr = rp(crate::crt::data("_environ").unwrap());
-                let warr = rp(crate::crt::data("_wenviron").unwrap());
+                let arr = rp(crate::crt::var_at(crate::crt::Var::Environ));
+                let warr = rp(crate::crt::var_at(crate::crt::Var::Wenviron));
                 let got = strings(arr);
                 let want: Vec<Vec<u8>> = with_crt_env(|e| e.clone()).iter().map(|(k, v)| format!("{k}={v}").into_bytes()).collect();
                 prop_assert_eq!(&got, &want);

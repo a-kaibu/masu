@@ -333,7 +333,7 @@ fn the_pointer_width_comes_from_the_addresses() {
 /// what a pointer to `t` (by its layout name) packs to, for `bits`
 fn pack(t: &str, v: &Value, bits: u32, objects: &[(u64, u32)]) -> Blob {
     let objects = objects.iter().copied().collect();
-    let mut p = Packer::with(Layouts::get(), (bits == 64) as usize, &objects);
+    let mut p = Packer::with(Layouts::get().unwrap(), (bits == 64) as usize, &objects);
     p.pointee(&crate::layout::parse_ty(t).unwrap(), v).unwrap();
     p.finish()
 }
@@ -387,13 +387,13 @@ fn structs_pack_as_the_headers_lay_them_out() {
     // (a struct without such a member is an error, not a guess)
     let bad = st("D3D11_BOX", &["left", "nope"], vec![Value::UInt(1), Value::UInt(2)]);
     let objects = Default::default();
-    let mut p = Packer::with(Layouts::get(), 0, &objects);
+    let mut p = Packer::with(Layouts::get().unwrap(), 0, &objects);
     assert!(p.pointee(&Ty::Rec("D3D11_BOX".into()), &bad).is_err());
 }
 
 #[test]
 fn the_layouts_are_the_headers() {
-    let l = Layouts::get();
+    let l = Layouts::get().unwrap();
     let idx = |i: &str, m: &str| l.method(i, m).map(|m| m.index);
     // (as mingw-w64's d3d9.h, d3d8.h and d3d11.h declare them)
     assert_eq!([idx("IDirect3DDevice9", "Present"), idx("IDirect3DDevice9", "Clear"), idx("IDirect3DDevice9", "SetRenderState"), idx("IDirect3DDevice9", "DrawPrimitiveUP")], [Some(17), Some(43), Some(57), Some(83)]);
@@ -628,7 +628,7 @@ proptest! {
     #[test]
     fn packing_any_value_is_sound(v in value(), rec in prop::sample::select(vec!["_D3DPRESENT_PARAMETERS_", "D3D11_INPUT_ELEMENT_DESC", "D3D11_SUBRESOURCE_DATA", "D3D11_BLEND_DESC", "_D3DMATRIX", "DXGI_SWAP_CHAIN_DESC", "_D3DVERTEXELEMENT9", "8._D3DPRESENT_PARAMETERS_"]), bits in prop::sample::select(vec![32u32, 64])) {
         let objects = [(1u64, 1u32)].into_iter().collect();
-        let mut p = Packer::with(Layouts::get(), (bits == 64) as usize, &objects);
+        let mut p = Packer::with(Layouts::get().unwrap(), (bits == 64) as usize, &objects);
         if p.pointee(&Ty::Rec(rec.into()), &v).is_ok() {
             let b = p.finish();
             prop_assert!(blob_ok(&b, bits / 8).is_ok());
@@ -638,7 +638,7 @@ proptest! {
     /// integers of a struct come back from where the layout says, at every width
     #[test]
     fn struct_members_land_at_their_offsets(vals in proptest::collection::vec(any::<u32>(), 8), bits in prop::sample::select(vec![32u32, 64])) {
-        let l = Layouts::get();
+        let l = Layouts::get().unwrap();
         let arch = (bits == 64) as usize;
         let names = ["ByteWidth", "Usage", "BindFlags", "CPUAccessFlags", "MiscFlags", "StructureByteStride"];
         let v = st("D3D11_BUFFER_DESC", &names, vals[..6].iter().map(|&x| Value::UInt(x as u64)).collect());

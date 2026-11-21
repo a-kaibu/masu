@@ -137,7 +137,7 @@ async fn rustfs_encrypted_storage() -> Result<()> {
             "must refuse overwrite"
         );
         s.db = Library(restored);
-        *s.shared.cache.lock().unwrap() = Default::default();
+        *s.shared.cache.locked() = Default::default();
         assert_eq!(s.db.profile("game")?.note, "private note");
         assert!(s.db.profile("game")?.favorite);
         s.hydrate_catalog(&dir).await?;
@@ -164,11 +164,11 @@ async fn rustfs_encrypted_storage() -> Result<()> {
         let mut damaged = s.download(original.object).await?;
         damaged[0] ^= 1;
         s.upload(original.object, &damaged, AtOnce::ALONE).await?;
-        *s.shared.cache.lock().unwrap() = Default::default();
+        *s.shared.cache.locked() = Default::default();
         assert_eq!(s.get("chunks/test").await?.as_deref(), Some(&chunk[..]));
         // ...and with it gone (memory and disk both cold) the damaged one is refused
         s.shared.disk.as_ref().unwrap().remove(original.object);
-        *s.shared.cache.lock().unwrap() = Default::default();
+        *s.shared.cache.locked() = Default::default();
         assert!(s.get("chunks/test").await.is_err());
         s.shared = Shared::new(8, None);
         assert!(s.get("chunks/test").await.is_err());
@@ -282,7 +282,7 @@ async fn rustfs_push_through_503() -> Result<()> {
             stored += page.contents.len();
         }
         assert_eq!(stored, files.len(), "one object for each file");
-        *s.shared.cache.lock().unwrap() = Default::default();
+        *s.shared.cache.locked() = Default::default();
         for (logical, bytes) in &files {
             assert_eq!(s.get(logical).await?.as_deref(), Some(&bytes[..]), "{logical}");
         }
@@ -348,7 +348,7 @@ async fn rustfs_remove_game() -> Result<()> {
         let fresh = dir.join("fresh");
         s.hydrate_catalog(&fresh).await?;
         assert!(fresh.join("games/b.json").exists() && !fresh.join("games/a.json").exists());
-        *s.shared.cache.lock().unwrap() = Default::default();
+        *s.shared.cache.locked() = Default::default();
         for line in std::fs::read_to_string(fresh.join("trees/b.tsv"))?.lines().filter(|l| l.starts_with("f\t")) {
             for c in line.split('\t').nth(5).unwrap().split(',').map(|c| c.split(':').next().unwrap()).filter(|c| c.len() > 2) {
                 assert!(s.get(&format!("chunks/{}/{c}", &c[..2])).await?.is_some(), "b's chunk {c}");

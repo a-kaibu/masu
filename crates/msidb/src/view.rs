@@ -15,7 +15,40 @@ const SUMMARY: &str = "\u{5}SummaryInformation";
 
 enum Src {
     Db(String),
-    Virt { name: String, cols: Vec<Col>, rows: Vec<Vec<Field>> },
+    Virt { sys: Sys, cols: Vec<Col>, rows: Vec<Vec<Field>> },
+}
+
+/// The system tables made from the database as it is (not stored).
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Sys {
+    Tables,
+    Columns,
+    Streams,
+    Storages,
+}
+
+impl Sys {
+    fn of(name: &str) -> Option<Sys> {
+        Some(match name {
+            "_Tables" => Sys::Tables,
+            "_Columns" => Sys::Columns,
+            "_Streams" => Sys::Streams,
+            "_Storages" => Sys::Storages,
+            _ => return None,
+        })
+    }
+    fn name(self) -> &'static str {
+        match self {
+            Sys::Tables => "_Tables",
+            Sys::Columns => "_Columns",
+            Sys::Streams => "_Streams",
+            Sys::Storages => "_Storages",
+        }
+    }
+    /// Its rows are names of data the Data column reads.
+    fn streams(self) -> bool {
+        matches!(self, Sys::Streams | Sys::Storages)
+    }
 }
 
 pub struct View {
@@ -50,10 +83,10 @@ fn vcol(name: &str, ty: u16) -> Col {
     Col { name: name.into(), ty }
 }
 
-fn virt(db: &Database, name: &str) -> Option<Src> {
-    let (cols, rows): (Vec<Col>, Vec<Vec<Field>>) = match name {
-        "_Tables" => (vec![vcol("Name", 0x2d40)], db.table_order().into_iter().map(|i| vec![Field::Str(db.tables[i].name.clone())]).collect()),
-        "_Columns" => {
+fn virt(db: &Database, sys: Sys) -> Src {
+    let (cols, rows): (Vec<Col>, Vec<Vec<Field>>) = match sys {
+        Sys::Tables => (vec![vcol("Name", 0x2d40)], db.table_order().into_iter().map(|i| vec![Field::Str(db.tables[i].name.clone())]).collect()),
+        Sys::Columns => {
             let mut rows = Vec::new();
             for i in db.table_order() {
                 let t = &db.tables[i];
@@ -64,19 +97,18 @@ fn virt(db: &Database, name: &str) -> Option<Src> {
             (vec![vcol("Table", 0x2d40), vcol("Number", 0x2502), vcol("Name", 0x0d40), vcol("Type", 0x0502)], rows)
         }
         // (the summary information is a stream too)
-        "_Streams" => (
+        Sys::Streams => (
             vec![vcol("Name", 0x2d3e), vcol("Data", 0x1900)],
             db.streams.keys().cloned().chain(db.summary.is_some().then(|| SUMMARY.to_string())).map(|k| vec![Field::Str(k), Field::Null]).collect(),
         ),
-        "_Storages" => (vec![vcol("Name", 0x2d3e), vcol("Data", 0x1900)], db.storages.keys().map(|k| vec![Field::Str(k.clone()), Field::Null]).collect()),
-        _ => return None,
+        Sys::Storages => (vec![vcol("Name", 0x2d3e), vcol("Data", 0x1900)], db.storages.keys().map(|k| vec![Field::Str(k.clone()), Field::Null]).collect()),
     };
-    Some(Src::Virt { name: name.into(), cols, rows })
+    Src::Virt { sys, cols, rows }
 }
 
 fn src_of(db: &Database, name: &str) -> R<Src> {
-    if let Some(v) = virt(db, name) {
-        return Ok(v);
+    if let Some(sys) = Sys::of(name) {
+        return Ok(virt(db, sys));
     }
     db.table(name).ok_or(ERROR_BAD_QUERY_SYNTAX)?;
     Ok(Src::Db(name.into()))
@@ -86,7 +118,7 @@ impl Src {
     fn name(&self) -> &str {
         match self {
             Src::Db(n) => n,
-            Src::Virt { name, .. } => name,
+            Src::Virt { sys, .. } => sys.name(),
         }
     }
     fn cols<'a>(&'a self, db: &'a Database) -> &'a [Col] {
@@ -107,13 +139,13 @@ impl Src {
                 Some(t) if r < t.rows.len() => db.field(t, &t.rows[r], c),
                 _ => Field::Null,
             },
-            Src::Virt { name, rows, .. } => {
+            Src::Virt { sys, rows, .. } => {
                 let f = rows.get(r).and_then(|row| row.get(c)).cloned().unwrap_or_default();
-                if c == 1 && (name == "_Streams" || name == "_Storages") {
+                if c == 1 && sys.streams() {
                     let key = rows[r][0].text();
-                    let d = if name == "_Streams" && key == SUMMARY {
+                    let d = if *sys == Sys::Streams && key == SUMMARY {
                         db.summary.clone()
-                    } else if name == "_Streams" {
+                    } else if *sys == Sys::Streams {
                         db.stream(&key)
                     } else {
                         db.storage(&key)
@@ -466,8 +498,8 @@ impl View {
                     Fv::Int(int_of(col, v))
                 }
             }
-            (Src::Virt { name, rows, .. }, _) => {
-                if c == 1 && (name == "_Streams" || name == "_Storages") {
+            (Src::Virt { sys, rows, .. }, _) => {
+                if c == 1 && sys.streams() {
                     return Fv::Owned(self.srcs[s].field(bd.db, r, c));
                 }
                 rows.get(r).and_then(|row| row.get(c)).map_or(Fv::Ref(&NULL), Fv::Ref)
@@ -594,8 +626,8 @@ impl View {
         self.result.clear();
         // (the system tables' contents as they are now)
         for s in self.srcs.iter_mut() {
-            if let Src::Virt { name, .. } = s {
-                *s = virt(db, &name.clone()).unwrap();
+            if let Src::Virt { sys, .. } = s {
+                *s = virt(db, *sys);
             }
         }
         let stmt = self.stmt.clone();
@@ -917,8 +949,8 @@ impl View {
                         return Err(ERROR_INVALID_DATA);
                     }
                 }
-                if mode == MSIMODIFY_VALIDATE_NEW && Self::find_by_keys(db, ti, &row).is_some() {
-                    let k = t.keys().next().unwrap();
+                // (find_by_keys finds none in a table without keys)
+                if mode == MSIMODIFY_VALIDATE_NEW && Self::find_by_keys(db, ti, &row).is_some() && let Some(k) = t.keys().next() {
                     self.error = Some((t.cols[k].name.clone(), 1)); // MSIDBERROR_DUPLICATEKEY
                     return Err(ERROR_INVALID_DATA);
                 }

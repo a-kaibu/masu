@@ -1560,7 +1560,6 @@ crates/kura/src/snap.rs	borrow_as_ptr	&VNHOST_SNAP
 crates/kura/src/snap.rs	masu-leak	None => Box::leak(Box::new(Part {
 crates/kura/src/usage.rs	undocumented_unsafe_blocks	unsafe { atexit(at_exit) };
 crates/kura/src/vfs.rs	borrow_as_ptr	let p = crate::wrap::load_idle(|| vnvm_fetch(c.as_ptr(), &mut len));
-crates/kura/src/vfs.rs	masu-from_raw_parts	let h: Hash = std::slice::from_raw_parts(hash, 16).try_into().unwrap();
 crates/kura/src/vfs.rs	masu-from_raw_parts	let text = String::from_utf8_lossy(std::slice::from_raw_parts(text, len)).into_owned();
 crates/kura/src/vfs.rs	masu-from_raw_parts	let v = std::slice::from_raw_parts(p, len).to_vec();
 crates/kura/src/vfs.rs	masu-wire_tree	fs.load_tree(root, &format!("vnvm-tree\t2\t64\nf\t644\t0\tbig\t{size}\t{h}:{size}\n"));
@@ -1600,7 +1599,7 @@ crates/kura/src/vfs.rs	unsafe_op_in_unsafe_fn	*len = out.at;
 crates/kura/src/vfs.rs	unsafe_op_in_unsafe_fn	*len = out.len();
 crates/kura/src/vfs.rs	unsafe_op_in_unsafe_fn	*out = v;
 crates/kura/src/vfs.rs	unsafe_op_in_unsafe_fn	let data = Vec::from_raw_parts(data, len, len);
-crates/kura/src/vfs.rs	unsafe_op_in_unsafe_fn	let h: Hash = std::slice::from_raw_parts(hash, 16).try_into().unwrap();
+crates/kura/src/vfs.rs	unsafe_op_in_unsafe_fn	let h: Hash = std::ptr::read(hash.cast::<Hash>());
 crates/kura/src/vfs.rs	unsafe_op_in_unsafe_fn	let p = libc::malloc(out.len().max(1)) as *mut u8;
 crates/kura/src/vfs.rs	unsafe_op_in_unsafe_fn	let p = libc::malloc(size.max(1)) as *mut u8;
 crates/kura/src/vfs.rs	unsafe_op_in_unsafe_fn	let roots = CStr::from_ptr(roots).to_string_lossy().into_owned();
@@ -1663,7 +1662,7 @@ crates/kura/src/video.rs	unsafe_op_in_unsafe_fn	let [b, g, r] = px_ref(t, out, *
 crates/kura/src/video.rs	unsafe_op_in_unsafe_fn	let [b, g, r] = px_ref(t, out, *yr.add(x), *ur.add(k), *vr.add(k));
 crates/kura/src/video.rs	unsafe_op_in_unsafe_fn	let [b, g, r] = px_ref(t, out, *yr.add(x), *ur.add(k), *vr.add(k));
 crates/kura/src/video.rs	unsafe_op_in_unsafe_fn	let [b, g, r] = px_ref(t, out, *yr.add(x), *ur.add(k), *vr.add(k));
-crates/kura/src/video.rs	unsafe_op_in_unsafe_fn	let l = &*layout;
+crates/kura/src/video.rs	unsafe_op_in_unsafe_fn	let layout: [[u32; 7]; 2] = std::ptr::read(layout.cast());
 crates/kura/src/video.rs	unsafe_op_in_unsafe_fn	let o = row.add(x * 4);
 crates/kura/src/video.rs	unsafe_op_in_unsafe_fn	let o = row.add(x * 4);
 crates/kura/src/video.rs	unsafe_op_in_unsafe_fn	let out = std::slice::from_raw_parts_mut(out, words);

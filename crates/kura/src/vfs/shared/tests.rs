@@ -5,7 +5,7 @@ use proptest::prelude::*;
 /// One process's operation as vfs::with runs it: take in the others' changes, do it, publish.
 fn op<R>(fs: &mut Fs, m: &mut Mem, f: impl FnOnce(&mut Fs) -> R) -> R {
     fs.dirt.on = true;
-    fs.sync_in(m);
+    fs.sync_in(m).unwrap();
     let r = f(fs);
     assert!(fs.sync_out(m));
     r
@@ -37,10 +37,10 @@ fn opening_counts_the_node_and_sends_only_the_count() {
     // (length, count, kind, inode, open handles)
     assert_eq!(m.written - before, 4 + 4 + 1 + 4 + 4);
     let mut other = Fs::default();
-    other.sync_in(&m);
+    other.sync_in(&m).unwrap();
     assert_eq!(other.node(ino).unwrap().open_refs, 1);
     op(&mut fs, &mut m, |fs| fs.close_handle(h));
-    other.sync_in(&m);
+    other.sync_in(&m).unwrap();
     assert_eq!(other.node(ino).unwrap().open_refs, 0);
 }
 
@@ -59,7 +59,7 @@ fn cut_or_broken_entries_change_nothing() {
     op(&mut a, &mut m, |fs| fs.put_file("/f", vec![1; 10], 1));
     let ino = a.walk(root, "f").unwrap();
     let mut b = Fs::default();
-    b.sync_in(&m);
+    b.sync_in(&m).unwrap();
     a.dirt.on = true;
     a.write_upper(ino, b"xyz", 20).unwrap();
     a.mkdir_p(root, "d/e");
@@ -92,7 +92,7 @@ fn writes_cost_what_they_write() {
     op(&mut a, &mut m, |fs| fs.put_file("/save/big.bin", vec![], 1));
     let ino = a.walk(root, "save/big.bin").unwrap();
     let mut b = Fs::default();
-    b.sync_in(&m);
+    b.sync_in(&m).unwrap();
     let start = (m.written, m.read.get());
     let piece = vec![0xa5u8; 64 << 10];
     for k in 0..1024u64 {
@@ -106,7 +106,7 @@ fn writes_cost_what_they_write() {
             assert!(m.written - before < 100, "an open and a close wrote {}", m.written - before);
         }
     }
-    b.sync_in(&m);
+    b.sync_in(&m).unwrap();
     assert_eq!(b.file_size(ino), 64 << 20);
     assert_eq!(b.shared_snapshot(), a.shared_snapshot());
     let (w, r) = (m.written - start.0, m.read.get() - start.1);
@@ -122,16 +122,16 @@ fn a_buffer_too_small_keeps_the_last_namespace() {
     op(&mut a, &mut m, |fs| fs.put_file("/x", vec![1; 10], 1));
     let generation = m.generation;
     a.dirt.on = true;
-    a.sync_in(&m);
+    a.sync_in(&m).unwrap();
     let ino = a.walk(root, "x").unwrap();
     a.write_upper(ino, &[2; 1000], 0).unwrap();
     assert!(!a.sync_out(&mut m));
     assert_eq!(m.generation, generation);
     let mut b = Fs::default();
-    b.sync_in(&m);
+    b.sync_in(&m).unwrap();
     assert_eq!(b.file_size(ino), 10);
     // (and the process that could not publish keeps its own files)
-    a.sync_in(&m);
+    a.sync_in(&m).unwrap();
     assert_eq!(a.file_size(ino), 1000);
 }
 
@@ -182,6 +182,40 @@ proptest! {
         let before = fs.shared_snapshot();
         if fs.apply_items(&b).is_none() { prop_assert_eq!(fs.shared_snapshot(), before); }
     }
+
+    /// A shared buffer of any bytes after a good head (another process's, or memory gone bad)
+    /// is taken in or refused, never a panic (review: an assert and expects aborted the VM).
+    #[test]
+    fn any_buffer_bytes(snap in 0u32..400, b in prop::collection::vec(any::<u8>(), 0..400)) {
+        let mut m = Mem::new(1 << 16);
+        let mut head = b"VFS2".to_vec();
+        head.extend_from_slice(&7u32.to_le_bytes());
+        head.extend_from_slice(&snap.to_le_bytes());
+        head.extend_from_slice(&b);
+        prop_assert!(m.write(0, &head));
+        m.commit(head.len());
+        let mut fs = Fs::default();
+        let _ = fs.sync_in(&m);
+    }
+}
+
+/// Each way a shared buffer is bad is told apart, and none panics.
+#[test]
+fn bad_buffers_are_refused() {
+    let buf = |b: &[u8]| { let mut m = Mem::new(1 << 16); assert!(m.write(0, b)); m.commit(b.len()); m };
+    let head = |snap: u32| { let mut h = b"VFS2".to_vec(); h.extend_from_slice(&1u32.to_le_bytes()); h.extend_from_slice(&snap.to_le_bytes()); h };
+    assert_eq!(Fs::default().sync_in(&buf(b"VFS")), Err(super::Corrupt::Head));
+    assert_eq!(Fs::default().sync_in(&buf(b"VFS1\0\0\0\0\0\0\0\0")), Err(super::Corrupt::Head));
+    assert_eq!(Fs::default().sync_in(&buf(&head(1000))), Err(super::Corrupt::Snapshot));
+    // (a good snapshot, then an entry longer than what follows)
+    let (fs, _) = rooted();
+    let snap = fs.shared_snapshot();
+    let mut b = head(snap.len() as u32);
+    b.extend_from_slice(&snap);
+    assert_eq!(Fs::default().sync_in(&buf(&b)), Ok(()));
+    b.extend_from_slice(&50u32.to_le_bytes());
+    b.extend_from_slice(&[0; 3]);
+    assert_eq!(Fs::default().sync_in(&buf(&b)), Err(super::Corrupt::Entry));
 }
 
 /// Byte ranges merge and stay few.

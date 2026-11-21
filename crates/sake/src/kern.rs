@@ -407,7 +407,7 @@ impl Kern {
             done: 0,
         };
         let id = self.new_end(e);
-        let pipe = self.pipes.get_mut(name).unwrap();
+        let pipe = self.pipes.get_mut(name).ok_or(OBJECT_NAME_NOT_FOUND)?;
         pipe.instances += 1;
         pipe.listeners.push(id);
         Ok(id)
@@ -437,8 +437,8 @@ impl Kern {
             done: 0,
         };
         let id = self.new_end(e);
-        self.pipes.get_mut(name).unwrap().listeners.remove(0);
-        let s = self.ends.get_mut(&server).unwrap();
+        self.pipes.get_mut(name).ok_or(OBJECT_NAME_NOT_FOUND)?.listeners.remove(0);
+        let s = self.end(server)?;
         s.state = State::Connected;
         s.conn = Some(id);
         Ok(id)
@@ -491,7 +491,7 @@ impl Kern {
     pub fn release_process(&mut self, pid: u32) {
         let ids: Vec<u32> = self.ends.iter().filter(|(_, e)| e.refs.iter().any(|r| r.0 == pid)).map(|(&i, _)| i).collect();
         for e in ids {
-            let end = self.ends.get_mut(&e).unwrap();
+            let Some(end) = self.ends.get_mut(&e) else { continue };
             end.refs.retain(|r| r.0 != pid);
             if end.refs.is_empty() {
                 self.destroy(e);
@@ -501,7 +501,7 @@ impl Kern {
 
     fn destroy(&mut self, e: u32) {
         self.disconnect_end(e, PIPE_BROKEN);
-        let end = self.ends.remove(&e).unwrap();
+        let Some(end) = self.ends.remove(&e) else { return };
         if end.server && let Some(name) = &end.pipe && let Some(p) = self.pipes.get_mut(name) {
             p.instances -= 1;
             p.listeners.retain(|&x| x != e);
@@ -551,7 +551,7 @@ impl Kern {
         let mut out = Vec::new();
         let mut more = false;
         if end.msg_read {
-            let m = end.queue.front_mut().unwrap();
+            let Some(m) = end.queue.front_mut() else { return Err(PENDING) };
             let n = max.min(m.left());
             out.extend_from_slice(&m.data[m.pos..m.pos + n]);
             m.pos += n;
@@ -657,12 +657,12 @@ impl Kern {
                 }
                 return Err(PENDING);
             }
-            let end = self.ends.get_mut(&e).unwrap();
+            let end = self.end(e)?;
             end.sent += 1;
             w.id = end.sent;
             let piece = data[w.queued..w.queued + n].to_vec();
             w.queued += n;
-            self.ends.get_mut(&c).unwrap().queue.push_back(Msg { data: piece, pos: 0, id: w.id });
+            self.end(c)?.queue.push_back(Msg { data: piece, pos: 0, id: w.id });
             self.settle(c);
             self.changed();
             // (an empty message is done at once, wherever it is in the queue)
@@ -756,8 +756,9 @@ impl Kern {
         match end.state {
             State::Connected => {
                 // (the client is cut off from the pipe: everything it does fails from now on)
-                let c = end.conn.unwrap();
-                self.ends.get_mut(&c).unwrap().pipe = None;
+                if let Some(client) = end.conn.and_then(|c| self.ends.get_mut(&c)) {
+                    client.pipe = None;
+                }
             }
             State::Closing => {}
             State::Listening => return PIPE_LISTENING,
@@ -782,10 +783,11 @@ impl Kern {
         if self.queued() + data.len() > PIPE_QUOTA {
             return QUOTA_EXCEEDED;
         }
-        let end = self.ends.get_mut(&e).unwrap();
+        let Ok(end) = self.end(e) else { return INVALID_HANDLE };
         end.sent += 1;
         let id = end.sent;
-        self.ends.get_mut(&c).unwrap().queue.push_back(Msg { data: data.to_vec(), pos: 0, id });
+        let Ok(client) = self.end(c) else { return PIPE_DISCONNECTED };
+        client.queue.push_back(Msg { data: data.to_vec(), pos: 0, id });
         self.settle(c);
         self.changed();
         SUCCESS
@@ -910,7 +912,9 @@ impl Kern {
         }
         let ids: Vec<u32> = self.sync.iter().filter(|(_, o)| o.refs.iter().any(|r| r.0 == pid)).map(|(&i, _)| i).collect();
         for id in ids {
-            self.sync.get_mut(&id).unwrap().refs.retain(|r| r.0 != pid);
+            if let Some(o) = self.sync.get_mut(&id) {
+                o.refs.retain(|r| r.0 != pid);
+            }
             self.drop_sync_if_unused(id);
         }
         // (the answers it was waiting for: nobody will take them; what it asked of others
@@ -1052,8 +1056,7 @@ impl Kern {
     /// CreateEvent / CreateMutex / CreateSemaphore with a name: (id, whether it was there
     /// already); Err(kind of the object that has the name) for another kind.
     pub fn create_sync(&mut self, name: &str, s: Sync, pid: u32) -> Result<(u32, bool), u8> {
-        if let Some(&id) = self.sync_names.get(name) {
-            let o = self.sync.get_mut(&id).unwrap();
+        if let Some(&id) = self.sync_names.get(name) && let Some(o) = self.sync.get_mut(&id) {
             if o.sync.kind() != s.kind() {
                 return Err(o.sync.kind());
             }
@@ -1079,7 +1082,7 @@ impl Kern {
     /// OpenEvent / OpenMutex / OpenSemaphore: Err(ERROR_FILE_NOT_FOUND, ERROR_INVALID_HANDLE)
     pub fn open_sync(&mut self, name: &str, kind: u8, pid: u32) -> Result<u32, u32> {
         let Some(&id) = self.sync_names.get(name) else { return Err(2) };
-        let o = self.sync.get_mut(&id).unwrap();
+        let Some(o) = self.sync.get_mut(&id) else { return Err(2) };
         if o.sync.kind() != kind {
             return Err(6);
         }
@@ -1106,8 +1109,7 @@ impl Kern {
         self.changed();
     }
     fn drop_sync_if_unused(&mut self, id: u32) {
-        if self.sync.get(&id).is_some_and(|o| o.refs.is_empty()) {
-            let o = self.sync.remove(&id).unwrap();
+        if self.sync.get(&id).is_some_and(|o| o.refs.is_empty()) && let Some(o) = self.sync.remove(&id) {
             self.sync_names.remove(&o.name);
         }
     }

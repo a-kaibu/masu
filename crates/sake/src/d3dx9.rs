@@ -6,6 +6,7 @@
 
 #![allow(non_snake_case)]
 
+use kome::locks::Lock as _;
 use crate::api::{implement, vtable, Ctx, Handler};
 use crate::mem::{self, r32, w32};
 
@@ -776,14 +777,14 @@ fn ms_release(c: &mut Ctx) -> u32 {
     let o = c.a(0);
     let (n, last) = release_count(o);
     if last {
-        STACKS.lock().unwrap().get_or_insert_with(Default::default).remove(&o);
+        STACKS.locked().get_or_insert_with(Default::default).remove(&o);
         mem::heap_free(o);
     }
     n
 }
 fn ms_pop(c: &mut Ctx) -> u32 {
     let o = c.a(0);
-    let m = STACKS.lock().unwrap().get_or_insert_with(Default::default).get_mut(&o).and_then(|v| v.pop());
+    let m = STACKS.locked().get_or_insert_with(Default::default).get_mut(&o).and_then(|v| v.pop());
     if let Some(m) = m {
         wm(o + 16, &m);
     }
@@ -791,7 +792,7 @@ fn ms_pop(c: &mut Ctx) -> u32 {
 }
 fn ms_push(c: &mut Ctx) -> u32 {
     let o = c.a(0);
-    STACKS.lock().unwrap().get_or_insert_with(Default::default).entry(o).or_default().push(rm(o + 16));
+    STACKS.locked().get_or_insert_with(Default::default).entry(o).or_default().push(rm(o + 16));
     0
 }
 fn ms_identity(c: &mut Ctx) -> u32 {
@@ -1167,7 +1168,8 @@ fn color_key(px: &mut [u8], key: u32) {
 #[allow(clippy::too_many_arguments)]
 fn put_scaled(px: &[u8], iw: u32, src: (u32, u32, u32, u32), fmt: u32, dw: u32, dh: u32, bits: u32, pitch: u32) {
     let (sl, st, sr, sb) = src;
-    let Some((_, bpp)) = pack(fmt, [0.0; 4]) else { return };
+    let Some(tf) = Tf::of(fmt) else { return };
+    let bpp = tf.bytes();
     if dw == 0 || dh == 0 || sr <= sl || sb <= st {
         return;
     }
@@ -1188,7 +1190,7 @@ fn put_scaled(px: &[u8], iw: u32, src: (u32, u32, u32, u32), fmt: u32, dw: u32, 
             let f = |v: u8| v as f32 / 255.0;
             for (o, &i) in row.chunks_exact_mut(bpp as usize).zip(&xs) {
                 let p = &line[i..i + 4];
-                let (v, _) = pack(fmt, [f(p[2]), f(p[1]), f(p[0]), f(p[3])]).unwrap();
+                let v = tf.pack([f(p[2]), f(p[1]), f(p[0]), f(p[3])]);
                 o.copy_from_slice(&v.to_le_bytes()[..bpp as usize]);
             }
         }
@@ -1373,40 +1375,99 @@ pub(crate) fn com_call(c: &mut Ctx, obj: u32, m: u32, args: &[u32]) -> u32 {
     c.call(f, &a)
 }
 
-/// Packs straight RGBA floats into a texel of D3DFORMAT `fmt`; None for formats not handled.
+/// A D3DFORMAT `pack` / `unpack` handle: only these, so a texel conversion of one cannot fail.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Tf {
+    A8R8G8B8,
+    X8R8G8B8,
+    A8B8G8R8,
+    R5G6B5,
+    X1R5G5B5,
+    A1R5G5B5,
+    A4R4G4B4,
+    A8,
+    L8,
+    A8L8,
+}
+
+impl Tf {
+    const ALL: [Tf; 10] = [Tf::A8R8G8B8, Tf::X8R8G8B8, Tf::A8B8G8R8, Tf::R5G6B5, Tf::X1R5G5B5, Tf::A1R5G5B5, Tf::A4R4G4B4, Tf::A8, Tf::L8, Tf::A8L8];
+    /// The D3DFORMAT number.
+    const fn id(self) -> u32 {
+        match self {
+            Tf::A8R8G8B8 => 21,
+            Tf::X8R8G8B8 => 22,
+            Tf::A8B8G8R8 => 32,
+            Tf::R5G6B5 => 23,
+            Tf::X1R5G5B5 => 24,
+            Tf::A1R5G5B5 => 25,
+            Tf::A4R4G4B4 => 26,
+            Tf::A8 => 28,
+            Tf::L8 => 50,
+            Tf::A8L8 => 51,
+        }
+    }
+    /// D3DFORMAT `fmt`; None for formats not handled.
+    fn of(fmt: u32) -> Option<Tf> {
+        Tf::ALL.into_iter().find(|t| t.id() == fmt)
+    }
+    /// Bytes a texel.
+    const fn bytes(self) -> u32 {
+        match self {
+            Tf::A8R8G8B8 | Tf::X8R8G8B8 | Tf::A8B8G8R8 => 4,
+            Tf::R5G6B5 | Tf::X1R5G5B5 | Tf::A1R5G5B5 | Tf::A4R4G4B4 | Tf::A8L8 => 2,
+            Tf::A8 | Tf::L8 => 1,
+        }
+    }
+    /// Straight RGBA floats packed into a texel.
+    fn pack(self, v: [f32; 4]) -> u32 {
+        let q = |x: f32, bits: u32| ((x.clamp(0.0, 1.0) * ((1u32 << bits) - 1) as f32) + 0.5) as u32;
+        let [r, g, b, a] = v;
+        match self {
+            Tf::A8R8G8B8 | Tf::X8R8G8B8 => q(a, 8) << 24 | q(r, 8) << 16 | q(g, 8) << 8 | q(b, 8),
+            Tf::A8B8G8R8 => q(a, 8) << 24 | q(b, 8) << 16 | q(g, 8) << 8 | q(r, 8),
+            Tf::R5G6B5 => q(r, 5) << 11 | q(g, 6) << 5 | q(b, 5),
+            Tf::X1R5G5B5 => q(r, 5) << 10 | q(g, 5) << 5 | q(b, 5),
+            Tf::A1R5G5B5 => q(a, 1) << 15 | q(r, 5) << 10 | q(g, 5) << 5 | q(b, 5),
+            Tf::A4R4G4B4 => q(a, 4) << 12 | q(r, 4) << 8 | q(g, 4) << 4 | q(b, 4),
+            Tf::A8 => q(a, 8),
+            Tf::L8 => q(r, 8),
+            Tf::A8L8 => q(a, 8) << 8 | q(r, 8),
+        }
+    }
+    /// A texel (its `pack` forms) unpacked into straight RGBA floats.
+    fn unpack(self, v: u32) -> [f32; 4] {
+        let f = |x: u32, shift: u32, bits: u32| ((x >> shift) & ((1 << bits) - 1)) as f32 / ((1u32 << bits) - 1) as f32;
+        match self {
+            Tf::A8R8G8B8 => [f(v, 16, 8), f(v, 8, 8), f(v, 0, 8), f(v, 24, 8)],
+            Tf::X8R8G8B8 => [f(v, 16, 8), f(v, 8, 8), f(v, 0, 8), 1.0],
+            Tf::A8B8G8R8 => [f(v, 0, 8), f(v, 8, 8), f(v, 16, 8), f(v, 24, 8)],
+            Tf::R5G6B5 => [f(v, 11, 5), f(v, 5, 6), f(v, 0, 5), 1.0],
+            Tf::X1R5G5B5 => [f(v, 10, 5), f(v, 5, 5), f(v, 0, 5), 1.0],
+            Tf::A1R5G5B5 => [f(v, 10, 5), f(v, 5, 5), f(v, 0, 5), f(v, 15, 1)],
+            Tf::A4R4G4B4 => [f(v, 8, 4), f(v, 4, 4), f(v, 0, 4), f(v, 12, 4)],
+            Tf::A8 => [0.0, 0.0, 0.0, f(v, 0, 8)],
+            Tf::L8 => [f(v, 0, 8), f(v, 0, 8), f(v, 0, 8), 1.0],
+            Tf::A8L8 => [f(v, 0, 8), f(v, 0, 8), f(v, 0, 8), f(v, 8, 8)],
+        }
+    }
+}
+
+/// Packs straight RGBA floats into a texel of D3DFORMAT `fmt` (the texel, its bytes); None for
+/// formats not handled.
 fn pack(fmt: u32, v: [f32; 4]) -> Option<(u32, u32)> {
-    let q = |x: f32, bits: u32| ((x.clamp(0.0, 1.0) * ((1u32 << bits) - 1) as f32) + 0.5) as u32;
-    let [r, g, b, a] = v;
-    Some(match fmt {
-        21 | 22 => (q(a, 8) << 24 | q(r, 8) << 16 | q(g, 8) << 8 | q(b, 8), 4),
-        32 => (q(a, 8) << 24 | q(b, 8) << 16 | q(g, 8) << 8 | q(r, 8), 4),
-        23 => (q(r, 5) << 11 | q(g, 6) << 5 | q(b, 5), 2),
-        24 => (q(r, 5) << 10 | q(g, 5) << 5 | q(b, 5), 2),
-        25 => (q(a, 1) << 15 | q(r, 5) << 10 | q(g, 5) << 5 | q(b, 5), 2),
-        26 => (q(a, 4) << 12 | q(r, 4) << 8 | q(g, 4) << 4 | q(b, 4), 2),
-        28 => (q(a, 8), 1),
-        50 => (q(r, 8), 1),
-        51 => (q(a, 8) << 8 | q(r, 8), 2),
-        _ => return None,
-    })
+    Tf::of(fmt).map(|t| (t.pack(v), t.bytes()))
 }
 
 /// Unpacks a texel of D3DFORMAT `fmt` (its `pack` forms) into straight RGBA floats.
+#[cfg(test)]
 fn unpack(fmt: u32, v: u32) -> Option<[f32; 4]> {
-    let f = |x: u32, shift: u32, bits: u32| ((x >> shift) & ((1 << bits) - 1)) as f32 / ((1u32 << bits) - 1) as f32;
-    Some(match fmt {
-        21 => [f(v, 16, 8), f(v, 8, 8), f(v, 0, 8), f(v, 24, 8)],
-        22 => [f(v, 16, 8), f(v, 8, 8), f(v, 0, 8), 1.0],
-        32 => [f(v, 0, 8), f(v, 8, 8), f(v, 16, 8), f(v, 24, 8)],
-        23 => [f(v, 11, 5), f(v, 5, 6), f(v, 0, 5), 1.0],
-        24 => [f(v, 10, 5), f(v, 5, 5), f(v, 0, 5), 1.0],
-        25 => [f(v, 10, 5), f(v, 5, 5), f(v, 0, 5), f(v, 15, 1)],
-        26 => [f(v, 8, 4), f(v, 4, 4), f(v, 0, 4), f(v, 12, 4)],
-        28 => [0.0, 0.0, 0.0, f(v, 0, 8)],
-        50 => [f(v, 0, 8), f(v, 0, 8), f(v, 0, 8), 1.0],
-        51 => [f(v, 0, 8), f(v, 0, 8), f(v, 0, 8), f(v, 8, 8)],
-        _ => return None,
-    })
+    Tf::of(fmt).map(|t| t.unpack(v))
+}
+
+/// The texel `v` (A8R8G8B8 floats) is color key `key` (0: none).
+fn keyed(v: [f32; 4], key: u32) -> bool {
+    key != 0 && Tf::A8R8G8B8.pack(v) == key
 }
 
 /// `px`, `sw` x `sh` texels of `sfmt` (`sbpp` bytes each, rows packed), scaled (nearest, as
@@ -1419,26 +1480,34 @@ fn convert_rows(px: &[u8], (sfmt, sbpp, sw, sh): (u32, u32, u32, u32), (dfmt, db
     }
     let (sb, db) = (sbpp as usize, dbpp as usize);
     let xs: Vec<usize> = (0..dw as u64).map(|x| sb * (x * sw as u64 / dw as u64) as usize).collect();
-    let raw = sfmt == dfmt && key == 0;
+    // (None: the texels as they are; else the formats to go through)
+    let conv = if sfmt == dfmt && key == 0 {
+        None
+    } else {
+        let (Some(st), Some(dt)) = (Tf::of(sfmt), Tf::of(dfmt)) else { return };
+        Some((st, dt))
+    };
     let mut row = vec![0u8; dw as usize * db];
     for y in 0..dh {
         let sy = (y as u64 * sh as u64 / dh as u64) as usize;
         let line = &px[sy * sw as usize * sb..][..sw as usize * sb];
-        if raw && sw == dw {
-            row.copy_from_slice(line);
-        } else if raw {
-            for (o, &i) in row.chunks_exact_mut(db).zip(&xs) {
-                o.copy_from_slice(&line[i..i + sb]);
-            }
-        } else {
-            for (o, &i) in row.chunks_exact_mut(db).zip(&xs) {
-                let mut b = [0u8; 4];
-                b[..sb].copy_from_slice(&line[i..i + sb]);
-                let mut v = unpack(sfmt, u32::from_le_bytes(b)).unwrap();
-                if key != 0 && pack(21, v).unwrap().0 == key {
-                    v = [0.0; 4];
+        match conv {
+            None if sw == dw => row.copy_from_slice(line),
+            None => {
+                for (o, &i) in row.chunks_exact_mut(db).zip(&xs) {
+                    o.copy_from_slice(&line[i..i + sb]);
                 }
-                o.copy_from_slice(&pack(dfmt, v).unwrap().0.to_le_bytes()[..db]);
+            }
+            Some((st, dt)) => {
+                for (o, &i) in row.chunks_exact_mut(db).zip(&xs) {
+                    let mut b = [0u8; 4];
+                    b[..sb].copy_from_slice(&line[i..i + sb]);
+                    let mut v = st.unpack(u32::from_le_bytes(b));
+                    if keyed(v, key) {
+                        v = [0.0; 4];
+                    }
+                    o.copy_from_slice(&dt.pack(v).to_le_bytes()[..db]);
+                }
             }
         }
         put(y, &row);
@@ -1455,7 +1524,7 @@ fn blit(px: &[[f32; 4]], sw: u32, sh: u32, dw: u32, dh: u32, key: u32) -> Vec<[f
         for x in 0..dw {
             let sx = (x as u64 * sw as u64 / dw as u64) as u32;
             let v = px[(sy * sw + sx) as usize];
-            out.push(if key != 0 && pack(21, v).unwrap().0 == key { [0.0; 4] } else { v });
+            out.push(if keyed(v, key) { [0.0; 4] } else { v });
         }
     }
     out
@@ -1907,6 +1976,21 @@ mod surface_quat_tests {
     const FMTS: &[(u32, u32, u32)] = &[(21, 0xffff_ffff, 0), (22, 0x00ff_ffff, 0xff00_0000), (32, 0xffff_ffff, 0), (23, 0xffff, 0),
         (24, 0x7fff, 0), (25, 0xffff, 0), (26, 0xffff, 0), (28, 0xff, 0), (50, 0xff, 0), (51, 0xffff, 0)];
 
+    /// Tf is these formats and no other: each id names its own, every other number none, and a
+    /// texel's bytes hold its bits.
+    #[test]
+    fn tf_is_the_table() {
+        assert_eq!(Tf::ALL.len(), FMTS.len());
+        for &(fmt, bits, _) in FMTS {
+            let t = Tf::of(fmt).unwrap();
+            assert_eq!(t.id(), fmt);
+            assert!(u64::from(bits) < 1u64 << (8 * t.bytes()));
+        }
+        for fmt in 0..1000 {
+            assert_eq!(Tf::of(fmt).is_some(), FMTS.iter().any(|f| f.0 == fmt));
+        }
+    }
+
     proptest! {
         /// every texel of every format unpacks and packs back to itself (the formats
         /// D3DXLoadSurfaceFromSurface converts between keep their bits)
@@ -2172,9 +2256,9 @@ mod lifetime_tests {
         assert_eq!(call(D3DXCreateMatrixStack, &[0, out]), 0);
         let s = r32(out);
         assert_eq!(vcall(s, 4), 0); // Push
-        assert!(STACKS.lock().unwrap().as_ref().is_some_and(|m| m.contains_key(&s)));
+        assert!(STACKS.locked().as_ref().is_some_and(|m| m.contains_key(&s)));
         assert_eq!(vcall(s, 2), 0);
-        assert!(!STACKS.lock().unwrap().as_ref().is_some_and(|m| m.contains_key(&s)));
+        assert!(!STACKS.locked().as_ref().is_some_and(|m| m.contains_key(&s)));
         assert!(!mem::heap_owns(s));
         // (D3DXCreateFontW(device, ..., out) without a device: nothing else to release)
         let mut a = vec![0u32; 11];

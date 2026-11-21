@@ -10,6 +10,7 @@
 
 #![allow(non_snake_case)]
 
+use kome::locks::Lock as _;
 use std::collections::HashMap;
 use std::sync::Mutex;
 
@@ -54,7 +55,7 @@ struct Provider {
 
 static PROVIDERS: Mutex<Option<HashMap<u32, Provider>>> = Mutex::new(None);
 fn with<R>(f: impl FnOnce(&mut HashMap<u32, Provider>) -> R) -> R {
-    f(PROVIDERS.lock().unwrap().get_or_insert_with(HashMap::new))
+    f(PROVIDERS.locked().get_or_insert_with(HashMap::new))
 }
 
 /// How a value setter may write counter `c`: Ok(slot is a pointer / DWORD / ULONGLONG)
@@ -244,13 +245,13 @@ fn PerfOpenQueryHandle(c: &mut Ctx) -> u32 {
         return ERROR_INVALID_PARAMETER;
     }
     let h = mem::heap_alloc(16, true);
-    QUERIES.lock().unwrap().push(h);
+    QUERIES.locked().push(h);
     out.put(h);
     0
 }
 fn PerfCloseQueryHandle(c: &mut Ctx) -> u32 {
     let h = c.a(0);
-    let mut q = QUERIES.lock().unwrap();
+    let mut q = QUERIES.locked();
     let Some(i) = q.iter().position(|&x| x == h) else { return 6 };
     q.remove(i);
     mem::heap_free(h);
@@ -259,7 +260,7 @@ fn PerfCloseQueryHandle(c: &mut Ctx) -> u32 {
 /// PerfAddCounters(query, PERF_COUNTER_IDENTIFIER list, size): each {GUID, Status, Size, ...}
 fn PerfAddCounters(c: &mut Ctx) -> u32 {
     let (h, ids, size) = (c.a(0), c.a(1), c.a(2));
-    if !QUERIES.lock().unwrap().contains(&h) {
+    if !QUERIES.locked().contains(&h) {
         return 6;
     }
     if ids == 0 || size < 40 {
@@ -280,7 +281,7 @@ fn PerfAddCounters(c: &mut Ctx) -> u32 {
 /// PerfQueryCounterData(query, PERF_DATA_HEADER buffer, size, &needed): the header alone
 fn PerfQueryCounterData(c: &mut Ctx) -> u32 {
     let (h, buf, size, need) = (c.a(0), c.a(1), c.a(2), c.a(3));
-    if need == 0 || !QUERIES.lock().unwrap().contains(&h) {
+    if need == 0 || !QUERIES.locked().contains(&h) {
         return ERROR_INVALID_PARAMETER;
     }
     w32(need, 48);

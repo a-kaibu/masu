@@ -17,6 +17,7 @@
 //! Only these APIs: the same set the Windows capture records (`--mode filtered --api`, the
 //! list in tools/shirusu/apis.txt).
 
+use kome::locks::Lock as _;
 use std::collections::HashMap;
 use std::sync::{Mutex, OnceLock};
 
@@ -55,7 +56,7 @@ pub fn api_name(dll: &str, name: &str) -> Option<String> {
 /// Per trap index: the catalog name, or None for an API not recorded.
 fn name_of(i: u32) -> Option<String> {
     static M: Mutex<Option<HashMap<u32, Option<String>>>> = Mutex::new(None);
-    let mut g = M.lock().unwrap();
+    let mut g = M.locked();
     g.get_or_insert_with(HashMap::default)
         .entry(i)
         .or_insert_with(|| trap_api(crate::api::trap_at(i)))

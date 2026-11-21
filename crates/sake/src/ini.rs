@@ -102,7 +102,7 @@ impl Ini {
     /// The value of `key`: trimmed, and unquoted when quoted at both ends
     pub(crate) fn value(&self, sec: &str, key: &str) -> Option<String> {
         let s = &self.secs[self.sec(sec)?];
-        s.lines.iter().filter_map(|l| entry(l)).find(|e| e.1.is_some() && e.0.eq_ignore_ascii_case(key.trim())).map(|e| unquote(e.1.unwrap()).to_string())
+        s.lines.iter().filter_map(|l| entry(l)).find_map(|(k, v)| v.filter(|_| k.eq_ignore_ascii_case(key.trim()))).map(|v| unquote(v).to_string())
     }
 
     fn sec_or_new(&mut self, sec: &str) -> usize {
@@ -123,9 +123,9 @@ impl Ini {
         };
         let i = self.sec_or_new(sec);
         let lines = &mut self.secs[i].lines;
-        match lines.iter().position(|l| entry(l).is_some_and(|e| e.0.eq_ignore_ascii_case(key.trim()))) {
-            Some(j) => {
-                let k = entry(&lines[j]).unwrap().0.to_string();
+        let at = lines.iter().enumerate().find_map(|(j, l)| entry(l).filter(|e| e.0.eq_ignore_ascii_case(key.trim())).map(|e| (j, e.0.to_string())));
+        match at {
+            Some((j, k)) => {
                 lines[j] = format!("{k}={val}");
             }
             None => {
@@ -164,7 +164,7 @@ pub(crate) fn struct_bytes(v: &str, size: usize) -> Result<Vec<u8>, u32> {
     for i in 0..=size {
         b.push(u8::from_str_radix(v.get(2 * i..2 * i + 2).ok_or(13u32)?, 16).map_err(|_| 13u32)?);
     }
-    let sum = b.pop().unwrap();
+    let Some(sum) = b.pop() else { return Err(13) };
     if sum != b.iter().fold(0u8, |s, &x| s.wrapping_add(x)) {
         return Err(13);
     }
@@ -651,11 +651,12 @@ pub fn fuzz_cache(dir: &std::path::Path, data: &[u8]) {
                 let mut bytes = b"[S]\r\n".to_vec();
                 bytes.extend(&data[i..i + n]);
                 i += n;
-                std::fs::write(&f, &bytes).unwrap();
+                // (a directory the harness cannot write: nothing more to check)
+                let Ok(()) = std::fs::write(&f, &bytes) else { return };
                 if op % 6 == 3 {
                     back -= 1;
                     let t = std::time::SystemTime::now() - std::time::Duration::from_secs(back);
-                    std::fs::File::options().write(true).open(&f).unwrap().set_modified(t).unwrap();
+                    let Ok(()) = std::fs::File::options().write(true).open(&f).and_then(|h| h.set_modified(t)) else { return };
                 }
             }
             4 => {

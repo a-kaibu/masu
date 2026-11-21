@@ -369,7 +369,7 @@ fn to_half(w: &[u16]) -> Vec<u16> {
             // (the marks ゛ ゜ and the brackets keep their full forms: only kana narrow)
             0x30a1..=0x30fc => match (half_of(c), voiced(c)) {
                 (Some(h), _) => out.push(h),
-                (None, Some((b, m))) if half_of(b).is_some() => out.extend([half_of(b).unwrap(), m]),
+                (None, Some((b, m))) if let Some(hb) = half_of(b) => out.extend([hb, m]),
                 _ => out.push(c),
             },
             _ => out.push(c),

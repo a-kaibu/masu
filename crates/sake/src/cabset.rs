@@ -156,7 +156,7 @@ impl<R: Read + Seek> Set<R> {
 
     fn next_block(&mut self) -> Result<(), u32> {
         let (src, un) = self.raw_block()?;
-        let st = self.cur.as_mut().unwrap();
+        let st = self.cur.as_mut().ok_or(BAD)?;
         st.base += st.buf.len() as u64;
         st.used = 0;
         let mut buf = std::mem::take(&mut st.buf);
@@ -180,7 +180,7 @@ impl<R: Read + Seek> Set<R> {
                 self.cur = None;
                 return Err(x);
             }
-            let st = self.cur.as_mut().unwrap();
+            let st = self.cur.as_mut().ok_or(BAD)?;
             let have = (st.buf.len() - st.used) as u64;
             if skip > 0 {
                 let n = skip.min(have);

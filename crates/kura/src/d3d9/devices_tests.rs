@@ -7,6 +7,7 @@
 //! and an object answers with the device that made it. (tests/winref/probes/d3d9twodev.c draws
 //! with two of them on Windows and on sake.)
 
+use kome::locks::Lock as _;
 use super::trace_tests::{alloc, CALLS, SERIAL};
 use super::draw_tests::call;
 use super::*;
@@ -59,7 +60,7 @@ struct Live {
 }
 
 fn objects() -> usize {
-    D3D.lock().unwrap().as_ref().map_or(0, |d| d.objs.len())
+    D3D.locked().as_ref().map_or(0, |d| d.objs.len())
 }
 
 fn run(ops: &[Op]) -> Result<(), TestCaseError> {

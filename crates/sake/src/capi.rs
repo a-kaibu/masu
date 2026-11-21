@@ -1,6 +1,7 @@
 //! CryptoAPI provider contexts and per-installation RSA key containers. Public
 //! APIs distinguish opening, creating and deleting a container. RSA material is
 //! generated normally and persisted atomically; missing keys never succeed.
+use kome::locks::Lock as _;
 use std::collections::HashMap;
 use std::io::Write;
 use std::sync::{Arc, Mutex, atomic::{AtomicU32, Ordering}};
@@ -25,7 +26,7 @@ fn storage<T>(f: impl FnOnce() -> Result<T, u32>) -> Result<T, u32> {
     crate::kern::with(|_| f()).0
 }
 pub(crate) fn provider(id: u32) -> Result<Provider, u32> {
-    PROVIDERS.lock().unwrap().as_ref().and_then(|m| m.get(&id)).cloned().ok_or(0x8009_0001)
+    PROVIDERS.locked().as_ref().and_then(|m| m.get(&id)).cloned().ok_or(0x8009_0001)
 }
 pub(crate) fn acquire(container: Option<&str>, name: Option<&str>, ty: u32, flags: u32) -> Result<u32, u32> {
     let name = name.unwrap_or("Microsoft Strong Cryptographic Provider");
@@ -82,13 +83,13 @@ pub(crate) fn acquire(container: Option<&str>, name: Option<&str>, ty: u32, flag
         }
     }
     let id = NEXT.fetch_add(1, Ordering::Relaxed);
-    PROVIDERS.lock().unwrap().get_or_insert_with(HashMap::new).insert(id,
+    PROVIDERS.locked().get_or_insert_with(HashMap::new).insert(id,
         Provider { path, generation, rc4_bits: if base { 40 } else { 128 }, rsa_bits: if base { 512 } else { 1024 }, keys: Arc::new(Mutex::new(HashMap::new())) });
     Ok(id)
 }
 pub(crate) fn release(id: u32, flags: u32) -> Result<(), u32> {
     if flags != 0 { return Err(cng::NTE_BAD_FLAGS); }
-    if PROVIDERS.lock().unwrap().as_mut().and_then(|m| m.remove(&id)).is_none() { return Err(0x8009_0001); }
+    if PROVIDERS.locked().as_mut().and_then(|m| m.remove(&id)).is_none() { return Err(0x8009_0001); }
     Ok(())
 }
 fn spec(alg: u32) -> Result<u32, u32> { match alg { 1 | 0xa400 => Ok(1), 2 | 0x2400 => Ok(2), _ => Err(0x8009_0008) } }
@@ -135,11 +136,12 @@ pub(crate) fn user_key(id: u32, key_spec: u32) -> Result<Key, u32> {
                 if kura::fs::read(&keyset).ok().as_ref() != Some(&p.generation) { return Err(cng::NTE_BAD_KEYSET); }
                 kura::fs::read(&file).map_err(|_| cng::NTE_NO_KEY)
             })?;
-            if bytes.get(..4) != Some(b"CAP1") || bytes.len() < 8 { return Err(cng::NTE_BAD_DATA); }
-            let (rsa, bits) = Rsa::from_blob(Blob::FullPrivate, false, &bytes[8..])?;
-            Ok(Key { rsa, bits, exportable: u32::from_le_bytes(bytes[4..8].try_into().unwrap()) & 1 != 0 })
+            let Some((b"CAP1", rest)) = bytes.split_first_chunk::<4>() else { return Err(cng::NTE_BAD_DATA) };
+            let Some((flags, blob)) = rest.split_first_chunk::<4>() else { return Err(cng::NTE_BAD_DATA) };
+            let (rsa, bits) = Rsa::from_blob(Blob::FullPrivate, false, blob)?;
+            Ok(Key { rsa, bits, exportable: u32::from_le_bytes(*flags) & 1 != 0 })
         })
-    } else { p.keys.lock().unwrap().get(&key_spec).cloned().ok_or(cng::NTE_NO_KEY) }
+    } else { p.keys.locked().get(&key_spec).cloned().ok_or(cng::NTE_NO_KEY) }
 }
 pub(crate) fn generate(id: u32, alg: u32, flags: u32) -> Result<Key, u32> {
     let p = provider(id)?; let key_spec = spec(alg)?;
@@ -161,7 +163,7 @@ pub(crate) fn generate(id: u32, alg: u32, flags: u32) -> Result<Key, u32> {
           }
           Ok(())
         })?;
-    } else { p.keys.lock().unwrap().insert(key_spec, key.clone()); }
+    } else { p.keys.locked().insert(key_spec, key.clone()); }
     Ok(key)
 }
 

@@ -23,6 +23,7 @@
 //! SAKE_NO_VORBIS: leave the game's decoder alone. SAKE_VORBIS_CHECK: run both, keep the
 //! game's samples, and print how far apart they are (every 500 packets).
 
+use kome::locks::Lock as _;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
@@ -98,7 +99,7 @@ impl Image<'_> {
 
     /// A mapped image's sections, from its headers.
     fn of(base: u32, img: &[u8]) -> Option<Image<'_>> {
-        let rd = |o: usize| img.get(o..o + 4).map(|b| u32::from_le_bytes(b.try_into().unwrap()));
+        let rd = |o: usize| kome::le::u32_at(&img, o);
         let pe = rd(0x3c)? as usize;
         let nsec = u16::from_le_bytes(img.get(pe + 6..pe + 8)?.try_into().ok()?) as usize;
         let opt = u16::from_le_bytes(img.get(pe + 20..pe + 22)?.try_into().ok()?) as usize;
@@ -129,7 +130,7 @@ impl Image<'_> {
 
     /// The 4 bytes at `o` (0 past the image's end: a damaged or packed module, not an abort).
     fn u32_at(&self, o: usize) -> u32 {
-        self.img.get(o..o.saturating_add(4)).map_or(0, |b| u32::from_le_bytes(b.try_into().unwrap()))
+        kome::le::u32_at(self.img, o).unwrap_or(0)
     }
 
     /// Addresses in `sections` holding the 4 bytes of `v` (any alignment).
@@ -256,7 +257,7 @@ fn locate(m: &Image) -> Option<(Vec<u32>, u32)> {
     // functions in a build without it)
     let table_or_null = |at: u32, n: usize, null: u32| -> Option<Vec<u32>> {
         let o = at.checked_sub(m.base)? as usize;
-        (0..n).map(|k| m.img.get(o + 4 * k..o + 4 * k + 4).map(|b| u32::from_le_bytes(b.try_into().unwrap())).filter(|&v| (m.in_code(v) && is_start(v)) || (v == 0 && null >> k & 1 != 0))).collect()
+        (0..n).map(|k| kome::le::u32_at(&m.img, o + 4 * k).filter(|&v| (m.in_code(v) && is_start(v)) || (v == 0 && null >> k & 1 != 0))).collect()
     };
     let table_at = |at: u32, n: usize| table_or_null(at, n, 0);
     // floor 1's table: entry 6 is the function using the dB table
@@ -396,7 +397,7 @@ fn hook(f: u32, kind: Kind) -> Option<()> {
     mem::write(t, &tr);
     let name = format!("vorbis_{}_{f:x}", if matches!(kind, Kind::Mapping { .. }) { "mapping0_inverse" } else { "headerin" });
     let h = api::host_fn(&name, handler, 0);
-    HOOKS.lock().unwrap().get_or_insert_with(HashMap::new).insert(h, (kind, t));
+    HOOKS.locked().get_or_insert_with(HashMap::new).insert(h, (kind, t));
     let mut jmp = vec![0xe9];
     jmp.extend(h.wrapping_sub(f + 5).to_le_bytes());
     mem::write(f, &jmp);
@@ -458,7 +459,7 @@ fn on_to(c: &mut Ctx, t: u32) -> u32 {
 }
 
 fn handler(c: &mut Ctx) -> u32 {
-    let Some((kind, t)) = HOOKS.lock().unwrap().as_ref().and_then(|h| h.get(&c.trap).copied()) else {
+    let Some((kind, t)) = HOOKS.locked().as_ref().and_then(|h| h.get(&c.trap).copied()) else {
         // (cannot happen: every trap is registered with its entry)
         eprintln!("sake: vorbis hook without an entry at trap {:#x}", c.trap);
         return 0;
@@ -494,7 +495,7 @@ fn headerin(vi: u32, op: u32) {
     }
     match pkt[0] {
         1 => {
-            let mut g = IDENTS.lock().unwrap();
+            let mut g = IDENTS.locked();
             let m = g.get_or_insert_with(HashMap::new);
             if m.len() >= MAX_STREAMS {
                 m.clear();
@@ -502,10 +503,10 @@ fn headerin(vi: u32, op: u32) {
             m.insert(vi, pkt.to_vec());
         }
         5 => {
-            let Some(ident) = IDENTS.lock().unwrap().as_mut().and_then(|m| m.remove(&vi)) else { return };
+            let Some(ident) = IDENTS.locked().as_mut().and_then(|m| m.remove(&vi)) else { return };
             let key = (ident, pkt.to_vec());
             let setup = {
-                let mut c = SETUPS.lock().unwrap();
+                let mut c = SETUPS.locked();
                 let c = c.get_or_insert_with(HashMap::new);
                 match c.get(&key) {
                     Some(s) => Some(s.clone()),
@@ -539,13 +540,14 @@ fn headerin(vi: u32, op: u32) {
             let dec = Arc::new(Mutex::new((setup, st, win)));
             static BORN: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
             let born = BORN.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-            let mut g = STREAMS.lock().unwrap();
+            let mut g = STREAMS.locked();
             let m = g.get_or_insert_with(HashMap::new);
             if m.len() >= MAX_STREAMS {
                 // those whose codec_setup is gone or another's, then the oldest
                 m.retain(|&k, s| s.seen.is_none_or(|seen| readable(k, 36) && mem::array::<36>(k) == seen));
-                while m.len() >= MAX_STREAMS {
-                    let oldest = *m.iter().min_by_key(|(_, s)| s.born).unwrap().0;
+                while m.len() >= MAX_STREAMS
+                    && let Some(oldest) = m.iter().min_by_key(|(_, s)| s.born).map(|(&k, _)| k)
+                {
                     m.remove(&oldest);
                 }
             }
@@ -599,7 +601,7 @@ enum Shape {
 static SHAPES: Mutex<Option<HashMap<u32, Shape>>> = Mutex::new(None);
 
 fn shape(tramp: u32) -> Shape {
-    SHAPES.lock().unwrap().as_ref().and_then(|m| m.get(&tramp).copied()).unwrap_or(Shape::Unknown(0))
+    SHAPES.locked().as_ref().and_then(|m| m.get(&tramp).copied()).unwrap_or(Shape::Unknown(0))
 }
 
 fn largest_diff(a: &[Vec<f32>], outs: &[u32]) -> (f32, f32) {
@@ -644,7 +646,7 @@ fn learn(c: &mut Ctx, tramp: u32, vb: u32, map: u32, fastcall: bool, shapes: &[(
         Shape::Off => eprintln!("sake: vorbis: decoder at {tramp:#x} left to the game (its samples match no shape: {diffs:?})"),
         _ => eprintln!("sake: vorbis: decoder at {tramp:#x} gives {s:?} blocks"),
     }
-    SHAPES.lock().unwrap().get_or_insert_with(HashMap::new).insert(tramp, s);
+    SHAPES.locked().get_or_insert_with(HashMap::new).insert(tramp, s);
     r
 }
 
@@ -661,7 +663,7 @@ static CHECK: Mutex<Check> = Mutex::new(Check { packets: 0, bad: 0, worst: 0.0, 
 fn pass(why: &'static str) -> Option<u32> {
     if crate::env_on!("SAKE_VORBIS_CHECK") {
         static SEEN: Mutex<u32> = Mutex::new(0);
-        let mut k = SEEN.lock().unwrap();
+        let mut k = SEEN.locked();
         *k += 1;
         if *k <= 8 {
             eprintln!("sake: vorbis: a block left to the game ({why})");
@@ -687,7 +689,7 @@ fn mapping(c: &mut Ctx, tramp: u32, fastcall: bool) -> Option<u32> {
         return pass("vi unreadable");
     }
     let dec = {
-        let mut g = STREAMS.lock().unwrap();
+        let mut g = STREAMS.locked();
         let Some(m) = g.as_mut() else { return pass("no headers for its vorbis_info") };
         let Some(key) = VI_SETUP.iter().map(|&o| r32(vi + o)).find(|k| m.contains_key(k)) else {
             return pass("no headers for its vorbis_info");
@@ -696,7 +698,7 @@ fn mapping(c: &mut Ctx, tramp: u32, fastcall: bool) -> Option<u32> {
             return pass("codec_setup unreadable");
         }
         let now: [u8; 36] = mem::array::<36>(key);
-        let s = m.get_mut(&key).unwrap();
+        let Some(s) = m.get_mut(&key) else { return pass("no headers for its vorbis_info") };
         let Some(dec) = s.dec.clone() else {
             return pass("no headers for its vorbis_info");
         };
@@ -711,7 +713,7 @@ fn mapping(c: &mut Ctx, tramp: u32, fastcall: bool) -> Option<u32> {
         }
         dec
     };
-    let mut g = dec.lock().unwrap();
+    let mut g = dec.locked();
     let (setup, st, win) = &mut *g;
     let ch = setup.ident.channels;
     let mode = r32(vb + VB_MODE) as usize;
@@ -771,7 +773,7 @@ fn mapping(c: &mut Ctx, tramp: u32, fastcall: bool) -> Option<u32> {
     if crate::env_on!("SAKE_VORBIS_CHECK") {
         // the game's own result stays
         let r = original(c, tramp, vb, map, fastcall);
-        let mut k = CHECK.lock().unwrap();
+        let mut k = CHECK.locked();
         let mut bad = None;
         for (i, &p) in outs.iter().enumerate() {
             for (j, &ours) in bufs[i].iter().enumerate() {

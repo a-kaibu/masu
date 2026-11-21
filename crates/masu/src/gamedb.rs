@@ -336,8 +336,7 @@ impl Registry {
     }
 
     fn auth(&self, challenge: &str, url: &str) -> Result<String> {
-        let f: HashMap<String, String> = regex::Regex::new(r#"(\w+)="([^"]*)""#)
-            .unwrap()
+        let f: HashMap<String, String> = lazy_regex::regex!(r#"(\w+)="([^"]*)""#)
             .captures_iter(challenge)
             .map(|c| (c[1].to_string(), c[2].to_string()))
             .collect();
@@ -515,6 +514,7 @@ fn hex(b: impl AsRef<[u8]>) -> String {
 
 #[cfg(test)]
 mod tests {
+    use kome::locks::Lock as _;
     use super::*;
 
     fn row(kv: &[(&str, &str)]) -> meta::Row {
@@ -526,7 +526,7 @@ mod tests {
         if sql.contains("max(id)") {
             return Ok(vec![row(&[("max", "5200")])]);
         }
-        let from: u32 = regex::Regex::new(r">= (\d+)").unwrap().captures(sql).unwrap()[1].parse().unwrap();
+        let from: u32 = lazy_regex::regex!(r">= (\d+)").captures(sql).unwrap()[1].parse().unwrap();
         Ok(if sql.contains("FROM gamelist g") {
             [(1u32, "サクラノ詩 -櫻の森の上を舞う-", "PC", "5000"), (5100, "アネモイ", "PC", "512"), (5101, "アネモイ (PS5)", "PS5", "3")]
                 .into_iter()
@@ -726,13 +726,13 @@ mod tests {
                     }
                 } else if let Some(d) = path.strip_prefix("/signed/") {
                     assert!(auth.is_empty(), "the signed URL gets no token");
-                    ("200 OK".into(), String::new(), st.blobs.lock().unwrap()[d].clone())
+                    ("200 OK".into(), String::new(), st.blobs.locked()[d].clone())
                 } else if auth != "Bearer push" && auth != "Bearer pull" {
                     ("401 Unauthorized".into(), format!("www-authenticate: Bearer realm=\"{me}/token\",service=\"t\",scope=\"repository:t/gamedb:pull\"\r\n"), vec![])
                 } else if method != "GET" && method != "HEAD" && auth != "Bearer push" {
                     ok("403 Forbidden")
                 } else if let Some(d) = path.strip_prefix("/v2/t/gamedb/blobs/").filter(|d| d.starts_with("sha256:")) {
-                    match (method.as_str(), st.blobs.lock().unwrap().contains_key(d)) {
+                    match (method.as_str(), st.blobs.locked().contains_key(d)) {
                         ("HEAD", true) => ok("200 OK"),
                         ("GET", true) => ("307 Temporary Redirect".into(), format!("location: {me}/signed/{d}\r\n"), vec![]),
                         _ => ok("404 Not Found"),
@@ -744,7 +744,7 @@ mod tests {
                     assert!(q.contains_key("state"), "the location's own query kept: {target}");
                     let d = q.get("digest").cloned().unwrap_or_default();
                     if d == sum(&body) {
-                        st.blobs.lock().unwrap().insert(d, body);
+                        st.blobs.locked().insert(d, body);
                         ok("201 Created")
                     } else {
                         ok("400 Bad Request")
@@ -753,12 +753,12 @@ mod tests {
                     if method == "PUT" {
                         assert_eq!(h.get("content-type").map(|s| s.as_str()), Some(MANIFEST));
                         let m: serde_json::Value = serde_json::from_slice(&body).unwrap();
-                        let blobs = st.blobs.lock().unwrap();
+                        let blobs = st.blobs.locked();
                         assert!(blobs.contains_key(m["config"]["digest"].as_str().unwrap()) && blobs.contains_key(m["layers"][0]["digest"].as_str().unwrap()), "blobs before the manifest");
-                        st.tags.lock().unwrap().insert(tag.into(), String::from_utf8(body).unwrap());
+                        st.tags.locked().insert(tag.into(), String::from_utf8(body).unwrap());
                         ok("201 Created")
                     } else {
-                        match st.tags.lock().unwrap().get(tag) {
+                        match st.tags.locked().get(tag) {
                             Some(m) => ("200 OK".into(), String::new(), m.clone().into_bytes()),
                             None => ok("404 Not Found"),
                         }
@@ -814,9 +814,9 @@ mod tests {
         assert!(push_to(&name, Part::Vndb, &db, "secret", "20261109").is_err(), "ErogameScape's copy is no VNDB part");
         let e = format!("{:#}", push_to(&name, Part::Egs, &db, "wrong", "20261109").unwrap_err());
         assert!(e.contains("403"), "{e}");
-        assert!(st.tags.lock().unwrap().is_empty() && st.blobs.lock().unwrap().is_empty());
+        assert!(st.tags.locked().is_empty() && st.blobs.locked().is_empty());
         let layer = push_to(&name, Part::Egs, &db, "secret", "20261109").unwrap();
-        let tags = st.tags.lock().unwrap().clone();
+        let tags = st.tags.locked().clone();
         assert_eq!(tags.keys().map(|s| s.as_str()).collect::<std::collections::BTreeSet<_>>(), ["egs", "egs-20261109"].into());
         let m: serde_json::Value = serde_json::from_str(&tags["egs"]).unwrap();
         assert_eq!(m["layers"][0]["digest"], layer);
@@ -834,7 +834,7 @@ mod tests {
         let small = dir.join("small.sqlite");
         write(&small, &[], &vns(0).unwrap()[..5]).unwrap();
         let d = Registry::new(&name, Some("secret".into())).unwrap().put_blob(&zstd::encode_all(&std::fs::read(&small).unwrap()[..], 3).unwrap()).unwrap();
-        st.tags.lock().unwrap().insert("vndb".into(), tags["egs"].replace(&layer, &d));
+        st.tags.locked().insert("vndb".into(), tags["egs"].replace(&layer, &d));
         let e = format!("{:#}", pull_from(&name, Part::Vndb, &back, None).unwrap_err());
         assert!(e.contains("only 5 VNs"), "{e}");
         assert_eq!(std::fs::read(&back).unwrap(), std::fs::read(&db).unwrap(), "the copy there kept");
@@ -864,19 +864,19 @@ mod tests {
         let not_egs = || -> Result<EgsGames> { panic!("ErogameScape asked") };
         let not_vndb = || -> Result<Vec<serde_json::Value>> { panic!("VNDB asked") };
         assert!(run(Part::Egs, "20261108", &egs_down, &not_vndb).is_err());
-        assert!(st.tags.lock().unwrap().is_empty());
+        assert!(st.tags.locked().is_empty());
         let e1 = run(Part::Egs, "20261109", &|| games(0), &not_vndb).unwrap();
         let v1 = run(Part::Vndb, "20261109", &not_egs, &|| vns(1)).unwrap();
         // VNDB failing, or too few: VNDB's tag stays, ErogameScape's untouched
         assert!(run(Part::Vndb, "20261110", &not_egs, &|| anyhow::bail!("429")).is_err());
         assert!(run(Part::Vndb, "20261110", &not_egs, &|| Ok(vns(0)?[..9].to_vec())).is_err());
-        let digest = |tag: &str| serde_json::from_str::<serde_json::Value>(&st.tags.lock().unwrap()[tag]).unwrap()["layers"][0]["digest"].as_str().unwrap().to_string();
+        let digest = |tag: &str| serde_json::from_str::<serde_json::Value>(&st.tags.locked()[tag]).unwrap()["layers"][0]["digest"].as_str().unwrap().to_string();
         assert_eq!((digest("egs"), digest("vndb")), (e1.clone(), v1.clone()));
         // a new ErogameScape part: VNDB's as it was
         let e2 = run(Part::Egs, "20261111", &|| games(1), &not_vndb).unwrap();
         assert_ne!(e1, e2);
         assert_eq!((digest("egs"), digest("vndb")), (e2, v1));
-        assert!(st.tags.lock().unwrap().contains_key("egs-20261109"), "each day's kept");
+        assert!(st.tags.locked().contains_key("egs-20261109"), "each day's kept");
         // the server's copies
         let store = dir.join("store");
         std::fs::create_dir_all(&store).unwrap();

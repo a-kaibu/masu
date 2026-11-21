@@ -7,6 +7,7 @@
 //! not match). No WebGPU error anywhere; the values the model gives a resolve are the ones a
 //! clear of a single-sample texture of the same color gives.
 
+use kome::locks::Lock as _;
 use super::*;
 use crate::d3d9::trace_tests::{alloc, attach_page, CALLS, SERIAL};
 use crate::render::model;
@@ -71,7 +72,7 @@ fn msaa() {
         rd1(o)
     };
     let gpu_of = |a: u32| {
-        let g = D11S.lock().unwrap();
+        let g = D11S.locked();
         let d = g.as_ref().unwrap();
         match &d.objs[&d.id_of(a)].data {
             Data::Texture(t) => t.gpu,

@@ -7,6 +7,7 @@
 //! of the newest request and copies decoded frames into the stream's slots
 //! (`vnhost_video_begin` / `vnhost_video_ready`); `frame` turns a slot into the guest's pixels.
 
+use kome::locks::Lock as _;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
 use std::sync::{Arc, Condvar, Mutex, OnceLock};
@@ -532,7 +533,7 @@ fn stat(waited: Duration, n: i32, late: bool) {
         return;
     }
     static S: Mutex<(Option<Instant>, u32, Duration, Duration, i32, u32)> = Mutex::new((None, 0, Duration::ZERO, Duration::ZERO, -1, 0));
-    let mut g = S.lock().unwrap();
+    let mut g = S.locked();
     let t0 = *g.0.get_or_insert_with(Instant::now);
     g.1 += 1;
     g.2 += waited;
@@ -1135,13 +1136,13 @@ fn fit_rows(layout: &[[u32; 7]; 2], tracks: u32, w: u32, h: u32, len: usize) -> 
 /// `layout` must hold 14 words.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn vnhost_video_ready(id: u32, buf: u32, layout: *const [u32; 14], ok: u32) {
-    let l = &*layout;
+    // (the same 14 words as two planes' 7: [[u32; 7]; 2] has [u32; 14]'s size and alignment)
+    let layout: [[u32; 7]; 2] = std::ptr::read(layout.cast());
     with(|m| {
         let Some(s) = m.get_mut(&id) else { return };
         let (w, h, tracks) = (s.w, s.h, s.tracks);
         if let Some(sl) = s.slots.iter_mut().find(|sl| sl.writing && !sl.buf.is_empty() && sl.buf.as_ptr() as u32 == buf) {
             sl.writing = false;
-            let layout: [[u32; 7]; 2] = [l[..7].try_into().unwrap(), l[7..].try_into().unwrap()];
             if ok == 0 {
                 sl.frame = -1;
             } else {
@@ -1279,7 +1280,7 @@ mod tests {
                 (f, true)
             })
             .collect();
-        crate::vnv::write(w, h, &[("raw-i420".into(), frames)], None)
+        crate::vnv::write(w, h, &[("raw-i420".into(), frames)], None).unwrap()
     }
 
     #[test]
@@ -1317,9 +1318,9 @@ mod tests {
         let mut d = raw(4, 4, 1, 128, 128);
         let i = info(&d).unwrap();
         let (off, _, _) = i.tracks[0].1[0];
-        d = crate::vnv::write(4, 4, &[("raw-i420".into(), vec![(d[off as usize..off as usize + 20].to_vec(), true)])], None);
+        d = crate::vnv::write(4, 4, &[("raw-i420".into(), vec![(d[off as usize..off as usize + 20].to_vec(), true)])], None).unwrap();
         assert!(open(d).is_none());
-        let two = crate::vnv::write(4, 4, &[("raw-i420".into(), vec![(vec![0; 24], true)]), ("vp09".into(), vec![(vec![0; 3], true)])], None);
+        let two = crate::vnv::write(4, 4, &[("raw-i420".into(), vec![(vec![0; 24], true)]), ("vp09".into(), vec![(vec![0; 3], true)])], None).unwrap();
         assert!(open(two).is_none());
     }
 
@@ -1376,7 +1377,7 @@ mod tests {
             if alpha {
                 tracks.push(("vp09.00.31.08".to_string(), track(0x5a)));
             }
-            let d = crate::vnv::write(32, 16, &tracks, None);
+            let d = crate::vnv::write(32, 16, &tracks, None).unwrap();
             let _fs = crate::vfs::tests::host_files();
             let f = TempVnv::new(&d);
             let (id, i) = open_file(&f.0).unwrap();
@@ -1882,7 +1883,7 @@ mod tests {
         let _fs = crate::vfs::tests::host_files();
         let mib = 1u32 << 20;
         let frames: Vec<(Vec<u8>, bool)> = (0..80).map(|k| (vec![k as u8], k == 0)).collect();
-        let mut d = crate::vnv::write(16, 16, &[("vp09.00.31.08".into(), frames)], None);
+        let mut d = crate::vnv::write(16, 16, &[("vp09.00.31.08".into(), frames)], None).unwrap();
         let i = info(&d).unwrap();
         // (each frame 1 MiB, one after the other in a sparse file past the header)
         let base = d.len() as u32;

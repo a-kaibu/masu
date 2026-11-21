@@ -3,6 +3,7 @@
 //! alertably (SleepEx, WaitFor*ObjectsEx, MsgWaitForMultipleObjectsEx with MWMO_ALERTABLE),
 //! which then returns WAIT_IO_COMPLETION. mono queues one to interrupt a thread that is
 //! blocked in such a wait (thread abort, GC handshakes).
+use kome::locks::Lock as _;
 use crate::api::Ctx;
 use crate::obj::{self, Obj};
 use std::sync::Mutex;
@@ -28,18 +29,18 @@ pub fn queue_args(tid: u32, f: u32, args: &[u32]) {
 pub fn queue_args_freeing(tid: u32, f: u32, args: &[u32], free: u32) {
     let mut a = [0; 4];
     a[..args.len()].copy_from_slice(args);
-    QUEUE.lock().unwrap().push((tid, f, a, args.len(), free));
+    QUEUE.locked().push((tid, f, a, args.len(), free));
     obj::signal();
 }
 
 /// Whether `tid` has an APC waiting (safe to call with the object table locked: the queue's
 /// lock is never held while taking that one)
 pub fn pending(tid: u32) -> bool {
-    QUEUE.lock().unwrap().iter().any(|&(t, ..)| t == tid)
+    QUEUE.locked().iter().any(|&(t, ..)| t == tid)
 }
 
 fn take(tid: u32) -> Option<(u32, [u32; 4], usize, u32)> {
-    let mut q = QUEUE.lock().unwrap();
+    let mut q = QUEUE.locked();
     let i = q.iter().position(|&(t, ..)| t == tid)?;
     let (_, f, a, n, free) = q.remove(i);
     Some((f, a, n, free))
@@ -161,7 +162,7 @@ pub fn NtTestAlert(c: &mut Ctx) -> u32 {
 /// Drops the APCs of a thread that ended
 pub fn forget(tid: u32) {
     let mut frees = Vec::new();
-    QUEUE.lock().unwrap().retain(|&(t, .., free)| {
+    QUEUE.locked().retain(|&(t, .., free)| {
         if t == tid && free != 0 {
             frees.push(free);
         }
@@ -199,7 +200,7 @@ mod tests {
             for t in 1..4 {
                 forget(base + t);
             }
-            prop_assert!(!QUEUE.lock().unwrap().iter().any(|&(t, ..)| t >= base));
+            prop_assert!(!QUEUE.locked().iter().any(|&(t, ..)| t >= base));
             for &b in &blocks {
                 prop_assert!(!crate::mem::heap_owns(b), "{:#x} kept", b);
             }

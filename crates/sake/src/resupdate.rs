@@ -12,6 +12,7 @@
 //! the data (8-byte aligned). Names are kept upper-cased (as FindResource looks for them), sorted
 //! before the integer ids, and "#123" is the id 123.
 
+use kome::locks::Lock as _;
 use crate::api::{implement, Ctx};
 use crate::k32::last_error;
 use crate::mem;
@@ -416,7 +417,7 @@ impl Update {
 static UPDATES: Mutex<Option<HashMap<u32, Update>>> = Mutex::new(None);
 
 fn updates<R>(f: impl FnOnce(&mut HashMap<u32, Update>) -> R) -> R {
-    f(UPDATES.lock().unwrap().get_or_insert_with(HashMap::default))
+    f(UPDATES.locked().get_or_insert_with(HashMap::default))
 }
 
 /// The tree after the updates

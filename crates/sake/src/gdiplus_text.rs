@@ -10,6 +10,7 @@
 
 #![allow(non_snake_case)]
 
+use kome::locks::Lock as _;
 use crate::api::{implement, Ctx, Handler};
 use crate::gdi::{LogFont, TextFont};
 use crate::mem::{self, put32, r32, w32};
@@ -37,7 +38,7 @@ enum Obj {
 static OBJS: Mutex<Option<HashMap<u32, Obj>>> = Mutex::new(None);
 
 fn with<R>(f: impl FnOnce(&mut HashMap<u32, Obj>) -> R) -> R {
-    f(OBJS.lock().unwrap().get_or_insert_with(HashMap::default))
+    f(OBJS.locked().get_or_insert_with(HashMap::default))
 }
 fn new_obj(o: Obj, out: crate::api::Out) -> u32 {
     crate::gdiplus::new_handle(&OBJS, o, out)
@@ -426,7 +427,7 @@ fn GdipDeleteStringFormat(c: &mut Ctx) -> u32 {
 static GENERIC_FORMATS: Mutex<[u32; 2]> = Mutex::new([0; 2]);
 fn generic_format(out: crate::api::Out, typographic: bool) -> u32 {
     if out.is_null() { return INVALID_PARAMETER; }
-    let mut handles = GENERIC_FORMATS.lock().unwrap();
+    let mut handles = GENERIC_FORMATS.locked();
     let h = &mut handles[usize::from(typographic)];
     if *h == 0 {
         let mut v = StringFormat::new(if typographic { 0x6004 } else { 0 });
@@ -589,7 +590,8 @@ pub(crate) struct Cell {
 pub(crate) fn layout(s: &[u16], rect: [f32; 4], em: f32, line: f32, no_wrap: bool, align: u32, adv: impl Fn(u16) -> f32) -> Vec<Cell> {
     let pad = em / 6.0;
     let width = rect[2];
-    let mut lines: Vec<Vec<(usize, f32)>> = vec![Vec::new()];
+    // (the lines before the one being filled, and that one)
+    let (mut lines, mut cur): (Vec<Vec<(usize, f32)>>, Vec<(usize, f32)>) = (Vec::new(), Vec::new());
     let mut x = 0.0f32;
     let mut i = 0;
     while i < s.len() {
@@ -598,7 +600,7 @@ pub(crate) fn layout(s: &[u16], rect: [f32; 4], em: f32, line: f32, no_wrap: boo
             if ch == u16::from(b'\r') && s.get(i + 1) == Some(&u16::from(b'\n')) {
                 i += 1;
             }
-            lines.push(Vec::new());
+            lines.push(std::mem::take(&mut cur));
             x = 0.0;
             i += 1;
             continue;
@@ -606,7 +608,6 @@ pub(crate) fn layout(s: &[u16], rect: [f32; 4], em: f32, line: f32, no_wrap: boo
         let a = adv(ch);
         if !no_wrap && width > 0.0 && x > 0.0 && pad * 2.0 + x + a > width {
             // (wrap at the last space of the line when there is one, else before this character)
-            let cur = lines.last_mut().unwrap();
             let cut = cur.iter().rposition(|&(k, _)| s[k] == u16::from(b' ')).map(|p| p + 1).filter(|&p| p < cur.len());
             let moved: Vec<(usize, f32)> = match cut {
                 Some(p) => cur.split_off(p),
@@ -618,13 +619,14 @@ pub(crate) fn layout(s: &[u16], rect: [f32; 4], em: f32, line: f32, no_wrap: boo
                 next.push((k, w));
                 nx += w;
             }
-            lines.push(next);
+            lines.push(std::mem::replace(&mut cur, next));
             x = nx;
         }
-        lines.last_mut().unwrap().push((i, a));
+        cur.push((i, a));
         x += a;
         i += 1;
     }
+    lines.push(cur);
     let mut out = Vec::new();
     for (n, l) in lines.iter().enumerate() {
         let total: f32 = l.iter().map(|c| c.1).sum();

@@ -1081,18 +1081,19 @@ fn flush(dc: u32) {
 
 /// `f`'s result, after making room in kura's atlas and ramps if it found none (by drawing
 /// what is pending first).
-fn room<T>(dc: u32, mut f: impl FnMut() -> Option<T>) -> T {
+/// None: more than an empty atlas holds (the item is not drawn).
+fn room<T>(dc: u32, mut f: impl FnMut() -> Option<T>) -> Option<T> {
     if let Some(v) = f() {
-        return v;
+        return Some(v);
     }
     flush(dc);
     gpu2d::reset();
-    f().expect("d2d: an empty atlas has room")
+    f()
 }
 
 /// Adds an item painted with `paint`.
 fn push(dc: u32, kind: u32, rect: [f32; 4], shape: [f32; 4], extra: [f32; 4], paint: &Paint) {
-    let (p, row) = room(dc, || paint.gpu());
+    let Some((p, row)) = room(dc, || paint.gpu()) else { return };
     st(|s| s.dcs.get_mut(&dc).map(|d| d.items.push(Item { rect, shape, extra, paint: p, kind: [kind, row, 0, 0] })));
 }
 
@@ -1449,7 +1450,7 @@ fn draw_text(dc: u32, text: &[u16], fmt: &dwrite::Format, w: f32, h: f32, x: f32
                     return;
                 }
                 let key = font.glyph_key(ch);
-                let at = room(dc, || gpu2d::glyph(key, gw.cast_unsigned(), gh.cast_unsigned(), || cov.to_vec()));
+                let Some(at) = room(dc, || gpu2d::glyph(key, gw.cast_unsigned(), gh.cast_unsigned(), || cov.to_vec())) else { return };
                 let shape = [to_f32(at[0]) - to_f32(ox), to_f32(at[1]) - to_f32(oy), 0.0, 0.0];
                 push(dc, gpu2d::GLYPH, [to_f32(x0), to_f32(y0), to_f32(x1), to_f32(y1)], shape, [0.0; 4], &paint);
             });
@@ -1510,7 +1511,7 @@ fn draw_glyphs(dc: u32, face: usize, em: f32, glyphs: &[(u16, f32, f32)], b: u32
                 return;
             }
             let key = font.index_key(gi) ^ u64::from(r.to_bits()).wrapping_mul(0x9e37_79b9_7f4a_7c15);
-            let at = room(dc, || gpu2d::glyph(key, gw.cast_unsigned(), gh.cast_unsigned(), || if r > 0.0 { dilate(cov, gw0, gh0, r).2 } else { cov.to_vec() }));
+            let Some(at) = room(dc, || gpu2d::glyph(key, gw.cast_unsigned(), gh.cast_unsigned(), || if r > 0.0 { dilate(cov, gw0, gh0, r).2 } else { cov.to_vec() })) else { return };
             let shape = [to_f32(at[0]) - to_f32(ox), to_f32(at[1]) - to_f32(oy), 0.0, 0.0];
             push(dc, gpu2d::GLYPH, [to_f32(x0), to_f32(y0), to_f32(x1), to_f32(y1)], shape, [0.0; 4], &paint);
         });

@@ -6,6 +6,7 @@
 
 #![allow(non_snake_case)]
 
+use kome::locks::Lock as _;
 use std::sync::Mutex;
 
 use crate::api::{implement, vtable, Ctx, Handler};
@@ -101,7 +102,7 @@ fn ct_release(c: &mut Ctx) -> u32 {
     let n = r32(o + 4).saturating_sub(1);
     w32(o + 4, n);
     if n == 0 {
-        let t = TABLES.lock().unwrap().get_mut(r32(o + 16) as usize).and_then(Option::take);
+        let t = TABLES.locked().get_mut(r32(o + 16) as usize).and_then(Option::take);
         if let Some(t) = t {
             free_table(t);
             mem::heap_free(r32(o + 8));
@@ -133,7 +134,7 @@ fn rd16(d: &[u8], o: usize, k: usize) -> u32 {
     at(d, o, k, 2).map_or(0, |b| u16::from_le_bytes([b[0], b[1]])) as u32
 }
 fn rd32(d: &[u8], o: usize, k: usize) -> u32 {
-    at(d, o, k, 4).map_or(0, |b| u32::from_le_bytes(b.try_into().unwrap()))
+    at(d, o, k, 4).and_then(|b| kome::le::u32_at(b, 0)).unwrap_or(0)
 }
 
 /// Parses a CTAB body into a table.
@@ -272,7 +273,7 @@ fn new_table(code: &[u8]) -> Option<u32> {
     w32(o + 4, 1);
     w32(o + 8, data);
     w32(o + 12, d.len() as u32);
-    let mut tabs = TABLES.lock().unwrap();
+    let mut tabs = TABLES.locked();
     // (a released table's place first)
     let i = tabs.iter().position(Option::is_none).unwrap_or_else(|| {
         tabs.push(None);
@@ -284,7 +285,7 @@ fn new_table(code: &[u8]) -> Option<u32> {
 }
 
 fn with<R>(this: u32, f: impl FnOnce(&Table) -> R) -> Option<R> {
-    let tabs = TABLES.lock().unwrap();
+    let tabs = TABLES.locked();
     tabs.get(r32(this + 16) as usize)?.as_ref().map(f)
 }
 
@@ -745,7 +746,7 @@ fn get_table(code: &[u8], out: u32) -> u32 {
 /// A guest copy of `s` kept for good (one per distinct string).
 fn profile(s: &str) -> u32 {
     static P: Mutex<Vec<(String, u32)>> = Mutex::new(Vec::new());
-    let mut p = P.lock().unwrap();
+    let mut p = P.locked();
     if let Some((_, a)) = p.iter().find(|x| x.0 == s) {
         return *a;
     }
@@ -822,7 +823,7 @@ fn D3DXGetShaderSamplers(c: &mut Ctx) -> u32 {
 fn semantics(c: &mut Ctx, output: bool) -> u32 {
     let (out, count) = (c.a(1), c.a(2));
     let code = shader_at(c.a(0));
-    let w = |i: usize| code.get(4 * i..4 * i + 4).map_or(0, |b| u32::from_le_bytes(b.try_into().unwrap()));
+    let w = |i: usize| kome::le::u32_at(&code, 4 * i).unwrap_or(0);
     let ver = w(0);
     let pixel = ver >> 16 == 0xffff;
     let major = (ver >> 8) & 0xff;
@@ -963,7 +964,7 @@ mod lifetime_tests {
         assert_eq!(call(ct_release, &[t]), 0);
         assert!(!mem::heap_owns(data) && !mem::heap_owns(t));
         assert!(made.iter().all(|&p| !mem::heap_owns(p)));
-        assert!(TABLES.lock().unwrap()[i as usize].is_none());
+        assert!(TABLES.locked()[i as usize].is_none());
         // (a new table reuses the place)
         let t2 = new_table(&code).unwrap();
         assert_eq!(r32(t2 + 16), i);

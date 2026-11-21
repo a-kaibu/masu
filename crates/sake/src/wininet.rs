@@ -1,6 +1,7 @@
 //! Synchronous WinINet HTTP with TLS verified inside Wasm.
 //! Response status and bytes are real server data; no licensing logic lives here.
 #![allow(non_snake_case)]
+use kome::locks::Lock as _;
 use crate::api::{self, Ctx};
 use crate::mem::{self, ps, r32, rp, w32};
 use std::collections::HashMap;
@@ -55,11 +56,10 @@ static NEXT: AtomicU32 = AtomicU32::new(0x4c000000);
 fn add_under(parent: u32, h: Handle) -> u32 {
     let id = NEXT.fetch_add(1, Ordering::Relaxed);
     HANDLES
-        .lock()
-        .unwrap()
+        .locked()
         .get_or_insert_with(HashMap::new)
         .insert(id, h);
-    PARENTS.lock().unwrap().get_or_insert_with(HashMap::new).insert(id, parent);
+    PARENTS.locked().get_or_insert_with(HashMap::new).insert(id, parent);
     id
 }
 /// `id` and every handle made from it, each once (`parents`: each handle's parent).
@@ -76,10 +76,10 @@ fn with_descendants(parents: &HashMap<u32, u32>, id: u32) -> Vec<u32> {
     out
 }
 fn get(id: u32) -> Option<Handle> {
-    HANDLES.lock().unwrap().as_ref()?.get(&id).cloned()
+    HANDLES.locked().as_ref()?.get(&id).cloned()
 }
 fn edit<T>(id: u32, f: impl FnOnce(&mut Handle) -> T) -> Option<T> {
-    HANDLES.lock().unwrap().as_mut()?.get_mut(&id).map(f)
+    HANDLES.locked().as_mut()?.get_mut(&id).map(f)
 }
 fn fail(error: u32) -> u32 {
     if crate::env_on!("SAKE_TRACE_WININET") { eprintln!("sake: WinINet error {error}"); }
@@ -430,7 +430,7 @@ fn transport(r: &Request) -> Result<Response, u32> {
     };
     let io = crate::tls_socket::Socket::open(&host, connection.session.timeout).map_err(|_| 12029u32)?;
     let response =
-        masu_tls::exchange(io, &request, masu_tls::default_config()).map_err(|error| -> u32 {
+        masu_tls::default_config().and_then(|config| masu_tls::exchange(io, &request, config)).map_err(|error| -> u32 {
             use masu_tls::{
                 Error,
                 rustls::{CertificateError, Error as TlsError},
@@ -768,12 +768,12 @@ fn HttpQueryInfoW(c: &mut Ctx) -> u32 {
 /// closed its session kept every request's response body for good).
 fn InternetCloseHandle(c: &mut Ctx) -> u32 {
     let id = c.a(0);
-    let mut handles = HANDLES.lock().unwrap();
+    let mut handles = HANDLES.locked();
     let Some(m) = handles.as_mut().filter(|m| m.contains_key(&id)) else {
         drop(handles);
         return fail(6);
     };
-    let mut parents = PARENTS.lock().unwrap();
+    let mut parents = PARENTS.locked();
     let p = parents.get_or_insert_with(HashMap::new);
     for h in with_descendants(p, id) {
         m.remove(&h);

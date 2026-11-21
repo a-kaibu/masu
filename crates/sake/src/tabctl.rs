@@ -56,7 +56,7 @@ pub const EXTRA_MAX: u32 = 0x1_0000;
 static TABS: Mutex<Option<HashMap<u32, Tab>>> = Mutex::new(None);
 
 fn tab<R>(h: u32, f: impl FnOnce(&mut Tab) -> R) -> R {
-    f(TABS.lock().unwrap().get_or_insert_with(HashMap::default).entry(h).or_default())
+    f(TABS.locked().get_or_insert_with(HashMap::default).entry(h).or_default())
 }
 
 const TCS_BOTTOM: u32 = 0x2;
@@ -426,7 +426,7 @@ pub(super) fn proc_fn(c: &mut Ctx) -> u32 {
     let style = with(|s| s.wins.get(&h).map_or(0, |w| w.style));
     // (a destroyed control's state goes at WM_NCDESTROY, and no message after it makes it again)
     if m == 0x2 || m == 0x82 {
-        TABS.lock().unwrap().get_or_insert_with(HashMap::default).remove(&h);
+        TABS.locked().get_or_insert_with(HashMap::default).remove(&h);
         return def_proc(c, wide);
     }
     let n = tab(h, |t| t.items.len() as u32);
@@ -761,8 +761,8 @@ mod review_b09_tests {
         assert_eq!(tab(h, |t| t.extra), 16);
         assert_eq!(call(proc_fn, &[h, 0x130e, EXTRA_MAX, 0]), 1);
         call(proc_fn, &[h, 0x82, 0, 0]);
-        assert!(!TABS.lock().unwrap().as_ref().is_some_and(|m| m.contains_key(&h)), "gone at WM_NCDESTROY");
+        assert!(!TABS.locked().as_ref().is_some_and(|m| m.contains_key(&h)), "gone at WM_NCDESTROY");
         call(proc_fn, &[h, 0x82, 0, 0]);
-        assert!(!TABS.lock().unwrap().as_ref().is_some_and(|m| m.contains_key(&h)), "not made again");
+        assert!(!TABS.locked().as_ref().is_some_and(|m| m.contains_key(&h)), "not made again");
     }
 }

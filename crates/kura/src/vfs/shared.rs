@@ -361,34 +361,40 @@ impl Fs {
         Some(())
     }
 
-    /// Takes in what the other processes changed since this one last looked.
-    fn sync_in(&mut self, r: &dyn Region) {
+    /// Takes in what the other processes changed since this one last looked; Err when the
+    /// buffer is not one they wrote (what was before the bad part is taken in).
+    fn sync_in(&mut self, r: &dyn Region) -> Result<(), Corrupt> {
         let len = r.len();
         let generation = r.generation();
-        if len == 0 || (self.shared.generation == generation && self.shared.off != 0) { return; }
+        if len == 0 || (self.shared.generation == generation && self.shared.off != 0) { return Ok(()); }
+        if len < HEAD { return Err(Corrupt::Head); }
         let mut head = [0u8; HEAD];
         r.read(0, &mut head);
-        assert_eq!(&head[..4], b"VFS2", "invalid shared filesystem");
-        let base = u32::from_le_bytes(head[4..8].try_into().unwrap());
-        let snap = u32::from_le_bytes(head[8..12].try_into().unwrap()) as usize;
+        if head[..4] != *b"VFS2" { return Err(Corrupt::Head); }
+        let base = kome::le::u32::<4, HEAD>(&head);
+        let snap = kome::le::u32::<8, HEAD>(&head) as usize;
         if self.shared.off == 0 || self.shared.base != base {
+            // (a length past the buffer: not read, the page's memory not asked for it)
+            if snap > len - HEAD { return Err(Corrupt::Snapshot); }
             let mut data = vec![0; snap];
             r.read(HEAD, &mut data);
-            self.apply_shared_snapshot(&data).expect("invalid shared filesystem snapshot");
+            self.apply_shared_snapshot(&data).ok_or(Corrupt::Snapshot)?;
             self.shared = Synced { generation, base, off: HEAD + snap, snap, mounts: self.mounts.len() };
         }
         if self.shared.off < len {
             let mut data = vec![0; len - self.shared.off];
             r.read(self.shared.off, &mut data);
-            let mut at = 0;
-            while at < data.len() {
-                let n = u32::from_le_bytes(data[at..at + 4].try_into().unwrap()) as usize;
-                self.apply_items(&data[at + 4..at + 4 + n]).expect("invalid shared filesystem entry");
-                at += 4 + n;
+            let mut rest = &data[..];
+            while !rest.is_empty() {
+                let (n, after) = rest.split_first_chunk::<4>().ok_or(Corrupt::Entry)?;
+                let (items, after) = after.split_at_checked(u32::from_le_bytes(*n) as usize).ok_or(Corrupt::Entry)?;
+                self.apply_items(items).ok_or(Corrupt::Entry)?;
+                rest = after;
             }
         }
         self.shared.off = len;
         self.shared.generation = generation;
+        Ok(())
     }
 
     /// Publishes what this process changed: an entry at the journal's end, or a new snapshot
@@ -460,14 +466,36 @@ pub(super) fn generation() -> u32 {
     #[cfg(not(target_arch = "wasm32"))]
     { 0 }
 }
+/// What [`Fs::sync_in`] found wrong in the shared buffer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum Corrupt {
+    /// shorter than its head, or not "VFS2"
+    Head,
+    /// the whole namespace's snapshot
+    Snapshot,
+    /// a change after the snapshot
+    Entry,
+}
+
+/// The shared buffer was found bad: this process goes on with its own files (as when a
+/// publish does not fit), the others with theirs.
+#[cfg(target_arch = "wasm32")]
+static BROKEN: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
 pub(super) struct Guard { enabled: bool }
 impl Guard {
     pub(super) fn enter(fs: &mut Fs) -> Self {
         #[cfg(target_arch = "wasm32")]
         unsafe {
-            if vnhost_vfs_shared_lock() == 0 { return Self { enabled: false }; }
+            if BROKEN.load(std::sync::atomic::Ordering::Relaxed) || vnhost_vfs_shared_lock() == 0 { return Self { enabled: false }; }
             fs.dirt.on = true;
-            fs.sync_in(&Host);
+            if let Err(e) = fs.sync_in(&Host) {
+                vnhost_vfs_shared_unlock();
+                if !BROKEN.swap(true, std::sync::atomic::Ordering::Relaxed) {
+                    eprintln!("kura: the shared file system is not valid ({e:?}); this process goes on with its own files");
+                }
+                return Self { enabled: false };
+            }
             return Self { enabled: true };
         }
         #[cfg(not(target_arch = "wasm32"))]

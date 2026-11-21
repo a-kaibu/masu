@@ -110,38 +110,37 @@ fn params(s: Option<&str>) -> Result<Vec<Ty>, String> {
 impl Layouts {
     pub fn parse(text: &str) -> Result<Layouts, String> {
         let mut l = Layouts::default();
-        let mut rec: Option<String> = None;
-        let mut iface: Option<String> = None;
+        // (the record or interface whose indented lines are being read, put in when it ends)
+        let mut rec: Option<(String, Record)> = None;
+        let mut iface: Option<(String, Interface)> = None;
         for line in text.lines() {
             let w: Vec<&str> = line.split_whitespace().collect();
             let bad = || format!("layouts: {line:?}");
             if let Some(body) = line.strip_prefix(' ') {
                 let w: Vec<&str> = body.split(' ').collect();
-                if let Some(r) = &rec {
+                if let Some((_, r)) = &mut rec {
                     let [o32, o64, name, ty] = w[..] else { return Err(bad()) };
                     let m = Member { off: [o32.parse().map_err(|_| bad())?, o64.parse().map_err(|_| bad())?], name: name.into(), ty: parse_ty(ty)? };
-                    l.records.get_mut(r).unwrap().members.push(m);
-                } else if let Some(i) = &iface {
+                    r.members.push(m);
+                } else if let Some((_, i)) = &mut iface {
                     if w.len() < 3 {
                         return Err(bad());
                     }
                     let m = Method { index: w[0].parse().map_err(|_| bad())?, name: w[1].into(), ret: parse_ty(w[2])?, params: params(w.get(3).copied())? };
-                    l.interfaces.get_mut(i).unwrap().methods.push(m);
+                    i.methods.push(m);
                 } else {
                     return Err(bad());
                 }
                 continue;
             }
-            rec = None;
-            iface = None;
+            l.records.extend(rec.take());
+            l.interfaces.extend(iface.take());
             match w.first() {
                 Some(&"R") if w.len() == 6 => {
-                    l.records.insert(w[1].into(), Record { size: [w[2].parse().map_err(|_| bad())?, w[3].parse().map_err(|_| bad())?], members: vec![] });
-                    rec = Some(w[1].into());
+                    rec = Some((w[1].into(), Record { size: [w[2].parse().map_err(|_| bad())?, w[3].parse().map_err(|_| bad())?], members: vec![] }));
                 }
                 Some(&"V") if w.len() == 3 => {
-                    l.interfaces.insert(w[1].into(), Interface { base: (w[2] != "-").then(|| w[2].into()), methods: vec![] });
-                    iface = Some(w[1].into());
+                    iface = Some((w[1].into(), Interface { base: (w[2] != "-").then(|| w[2].into()), methods: vec![] }));
                 }
                 Some(&"F") if w.len() >= 3 => {
                     l.functions.insert(w[1].into(), (parse_ty(w[2])?, params(w.get(3).copied())?));
@@ -149,13 +148,15 @@ impl Layouts {
                 _ => return Err(bad()),
             }
         }
+        l.records.extend(rec);
+        l.interfaces.extend(iface);
         Ok(l)
     }
 
     /// the headers' own (layouts.txt)
-    pub fn get() -> &'static Layouts {
-        static L: OnceLock<Layouts> = OnceLock::new();
-        L.get_or_init(|| Layouts::parse(include_str!("layouts.txt")).expect("layouts.txt"))
+    pub fn get() -> Result<&'static Layouts, String> {
+        static L: OnceLock<Result<Layouts, String>> = OnceLock::new();
+        L.get_or_init(|| Layouts::parse(include_str!("layouts.txt"))).as_ref().map_err(|e| format!("layouts.txt: {e}"))
     }
 
     /// a method of an interface or of one of its bases

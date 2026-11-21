@@ -64,8 +64,7 @@ mod tests {
             State(s): State<Objects>,
             UrlPath(p): UrlPath<String>,
         ) -> axum::response::Response {
-            s.lock()
-                .unwrap()
+            s.locked()
                 .get(&p)
                 .cloned()
                 .map(IntoResponse::into_response)

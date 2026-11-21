@@ -9,6 +9,7 @@
 //! Direct3D 10's ID3D10Device (d3d10.rs: its methods become the D3D11 ones), on a stack and
 //! heap below 4 GB as in wasm32.
 
+use kome::locks::Lock as _;
 use super::*;
 use crate::d3d9::trace_tests::{alloc, attach_page, on_low_stack, Rng, CALLS, SERIAL};
 use d3d10::*;
@@ -265,7 +266,7 @@ fn run(seed: u64, vs: &[u8], ps: &[u8], ten: bool) {
     // (the shaders released: their translations and the pipelines made of them go from the
     // page, nothing else)
     let (mods, pipes) = {
-        let g = D11S.lock().unwrap();
+        let g = D11S.locked();
         let d = g.as_ref().unwrap();
         let ours = [d.id_of(vsh), d.id_of(psh)];
         let mods: Vec<u32> = ours.iter().filter_map(|id| match d.objs.get(id).map(|o| &o.data) { Some(Data::Shader(s)) => Some(s), _ => None }).flat_map(|s| s.wgsl.values().flatten().map(|r| r.0)).collect();

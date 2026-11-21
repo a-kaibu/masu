@@ -14,6 +14,7 @@
 
 #![allow(non_snake_case)]
 
+use kome::locks::Lock as _;
 use crate::api::{implement, Ctx};
 use crate::k32::last_error;
 use crate::kern::debug::{Ev, DBG_CONTINUE, DBG_EXCEPTION_NOT_HANDLED, DBG_REPLY_LATER};
@@ -156,7 +157,7 @@ static ATTACH: std::sync::Mutex<Vec<(u32, u32)>> = std::sync::Mutex::new(Vec::ne
 fn post_suspended(tid: u32, code: u32, vals: Vec<u64>) {
     let _ = crate::k32::suspend_count(tid, true);
     match post(tid, code, vals) {
-        Some(id) => ATTACH.lock().unwrap().push((tid, id)),
+        Some(id) => ATTACH.locked().push((tid, id)),
         None => {
             let _ = crate::k32::suspend_count(tid, false);
         }
@@ -166,7 +167,7 @@ fn post_suspended(tid: u32, code: u32, vals: Vec<u64>) {
 /// The watcher's part (before it serves other processes' requests, so that a debugger that
 /// continued an event sees the thread running): the threads whose attach event is done go on
 pub fn watch_attach() {
-    let mut g = ATTACH.lock().unwrap();
+    let mut g = ATTACH.locked();
     if g.is_empty() {
         return;
     }
@@ -524,7 +525,7 @@ struct Given {
 }
 static GIVEN: std::sync::Mutex<Option<Given>> = std::sync::Mutex::new(None);
 fn given<R>(f: impl FnOnce(&mut Given) -> R) -> R {
-    f(GIVEN.lock().unwrap().get_or_insert_with(Given::default))
+    f(GIVEN.locked().get_or_insert_with(Given::default))
 }
 
 /// Closes handle `h` if it is still the one given: the debugger may have closed it and the

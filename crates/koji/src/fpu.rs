@@ -319,7 +319,7 @@ pub fn to_f80(v: f64) -> [u8; 10] {
 
 /// 80-bit extended -> f64 (rounded to nearest).
 pub fn from_f80(b: &[u8; 10]) -> f64 {
-    let m = u64::from_le_bytes(b[..8].try_into().unwrap());
+    let m = u64::from_le_bytes(kome::le::arr::<0, 8, 10>(b));
     let se = u16::from_le_bytes([b[8], b[9]]);
     let sign = if se & 0x8000 != 0 { -1.0 } else { 1.0 };
     let e = i32::from(se & 0x7fff);

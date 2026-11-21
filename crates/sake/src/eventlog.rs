@@ -15,6 +15,7 @@
 //! - EVENTLOGRECORD: header, source, computer, padding to 8, SID, strings, data, padding to 4,
 //!   the length again.
 
+use kome::locks::Lock as _;
 use crate::api::{implement, Ctx};
 use crate::k32::{arg_str, last_error};
 use crate::mem;
@@ -329,7 +330,7 @@ impl State {
 static ST: Mutex<Option<State>> = Mutex::new(None);
 
 fn with<R>(f: impl FnOnce(&mut State) -> R) -> R {
-    let mut g = ST.lock().unwrap();
+    let mut g = ST.locked();
     let s = g.get_or_insert_with(|| {
         let mut s = State { next: 0x6e10_0000, ..Default::default() };
         s.logs.insert("system".into(), system_log());

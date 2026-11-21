@@ -788,7 +788,7 @@ fn check_(m: &[u8], funcs: usize) -> Option<()> {
     // the types and imports the translators write, byte for byte (an import of another type
     // links nowhere: every page's instantiate of the bundle would throw)
     let (types, imports) = (sec(&s, 1)?, sec(&s, 2)?);
-    if !heads().iter().any(|h| h.0 == types && h.1 == imports) {
+    if !heads()?.iter().any(|h| h.0 == types && h.1 == imports) {
         return None;
     }
     let mut p = 0;
@@ -858,14 +858,15 @@ fn check_(m: &[u8], funcs: usize) -> Option<()> {
 
 /// The types and imports sections of the translators' modules ([`super::module_head`]): 32-bit,
 /// long mode.
-fn heads() -> [(Vec<u8>, Vec<u8>); 2] {
-    [false, true].map(|long| {
+fn heads() -> Option<[(Vec<u8>, Vec<u8>); 2]> {
+    let head = |long| {
         let mut m = Module::default();
         super::module_head(&mut m, long);
         let b = m.finish();
-        let s = sections(&b).expect("our own module");
-        (sec(&s, 1).unwrap().to_vec(), sec(&s, 2).unwrap().to_vec())
-    })
+        let s = sections(&b)?;
+        Some((sec(&s, 1)?.to_vec(), sec(&s, 2)?.to_vec()))
+    };
+    Some([head(false)?, head(true)?])
 }
 
 /// A module of `funcs` (exported as "f0", "f1", ... and named `names` if there is one each).

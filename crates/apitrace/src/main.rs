@@ -4,14 +4,23 @@
 //! apitrace dump <trace>: its calls
 fn main() {
     let a: Vec<String> = std::env::args().collect();
-    if a.len() == 3 && a[1] == "dump" {
-        let file = std::fs::read(&a[2]).unwrap_or_else(|e| panic!("{}: {e}", a[2]));
+    if let [_, cmd, path] = a.as_slice()
+        && cmd == "dump"
+    {
+        let file = std::fs::read(path).unwrap_or_else(|e| panic!("{path}: {e}"));
         // (a game's trace, cut where the game was killed: the calls before its last chunk)
-        let (ev, _) = apitrace::trace::unpack_cut(&file).unwrap();
-        let mut p = apitrace::trace::Parser::new(&ev).unwrap();
-        println!("{:?}", p.properties);
-        while let Ok(Some(c)) = p.next_call() {
-            println!("{c}");
+        let dump = || -> Result<(), String> {
+            let (ev, _) = apitrace::trace::unpack_cut(&file)?;
+            let mut p = apitrace::trace::Parser::new(&ev)?;
+            println!("{:?}", p.properties);
+            while let Ok(Some(c)) = p.next_call() {
+                println!("{c}");
+            }
+            Ok(())
+        };
+        if let Err(e) = dump() {
+            eprintln!("{path}: {e}");
+            std::process::exit(1);
         }
         return;
     }

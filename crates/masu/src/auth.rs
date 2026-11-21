@@ -199,7 +199,8 @@ fn signed_in_to(auth: &Auth, h: &HeaderMap, next: &str) -> Response {
     let https = h.get("x-forwarded-proto").is_some_and(|v| v == "https");
     let Ok(session) = auth.new_session() else { return StatusCode::INTERNAL_SERVER_ERROR.into_response() };
     let cookie = format!("{COOKIE}={session}; Path=/; Max-Age=315360000; HttpOnly; SameSite=Lax{}", if https { "; Secure" } else { "" });
-    let mut res = (StatusCode::SEE_OTHER, [(header::SET_COOKIE, HeaderValue::from_str(&cookie).unwrap())]).into_response();
+    let Ok(cookie) = HeaderValue::from_str(&cookie) else { return StatusCode::INTERNAL_SERVER_ERROR.into_response() };
+    let mut res = (StatusCode::SEE_OTHER, [(header::SET_COOKIE, cookie)]).into_response();
     if let Ok(l) = HeaderValue::from_str(next) {
         res.headers_mut().insert(header::LOCATION, l);
     }

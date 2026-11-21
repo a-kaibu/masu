@@ -2,6 +2,7 @@
 //! handler (the `SIMPLE` table); the rest are here. Messages crossing between 16-bit window
 //! procedures and the 32-bit window manager are converted by `to16` / `to32`.
 
+use kome::locks::Lock as _;
 use crate::mem::{cstr, r16, r32, w16, w32, w8};
 use crate::w16::{self, call16, call32, h16, h32, lin, task, C16, A};
 use crate::HashMap;
@@ -259,8 +260,7 @@ fn logfont_in(p16: u32, p32: u32) {
 }
 
 fn reg(name: &str, f: w16::H16) {
-    let (m, n) = name.split_once('.').unwrap();
-    w16::implement16(m, n, f);
+    w16::implement16_named(name, f);
 }
 
 pub fn init() {
@@ -847,7 +847,7 @@ fn fp_math(c: &mut C16) -> u32 {
     match bx {
         0 | 1 => cpu.fpu = Default::default(),
         2 => {}
-        3 => *FP_HANDLER.lock().unwrap() = (cpu.regs[EDX] & 0xffff) << 16 | cpu.regs[EAX] & 0xffff,
+        3 => *FP_HANDLER.locked() = (cpu.regs[EDX] & 0xffff) << 16 | cpu.regs[EAX] & 0xffff,
         _ => eprintln!("sake w16: __fpMath {bx}"),
     }
     cpu.regs[EAX] &= 0xffff_0000;
@@ -912,10 +912,12 @@ fn init_task(c: &mut C16) -> u32 {
     w16(base + 0x0e, sp as u16); // stackbottom
     w16(base + 0x0a, (sp.saturating_sub(bx) + 150) as u16); // stacktop
     let t = task();
-    let pb = w16::sel_base(t.psp).unwrap().0;
+    // (BX: the command tail's first non-blank, in the PSP)
     let mut bxv = 0x81;
-    while matches!(crate::mem::r8(pb + bxv), b' ' | b'\t') {
-        bxv += 1;
+    if let Some((pb, _)) = w16::sel_base(t.psp) {
+        while matches!(crate::mem::r8(pb + bxv), b' ' | b'\t') {
+            bxv += 1;
+        }
     }
     cpu.regs[EAX] = 1;
     cpu.regs[koji::EBX] = bxv;
@@ -963,7 +965,7 @@ pub fn proc_thunk(fp: u32, kind: Kind) -> u32 {
     if let Some(p32) = proc32_of(fp) {
         return p32;
     }
-    let mut g = PROCS.lock().unwrap();
+    let mut g = PROCS.locked();
     let p = g.get_or_insert_with(|| Procs { by_trap: HashMap::default(), by_fp: HashMap::default() });
     if let Some(&t) = p.by_fp.get(&(fp, kind as u8)) {
         return t;
@@ -977,7 +979,7 @@ pub fn proc_thunk(fp: u32, kind: Kind) -> u32 {
 /// The 16-bit procedure behind a 32-bit one (GetWindowLong(GWL_WNDPROC)): our thunk's, or
 /// one that calls the 32-bit procedure.
 pub fn proc_back(p32: u32) -> u32 {
-    if let Some(&(fp, _)) = PROCS.lock().unwrap().as_ref().and_then(|p| p.by_trap.get(&p32)) {
+    if let Some(&(fp, _)) = PROCS.locked().as_ref().and_then(|p| p.by_trap.get(&p32)) {
         return fp;
     }
     proc16_of(p32)
@@ -988,7 +990,7 @@ static P32: Mutex<Option<(HashMap<u32, u32>, HashMap<u32, u32>)>> = Mutex::new(N
 /// A far pointer that calls the 32-bit procedure `p32`: CallWindowProc recognizes it, and a
 /// program calling it itself (an old window procedure kept from a subclassing) reaches it too.
 fn proc16_of(p32: u32) -> u32 {
-    let mut g = P32.lock().unwrap();
+    let mut g = P32.locked();
     let m = g.get_or_insert_with(Default::default);
     if let Some(&fp) = m.0.get(&p32) {
         return fp;
@@ -1001,7 +1003,8 @@ fn proc16_of(p32: u32) -> u32 {
 
 /// A program's call of a 32-bit window procedure (proc16_of): its message made 32-bit.
 fn call_proc32(c: &mut C16) -> u32 {
-    let p32 = u32::from_str_radix(&c.name, 16).unwrap();
+    // (the name proc16_of gave it: the procedure's address in hex)
+    let Ok(p32) = u32::from_str_radix(&c.name, 16) else { return 0 };
     let (m, w, l, tmp) = to32(c.w(1), c.w(2), c.a(3));
     let r = crate::call(c.cpu, p32, &[c.h(0), m, w, l]);
     to32_done(tmp);
@@ -1009,11 +1012,11 @@ fn call_proc32(c: &mut C16) -> u32 {
 }
 
 fn proc32_of(fp: u32) -> Option<u32> {
-    P32.lock().unwrap().as_ref().and_then(|m| m.1.get(&fp).copied())
+    P32.locked().as_ref().and_then(|m| m.1.get(&fp).copied())
 }
 
 fn proc_entry(c: &mut crate::api::Ctx) -> u32 {
-    let Some((fp, kind)) = PROCS.lock().unwrap().as_ref().and_then(|p| p.by_trap.get(&c.trap).copied()) else {
+    let Some((fp, kind)) = PROCS.locked().as_ref().and_then(|p| p.by_trap.get(&c.trap).copied()) else {
         return 0;
     };
     let (hwnd, msg, wp, lp) = (c.a(0), c.a(1), c.a(2), c.a(3));
@@ -1348,7 +1351,7 @@ fn register_class(c: &mut C16) -> u32 {
     let menu = r32(p + 18);
     if menu != 0 {
         let key = if name < 0x10000 { name.to_le_bytes().to_vec() } else { cstr(name).to_ascii_uppercase() };
-        CLASS_MENU.lock().unwrap().get_or_insert_with(HashMap::default).insert(key, menu);
+        CLASS_MENU.locked().get_or_insert_with(HashMap::default).insert(key, menu);
     }
     let r = call32(c.cpu, "user32!RegisterClassA", &[wc]);
     crate::mem::heap_free(wc);
@@ -1365,7 +1368,7 @@ fn create_window(c: &mut C16, ex: bool) -> u32 {
     let style = c.a(o + 2);
     if menu == 0 && style & 0x4000_0000 == 0 {
         let key = if cls < 0x10000 { cls.to_le_bytes().to_vec() } else { cstr(cls).to_ascii_uppercase() };
-        let m = CLASS_MENU.lock().unwrap().as_ref().and_then(|m| m.get(&key).copied());
+        let m = CLASS_MENU.locked().as_ref().and_then(|m| m.get(&key).copied());
         if let Some(m) = m {
             menu = load_menu(c.cpu, lin(m));
         }
@@ -1861,6 +1864,7 @@ fn format16(fmt: u32, va: u32) -> Vec<u8> {
 // ---------------------------------------------------------------------------------------------
 // DOS (INT 21h, DOS3Call)
 
+#[derive(Default)]
 struct Dos {
     dta: u32,
     finds: HashMap<u32, u32>,
@@ -1906,7 +1910,7 @@ pub fn dos(cpu: &mut Cpu) {
             }
         }
         0x1a => {
-            DOS.lock().unwrap().get_or_insert_with(|| Dos { dta: 0, finds: HashMap::default() }).dta = ds_dx(cpu);
+            DOS.locked().get_or_insert_with(|| Dos { dta: 0, finds: HashMap::default() }).dta = ds_dx(cpu);
         }
         0x3d | 0x3c => {
             let name = ds_dx(cpu);
@@ -1993,9 +1997,11 @@ pub fn dos(cpu: &mut Cpu) {
             unsafe { libc::exit((ax & 0xff) as i32) }
         }
         0x4e | 0x4f => {
-            let mut g = DOS.lock().unwrap();
-            let dos = g.get_or_insert_with(|| Dos { dta: 0, finds: HashMap::default() });
-            let dta = if dos.dta == 0 { w16::sel_base(task().psp).unwrap().0 + 0x80 } else { dos.dta };
+            let mut g = DOS.locked();
+            let dos = g.get_or_insert_with(Dos::default);
+            // (the default DTA: the PSP's command tail; a task without a PSP has none: no more files)
+            let dta = if dos.dta == 0 { w16::sel_base(task().psp).map(|b| b.0 + 0x80) } else { Some(dos.dta) };
+            let Some(dta) = dta else { return err(cpu, 18) };
             let fd = crate::mem::heap_alloc(320, true);
             let (h, r) = if ah == 0x4e {
                 // (a new search at this DTA ends the one before: its find handle is closed)
@@ -2013,11 +2019,11 @@ pub fn dos(cpu: &mut Cpu) {
             };
             // (no more files: the search is over and its handle closed, as DOS has none to keep)
             if !r && h != u32::MAX {
-                DOS.lock().unwrap().as_mut().unwrap().finds.remove(&dta);
+                DOS.locked().get_or_insert_with(Dos::default).finds.remove(&dta);
                 crate::w16::call32(cpu, "kernel32!FindClose", &[h]);
             }
             if r {
-                DOS.lock().unwrap().as_mut().unwrap().finds.insert(dta, h);
+                DOS.locked().get_or_insert_with(Dos::default).finds.insert(dta, h);
                 w8(dta + 0x15, r32(fd) as u8);
                 w32(dta + 0x1a, r32(fd + 32));
                 let name = cstr(fd + 44);
@@ -2029,7 +2035,7 @@ pub fn dos(cpu: &mut Cpu) {
             crate::mem::heap_free(fd);
         }
         0x2f => {
-            let dta = DOS.lock().unwrap().as_ref().map_or(0, |d| d.dta);
+            let dta = DOS.locked().as_ref().map_or(0, |d| d.dta);
             let _ = dta;
             ok(cpu);
         }

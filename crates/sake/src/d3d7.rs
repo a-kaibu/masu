@@ -1395,8 +1395,8 @@ impl Xform {
         let cv = d.rs[RS_COLORVERTEX] != 0;
         let src = |rs: usize, mat: usize| -> C4 {
             match (cv, d.rs[rs]) {
-                (true, 1) if vd.is_some() => vd.unwrap(),
-                (true, 2) if vs.is_some() => vs.unwrap(),
+                (true, 1) if let Some(v) = vd => v,
+                (true, 2) if let Some(v) = vs => v,
                 _ => mc(mat),
             }
         };
@@ -1929,7 +1929,7 @@ impl Raster {
                 let (a1, a2) = (arg(s.aa[0], diff, &cur, &tex, &self.tfactor, spec), arg(s.aa[1], diff, &cur, &tex, &self.tfactor, spec));
                 op(s.aop, &a1, &a2, diff, &tex, &self.tfactor, &cur, &mut out, 3, 4);
             }
-            if self.ck && s.linear && s.tex.as_ref().is_some_and(|t| t.key.is_some()) && tex[3] < 0.5 && s.tex.as_ref().unwrap().fmt.ch[3].1 == 0 {
+            if self.ck && s.linear && tex[3] < 0.5 && s.tex.as_ref().is_some_and(|t| t.key.is_some() && t.fmt.ch[3].1 == 0) {
                 return None;
             }
             cur = out;

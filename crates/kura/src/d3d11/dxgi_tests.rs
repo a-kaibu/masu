@@ -3,6 +3,7 @@
 //! a display one and WARP), every IDXGIFactory1..7 / IDXGIAdapter1..4 / IDXGIOutput1..6
 //! QueryInterface, and random enumerations against a model of the adapter list.
 
+use kome::locks::Lock as _;
 use super::*;
 use crate::d3d9::trace_tests::{alloc, seeds, Rng, SERIAL};
 
@@ -24,7 +25,7 @@ fn m(iface: u32, m: u32) -> u32 {
     iface << 8 | m
 }
 fn with<R>(f: impl FnOnce(&mut D11) -> R) -> R {
-    f(D11S.lock().unwrap().as_mut().unwrap())
+    f(D11S.locked().as_mut().unwrap())
 }
 /// A GUID in guest memory (only Data1 tells interfaces apart here; the rest as Windows' IIDs)
 fn iid(data1: u32) -> u32 {

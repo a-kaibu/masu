@@ -3,6 +3,7 @@
 //! own state, what FinishCommandList keeps or clears, what ExecuteCommandList gives back,
 //! Map's limits on a deferred context and the data its Unmap records, and references.
 
+use kome::locks::Lock as _;
 use super::*;
 use crate::d3d9::trace_tests::{alloc, client_rect, free, CALLS, SERIAL};
 
@@ -24,7 +25,7 @@ fn m(iface: u32, m: u32) -> u32 {
     iface << 8 | m
 }
 fn iface_of(a: u32) -> u32 {
-    let g = D11S.lock().unwrap();
+    let g = D11S.locked();
     let d = g.as_ref().unwrap();
     d.objs[&d.id_of(a)].faces.iter().find(|f| f.1 == a).unwrap().0
 }
@@ -37,7 +38,7 @@ fn refs(a: u32) -> u32 {
 }
 /// A buffer's contents as dwords.
 fn contents(a: u32, n: usize) -> Vec<u32> {
-    let g = D11S.lock().unwrap();
+    let g = D11S.locked();
     let d = g.as_ref().unwrap();
     let Data::Buffer(b) = &d.objs[&d.id_of(a)].data else { panic!("not a buffer") };
     (0..n).map(|i| unsafe { *((b.mem + 4 * i as u32) as *const u32) }).collect()
@@ -274,7 +275,7 @@ fn deferred_queries() {
 }
 
 fn recorded(ctx: u32) -> (usize, usize) {
-    let g = D11S.lock().unwrap();
+    let g = D11S.locked();
     let d = g.as_ref().unwrap();
     deferred::recorded(d, d.id_of(ctx))
 }
