@@ -37,7 +37,8 @@ impl std::fmt::Display for Rel {
 enum Base {
     /// the repository's tracked files (listed once, when the tree is made), read from the disk
     Repo(BTreeSet<Rel>),
-    /// a made-up tree: path -> text
+    /// a made-up tree: path -> text (tests' own)
+    #[cfg(test)]
     MadeUp(BTreeMap<Rel, String>),
 }
 
@@ -66,6 +67,7 @@ impl Tree {
     pub fn with(real: &Tree, path: &Rel, text: Option<String>) -> Tree {
         let base = match &real.base {
             Base::Repo(f) => Base::Repo(f.clone()),
+            #[cfg(test)]
             Base::MadeUp(m) => Base::MadeUp(m.clone()),
         };
         let mut t = Tree { root: real.root.clone(), base, overlay: BTreeMap::new(), paths: OnceLock::new(), code: Default::default(), items: Default::default() };
@@ -73,7 +75,11 @@ impl Tree {
         t
     }
     pub fn is_made_up(&self) -> bool {
-        matches!(self.base, Base::MadeUp(_))
+        match self.base {
+            Base::Repo(_) => false,
+            #[cfg(test)]
+            Base::MadeUp(_) => true,
+        }
     }
     pub fn has(&self, p: &Rel) -> bool {
         self.paths().binary_search(p).is_ok()
@@ -82,6 +88,7 @@ impl Tree {
     pub fn paths(&self) -> &[Rel] {
         self.paths.get_or_init(|| {
             let mut ps: BTreeSet<Rel> = match &self.base {
+                #[cfg(test)]
                 Base::MadeUp(b) => b.keys().cloned().collect(),
                 Base::Repo(f) => f.clone(),
             };
@@ -101,6 +108,7 @@ impl Tree {
             return t.clone().unwrap_or_default();
         }
         match &self.base {
+            #[cfg(test)]
             Base::MadeUp(b) => b.get(p).cloned().unwrap_or_default(),
             Base::Repo(_) => std::fs::read(self.root.join(p.as_str())).map_or_default(|b| String::from_utf8_lossy(&b).into_owned()),
         }

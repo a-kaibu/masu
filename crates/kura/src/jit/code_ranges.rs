@@ -30,7 +30,8 @@ impl Span {
     }
     /// One past the last byte (up to 2^32).
     pub(crate) fn end(self) -> u64 {
-        u64::from(self.addr) + u64::from(self.len.get())
+        // (two u32s: no u64 overflow)
+        u64::from(self.addr).saturating_add(u64::from(self.len.get()))
     }
 }
 
@@ -159,7 +160,7 @@ mod tests {
                     prop_assert!(u64::from(a) < e);
                     prop_assert!((u64::from(a)..e).all(|b| bytes.contains(&b)), "{:?}", iv);
                 }
-                prop_assert_eq!(iv.iter().map(|&(a, e)| e - u64::from(a)).sum::<u64>(), bytes.len() as u64);
+                prop_assert_eq!(iv.iter().map(|&(a, e)| e - u64::from(a)).sum::<u64>(), u64::try_from(bytes.len()).unwrap_or(u64::MAX));
             }
         }
     }

@@ -355,11 +355,11 @@ pub(crate) mod gc_tests {
         for seed in [0x9e3779b97f4a7c15u64, 0xbf58476d1ce4e5b9, 0x94d049bb133111eb] {
             let (f, s, dir) = serve(0).await;
             let mut seed = seed;
-            let mut rnd = move |n: u64| {
+            let mut rnd = move |n: usize| {
                 seed ^= seed << 13;
                 seed ^= seed >> 7;
                 seed ^= seed << 17;
-                seed % n
+                usize::try_from(seed % u64::try_from(n).unwrap_or(u64::MAX)).unwrap_or(0)
             };
             let mut want: BTreeMap<String, Vec<u8>> = BTreeMap::new();
             for k in 0..4 {
@@ -370,7 +370,7 @@ pub(crate) mod gc_tests {
             let mut backups = vec![(s.backup().await.unwrap(), want.clone())];
             let mut store = s;
             for round in 0..3 {
-                let (b, _) = backups[rnd(backups.len() as u64) as usize].clone();
+                let (b, _) = backups[rnd(backups.len())].clone();
                 let db = dir.join(format!("restored-{round}.db"));
                 store.restore(b, &db).await.unwrap();
                 let r = restored(&store, db);

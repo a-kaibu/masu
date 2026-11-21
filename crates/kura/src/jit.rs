@@ -296,7 +296,7 @@ pub(crate) fn interp_write(a: u32, len: u32) -> bool {
         return false;
     }
     // (code there checks itself on entry: the page stays translated)
-    let last = lo32((w.end() - 1).min(u64::from(u32::MAX)));
+    let last = lo32(w.end().saturating_sub(1).min(u64::from(u32::MAX)));
     if wx_page(a) && wx_page(last) && wx_checked() {
         return false;
     }
@@ -4258,7 +4258,7 @@ mod smc_span_tests {
             mark_code(&[(block, n)]);
             for _ in 0..64 {
                 let a = page + 0xf00 + rnd(0x300);
-                let len = [1, 2, 4, 8, 10, 16][rnd(6) as usize];
+                let len = match rnd(6) { 0 => 1, 1 => 2, 2 => 4, 3 => 8, 4 => 10, _ => 16 };
                 let meets = u64::from(a) < u64::from(block) + u64::from(n) && u64::from(block) < u64::from(a) + u64::from(len);
                 if meets {
                     assert!(interp_write(a, len), "round {round}: {a:#x}+{len} into {block:#x}+{n}");
