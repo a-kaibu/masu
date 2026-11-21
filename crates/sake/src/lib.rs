@@ -98,6 +98,9 @@ pub mod fast;
 pub mod files;
 pub mod fmtmsg;
 pub mod rtlfmt;
+pub mod llmath;
+pub mod curdir;
+pub mod ntpath;
 pub mod gdi;
 pub mod gdi_geom;
 pub mod k32;
@@ -1095,6 +1098,9 @@ pub fn main(exe: &str, args: &[String]) -> ! {
     ntcrt::init();
     rtlstr::init();
     rtlfmt::init();
+    llmath::init();
+    curdir::init();
+    ntpath::init();
     security::init();
     lsa::init();
     actctx::init();
@@ -1234,6 +1240,8 @@ pub fn main(exe: &str, args: &[String]) -> ! {
     ustr(pp + cmd, cmdlen, wcmd);
     // the window title (STARTUPINFO lpTitle) is the image path when the parent gave none
     ustr(pp + if x64 { 0xb0 } else { 0x70 }, 2 * wpath16.len() as u32, wp);
+    // (CurrentDirectory: the buffer, the first reference's handle and path)
+    curdir::install(pp);
     let Some(entry) = pe::with(base, |m| m.entry) else { start_failed(exe, "the image is not among the loaded modules") };
     // (a process created suspended has its image mapped and its PEB filled, as on Windows,
     // where the parent reads both before ResumeThread: kernel32:loader; nothing of it runs yet)

@@ -188,12 +188,13 @@ pub fn unicode_to_integer(unit: &dyn Fn(usize) -> u16, length: u16, base: u32) -
 }
 
 /// the digits of `value` in `radix` (unsigned, uppercase, at least one)
-pub fn digits(value: u32, radix: Radix) -> Vec<u8> {
+pub fn digits(value: u64, radix: Radix) -> Vec<u8> {
     let mut v = value;
     let mut d = Vec::new();
     loop {
-        d.push(b"0123456789ABCDEF".get(kome::num::us(v.checked_rem(radix.value()).unwrap_or(0))).copied().unwrap_or(b'0'));
-        v = v.checked_div(radix.value()).unwrap_or(0);
+        let r = u64::from(radix.value());
+        d.push(b"0123456789ABCDEF".get(kome::num::us(v.checked_rem(r).unwrap_or(0))).copied().unwrap_or(b'0'));
+        v = v.checked_div(r).unwrap_or(0);
         if v == 0 {
             break;
         }
@@ -202,8 +203,9 @@ pub fn digits(value: u32, radix: Radix) -> Vec<u8> {
     d
 }
 
-/// What RtlIntegerToChar writes for a length: the bytes (None: nothing, STATUS_BUFFER_OVERFLOW)
-pub fn integer_to_char(value: u32, base: u32, length: i32) -> Result<Vec<u8>, Status> {
+/// What RtlIntegerToChar (and RtlLargeIntegerToChar, its 64-bit value) writes for a length: the
+/// bytes (None: nothing, STATUS_BUFFER_OVERFLOW)
+pub fn integer_to_char(value: u64, base: u32, length: i32) -> Result<Vec<u8>, Status> {
     let radix = match Base::of(base) {
         Some(Base::ByPrefix) => Radix::Dec,
         Some(Base::Fixed(r)) => r,
@@ -258,7 +260,11 @@ fn RtlUnicodeStringToInteger(c: &mut Ctx) -> u32 {
 }
 
 fn RtlIntegerToChar(c: &mut Ctx) -> u32 {
-    let (value, base, length, s) = (c.a(0), c.a(1), c.a(2).cast_signed(), c.a(3));
+    to_char_out(u64::from(c.a(0)), c.a(1), c.a(2).cast_signed(), c.a(3))
+}
+/// RtlIntegerToChar / RtlLargeIntegerToChar's writing: the digits to `s` (a NULL `s` with
+/// something to copy: the STATUS_ACCESS_VIOLATION its SEH catches)
+pub fn to_char_out(value: u64, base: u32, length: i32, s: u32) -> u32 {
     match integer_to_char(value, base, length) {
         Ok(b) => {
             if s == 0 && !b.is_empty() {
@@ -276,8 +282,12 @@ fn RtlIntegerToChar(c: &mut Ctx) -> u32 {
 /// RtlIntegerToUnicodeString(value, base, UNICODE_STRING *): RtlIntegerToChar into 33 bytes,
 /// then RtlAnsiStringToUnicodeString(String, the digits, FALSE)
 fn RtlIntegerToUnicodeString(c: &mut Ctx) -> u32 {
-    let (value, base, us) = (c.a(0), c.a(1), c.a(2));
-    let d = match integer_to_char(value, base, 33) {
+    to_unicode_out(u64::from(c.a(0)), c.a(1), 33, c.a(2))
+}
+/// RtlIntegerToUnicodeString (`room` 33) / RtlInt64ToUnicodeString (65): the digits made in a
+/// buffer of `room` bytes, then RtlAnsiStringToUnicodeString(us, them, FALSE)
+pub fn to_unicode_out(value: u64, base: u32, room: i32, us: u32) -> u32 {
+    let d = match integer_to_char(value, base, room) {
         Ok(mut b) => {
             b.retain(|&x| x != 0);
             b

@@ -1636,6 +1636,18 @@ fn _vsnprintf(c: &mut Ctx) -> u32 {
     let s = legacy::<u8>(c.a(2), &mut VaArgs::stack(c.a(3)));
     put_count(c.a(0), size(c, 1), s)
 }
+/// ntdll's _snprintf / _vsnprintf / _snwprintf / _vsnwprintf (buf, count, fmt, ...|va):
+/// msvcrt's put_count, except that (NULL, 0) answers the text's length (sake-re/ntdll/
+/// crt-printf-scanf.md; Wine's ntdll:string)
+pub(crate) fn nt_snprintf<T: Unit>(c: &mut Ctx, va_list: bool) -> u32 {
+    let mut va = if va_list { VaArgs::stack(c.a(3)) } else { VaArgs::arg(c, 3) };
+    let s = legacy::<T>(c.a(2), &mut va);
+    let (out, count) = (c.a(0), size(c, 1));
+    if out == 0 && count == 0 {
+        return s.map_or(u32::MAX, |s| u32::try_from(s.len()).unwrap_or(u32::MAX));
+    }
+    put_count(out, count, s)
+}
 fn swprintf(c: &mut Ctx) -> u32 {
     let s = legacy::<u16>(c.a(1), &mut VaArgs::arg(c, 2));
     put_all(c.a(0), s)
@@ -1873,7 +1885,7 @@ impl crt::scan::Sink for GuestSink {
     }
 }
 fn scan_mode(secure: bool) -> crt::scan::Mode {
-    crt::scan::Mode { ptr64: mem::x64(), secure, legacy: true, legacy_wide: true }
+    crt::scan::Mode { ptr64: mem::x64(), secure, legacy: true, legacy_wide: true, no_float: false }
 }
 /// sscanf / swscanf and the _s forms (input, fmt, ...); vsscanf (input, fmt, va)
 fn scanf<T: Unit>(input: u32, fmt: u32, va: VaArgs, m: crt::scan::Mode) -> u32 {
@@ -1882,6 +1894,11 @@ fn scanf<T: Unit>(input: u32, fmt: u32, va: VaArgs, m: crt::scan::Mode) -> u32 {
         return u32::MAX;
     }
     crt::scan::scan(&gstr::<T>(input), &gstr::<T>(fmt), m, &mut GuestSink(va)) as u32
+}
+/// ntdll's sscanf / sscanf_s / swscanf_s: no float conversions (a matching failure; Wine's
+/// ntdll:string, sake-re/ntdll/crt-printf-scanf.md)
+pub(crate) fn nt_sscanf<T: Unit>(c: &mut Ctx, secure: bool) -> u32 {
+    scanf::<T>(c.a(0), c.a(1), VaArgs::arg(c, 2), crt::scan::Mode { no_float: true, ..scan_mode(secure) })
 }
 fn sscanf(c: &mut Ctx) -> u32 {
     scanf::<u8>(c.a(0), c.a(1), VaArgs::arg(c, 2), scan_mode(false))
@@ -3108,7 +3125,7 @@ fn ucrt_scan<T: Unit>(c: &mut Ctx) -> u32 {
         return u32::MAX;
     }
     let text = if n == u32::MAX { gstr::<T>(input) } else { gstrn::<T>(input, n) };
-    let m = crt::scan::Mode { ptr64: mem::x64(), secure: opts & 1 != 0, legacy: opts & 4 != 0, legacy_wide: opts & 2 != 0 };
+    let m = crt::scan::Mode { ptr64: mem::x64(), secure: opts & 1 != 0, legacy: opts & 4 != 0, legacy_wide: opts & 2 != 0, no_float: false };
     crt::scan::scan(&text, &gstr::<T>(fmt), m, &mut GuestSink(VaArgs::stack(va))) as u32
 }
 fn __stdio_common_vsscanf(c: &mut Ctx) -> u32 {

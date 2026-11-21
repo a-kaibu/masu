@@ -116,6 +116,15 @@ pub const NTDLL_OWN_CRT: &[&str] = &[
     "RtlUnicodeStringToAnsiString", "RtlDowncaseUnicodeChar",
     // (rtlfmt.rs, 2026-11-21: without it Wine's ntdll:rtlstr had no message formatter, 65K failures)
     "RtlFormatMessage", "RtlFormatMessageEx", "RtlIsTextUnicode",
+    // (ntcrt.rs, 2026-11-21: msvcrt's _snprintf(NULL, 0) answered -1 and its sscanf read floats)
+    "_snprintf", "_vsnprintf", "_snwprintf", "_vsnwprintf", "sscanf", "sscanf_s", "swscanf_s",
+    // (llmath.rs, 2026-11-21: no handler, so every x86 64-bit divide, multiply and shift through
+    // ntdll answered 0; Wine's ntdll:large_int 454 failures)
+    "_allmul", "_alldiv", "_allrem", "_alldvrm", "_aulldiv", "_aullrem", "_aulldvrm", "_allshl", "_allshr", "_aullshr",
+    "RtlExtendedMagicDivide", "RtlLargeIntegerToChar", "RtlInt64ToUnicodeString",
+    // (curdir.rs, ntpath.rs, 2026-11-21: no handlers; Wine's ntdll:path crashed on an empty
+    // CURDIR and answered 0 for every path type)
+    "RtlSetCurrentDirectory_U", "RtlDetermineDosPathNameType_U", "RtlIsDosDeviceName_U",
 ];
 
 static NTDLL_IMPL: LazyLock<Option<Regex>> = LazyLock::new(|| Regex::new(r#"implement\(\s*(?:"ntdll"|d)\s*,\s*"([A-Za-z0-9_]+)""#).ok());

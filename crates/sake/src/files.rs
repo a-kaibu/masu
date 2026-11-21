@@ -230,7 +230,9 @@ pub fn set_cwd(d: &str) {
     if !s.ends_with('\\') {
         s.push('\\');
     }
-    *CWD.locked() = s;
+    *CWD.locked() = s.clone();
+    // (the PEB's CURDIR: a new reference, its handle and path)
+    crate::curdir::publish(&s);
 }
 
 fn c_root() -> String {

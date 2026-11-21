@@ -143,7 +143,7 @@ kernel32:codepage	fail	263134	394741
 kernel32:comm	fail	763	8842
 kernel32:console	fail	2	4
 kernel32:debugger	fail	4	1106
-kernel32:directory	fail	27	104
+kernel32:directory	fail	22	105
 kernel32:drive	fail	13	129
 kernel32:environ	fail	96	454
 kernel32:fiber	fail	1	32993
@@ -198,7 +198,7 @@ msvcrt:cpp	fail	6	541
 msvcrt:data	fail	6	17
 msvcrt:dir	fail	61	367
 msvcrt:environ	crash	5	0
-msvcrt:file	ok	0	1
+msvcrt:file	timeout	270	6
 msvcrt:heap	fail	7	1136
 msvcrt:locale	fail	44	144
 msvcrt:misc	fail	394	563
@@ -221,16 +221,16 @@ ntdll:exception	crash	73	0
 ntdll:file	fail	745	2165
 ntdll:generated	ok	0	0
 ntdll:info	crash	322	0
-ntdll:large_int	fail	454	756
+ntdll:large_int	ok	0	740
 ntdll:om	crash	31	0
-ntdll:path	crash	1	0
+ntdll:path	crash	231	0
 ntdll:pipe	fail	632	1813
 ntdll:port	ok	0	0
 ntdll:reg	crash	47	0
 ntdll:rtl	crash	2	0
 ntdll:rtlbitmap	fail	338	376
 ntdll:rtlstr	ok	0	2178626
-ntdll:string	fail	8	1973924
+ntdll:string	ok	0	1973925
 ntdll:sync	fail	130	433
 ntdll:thread	timeout	7	0
 ntdll:threadpool	timeout	766	0

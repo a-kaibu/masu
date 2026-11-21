@@ -8345,6 +8345,11 @@ fn GetCurrentDirectoryW(c: &mut Ctx) -> u32 {
     cur_dir(c, true)
 }
 pub(crate) fn set_dir(d: &str) -> u32 {
+    // (RtlSetCurrentDirectory_U's first step: the path the current reference was made for keeps
+    // it, handle and all)
+    if crate::curdir::same_as_current(&d.encode_utf16().collect::<Vec<u16>>()) {
+        return 1;
+    }
     let full = files::full_path(d);
     if crate::env_on!("SAKE_TRACE_FILES") {
         eprintln!("sake: SetCurrentDirectory({d}) -> {full}");

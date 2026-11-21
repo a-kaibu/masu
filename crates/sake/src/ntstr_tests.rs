@@ -81,7 +81,7 @@ proptest! {
     #[test]
     fn printed_values_parse_back(v: u32, b in 0usize..4) {
         let base = BASES[b];
-        let mut d = integer_to_char(v, base, 40).unwrap();
+        let mut d = integer_to_char(u64::from(v), base, 40).unwrap();
         prop_assert_eq!(d.pop(), Some(0));
         prop_assert_eq!(a2i(&d, base), (Status::Success, Some(v)));
         let u: Vec<u16> = d.iter().map(|&x| u16::from(x)).collect();
@@ -103,9 +103,9 @@ proptest! {
     #[test]
     fn lengths_of_integer_to_char(v: u32, b in 0usize..4, len in -40i32..=40) {
         let base = BASES[b];
-        let d = integer_to_char(v, base, 40).unwrap();
+        let d = integer_to_char(u64::from(v), base, 40).unwrap();
         let n = kome::num::u32_of(d.len() - 1);
-        match integer_to_char(v, base, len) {
+        match integer_to_char(u64::from(v), base, len) {
             Ok(x) if len >= 0 => prop_assert_eq!(kome::num::u32_of(x.len()), n + u32::from(n < len.unsigned_abs())),
             Ok(x) => prop_assert_eq!(kome::num::u32_of(x.len()), len.unsigned_abs()),
             Err(st) => {

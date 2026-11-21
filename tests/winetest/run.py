@@ -130,8 +130,8 @@ def read_tsv(path):
         for l in open(path):
             if l.startswith("#") or not l.strip():
                 continue
-            k, status, failures = l.rstrip("\n").split("\t")[:3]
-            res[k] = (status, int(failures))
+            k, status, failures, *rest = l.rstrip("\n").split("\t")
+            res[k] = (status, int(failures), rest[0] if rest else "")
     return res
 
 
@@ -215,7 +215,7 @@ def main():
         r = results[k]
         if k not in expected:
             continue
-        es, ef = expected[k]
+        es, ef, _ = expected[k]
         # (failure counts of some tests move a little from run to run: timing, threads)
         if RANK[r["status"]] > RANK[es] or (r["status"] == es == "fail" and k not in flaky and r["failures"] > ef + max(5, ef // 10)):
             worse.append(f"{k}: {es} ({ef}) -> {r['status']} ({r['failures']})")
@@ -228,7 +228,8 @@ def main():
             f.write(f"# tests/winetest/run.py --arch {a.arch}: <dll>:<test> status failures executed (Wine 11.20 tests on sake)\n")
             keep = {k: v for k, v in expected.items() if k not in results} if path == exp_path else {}
             rows = {k: (r["status"], r["failures"], r["executed"]) for k, r in results.items()}
-            rows.update({k: (s, n, "") for k, (s, n) in keep.items()})
+            # (the rows not run this time stay as they were, their executed count too)
+            rows.update(keep)
             for k in sorted(rows):
                 s, n, e = rows[k]
                 f.write(f"{k}\t{s}\t{n}\t{e}\n")

@@ -26,6 +26,9 @@ pub struct Mode {
     pub legacy: bool,
     /// `%s`/`%c` in a wide function read wide (the MS default; ISO mode: narrow)
     pub legacy_wide: bool,
+    /// ntdll's sscanf: no float conversions (sake-re/ntdll/crt-printf-scanf.md): %e %f %g %a
+    /// are a matching failure, nothing stored (Wine's ntdll:string, Vista and later)
+    pub no_float: bool,
 }
 
 /// Where the results go: the pointer arguments and the guest memory behind them.
@@ -193,6 +196,9 @@ pub fn scan<T: Unit>(input: &[T], fmt: &[T], m: Mode, k: &mut impl Sink) -> i32 
                 b'e' | b'E' | b'f' | b'F' | b'g' | b'G' | b'a' | b'A' => {
                     if inp(pos).is_none() {
                         break 'run Stop::Input;
+                    }
+                    if m.no_float {
+                        break 'run Stop::Matching;
                     }
                     let kind = if dbl { Float::F64 } else { Float::F32 };
                     // the field is the longest prefix of a floating constant (no going back:
@@ -506,6 +512,25 @@ mod tests {
         assert_eq!(run("-1", "%u", m).1, vec!["1:i4=ffffffffffffffff".to_string()]);
         assert_eq!(run("ab", "%c%c", m).1.len(), 2);
         assert_eq!(run("100%", "%d%%", m).0, 1);
+    }
+
+    #[test]
+    fn no_float_is_a_matching_failure() {
+        let m = Mode { no_float: true, ..Default::default() };
+        // every float conversion, with and without l / *: nothing stored, the count so far
+        for c in ["e", "E", "f", "F", "g", "G", "a", "A"] {
+            for pre in ["", "l", "*", "5", "L"] {
+                let f = format!("%d %{pre}{c}%d");
+                assert_eq!(run("10 2.5 7", &f, m), (1, vec!["1:i4=a".to_string()]), "{f}");
+                // (end of input first: still EOF)
+                assert_eq!(run("", &format!("%{pre}{c}"), m).0, -1, "{f}");
+            }
+        }
+        // the rest as before
+        let all = Mode::default();
+        for (i, f) in [("12 abc", "%d %s"), ("0x1f", "%i"), ("ab", "%c%c")] {
+            assert_eq!(run(i, f, m), run(i, f, all));
+        }
     }
 
     #[test]

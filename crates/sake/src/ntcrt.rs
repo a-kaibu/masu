@@ -522,6 +522,14 @@ pub fn init() {
     implement(d, "_ultow", |c: &mut Ctx| itoa_call(c, Arg::U32, true));
     implement(d, "_i64tow", |c: &mut Ctx| itoa_call(c, Arg::S64, true));
     implement(d, "_ui64tow", |c: &mut Ctx| itoa_call(c, Arg::U64, true));
+    // (printf and scanf: msvcrt's engine, ntdll's edges)
+    implement(d, "_snprintf", |c: &mut Ctx| crate::crt::nt_snprintf::<u8>(c, false));
+    implement(d, "_vsnprintf", |c: &mut Ctx| crate::crt::nt_snprintf::<u8>(c, true));
+    implement(d, "_snwprintf", |c: &mut Ctx| crate::crt::nt_snprintf::<u16>(c, false));
+    implement(d, "_vsnwprintf", |c: &mut Ctx| crate::crt::nt_snprintf::<u16>(c, true));
+    implement(d, "sscanf", |c: &mut Ctx| crate::crt::nt_sscanf::<u8>(c, false));
+    implement(d, "sscanf_s", |c: &mut Ctx| crate::crt::nt_sscanf::<u8>(c, true));
+    implement(d, "swscanf_s", |c: &mut Ctx| crate::crt::nt_sscanf::<u16>(c, true));
     implement(d, "atoi", |c: &mut Ctx| strto_call(c, rb, 1, Some(Kind::Wrapping), 32, Kind::Wrapping));
     implement(d, "atol", |c: &mut Ctx| strto_call(c, rb, 1, Some(Kind::Wrapping), 32, Kind::Wrapping));
     implement(d, "_wtoi", |c: &mut Ctx| strto_call(c, rw, 2, Some(Kind::Wrapping), 32, Kind::Wrapping));

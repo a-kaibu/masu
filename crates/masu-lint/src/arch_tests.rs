@@ -34,6 +34,12 @@ const GOOD_NTCRT: &str = concat!(
     "    implement(d, \"RtlUTF8ToUnicodeN\", f); implement(d, \"RtlUnicodeToUTF8N\", f); implement(d, \"RtlHashUnicodeString\", f);\n",
     "    implement(d, \"RtlUnicodeStringToAnsiString\", f); implement(d, \"RtlDowncaseUnicodeChar\", f);\n",
     "    implement(d, \"RtlFormatMessage\", f); implement(d, \"RtlFormatMessageEx\", f); implement(d, \"RtlIsTextUnicode\", f);\n",
+    "    implement(d, \"_snprintf\", f); implement(d, \"_vsnprintf\", f); implement(d, \"_snwprintf\", f); implement(d, \"_vsnwprintf\", f);\n",
+    "    implement(d, \"sscanf\", f); implement(d, \"sscanf_s\", f); implement(d, \"swscanf_s\", f);\n",
+    "    implement(d, \"_allmul\", f); implement(d, \"_alldiv\", f); implement(d, \"_allrem\", f); implement(d, \"_alldvrm\", f); implement(d, \"_aulldiv\", f);\n",
+    "    implement(d, \"_aullrem\", f); implement(d, \"_aulldvrm\", f); implement(d, \"_allshl\", f); implement(d, \"_allshr\", f); implement(d, \"_aullshr\", f);\n",
+    "    implement(d, \"RtlExtendedMagicDivide\", f); implement(d, \"RtlLargeIntegerToChar\", f); implement(d, \"RtlInt64ToUnicodeString\", f);\n",
+    "    implement(d, \"RtlSetCurrentDirectory_U\", f); implement(d, \"RtlDetermineDosPathNameType_U\", f); implement(d, \"RtlIsDosDeviceName_U\", f);\n",
     "}\n",
 );
 

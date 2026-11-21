@@ -880,6 +880,54 @@ fn radix32(mut n: u32) -> String {
     // (ASCII digits and letters)
     s.iter().map(|&b| char::from(b)).collect()
 }
+/// tmpnam / _wtmpnam (buf): msvcrt's names in the root of the current drive, "\\s<pid>." and
+/// then "\\s<pid>.<n>" (base 32, n counting the calls; a name that is there is passed over),
+/// into `buf` or the thread's own buffer (Wine's msvcrt:file test_tmpnam). The UCRT's: the same
+/// names in the temporary directory.
+fn tmpnam(c: &mut Ctx, wide: bool) -> u32 {
+    static N: AtomicU32 = AtomicU32::new(0);
+    thread_local!(static OWN: std::cell::Cell<[u32; 2]> = const { std::cell::Cell::new([0; 2]) });
+    let dir = if is_ucrt(c) { crate::files::full_path(&crate::k32::env_get("TMP").unwrap_or_else(|| "C:\\".into())).trim_end_matches('\\').to_string() } else { String::new() };
+    let pid = radix32(crate::pid());
+    let name = loop {
+        let n = N.fetch_add(1, Ordering::Relaxed);
+        let tail = if n == 0 { String::new() } else { radix32(n) };
+        let name = format!("{dir}\\s{pid}.{tail}");
+        if crate::files::resolve(&crate::files::full_path(&name)).is_none() {
+            break name;
+        }
+    };
+    let buf = match c.a(0) {
+        0 => OWN.with(|o| {
+            let mut v = o.get();
+            let k = usize::from(wide);
+            let slot = v.get_mut(k);
+            match slot {
+                Some(b) if *b != 0 => *b,
+                Some(b) => {
+                    *b = mem::heap_alloc(if wide { 520 } else { 260 }, true);
+                    let got = *b;
+                    o.set(v);
+                    got
+                }
+                None => 0,
+            }
+        }),
+        b => b,
+    };
+    if wide {
+        let w: Vec<u16> = name.encode_utf16().collect();
+        put_or_alloc::<u16>(buf, 260, &w)
+    } else {
+        put_or_alloc::<u8>(buf, 260, &crate::text::s2a(&name))
+    }
+}
+fn tmpnam_a(c: &mut Ctx) -> u32 {
+    tmpnam(c, false)
+}
+fn _wtmpnam(c: &mut Ctx) -> u32 {
+    tmpnam(c, true)
+}
 fn _tempnam(c: &mut Ctx) -> u32 {
     tempnam(c, false)
 }
@@ -2171,6 +2219,8 @@ pub(super) fn init() {
     );
     reg!(_wgetenv, _wgetenv_s, _wputenv, _putenv, _putenv_s, _wputenv_s);
     implement("msvcrt", "getenv_s", getenv_s_a);
+    implement("msvcrt", "tmpnam", tmpnam_a);
+    implement("msvcrt", "_wtmpnam", _wtmpnam);
     reg!(_tzset, __timezone, __daylight, __dstbias, __tzname, _get_tzname, _get_timezone, _get_daylight, _get_dstbias);
     reg!(strerror, _wcserror, setlocale, _wsetlocale, _mbtowc_l, mbrtowc, mbrlen, btowc, wctob, wcrtomb, wcrtomb_s, mbstowcs, mbsrtowcs, wcstombs);
     implement("msvcrt", "mbtowc", _mbtowc_l);
