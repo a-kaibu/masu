@@ -131,6 +131,11 @@ fn fixture(r: Rule) -> Fixture {
             ],
             mutate: ("crates/sake/src/k32.rs", |t| Some(t.replace("counted_out(c.a(0), &w, 2, c.boolean(2))", "counted_out(c.a(0), &w, 2, c.a(2) != 0)"))),
         },
+        Rule::WgslLoadBounds => Fixture {
+            bad: &[("crates/dxwgsl/src/wgsl.rs", "fn load() -> String {\n    format!(\"textureLoad(t{t}, {a}, {l})\")\n}\n")],
+            good: &[("crates/dxwgsl/src/wgsl.rs", "fn load() -> String {\n    format!(\"select(vec4<f32>(), textureLoad(t{t}, {a}, {l}), {ok})\")\n}\n// textureLoad( named in a comment\n")],
+            mutate: ("crates/dxwgsl/src/wgsl.rs", |t| Some(t.replace("format!(\"select(vec4<{}>(), textureLoad(t{t}, {args}), {ok})\", k.s())", "format!(\"textureLoad(t{t}, {args})\")"))),
+        },
         Rule::DepthGuard => Fixture {
             bad: &[
                 ("crates/apitrace/src/trace.rs", "pub const MAX_DEPTH: u32 = 64;\nfn value(&mut self) { self.depth += 1; }\n"),
@@ -596,3 +601,4 @@ fn each_depth_guard_is_in_the_real_tree() {
         assert!(!regress::depth_guard(&t).is_empty(), "{file} {name}: its uses taken away is not found");
     }
 }
+

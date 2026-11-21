@@ -77,7 +77,7 @@ file	crates/dxwgsl/src/dxbc.rs	indexing_slicing	5
 file	crates/dxwgsl/src/tpf.rs	arithmetic_side_effects	13
 file	crates/dxwgsl/src/tpf.rs	indexing_slicing	11
 file	crates/dxwgsl/src/wgsl.rs	arithmetic_side_effects	19
-file	crates/dxwgsl/src/wgsl.rs	indexing_slicing	214
+file	crates/dxwgsl/src/wgsl.rs	indexing_slicing	209
 file	crates/dxwgsl/src/wgsl.rs	let_underscore_must_use	25
 file	crates/foresee/src/lib.rs	arithmetic_side_effects	27
 file	crates/foresee/src/lib.rs	as_conversions	58

@@ -204,7 +204,10 @@ fn words_bytes(w: &[u32]) -> Vec<u8> {
 /// A case of buffers only: (binding, its words) bound, the bindings read back after one
 /// dispatch, what they must hold (Direct3D 11.3 spec: raw and structured views, the hidden
 /// counter, the atomics; reads out of the view 0, writes there dropped).
-fn buffer_case(name: &str, src: &str, dispatch: [u32; 3], bufs: &[(u32, Vec<u32>)], uniform: Vec<u32>, outs: &[u32], want: Vec<u32>) -> Result<String, String> {
+/// A compute case whose outputs are storage buffers: `bufs` (binding, words), the views'
+/// ranges `uniform`, `extra` other bindings as tests/compute.mjs takes them.
+#[allow(clippy::too_many_arguments)]
+fn buffer_case(name: &str, src: &str, dispatch: [u32; 3], bufs: &[(u32, Vec<u32>)], uniform: Vec<u32>, extra: &[String], outs: &[u32], want: Vec<u32>) -> Result<String, String> {
     let code = hlslc::compile(src, &[], &mut |_, _| None, "main", "cs_5_0", 0).map_err(|e| format!("{name}: hlslc: {e}"))?;
     let ours = dxwgsl::translate_compute(&code, &[]).map_err(|e| format!("{name}: dxwgsl: {e}"))?;
     let ranges: Vec<u32> = ours.bindings.iter().filter_map(|(_, b)| if let dxwgsl::Binding::BufferRanges(r) = b { Some(r.clone()) } else { None }).flatten().collect();
@@ -214,6 +217,7 @@ fn buffer_case(name: &str, src: &str, dispatch: [u32; 3], bufs: &[(u32, Vec<u32>
     }
     let mut b: Vec<String> = bufs.iter().map(|(n, w)| format!(r#"{{"binding":{n},"buffer":{{"words":[{}]}}}}"#, list(w))).collect();
     b.push(format!(r#"{{"binding":{},"uniform":[{}]}}"#, dxwgsl::BUFFER_RANGES, list(&uniform)));
+    b.extend(extra.iter().cloned());
     Ok(format!(
         r#"{{"name":{},"dispatch":[{},{},{}],"out":[{}],"want":[{}],"variants":[{{"name":"masu","wgsl":{}}}],"bindings":[{}]}}"#,
         string(name),
@@ -251,7 +255,7 @@ fn buffer_cases() -> Result<Vec<String>, String> {
     }
     want.extend([0, 0, 0, 0, 7, 32]);
     want.extend_from_slice(init.get(34..).unwrap_or_default());
-    out.push(buffer_case("structured: view range, members, matrices, out of range", src, [1, 1, 1], &[(500, input), (601, init)], vec![8, 7 * 32, 7, 0, 0, 144, 9, 0], &[601], want)?);
+    out.push(buffer_case("structured: view range, members, matrices, out of range", src, [1, 1, 1], &[(500, input), (601, init)], vec![8, 7 * 32, 7, 0, 0, 144, 9, 0], &[], &[601], want)?);
     // the hidden counters: Append and IncrementCounter return the count before, Consume and
     // DecrementCounter the count after
     let src = "AppendStructuredBuffer<uint> a : register(u0); RWStructuredBuffer<uint> c : register(u1); ConsumeStructuredBuffer<uint> s : register(u2);\n\
@@ -273,6 +277,7 @@ fn buffer_cases() -> Result<Vec<String>, String> {
         [1, 1, 1],
         &[(600, ia), (601, ic), (602, vec![10, 11, 12, 13]), (700, vec![2]), (701, vec![1]), (702, vec![3])],
         vec![0, 16, 4, 0, 0, 32, 8, 0, 0, 16, 4, 0],
+        &[],
         &[600, 601, 700, 701, 702],
         want,
     )?);
@@ -293,7 +298,18 @@ fn buffer_cases() -> Result<Vec<String>, String> {
     // (g[k]: the sum of the group indices i with i & 3 == k, 480 + 16k; raw dword 6 of the
     // buffer, 0x106, is the view's dword 4)
     let want = vec![64, 31, (-32i32).cast_unsigned(), 5, u32::MAX, 0, 77, 99, 13, 480, 496, 512, 528, 24, 0x106, 0];
-    out.push(buffer_case("raw views and atomics", src, [1, 1, 1], &[(500, raw), (600, iw)], vec![2, 24, 24, 0, 0, 64, 64, 0], &[600], want)?);
+    out.push(buffer_case("raw views and atomics", src, [1, 1, 1], &[(500, raw), (600, iw)], vec![2, 24, 24, 0, 0, 64, 64, 0], &[], &[600], want)?);
+    // Load outside the texture: 0 in every component (an address past its size or below 0, a
+    // level past its levels, an offset taking it outside); inside, with and without an offset
+    let src = "Texture2D<float4> t : register(t0); RWStructuredBuffer<float4> o : register(u0);\n\
+        [numthreads(1,1,1)] void main() { o[0] = t.Load(int3(1, 1, 0)); o[1] = t.Load(int3(2, 0, 0)); o[2] = t.Load(int3(-1, 0, 0));\n\
+          o[3] = t.Load(int3(0, 0, 1)); o[4] = t.Load(int3(0, 1, 0), int2(1, 0)); o[5] = t.Load(int3(1, 0, 0), int2(1, 0)); o[6] = t.Load(int3(0, 5, 0)); }";
+    // (texel i of the 2x2: 10i + 1 .. 10i + 4)
+    let texel = |i: u8| (1..5u8).map(move |c| f32::from(i.wrapping_mul(10).wrapping_add(c)).to_bits());
+    let tex: Vec<String> = (0..4u8).flat_map(texel).map(|b| f32::from_bits(b).to_string()).collect();
+    let tex = format!(r#"{{"binding":16,"texture":{{"format":"rgba32float","w":2,"h":2,"f32":[{}]}}}}"#, tex.join(","));
+    let want: Vec<u32> = texel(3).chain([0; 12]).chain(texel(3)).chain([0; 8]).collect();
+    out.push(buffer_case("Load outside the texture", src, [1, 1, 1], &[(600, pattern(28))], vec![0, 112, 7, 0], &[tex], &[600], want)?);
     Ok(out)
 }
 
@@ -303,6 +319,6 @@ mod tests {
     #[test]
     fn compute_cases_build() {
         let s = super::cases().unwrap();
-        assert_eq!(s.matches("\"dispatch\"").count(), 10);
+        assert_eq!(s.matches("\"dispatch\"").count(), 11);
     }
 }

@@ -43,6 +43,7 @@ pub enum Rule {
     CatchUnwindAbort,
     ShellSpecialEnv,
     DepthGuard,
+    WgslLoadBounds,
     BooleanArg,
     TypedRegisters,
     NtdllOwnCrt,
@@ -59,7 +60,7 @@ pub enum Rule {
 }
 
 impl Rule {
-    pub const ALL: [Rule; 39] = [
+    pub const ALL: [Rule; 40] = [
         Rule::BuildOutput,
         Rule::HresultCopy,
         Rule::KomeCopy,
@@ -86,6 +87,7 @@ impl Rule {
         Rule::CatchUnwindAbort,
         Rule::ShellSpecialEnv,
         Rule::DepthGuard,
+        Rule::WgslLoadBounds,
         Rule::BooleanArg,
         Rule::TypedRegisters,
         Rule::NtdllOwnCrt,
@@ -130,6 +132,7 @@ impl Rule {
             Rule::CatchUnwindAbort => "catch-unwind-abort",
             Rule::ShellSpecialEnv => "shell-special-env",
             Rule::DepthGuard => "depth-guard",
+            Rule::WgslLoadBounds => "wgsl-load-bounds",
             Rule::BooleanArg => "boolean-arg",
             Rule::TypedRegisters => "typed-registers",
             Rule::NtdllOwnCrt => "ntdll-own-crt",
@@ -174,6 +177,7 @@ impl Rule {
             Rule::CatchUnwindAbort => "sake.wasm is built with panic=abort, so catch_unwind in a crate it links never catches (82cdd0d0: naga's GLSL panic ended the game through a catch_unwind; review 2026-11-14 P1-7): return a Result, or check the input before the call",
             Rule::ShellSpecialEnv => "a workflow's env or a script does not set one of bash's own variables (bench.yml's inputs went through GROUPS: a script's GROUPS=.. is dropped, RANDOM/SECONDS/LINENO are replaced, whether an env value gets in depends on the variable and the bash version): give it a name of its own",
             Rule::DepthGuard => "the depth limits on recursion over game and file input stay (regress::DEPTH_GUARDS; review b00/b04/b07: damaged traces, MSI conditions, shaders, .x files nesting without end blew the stack): keep the const and the check against it; a new limit is added to the list",
+            Rule::WgslLoadBounds => "a texel fetch outside its texture is 0 in Direct3D (2026-11-21: ld gave WGSL's texel there): dxwgsl writes textureLoad only as select(zero, textureLoad(..), address in bounds), on one line",
             Rule::BooleanArg => "a BOOLEAN parameter is its low byte (2026-11-20, RtlAnsiStringToUnicodeString read c.a(2) != 0): read it with c.boolean(i); win32.rs BOOLEAN_ARGS lists them",
             Rule::TypedRegisters => "koji's registers are named, not numbered (2026-11-20, Farcall comparison): Cpu::regs/hi are Gprs indexed by Gpr (EAX..EDI), sreg/sbase Segs indexed by Seg, Cpu::gpr takes a Reg64; write the register's name (koji::EBX, Seg::Ss, Reg64::R8), not Gpr::ALL[3] or values()[3], and give Gprs/Segs no index, conversion or public field that takes a number",
             Rule::Utf8OneDecoder => "sake decodes UTF-8 by one rule, Windows' (RtlUTF8ToUnicodeN: a wrong second byte is swallowed with its lead into one U+FFFD, not Unicode's maximal subparts; 2026-11-21, MultiByteToWideChar had its own): only rtlstr.rs splits bytes with utf8_chunks; elsewhere call crate::rtlstr::utf8_units",
@@ -219,6 +223,7 @@ impl Rule {
             Rule::CatchUnwindAbort => regress::catch_unwind_abort(tree),
             Rule::ShellSpecialEnv => regress::shell_special_env(tree),
             Rule::DepthGuard => regress::depth_guard(tree),
+            Rule::WgslLoadBounds => regress::wgsl_load_bounds(tree),
             Rule::BooleanArg => crate::win32::boolean_arg(tree),
             Rule::TypedRegisters => typed_registers(tree),
             Rule::NtdllOwnCrt => crate::win32::ntdll_own_crt(tree),

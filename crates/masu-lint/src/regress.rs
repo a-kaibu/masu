@@ -155,6 +155,27 @@ pub(super) fn depth_guard(tree: &Tree) -> Hits {
     out
 }
 
+// --- wgsl-load-bounds ------------------------------------------------------------------------
+
+/// The WGSL dxwgsl writes reads a texel with textureLoad only beside the test of its address:
+/// `select(zero, textureLoad(..), in bounds)` in one expression (2026-11-21, ld returned
+/// WGSL's texel of an address outside the texture, where Direct3D returns 0). A line of
+/// product code under crates/dxwgsl/src that writes `textureLoad(` and no `select(`.
+pub(super) fn wgsl_load_bounds(tree: &Tree) -> Hits {
+    let files = tree.rs(&["crates/dxwgsl/src/"]);
+    let tests = test_mod_files(tree, &files);
+    let mut out = Hits::new();
+    for f in files.into_iter().filter(|f| !tests.contains(f)) {
+        for (n, l) in tree.text(&f).lines().enumerate() {
+            let code = l.split("//").next().unwrap_or_default();
+            if code.contains("textureLoad(") && !code.contains("select(") {
+                out.push((f.clone(), n.saturating_add(1), "textureLoad outside select(zero, .., in bounds)".to_owned()));
+            }
+        }
+    }
+    out
+}
+
 /// (for the tests: every regex here compiles)
 #[cfg(test)]
 pub(super) fn regexes() -> [&'static LazyLock<Option<Regex>>; 4] {

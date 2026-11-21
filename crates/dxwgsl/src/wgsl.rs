@@ -1142,10 +1142,14 @@ impl W {
         self.vec4_result(i, format!("{f}({})", args.join(", ")), if depth { K::F } else { k }, swz)
     }
 
+    /// ld / ld2dms: a texel by its integer address, 0 in every component outside the resource
+    /// (an address past its size at that level, a level past its levels, a slice past its
+    /// slices, a sample past its samples: D3D11 functional spec 7.12, out-of-bounds fetches
+    /// return 0; WGSL's textureLoad there is any texel or 0)
     fn load(&mut self, i: &Inst) -> R<()> {
-        let (t, dim, k, depth) = self.texture(&i.ops[2])?;
-        let swz = i.ops[2].swizzle();
-        let o = &i.ops[1];
+        let (t, dim, k, depth) = self.texture(i.op(2)?)?;
+        let swz = i.op(2)?.swizzle();
+        let o = i.op(1)?;
         let off = i.offset;
         let add = |e: String, n: usize| -> String {
             if off == [0; 3] {
@@ -1153,34 +1157,67 @@ impl W {
             } else if n == 1 {
                 format!("({e} + {})", off[0])
             } else {
-                format!("({e} + vec{n}<i32>({}))", off[..n].iter().map(|v| v.to_string()).collect::<Vec<_>>().join(", "))
+                format!("({e} + vec{n}<i32>({}))", off.iter().take(n).map(|v| v.to_string()).collect::<Vec<_>>().join(", "))
             }
         };
-        // ld2dms: the sample index instead of a level (WebGPU has no multisampled arrays: the
-        // page binds those single-sampled, see texture_type)
-        if i.op == Opcode::LdMs {
-            if !matches!(dim, 4 | 9) {
-                return Err(format!("ld2dms from resource dimension {dim}"));
-            }
-            let si = self.src(&i.ops[3], K::I, &[0])?;
-            let call = format!("textureLoad(t{t}, {}, {si})", add(self.src(o, K::I, &[0, 1])?, 2));
-            let e = if depth { format!("vec4<f32>({call}, 0.0f, 0.0f, 1.0f)") } else { call };
-            return self.vec4_result(i, e, if depth { K::F } else { k }, swz);
+        // (address, its components, level, slice, sample)
+        let (addr, n, level, slice, sample) = match dim {
+            1 => (format!("vec2<i32>({}, 0)", self.src(o, K::I, &[0])?), 2, None, None, None),
+            // (1D: a row of a 2D texture; the level is in w for every dimension)
+            2 => (format!("vec2<i32>({}, 0)", add(self.src(o, K::I, &[0])?, 1)), 2, Some(self.src(o, K::I, &[3])?), None, None),
+            7 => (format!("vec2<i32>({}, 0)", add(self.src(o, K::I, &[0])?, 1)), 2, Some(self.src(o, K::I, &[3])?), Some(self.src(o, K::I, &[1])?), None),
+            3 => (add(self.src(o, K::I, &[0, 1])?, 2), 2, Some(self.src(o, K::I, &[3])?), None, None),
+            8 => (add(self.src(o, K::I, &[0, 1])?, 2), 2, Some(self.src(o, K::I, &[3])?), Some(self.src(o, K::I, &[2])?), None),
+            5 => (add(self.src(o, K::I, &[0, 1, 2])?, 3), 3, Some(self.src(o, K::I, &[3])?), None, None),
+            // ld2dms: the sample index instead of a level (WebGPU has no multisampled arrays: the
+            // page binds those single-sampled, see texture_type)
+            4 | 9 if i.op == Opcode::LdMs => (add(self.src(o, K::I, &[0, 1])?, 2), 2, None, None, Some(self.src(i.op(3)?, K::I, &[0])?)),
+            d => return Err(format!("{:?} from resource dimension {d}", i.op)),
+        };
+        if i.op == Opcode::LdMs && sample.is_none() {
+            return Err(format!("ld2dms from resource dimension {dim}"));
         }
-        let mip = self.src(o, K::I, &[3])?;
-        let args = match dim {
-            1 => format!("vec2<i32>({}, 0), 0", self.src(o, K::I, &[0])?),
-            // (the level is in w for every dimension)
-            2 => format!("vec2<i32>({}, 0), {mip}", add(self.src(o, K::I, &[0])?, 1)),
-            7 => format!("vec2<i32>({}, 0), {}, {mip}", add(self.src(o, K::I, &[0])?, 1), self.src(o, K::I, &[1])?),
-            3 => format!("{}, {mip}", add(self.src(o, K::I, &[0, 1])?, 2)),
-            8 => format!("{}, {}, {mip}", add(self.src(o, K::I, &[0, 1])?, 2), self.src(o, K::I, &[2])?),
-            5 => format!("{}, {mip}", add(self.src(o, K::I, &[0, 1, 2])?, 3)),
-            d => return Err(format!("ld from resource dimension {d}")),
+        let a = self.fresh();
+        self.line(&format!("let {a} = {addr};"));
+        let mut ok = Vec::new();
+        let mut args = vec![a.clone()];
+        let lv = match &level {
+            Some(l) => {
+                let lv = self.fresh();
+                self.line(&format!("let {lv} = {l};"));
+                ok.push(format!("bitcast<u32>({lv}) < textureNumLevels(t{t})"));
+                Some(lv)
+            }
+            None => None,
         };
-        let call = format!("textureLoad(t{t}, {args})");
-        let e = if depth { format!("vec4<f32>({call}, 0.0f, 0.0f, 1.0f)") } else { call };
-        self.vec4_result(i, e, if depth { K::F } else { k }, swz)
+        let at = match (&lv, &sample) {
+            (Some(lv), _) => format!("textureDimensions(t{t}, {lv})"),
+            (None, Some(_)) => format!("textureDimensions(t{t})"),
+            (None, None) => format!("textureDimensions(t{t}, 0)"),
+        };
+        ok.insert(0, format!("all(bitcast<vec{n}<u32>>({a}) < {at})"));
+        if let Some(sl) = slice {
+            let v = self.fresh();
+            self.line(&format!("let {v} = {sl};"));
+            ok.push(format!("bitcast<u32>({v}) < textureNumLayers(t{t})"));
+            args.push(v);
+        }
+        match (lv, sample) {
+            (Some(lv), _) => args.push(lv),
+            (None, Some(si)) => {
+                let v = self.fresh();
+                self.line(&format!("let {v} = {si};"));
+                ok.push(format!("bitcast<u32>({v}) < textureNumSamples(t{t})"));
+                args.push(v);
+            }
+            (None, None) => args.push("0".into()),
+        }
+        let (args, ok) = (args.join(", "), ok.join(" && "));
+        if depth {
+            self.vec4_result(i, format!("select(vec4<f32>(), vec4<f32>(textureLoad(t{t}, {args}), 0.0f, 0.0f, 1.0f), {ok})"), K::F, swz)
+        } else {
+            self.vec4_result(i, format!("select(vec4<{}>(), textureLoad(t{t}, {args}), {ok})", k.s()), k, swz)
+        }
     }
 
     /// sampleinfo: the resource's sample count in x (a rasterizer operand: 1, what the shader
