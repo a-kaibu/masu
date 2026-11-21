@@ -28,6 +28,13 @@ pub enum RegF {
     G(u32),
     /// a geometry shader's input: v[vertex][register]
     GsInput(u32, u32),
+    /// a hull or domain shader's input control point: vicp[point][register]
+    Icp(u32, u32),
+    /// a hull shader's output control point (read by its patch constant phase):
+    /// vocp[point][register]
+    Ocp(u32, u32),
+    /// a domain shader's patch constant input: vpc[register]
+    Pc(u32),
 }
 
 /// One component of a four-component register: no value outside x..w can be named.
@@ -249,6 +256,127 @@ pub enum SysVal {
     /// (in the signature only; declared as a plain output)
     Target,
     Depth,
+    /// SV_TessFactor / SV_InsideTessFactor of a patch: which one
+    Tess(TessFactor),
+}
+
+/// A tess factor of a patch constant signature: D3D_NAME FINAL_*_TESSFACTOR in the signature,
+/// D3D10_SB_NAME FINAL_*_TESSFACTOR (each edge its own) in the declarations.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum TessFactor {
+    /// SV_TessFactor[i] of a quad: the U == 0, V == 0, U == 1, V == 1 edges
+    QuadEdge(QuadEdge),
+    /// SV_InsideTessFactor[0] (U), [1] (V) of a quad
+    QuadInsideU,
+    QuadInsideV,
+    /// SV_TessFactor[i] of a tri: the U == 0, V == 0, W == 0 edges
+    TriEdge(TriEdge),
+    TriInside,
+    /// SV_TessFactor[0] of an isoline: the line detail
+    LineDetail,
+    /// SV_TessFactor[1] of an isoline: the line density
+    LineDensity,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum QuadEdge {
+    U0,
+    V0,
+    U1,
+    V1,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum TriEdge {
+    U0,
+    V0,
+    W0,
+}
+
+/// D3D11_SB_TESSELLATOR_DOMAIN (dcl_tessellator_domain): 1 isoline, 2 tri, 3 quad
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum TessDomain {
+    Isoline,
+    Tri,
+    Quad,
+}
+
+impl TessDomain {
+    pub fn of_name(s: &str) -> Option<TessDomain> {
+        Some(match s {
+            "isoline" => TessDomain::Isoline,
+            "tri" => TessDomain::Tri,
+            "quad" => TessDomain::Quad,
+            _ => return None,
+        })
+    }
+    pub fn code(self) -> u32 {
+        match self {
+            TessDomain::Isoline => 1,
+            TessDomain::Tri => 2,
+            TessDomain::Quad => 3,
+        }
+    }
+    /// SV_TessFactor's elements, SV_InsideTessFactor's
+    pub fn factors(self) -> (u32, u32) {
+        match self {
+            TessDomain::Isoline => (2, 0),
+            TessDomain::Tri => (3, 1),
+            TessDomain::Quad => (4, 2),
+        }
+    }
+    /// The tess factor SV_TessFactor[index] (`inside`: SV_InsideTessFactor[index]) is; None past
+    /// the domain's.
+    pub fn factor(self, inside: bool, index: u32) -> Option<TessFactor> {
+        Some(match (self, inside, index) {
+            (TessDomain::Quad, false, 0) => TessFactor::QuadEdge(QuadEdge::U0),
+            (TessDomain::Quad, false, 1) => TessFactor::QuadEdge(QuadEdge::V0),
+            (TessDomain::Quad, false, 2) => TessFactor::QuadEdge(QuadEdge::U1),
+            (TessDomain::Quad, false, 3) => TessFactor::QuadEdge(QuadEdge::V1),
+            (TessDomain::Quad, true, 0) => TessFactor::QuadInsideU,
+            (TessDomain::Quad, true, 1) => TessFactor::QuadInsideV,
+            (TessDomain::Tri, false, 0) => TessFactor::TriEdge(TriEdge::U0),
+            (TessDomain::Tri, false, 1) => TessFactor::TriEdge(TriEdge::V0),
+            (TessDomain::Tri, false, 2) => TessFactor::TriEdge(TriEdge::W0),
+            (TessDomain::Tri, true, 0) => TessFactor::TriInside,
+            // (density, the count of lines, first: fxc's LINEDEN / LINEDET, what Vulkan
+            // translators map to TessLevelOuter[0] / [1])
+            (TessDomain::Isoline, false, 0) => TessFactor::LineDensity,
+            (TessDomain::Isoline, false, 1) => TessFactor::LineDetail,
+            _ => return None,
+        })
+    }
+}
+
+impl TessFactor {
+    /// D3D_NAME (signatures)
+    pub fn code(self) -> u32 {
+        match self {
+            TessFactor::QuadEdge(_) => 11,
+            TessFactor::QuadInsideU | TessFactor::QuadInsideV => 12,
+            TessFactor::TriEdge(_) => 13,
+            TessFactor::TriInside => 14,
+            TessFactor::LineDetail => 15,
+            TessFactor::LineDensity => 16,
+        }
+    }
+    /// D3D10_SB_NAME (dcl_output_siv, dcl_input_siv)
+    pub fn sb_code(self) -> u32 {
+        match self {
+            TessFactor::QuadEdge(QuadEdge::U0) => 11,
+            TessFactor::QuadEdge(QuadEdge::V0) => 12,
+            TessFactor::QuadEdge(QuadEdge::U1) => 13,
+            TessFactor::QuadEdge(QuadEdge::V1) => 14,
+            TessFactor::QuadInsideU => 15,
+            TessFactor::QuadInsideV => 16,
+            TessFactor::TriEdge(TriEdge::U0) => 17,
+            TessFactor::TriEdge(TriEdge::V0) => 18,
+            TessFactor::TriEdge(TriEdge::W0) => 19,
+            TessFactor::TriInside => 20,
+            TessFactor::LineDetail => 21,
+            TessFactor::LineDensity => 22,
+        }
+    }
 }
 
 impl SysVal {
@@ -265,6 +393,16 @@ impl SysVal {
             SysVal::SampleIndex => 10,
             SysVal::Target => 64,
             SysVal::Depth => 65,
+            SysVal::Tess(t) => t.code(),
+        }
+    }
+    /// the D3D10_SB_NAME a declaration gives (the D3D_NAME but for tess factors: each edge its
+    /// own)
+    pub fn sb_code(self) -> u32 {
+        match self {
+            SysVal::Tess(t) => t.sb_code(),
+            SysVal::Undefined | SysVal::Position | SysVal::ClipDistance | SysVal::VertexId | SysVal::PrimitiveId | SysVal::InstanceId
+            | SysVal::IsFrontFace | SysVal::SampleIndex | SysVal::Target | SysVal::Depth => self.code(),
         }
     }
     /// declared with a dcl_*_siv/sgv (not Target and Depth, which are plain outputs)
@@ -272,7 +410,7 @@ impl SysVal {
         match self {
             SysVal::Undefined | SysVal::Target | SysVal::Depth => false,
             SysVal::Position | SysVal::ClipDistance | SysVal::VertexId | SysVal::PrimitiveId
-            | SysVal::InstanceId | SysVal::IsFrontFace | SysVal::SampleIndex => true,
+            | SysVal::InstanceId | SysVal::IsFrontFace | SysVal::SampleIndex | SysVal::Tess(_) => true,
         }
     }
 }
@@ -349,6 +487,98 @@ pub struct Gs {
     pub instances: u32,
     /// each stream's D3D10_SB_PRIMITIVE_TOPOLOGY (1 point list, 3 line strip, 5 triangle strip)
     pub streams: Vec<u32>,
+}
+
+/// D3D11_SB_TESSELLATOR_PARTITIONING: 1 integer, 2 pow2, 3 fractional_odd, 4 fractional_even
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Partitioning {
+    Integer,
+    Pow2,
+    FractionalOdd,
+    FractionalEven,
+}
+
+impl Partitioning {
+    pub fn of_name(s: &str) -> Option<Partitioning> {
+        Some(match s {
+            "integer" => Partitioning::Integer,
+            "pow2" => Partitioning::Pow2,
+            "fractional_odd" => Partitioning::FractionalOdd,
+            "fractional_even" => Partitioning::FractionalEven,
+            _ => return None,
+        })
+    }
+    pub fn code(self) -> u32 {
+        match self {
+            Partitioning::Integer => 1,
+            Partitioning::Pow2 => 2,
+            Partitioning::FractionalOdd => 3,
+            Partitioning::FractionalEven => 4,
+        }
+    }
+}
+
+/// D3D11_SB_TESSELLATOR_OUTPUT_PRIMITIVE: 1 point, 2 line, 3 triangle_cw, 4 triangle_ccw
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum TessOutput {
+    Point,
+    Line,
+    TriangleCw,
+    TriangleCcw,
+}
+
+impl TessOutput {
+    pub fn of_name(s: &str) -> Option<TessOutput> {
+        Some(match s {
+            "point" => TessOutput::Point,
+            "line" => TessOutput::Line,
+            "triangle_cw" => TessOutput::TriangleCw,
+            "triangle_ccw" => TessOutput::TriangleCcw,
+            _ => return None,
+        })
+    }
+    pub fn code(self) -> u32 {
+        match self {
+            TessOutput::Point => 1,
+            TessOutput::Line => 2,
+            TessOutput::TriangleCw => 3,
+            TessOutput::TriangleCcw => 4,
+        }
+    }
+}
+
+/// A hull shader: its declarations, the patch constants it writes, and its two phases (the
+/// control point phase, then the patch constant function as one fork phase of one instance).
+#[derive(Clone, Debug)]
+pub struct Hs {
+    pub domain: TessDomain,
+    pub partitioning: Partitioning,
+    pub output: TessOutput,
+    /// InputPatch<T, n>'s n, [outputcontrolpoints(n)]'s
+    pub in_cps: u32,
+    pub out_cps: u32,
+    /// [maxtessfactor(f)]
+    pub max_tess: Option<f32>,
+    /// the instruction the fork phase starts at
+    pub fork_at: usize,
+    /// each phase's system inputs (register type, mask): the control point phase's, the fork
+    /// phase's
+    pub cp_sys: Vec<(OpType, u8)>,
+    pub fork_sys: Vec<(OpType, u8)>,
+    /// the fork phase reads the input control points (vicp), the output ones (vocp)
+    pub fork_icp: bool,
+    pub fork_ocp: bool,
+    /// the patch constants (PCSG): o registers of the fork phase
+    pub patch: Vec<SigEl>,
+}
+
+/// A domain shader's declarations and its patch constant inputs (PCSG: vpc registers).
+#[derive(Clone, Debug)]
+pub struct Ds {
+    pub domain: TessDomain,
+    /// OutputPatch<T, n>'s n (0 without one)
+    pub cps: u32,
+    pub patch: Vec<SigEl>,
 }
 
 /// What a t or u register is a view of.
@@ -463,6 +693,8 @@ pub struct Shader {
     pub d3d10: bool,
     /// a geometry shader's declarations
     pub gs: Option<Gs>,
+    pub hs: Option<Hs>,
+    pub ds: Option<Ds>,
 }
 
 // ---- register allocation ----
@@ -602,6 +834,9 @@ impl Enc<'_> {
             RegF::Uav(u) => (tpf::UAV, vec![bound(&self.s.uav_map, &self.s.uavs, u, |u| u.slot, "UAV")?]),
             RegF::G(g) => (tpf::TGSM, vec![g]),
             RegF::GsInput(v, i) => (tpf::INPUT, vec![v, i]),
+            RegF::Icp(v, i) => (tpf::INPUT_CONTROL_POINT, vec![v, i]),
+            RegF::Ocp(v, i) => (tpf::OUTPUT_CONTROL_POINT, vec![v, i]),
+            RegF::Pc(i) => (tpf::INPUT_PATCH_CONSTANT, vec![i]),
         })
     }
 
@@ -698,7 +933,7 @@ impl Enc<'_> {
             }
             RegF::Depth => self.reg(out, &d.r, 1, 0, 0, 0),
             RegF::Temp(_) | RegF::Input(_) | RegF::Output(_) | RegF::Cb(..) | RegF::Icb(_) | RegF::X(..)
-            | RegF::Sys(_) | RegF::Uav(_) | RegF::G(_) | RegF::GsInput(..) => self.reg(out, &d.r, 2, 0, u32::from(d.mask), 0),
+            | RegF::Sys(_) | RegF::Uav(_) | RegF::G(_) | RegF::GsInput(..) | RegF::Icp(..) | RegF::Ocp(..) | RegF::Pc(_) => self.reg(out, &d.r, 2, 0, u32::from(d.mask), 0),
         }
     }
 
@@ -754,10 +989,30 @@ fn program(s: &mut Shader) -> Result<Vec<u32>, String> {
         5
     } else if s.gs.is_some() {
         2
+    } else if s.hs.is_some() {
+        3
+    } else if s.ds.is_some() {
+        4
     } else {
         u32::from(!s.pixel)
     };
     let mut w = vec![kind << 16 | (s.major << 4) | s.minor, 0];
+    // (a hull shader's declarations of its own, before the phases)
+    if let Some(h) = &s.hs {
+        decl(&mut w, Opcode::HsDecls, 0, &[]);
+        decl(&mut w, Opcode::DclInputControlPointCount, h.in_cps, &[]);
+        decl(&mut w, Opcode::DclOutputControlPointCount, h.out_cps, &[]);
+        decl(&mut w, Opcode::DclTessDomain, h.domain.code(), &[]);
+        decl(&mut w, Opcode::DclTessPartitioning, h.partitioning.code(), &[]);
+        decl(&mut w, Opcode::DclTessOutputPrimitive, h.output.code(), &[]);
+        if let Some(f) = h.max_tess {
+            decl(&mut w, Opcode::DclHsMaxTessFactor, 0, &[f.to_bits()]);
+        }
+    }
+    if let Some(ds) = &s.ds {
+        decl(&mut w, Opcode::DclTessDomain, ds.domain.code(), &[]);
+        decl(&mut w, Opcode::DclInputControlPointCount, ds.cps, &[]);
+    }
     // global flags: refactoring allowed (+ early depth stencil)
     decl(&mut w, Opcode::DclGlobalFlags, 1 | (u32::from(s.early_depth) << 2), &[]);
     if !s.icb.is_empty() {
@@ -802,20 +1057,96 @@ fn program(s: &mut Shader) -> Result<Vec<u32>, String> {
     for (g, &bytes) in s.tgsm.iter().enumerate() {
         decl(&mut w, Opcode::DclTgsmRaw, 0, &[ty_bits(tpf::TGSM) | (1 << 20), kome::num::u32_of(g), bytes]);
     }
-    for &(ty, mask) in &s.sys_inputs {
-        // (vThreadIDInGroupFlattened is one component)
-        let t = if ty == tpf::THREAD_ID_IN_GROUP_FLATTENED { 1 | ty_bits(ty) } else { 2 | (u32::from(mask) << 4) | ty_bits(ty) };
-        decl(&mut w, Opcode::DclInput, 0, &[t]);
-    }
     let reg_tok = |ty: OpType, mask: u8| 2 | (u32::from(mask) << 4) | ty_bits(ty) | (1 << 20);
-    for i in &s.inputs {
+    // (a register of two indices: [count][register])
+    let reg_tok2 = |ty: OpType, mask: u8| (reg_tok(ty, mask) & !(3 << 20)) | (2 << 20);
+    let sys_decls = |w: &mut Vec<u32>, sys: &[(OpType, u8)]| {
+        for &(ty, mask) in sys {
+            // (vThreadIDInGroupFlattened, vOutputControlPointID, vForkInstanceID are one component)
+            let t = if matches!(ty, tpf::THREAD_ID_IN_GROUP_FLATTENED | tpf::OUTPUT_CONTROL_POINT_ID | tpf::INPUT_FORK_INSTANCE_ID) { 1 | ty_bits(ty) } else { 2 | (u32::from(mask) << 4) | ty_bits(ty) };
+            decl(w, Opcode::DclInput, 0, &[t]);
+        }
+    };
+    let out_decl = |w: &mut Vec<u32>, o: &SigEl| {
+        if o.depth {
+            decl(w, Opcode::DclOutput, 0, &[1 | ty_bits(tpf::OUTPUT_DEPTH)]);
+        } else if o.sysval.declared() {
+            decl(w, Opcode::DclOutputSiv, 0, &[reg_tok(tpf::OUTPUT, o.mask), o.reg, o.sysval.sb_code()]);
+        } else {
+            decl(w, Opcode::DclOutput, 0, &[reg_tok(tpf::OUTPUT, o.mask), o.reg]);
+        }
+    };
+    // (input control points: vicp[n][register], or a hull shader's output ones, vocp)
+    let cp_decls = |w: &mut Vec<u32>, ty: OpType, n: u32, els: &[SigEl]| {
+        for i in els {
+            if i.sysval == SysVal::Undefined {
+                decl(w, Opcode::DclInput, 0, &[reg_tok2(ty, i.mask), n, i.reg]);
+            } else {
+                decl(w, Opcode::DclInputSiv, 0, &[reg_tok2(ty, i.mask), n, i.reg, i.sysval.sb_code()]);
+            }
+        }
+    };
+    let temp_decls = |w: &mut Vec<u32>| {
+        if temps > 0 {
+            decl(w, Opcode::DclTemps, 0, &[temps]);
+        }
+        for (n, &size) in s.xs.iter().enumerate() {
+            decl(w, Opcode::DclIndexableTemp, 0, &[kome::num::u32_of(n), size, 4]);
+        }
+    };
+    if let Some(h) = &s.hs {
+        // the control point phase, then the patch constant function's fork phase: each with
+        // its own inputs, outputs and temps
+        let (cp, fork) = s.code.split_at(h.fork_at.min(s.code.len()));
+        decl(&mut w, Opcode::HsControlPointPhase, 0, &[]);
+        sys_decls(&mut w, &h.cp_sys);
+        cp_decls(&mut w, tpf::INPUT_CONTROL_POINT, h.in_cps, &s.inputs);
+        for o in &s.outputs {
+            out_decl(&mut w, o);
+        }
+        temp_decls(&mut w);
+        for i in cp {
+            e.ins(&mut w, i)?;
+        }
+        decl(&mut w, Opcode::HsForkPhase, 0, &[]);
+        decl(&mut w, Opcode::DclHsForkPhaseInstanceCount, 0, &[1]);
+        sys_decls(&mut w, &h.fork_sys);
+        if h.fork_icp {
+            cp_decls(&mut w, tpf::INPUT_CONTROL_POINT, h.in_cps, &s.inputs);
+        }
+        if h.fork_ocp {
+            cp_decls(&mut w, tpf::OUTPUT_CONTROL_POINT, h.out_cps, &s.outputs);
+        }
+        for o in &h.patch {
+            out_decl(&mut w, o);
+        }
+        temp_decls(&mut w);
+        for i in fork {
+            e.ins(&mut w, i)?;
+        }
+        w[1] = kome::num::u32_of(w.len());
+        return Ok(w);
+    }
+    sys_decls(&mut w, &s.sys_inputs);
+    if let Some(ds) = &s.ds {
+        cp_decls(&mut w, tpf::INPUT_CONTROL_POINT, ds.cps, &s.inputs);
+        for p in &ds.patch {
+            let t = reg_tok(tpf::INPUT_PATCH_CONSTANT, p.mask);
+            if p.sysval == SysVal::Undefined {
+                decl(&mut w, Opcode::DclInput, 0, &[t, p.reg]);
+            } else {
+                decl(&mut w, Opcode::DclInputSiv, 0, &[t, p.reg, p.sysval.sb_code()]);
+            }
+        }
+    }
+    for i in s.inputs.iter().filter(|_| s.ds.is_none()) {
         let t = reg_tok(tpf::INPUT, i.mask);
         if s.pixel {
             match i.sysval {
                 SysVal::Undefined => decl(&mut w, Opcode::DclInputPs, i.interp.code(), &[t, i.reg]),
                 SysVal::Position => decl(&mut w, Opcode::DclInputPsSiv, i.interp.code(), &[t, i.reg, 1]),
                 v @ (SysVal::ClipDistance | SysVal::VertexId | SysVal::PrimitiveId | SysVal::InstanceId
-                     | SysVal::IsFrontFace | SysVal::SampleIndex | SysVal::Target | SysVal::Depth) => {
+                     | SysVal::IsFrontFace | SysVal::SampleIndex | SysVal::Target | SysVal::Depth | SysVal::Tess(_)) => {
                     decl(&mut w, Opcode::DclInputPsSgv, 1, &[t, i.reg, v.code()]);
                 }
             }
@@ -837,15 +1168,6 @@ fn program(s: &mut Shader) -> Result<Vec<u32>, String> {
     if let Some(g) = &s.gs {
         decl(&mut w, Opcode::DclGsInputPrimitive, g.input, &[]);
     }
-    let out_decl = |w: &mut Vec<u32>, o: &SigEl| {
-        if o.depth {
-            decl(w, Opcode::DclOutput, 0, &[1 | ty_bits(tpf::OUTPUT_DEPTH)]);
-        } else if o.sysval.declared() {
-            decl(w, Opcode::DclOutputSiv, 0, &[reg_tok(tpf::OUTPUT, o.mask), o.reg, o.sysval.code()]);
-        } else {
-            decl(w, Opcode::DclOutput, 0, &[reg_tok(tpf::OUTPUT, o.mask), o.reg]);
-        }
-    };
     match &s.gs {
         // (each stream: dcl_stream m<k> (shader model 5), its topology, then its outputs)
         Some(g) => {
@@ -869,12 +1191,7 @@ fn program(s: &mut Shader) -> Result<Vec<u32>, String> {
             }
         }
     }
-    if temps > 0 {
-        decl(&mut w, Opcode::DclTemps, 0, &[temps]);
-    }
-    for (n, &size) in s.xs.iter().enumerate() {
-        decl(&mut w, Opcode::DclIndexableTemp, 0, &[kome::num::u32_of(n), size, 4]);
-    }
+    temp_decls(&mut w);
     if let Some([x, y, z]) = s.threads {
         decl(&mut w, Opcode::DclThreadGroup, 0, &[x, y, z]);
     }
@@ -1108,8 +1425,20 @@ fn rdef(s: &Shader) -> Vec<u8> {
     set32(&mut b, 4, kome::num::u32_of(cb_at));
     set32(&mut b, 8, kome::num::u32_of(binds.len()));
     set32(&mut b, 12, kome::num::u32_of(bind_at));
-    // (D3D11_SHVER: CS 0x4353, GS 0x4753, PS 0xffff, VS 0xfffe)
-    let kind = if s.threads.is_some() { 0x4353 } else if s.gs.is_some() { 0x4753 } else if s.pixel { 0xffff } else { 0xfffe };
+    // (D3D11_SHVER: CS 0x4353, GS 0x4753, HS 0x4853, DS 0x4453, PS 0xffff, VS 0xfffe)
+    let kind = if s.threads.is_some() {
+        0x4353
+    } else if s.gs.is_some() {
+        0x4753
+    } else if s.hs.is_some() {
+        0x4853
+    } else if s.ds.is_some() {
+        0x4453
+    } else if s.pixel {
+        0xffff
+    } else {
+        0xfffe
+    };
     set32(&mut b, 16, (kind << 16) | (s.major << 8) | s.minor);
     set32(&mut b, 20, 0x100);
     set32(&mut b, 24, creator);
@@ -1129,13 +1458,20 @@ fn rdef(s: &Shader) -> Vec<u8> {
 pub fn finish(mut s: Shader) -> Result<Vec<u8>, String> {
     let prog = program(&mut s)?;
     let shdr: Vec<u8> = prog.iter().flat_map(|w| w.to_le_bytes()).collect();
-    let chunks: Vec<([u8; 4], Vec<u8>)> = vec![
+    let mut chunks: Vec<([u8; 4], Vec<u8>)> = vec![
         (*b"RDEF", rdef(&s)),
         (*b"ISGN", signature(&s.inputs, false, s.d3d10)),
         // (a shader model 5 geometry shader's outputs name their stream: OSG5)
         if s.gs.is_some() && s.major >= 5 { (*b"OSG5", signature5(&s.outputs)) } else { (*b"OSGN", signature(&s.outputs, true, s.d3d10)) },
-        (if s.major >= 5 { *b"SHEX" } else { *b"SHDR" }, shdr),
     ];
+    // (the patch constants: a hull shader's outputs, a domain shader's inputs)
+    if let Some(h) = &s.hs {
+        chunks.push((*b"PCSG", signature(&h.patch, true, false)));
+    }
+    if let Some(d) = &s.ds {
+        chunks.insert(2, (*b"PCSG", signature(&d.patch, false, false)));
+    }
+    chunks.push((if s.major >= 5 { *b"SHEX" } else { *b"SHDR" }, shdr));
     Ok(container(&chunks))
 }
 

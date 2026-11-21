@@ -106,16 +106,32 @@ impl Val {
 }
 
 pub struct Opts {
-    pub pixel: bool,
-    /// a compute shader (cs_5_0, cs_4_x)
-    pub compute: bool,
-    /// a geometry shader (gs_4_0, gs_4_1, gs_5_0)
-    pub geometry: bool,
+    pub stage: crate::Stage,
     pub major: u32,
     pub minor: u32,
     pub row_major: bool,
     /// D3DCOMPILE_IEEE_STRICTNESS: without it isnan() is false, as fxc folds it
     pub ieee: bool,
+}
+
+impl Opts {
+    pub fn pixel(&self) -> bool {
+        self.stage == crate::Stage::Pixel
+    }
+    /// a compute shader (cs_5_0, cs_4_x)
+    pub fn compute(&self) -> bool {
+        self.stage == crate::Stage::Compute
+    }
+    /// a geometry shader (gs_4_0, gs_4_1, gs_5_0)
+    pub fn geometry(&self) -> bool {
+        self.stage == crate::Stage::Geometry
+    }
+    pub fn hull(&self) -> bool {
+        self.stage == crate::Stage::Hull
+    }
+    pub fn domain(&self) -> bool {
+        self.stage == crate::Stage::Domain
+    }
 }
 
 struct TexD {
@@ -209,6 +225,27 @@ pub struct L<'a> {
     streams: Vec<GsStream>,
     /// the stream whose output signature is being made
     cur_stream: u32,
+    /// a hull shader's declarations (its fork phase's start set when the control point phase
+    /// ends), a domain shader's
+    hs: Option<sm4::Hs>,
+    ds: Option<sm4::Ds>,
+    /// the patch domain of a hull or domain shader ([domain(...)]): its tess factors' names
+    tess_domain: Option<sm4::TessDomain>,
+    /// the patch constants (PCSG): a hull shader's fork phase outputs, a domain shader's inputs
+    patch: Vec<SigEl>,
+    /// sig() makes patch constants (into `patch`), or input control points' elements (a patch
+    /// parameter's element type)
+    sig_patch: bool,
+    sig_cp: bool,
+    /// a hull shader's patch constant function is being lowered (its fork phase)
+    in_pcf: bool,
+    /// a hull shader's control points: the input ones (element type, one point's registers),
+    /// the control point phase's outputs
+    icp: Option<(Ty, Vec<C>)>,
+    ocp: Option<(Ty, Vec<C>)>,
+    /// the statics' storage, types and initializers (a hull shader's fork phase sets them
+    /// again: its temps are its own)
+    static_inits: Vec<(Vec<C>, Ty, Option<Expr>)>,
 }
 
 /// A geometry shader's output stream: what Append writes and where.
@@ -587,6 +624,16 @@ impl<'a> L<'a> {
             gs: None,
             streams: Vec::new(),
             cur_stream: 0,
+            hs: None,
+            ds: None,
+            tess_domain: None,
+            patch: Vec::new(),
+            sig_patch: false,
+            sig_cp: false,
+            in_pcf: false,
+            icp: None,
+            ocp: None,
+            static_inits: Vec::new(),
         }
     }
 
@@ -1469,7 +1516,7 @@ impl<'a> L<'a> {
             if v.ty().is_object() {
                 self.add_object(v)?;
             } else if v.shared {
-                if !self.o.compute {
+                if !self.o.compute() {
                     return Err(format!("line {}: groupshared outside a compute shader", v.line));
                 }
                 if v.init.is_some() {
@@ -1537,6 +1584,7 @@ impl<'a> L<'a> {
                 None => vec![C::I(0); s.len()],
             };
             self.assign(&s, &init);
+            self.static_inits.push((s.clone(), t.clone(), v.init.clone()));
             self.globals.insert(v.name.clone(), Val::num(t, s));
         }
         Ok(())
@@ -1561,8 +1609,8 @@ impl<'a> L<'a> {
         let up = name0.to_ascii_uppercase();
         // (a geometry shader's primitive id and instance: vPrim, vGSInstanceID)
         let gs_sys = match up.as_str() {
-            "SV_PRIMITIVEID" if self.o.geometry && !output => Some(dxwgsl::tpf::INPUT_PRIMITIVEID),
-            "SV_GSINSTANCEID" if self.o.geometry && !output && self.o.major >= 5 => Some(dxwgsl::tpf::INPUT_GS_INSTANCE_ID),
+            "SV_PRIMITIVEID" if self.o.geometry() && !output => Some(dxwgsl::tpf::INPUT_PRIMITIVEID),
+            "SV_GSINSTANCEID" if self.o.geometry() && !output && self.o.major >= 5 => Some(dxwgsl::tpf::INPUT_GS_INSTANCE_ID),
             _ => None,
         };
         if let Some(ty) = gs_sys {
@@ -1575,7 +1623,35 @@ impl<'a> L<'a> {
             out.push(C::R(Reg { f: RegF::Sys(ty), rel: None }, Lane::X));
             return Ok(());
         }
-        if self.o.compute {
+        // (a hull or domain shader's system inputs: vOutputControlPointID, vPrim, vDomain)
+        let tess_sys = match up.as_str() {
+            "SV_OUTPUTCONTROLPOINTID" if self.o.hull() && !output && !self.in_pcf => Some((dxwgsl::tpf::OUTPUT_CONTROL_POINT_ID, 1)),
+            "SV_PRIMITIVEID" if (self.o.hull() || self.o.domain()) && !output => Some((dxwgsl::tpf::INPUT_PRIMITIVEID, 1)),
+            "SV_DOMAINLOCATION" if self.o.domain() && !output => Some((dxwgsl::tpf::INPUT_DOMAIN_POINT, if self.tess_domain == Some(sm4::TessDomain::Tri) { 3 } else { 2 })),
+            _ => None,
+        };
+        if let Some((ty, n)) = tess_sys {
+            let float = ty == dxwgsl::tpf::INPUT_DOMAIN_POINT;
+            if t.comps() != n || !t.numeric() || (t.base() == B::Float) != float {
+                return Err(format!("{sem} of type {t:?}"));
+            }
+            let mask = Lane::mask(n);
+            match self.sys_inputs.iter_mut().find(|s| s.0 == ty) {
+                Some(s) => s.1 |= mask,
+                None => self.sys_inputs.push((ty, mask)),
+            }
+            for c in Lane::first(n) {
+                out.push(C::R(Reg { f: RegF::Sys(ty), rel: None }, c));
+            }
+            return Ok(());
+        }
+        if up == "SV_TESSFACTOR" || up == "SV_INSIDETESSFACTOR" {
+            return self.tess_factor_sig(t, up == "SV_INSIDETESSFACTOR", index, output, out);
+        }
+        if self.o.hull() && !output && !self.sig_cp {
+            return Err(format!("semantic {sem}: a hull shader's inputs are its InputPatch, OutputPatch and system values"));
+        }
+        if self.o.compute() {
             let ty = match up.as_str() {
                 "SV_DISPATCHTHREADID" => dxwgsl::tpf::THREAD_ID,
                 "SV_GROUPID" => dxwgsl::tpf::THREAD_GROUP_ID,
@@ -1602,7 +1678,7 @@ impl<'a> L<'a> {
             return Ok(());
         }
         // (8 render targets, 4 in shader model 2/3; 32 input/output registers)
-        let max = if matches!(up.as_str(), "SV_TARGET" | "COLOR") && pixel_out(self.o.pixel, output) {
+        let max = if matches!(up.as_str(), "SV_TARGET" | "COLOR") && pixel_out(self.o.pixel(), output) {
             if self.sm3() { 4 } else { 8 }
         } else {
             32
@@ -1610,7 +1686,7 @@ impl<'a> L<'a> {
         if index >= max {
             return Err(format!("semantic {sem}: index out of range"));
         }
-        let pixel = self.o.pixel;
+        let pixel = self.o.pixel();
         // shader model 2/3 names (backward compatibility)
         let (name, sysval) = match (up.as_str(), pixel, output) {
             // (shader model 2/3 pixel shaders: POSITION is not VPOS, not readable)
@@ -1645,9 +1721,15 @@ impl<'a> L<'a> {
         let b = bases.first().copied().unwrap_or(B::Float);
         let mut k = 0;
         // (a geometry shader's streams each number their outputs from o0)
-        let stream = if output && self.o.geometry { self.cur_stream } else { 0 };
+        let stream = if output && self.o.geometry() { self.cur_stream } else { 0 };
         for n in u {
-            let list = if output { &mut self.outputs } else { &mut self.inputs };
+            let list = if self.sig_patch {
+                &mut self.patch
+            } else if output {
+                &mut self.outputs
+            } else {
+                &mut self.inputs
+            };
             let depth = name == "SV_Depth";
             let reg = if name == "SV_Target" {
                 index
@@ -1678,6 +1760,8 @@ impl<'a> L<'a> {
                 RegF::Depth
             } else if output {
                 RegF::Output(reg)
+            } else if self.sig_patch {
+                RegF::Pc(reg)
             } else {
                 RegF::Input(reg)
             };
@@ -1688,6 +1772,263 @@ impl<'a> L<'a> {
             index += 1;
         }
         let _ = k;
+        Ok(())
+    }
+
+    /// SV_TessFactor (`inside` false) or SV_InsideTessFactor elements from `index` of type `t`
+    /// (a float, or an array of them: one register each, .x): patch constants, each its own
+    /// tess factor of the patch's domain.
+    fn tess_factor_sig(&mut self, t: &Ty, inside: bool, index: u32, output: bool, out: &mut Vec<C>) -> R<()> {
+        let name = if inside { "SV_InsideTessFactor" } else { "SV_TessFactor" };
+        if !self.sig_patch {
+            return Err(format!("{name} outside the patch constants (a hull shader's patch constant function, a domain shader's input)"));
+        }
+        let Some(d) = self.tess_domain else { return Err(format!("{name} without [domain(...)]")) };
+        let mut u = Vec::new();
+        units(self.prog, t, &mut u);
+        let mut bases = Vec::new();
+        leaf_bases(self.prog, t, &mut bases);
+        if u.is_empty() || u.iter().any(|&n| n != 1) || bases.iter().any(|&b| b != B::Float) {
+            return Err(format!("{name} of type {t:?}: a float or an array of floats"));
+        }
+        let (edges, insides) = d.factors();
+        for i in (index..).take(u.len()) {
+            let f = d.factor(inside, i).ok_or_else(|| format!("{name}[{i}]: a {d:?} patch has {} of them", if inside { insides } else { edges }))?;
+            if self.patch.iter().any(|e| e.sysval == SysVal::Tess(f)) {
+                return Err(format!("{name}[{i}] twice"));
+            }
+            let reg = self.patch.iter().map(|e| e.reg.saturating_add(1)).max().unwrap_or(0);
+            if reg >= 32 {
+                return Err(format!("{name}[{i}]: past the 32 patch constant registers"));
+            }
+            self.patch.push(SigEl { name: name.into(), index: i, sysval: SysVal::Tess(f), ctype: sm4::CompType::Float, reg, mask: 1, interp: InterpMode::Undefined, depth: false, stream: 0 });
+            out.push(C::R(Reg { f: if output { RegF::Output(reg) } else { RegF::Pc(reg) }, rel: None }, Lane::X));
+        }
+        Ok(())
+    }
+
+    /// A string attribute's value ([domain("tri")]...): None without the attribute.
+    fn str_attr(f: &Func, n: &str) -> R<Option<String>> {
+        match f.attrs.iter().find(|a| a.0.eq_ignore_ascii_case(n)) {
+            None => Ok(None),
+            Some((_, a)) => match a.as_slice() {
+                [Expr::Str(s)] => Ok(Some(s.clone())),
+                _ => Err(format!("{n} takes one string")),
+            },
+        }
+    }
+
+    /// A hull shader's attributes: its declarations (the fork phase's start, the counts of the
+    /// control points their parameters say, set later), and the patch constant function's name.
+    fn hull_attrs(&mut self, f: &Func) -> R<String> {
+        let name = &f.name;
+        let need = |n: &str| -> R<String> { Self::str_attr(f, n)?.ok_or(format!("{name}: a hull shader needs [{n}(...)]")) };
+        let domain = need("domain")?;
+        let domain = sm4::TessDomain::of_name(&domain).ok_or(format!("domain(\"{domain}\"): not isoline, tri or quad"))?;
+        let part = need("partitioning")?;
+        let partitioning = sm4::Partitioning::of_name(&part).ok_or(format!("partitioning(\"{part}\"): not integer, pow2, fractional_odd or fractional_even"))?;
+        let topo = need("outputtopology")?;
+        let output = sm4::TessOutput::of_name(&topo).ok_or(format!("outputtopology(\"{topo}\"): not point, line, triangle_cw or triangle_ccw"))?;
+        // (isolines make points or lines, tris and quads points or triangles)
+        let fits = match (domain, output) {
+            (sm4::TessDomain::Isoline, sm4::TessOutput::Point | sm4::TessOutput::Line) => true,
+            (sm4::TessDomain::Isoline, sm4::TessOutput::TriangleCw | sm4::TessOutput::TriangleCcw) => false,
+            (sm4::TessDomain::Tri | sm4::TessDomain::Quad, sm4::TessOutput::Line) => false,
+            (sm4::TessDomain::Tri | sm4::TessDomain::Quad, sm4::TessOutput::Point | sm4::TessOutput::TriangleCw | sm4::TessOutput::TriangleCcw) => true,
+        };
+        if !fits {
+            return Err(format!("outputtopology(\"{topo}\") of a {domain:?} domain"));
+        }
+        let pcf = need("patchconstantfunc")?;
+        let cps = match f.attrs.iter().find(|a| a.0.eq_ignore_ascii_case("outputcontrolpoints")) {
+            None => return Err(format!("{name}: a hull shader needs [outputcontrolpoints(n)]")),
+            Some((_, a)) => match a.as_slice() {
+                [e] => super::parse::const_int(e).ok_or("outputcontrolpoints: not a constant")?,
+                _ => return Err("outputcontrolpoints takes one number".into()),
+            },
+        };
+        let out_cps = u32::try_from(cps).ok().filter(|n| *n <= 32).ok_or(format!("outputcontrolpoints({cps}) is out of range"))?;
+        let max_tess = match f.attrs.iter().find(|a| a.0.eq_ignore_ascii_case("maxtessfactor")) {
+            None => None,
+            Some((_, a)) => {
+                let v = match a.as_slice() {
+                    [Expr::Float(v)] => *v,
+                    [e] => super::parse::const_int(e).map(kome::num::to_f64).ok_or("maxtessfactor: not a constant")?,
+                    _ => return Err("maxtessfactor takes one number".into()),
+                };
+                if !(1.0..=64.0).contains(&v) {
+                    return Err(format!("maxtessfactor({v}) is out of range"));
+                }
+                Some(kome::num::to_f32(v))
+            }
+        };
+        self.tess_domain = Some(domain);
+        self.hs = Some(sm4::Hs { domain, partitioning, output, in_cps: 0, out_cps, max_tess, fork_at: 0, cp_sys: Vec::new(), fork_sys: Vec::new(), fork_icp: false, fork_ocp: false, patch: Vec::new() });
+        Ok(pcf)
+    }
+
+    /// A patch parameter (InputPatch<T, n> / OutputPatch<T, n>): its control points' registers
+    /// (vicp[point][register], or the hull shader's vocp) copied to temporaries.
+    fn patch_param(&mut self, k: PatchKind, t: &Ty, p: &Var) -> R<Val> {
+        let Ty::Array(el, n) = t else { return Err(format!("{}: a patch is an array", p.name)) };
+        let n = *n;
+        if !(1..=32).contains(&n) {
+            return Err(format!("{}: a patch of {n} control points (1 to 32)", p.name));
+        }
+        let el: &Ty = el;
+        let regs = match (self.o.stage, k) {
+            (crate::Stage::Hull, PatchKind::Input) => {
+                let Some(h) = self.hs.as_mut() else { return Err("a hull shader without its declarations".into()) };
+                if h.in_cps != 0 && h.in_cps != n {
+                    return Err(format!("{}: InputPatch of {n} control points, another of {}", p.name, h.in_cps));
+                }
+                h.in_cps = n;
+                if self.in_pcf {
+                    h.fork_icp = true;
+                }
+                match &self.icp {
+                    Some((ty, regs)) if ty == el => regs.clone(),
+                    Some(_) => return Err(format!("{}: the patch constant function's InputPatch of another type than the control point function's", p.name)),
+                    None => {
+                        let mut regs = Vec::new();
+                        self.sig_cp = true;
+                        let r = self.sig(el, p.sem.as_deref(), p.interp, false, &mut regs);
+                        self.sig_cp = false;
+                        r?;
+                        self.icp = Some((el.clone(), regs.clone()));
+                        regs
+                    }
+                }
+                .into_iter()
+                .map(|c| (c, false))
+                .collect::<Vec<_>>()
+            }
+            (crate::Stage::Hull, PatchKind::Output) => {
+                if !self.in_pcf {
+                    return Err(format!("{}: an OutputPatch is the patch constant function's", p.name));
+                }
+                let Some(h) = self.hs.as_mut() else { return Err("a hull shader without its declarations".into()) };
+                if n != h.out_cps {
+                    return Err(format!("{}: OutputPatch of {n} control points, outputcontrolpoints({})", p.name, h.out_cps));
+                }
+                h.fork_ocp = true;
+                match &self.ocp {
+                    Some((ty, regs)) if ty == el => regs.iter().map(|&c| (c, true)).collect(),
+                    _ => return Err(format!("{}: an OutputPatch of another type than the control point function returns", p.name)),
+                }
+            }
+            (crate::Stage::Domain, PatchKind::Output) => {
+                let Some(d) = self.ds.as_mut() else { return Err("a domain shader without its declarations".into()) };
+                if d.cps != 0 {
+                    return Err(format!("{}: a second OutputPatch", p.name));
+                }
+                d.cps = n;
+                let mut regs = Vec::new();
+                self.sig_cp = true;
+                let r = self.sig(el, p.sem.as_deref(), p.interp, false, &mut regs);
+                self.sig_cp = false;
+                r?;
+                regs.into_iter().map(|c| (c, false)).collect()
+            }
+            (crate::Stage::Domain, PatchKind::Input) => return Err(format!("{}: a domain shader's control points are an OutputPatch", p.name)),
+            (crate::Stage::Vertex | crate::Stage::Pixel | crate::Stage::Geometry | crate::Stage::Compute, PatchKind::Input | PatchKind::Output) => {
+                return Err(format!("{}: a patch outside a hull or domain shader", p.name));
+            }
+        };
+        let mut all = Vec::new();
+        for v in 0..n {
+            for &(c, ocp) in &regs {
+                all.push(match c {
+                    C::R(Reg { f: RegF::Input(r), rel }, l) if !ocp => C::R(Reg { f: RegF::Icp(v, r), rel }, l),
+                    C::R(Reg { f: RegF::Output(r), rel }, l) if ocp => C::R(Reg { f: RegF::Ocp(v, r), rel }, l),
+                    c => c,
+                });
+            }
+        }
+        let st = self.storage(t);
+        self.assign(&st, &all);
+        Ok(Val::num(t.clone(), st))
+    }
+
+    /// A hull shader's patch constant function `name`, its fork phase: after the control point
+    /// phase, its statics set again, its outputs the patch constants.
+    fn hull_pcf(&mut self, name: &str) -> R<()> {
+        let prog = self.prog;
+        let f = prog.funcs.iter().find(|f| f.name == name && f.body.is_some()).ok_or(format!("patch constant function '{name}' not found"))?;
+        let at = self.code.len();
+        let cp_sys = std::mem::take(&mut self.sys_inputs);
+        let Some(h) = self.hs.as_mut() else { return Err("a hull shader without its declarations".into()) };
+        h.fork_at = at;
+        h.cp_sys = cp_sys;
+        self.in_pcf = true;
+        self.scopes.open();
+        for (st, t, init) in self.static_inits.clone() {
+            let v = match &init {
+                Some(e) => self.init_value(&t, e)?.c,
+                None => vec![C::I(0); st.len()],
+            };
+            self.assign(&st, &v);
+        }
+        let Some(body) = f.body.as_ref() else { return Err(format!("{name} has no body")) };
+        let mut outs = Vec::new();
+        for p in &f.params {
+            let t = p.ty().clone();
+            if p.uniform {
+                return Err(format!("{name}: uniform parameter {} of a patch constant function", p.name));
+            }
+            if let Some(k) = p.patch {
+                let v = self.patch_param(k, &t, p)?;
+                self.scopes.declare(p.name.clone(), v);
+                continue;
+            }
+            let mut regs = Vec::new();
+            if p.is_out {
+                self.sig_patch = true;
+                let r = self.sig(&t, p.sem.as_deref(), p.interp, true, &mut regs);
+                self.sig_patch = false;
+                r?;
+                let s = self.storage(&t);
+                outs.push((s.clone(), regs));
+                self.scopes.declare(p.name.clone(), Val::num(t, s));
+            } else {
+                self.sig(&t, p.sem.as_deref(), p.interp, false, &mut regs)?;
+                let s = self.storage(&t);
+                self.assign(&s, &regs);
+                self.scopes.declare(p.name.clone(), Val::num(t, s));
+            }
+        }
+        let mut ret_regs = Vec::new();
+        if f.ret != Ty::Void {
+            self.sig_patch = true;
+            let r = self.sig(&f.ret.clone(), f.ret_sem.as_deref(), Interp::Linear, true, &mut ret_regs);
+            self.sig_patch = false;
+            r?;
+        }
+        // (every tess factor of the domain: the tessellator reads them all)
+        if let Some(d) = self.tess_domain {
+            let (edges, insides) = d.factors();
+            for (inside, n) in [(false, edges), (true, insides)] {
+                for i in 0..n {
+                    let Some(want) = d.factor(inside, i) else { continue };
+                    if !self.patch.iter().any(|e| e.sysval == SysVal::Tess(want)) {
+                        return Err(format!("{name}: no {}[{i}] (a {d:?} patch's)", if inside { "SV_InsideTessFactor" } else { "SV_TessFactor" }));
+                    }
+                }
+            }
+        }
+        self.fns.push(FnCtx { ret: Vec::new(), ret_ty: f.ret.clone(), flag: None, loops: 0, entry: Some((outs, ret_regs)) });
+        self.stmts(body)?;
+        if f.ret == Ty::Void {
+            self.write_outputs()?;
+        }
+        if self.code.last().map(|i| i.op) != Some(sm4::RET) || self.code.len() == at {
+            self.flow(sm4::RET);
+        }
+        let fork_sys = std::mem::take(&mut self.sys_inputs);
+        if let Some(h) = self.hs.as_mut() {
+            h.fork_sys = fork_sys;
+        }
+        self.in_pcf = false;
         Ok(())
     }
 
@@ -1705,7 +2046,7 @@ impl<'a> L<'a> {
         }
         let is_bound = |p: &Var| bound.iter().any(|b| b.name == p.name);
         let uniforms: Vec<Var> = f.params.iter().filter(|p| p.uniform && !is_bound(p)).cloned().collect();
-        if self.o.compute {
+        if self.o.compute() {
             let (_, a) = f.attrs.iter().find(|a| a.0.eq_ignore_ascii_case("numthreads")).ok_or(format!("{name}: a compute shader needs [numthreads(x, y, z)]"))?;
             let n: Vec<i64> = a.iter().map(|e| super::parse::const_int(e).ok_or("numthreads: not a constant")).collect::<Result<_, _>>()?;
             let [x, y, z] = n[..] else { return Err("numthreads takes 3 numbers".into()) };
@@ -1719,7 +2060,7 @@ impl<'a> L<'a> {
             };
             self.threads = Some([x, y, z]);
         }
-        if self.o.geometry {
+        if self.o.geometry() {
             let int_attr = |n: &str| -> R<Option<i64>> {
                 match f.attrs.iter().find(|a| a.0.eq_ignore_ascii_case(n)) {
                     None => Ok(None),
@@ -1741,6 +2082,13 @@ impl<'a> L<'a> {
             }
             self.gs = Some(sm4::Gs { input: 0, maxout, instances, streams: Vec::new() });
         }
+        let pcf = if self.o.hull() { Some(self.hull_attrs(f)?) } else { None };
+        if self.o.domain() {
+            let d = Self::str_attr(f, "domain")?.ok_or(format!("{name}: a domain shader needs [domain(...)]"))?;
+            let domain = sm4::TessDomain::of_name(&d).ok_or(format!("domain(\"{d}\"): not isoline, tri or quad"))?;
+            self.tess_domain = Some(domain);
+            self.ds = Some(sm4::Ds { domain, cps: 0, patch: Vec::new() });
+        }
         self.scopes.open();
         self.setup_globals(&uniforms)?;
         for (p, a) in bound.iter().zip(args) {
@@ -1760,6 +2108,24 @@ impl<'a> L<'a> {
             if let Some(prim) = p.prim {
                 let v = self.gs_input(prim, &t, p)?;
                 self.scopes.declare(p.name.clone(), v);
+                continue;
+            }
+            if let Some(k) = p.patch {
+                let v = self.patch_param(k, &t, p)?;
+                self.scopes.declare(p.name.clone(), v);
+                continue;
+            }
+            if self.o.domain() && !p.is_out {
+                // (a domain shader's inputs besides its control points and system values: the
+                // patch constants)
+                let mut regs = Vec::new();
+                self.sig_patch = true;
+                let r = self.sig(&t, p.sem.as_deref(), p.interp, false, &mut regs);
+                self.sig_patch = false;
+                r?;
+                let s = self.storage(&t);
+                self.assign(&s, &regs);
+                self.scopes.declare(p.name.clone(), Val::num(t, s));
                 continue;
             }
             if p.is_out {
@@ -1789,6 +2155,9 @@ impl<'a> L<'a> {
         let mut ret_regs = Vec::new();
         if f.ret != Ty::Void {
             self.sig(&f.ret.clone(), f.ret_sem.as_deref(), Interp::Linear, true, &mut ret_regs)?;
+            if self.o.hull() {
+                self.ocp = Some((f.ret.clone(), ret_regs.clone()));
+            }
         }
         if self.sm3() {
             // (no ret before the end: returns as in an inlined function, outputs at the end)
@@ -1816,6 +2185,12 @@ impl<'a> L<'a> {
         if self.code.last().map(|i| i.op) != Some(sm4::RET) {
             self.flow(sm4::RET);
         }
+        if let Some(pcf) = pcf {
+            self.hull_pcf(&pcf)?;
+            if self.hs.as_ref().is_some_and(|h| h.in_cps == 0) {
+                return Err(format!("{name}: a hull shader needs an InputPatch"));
+            }
+        }
         self.finish()
     }
 
@@ -1823,7 +2198,7 @@ impl<'a> L<'a> {
     /// next one) and the stream's index.
     fn gs_stream(&mut self, kind: StreamKind, el: &Ty, p: &Var) -> R<u32> {
         let k = kome::num::u32_of(self.streams.len());
-        if !self.o.geometry {
+        if !self.o.geometry() {
             return Err(format!("{}: an output stream outside a geometry shader", p.name));
         }
         if !p.is_out || !p.is_in {
@@ -2039,6 +2414,7 @@ impl<'a> L<'a> {
             uav_map[n] = Some(uavs.len());
             uavs.push(sm4::Uav { name: u.name.clone(), view: u.view, coherent: u.coherent, dim, ret, comps: kome::num::u32_of(u.el.comps().max(1)), slot, explicit: u.reg.is_some() });
         }
+        let patch = self.patch;
         Ok(sm4::Shader {
             elements,
             threads: self.threads,
@@ -2046,7 +2422,7 @@ impl<'a> L<'a> {
             uavs,
             uav_map,
             tgsm: self.tgsm,
-            pixel: self.o.pixel,
+            pixel: self.o.pixel(),
             major: self.o.major,
             minor: self.o.minor,
             code: self.code,
@@ -2064,6 +2440,8 @@ impl<'a> L<'a> {
             early_depth: false,
             d3d10: false,
             gs: self.gs,
+            hs: self.hs.map(|h| sm4::Hs { patch: patch.clone(), ..h }),
+            ds: self.ds.map(|d| sm4::Ds { patch: patch.clone(), ..d }),
         })
     }
 
@@ -3049,7 +3427,7 @@ impl<'a> L<'a> {
         };
         let e0 = elems.first().ok_or("index into an array of no elements")?;
         // (shader model 3 pixel shaders: no address register)
-        if !e0.is_empty() && e0.iter().all(addressable) && !(self.sm3() && self.o.pixel) {
+        if !e0.is_empty() && e0.iter().all(addressable) && !(self.sm3() && self.o.pixel()) {
             let stride = if elems.len() > 1 { regno(&elems[1][0]).wrapping_sub(regno(&e0[0])) } else { 1 };
             let regular = elems.iter().enumerate().all(|(k, e)| {
                 e.len() == e0.len()

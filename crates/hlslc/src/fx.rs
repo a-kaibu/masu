@@ -671,7 +671,7 @@ impl W<'_> {
         match v {
             FxVal::Compile(target, entry, args) => {
                 let r = super::parse_target(target).and_then(|t: Target| {
-                    if t.pixel == vertex {
+                    if t.pixel() == vertex {
                         return Err(format!("{target} for a {} shader", if vertex { "vertex" } else { "pixel" }));
                     }
                     let s = super::lower_entry(self.prog, self.pre, entry, args, &t, self.flags)?;

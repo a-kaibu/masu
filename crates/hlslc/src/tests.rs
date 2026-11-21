@@ -1344,3 +1344,104 @@ fn structured_and_raw_buffers() {
         assert!(e.contains(want), "{src}: {e}");
     }
 }
+
+/// The program (SHEX) of DXBC `code`.
+fn program_of(code: &[u8]) -> dxwgsl::tpf::Program {
+    let c = dxwgsl::dxbc::Container::parse(code).unwrap();
+    dxwgsl::tpf::decode(c.chunk(b"SHEX").or_else(|| c.chunk(b"SHDR")).unwrap()).unwrap()
+}
+
+#[test]
+fn hull_and_domain_shaders_of_the_d3d11tess_probe() {
+    use dxwgsl::tpf::Opcode;
+    let src = probe_hlsl(include_str!("../../../tests/winref/probes/d3d11tess.c"));
+    // (domain, partitioning, output topology as the declarations number them; control points)
+    for (entry, domain, part, out, cps) in [
+        ("hs_tri_int", 2, 1, 3, 3),
+        ("hs_tri_pow2", 2, 2, 3, 3),
+        ("hs_tri_odd", 2, 3, 3, 3),
+        ("hs_tri_even", 2, 4, 3, 3),
+        ("hs_tri_ccw", 2, 1, 4, 3),
+        ("hs_tri_point", 2, 3, 1, 3),
+        ("hs_quad_int", 3, 1, 3, 4),
+        ("hs_quad_pow2", 3, 2, 4, 4),
+        ("hs_quad_odd", 3, 3, 3, 4),
+        ("hs_quad_even", 3, 4, 3, 4),
+        ("hs_quad_point", 3, 1, 1, 4),
+        ("hs_line_int", 1, 1, 2, 2),
+        ("hs_line_odd", 1, 3, 2, 2),
+        ("hs_line_even", 1, 4, 2, 2),
+        ("hs_line_point", 1, 1, 1, 2),
+        ("hs_tri_max", 2, 1, 3, 3),
+        ("hs_tri_one", 2, 1, 3, 1),
+    ] {
+        let code = compile(&src, entry, "hs_5_0");
+        let p = program_of(&code);
+        assert_eq!(p.kind, dxwgsl::tpf::HULL, "{entry}");
+        let decl = |op: Opcode| p.insts.iter().find(|i| i.op == op).map(|i| i.ctl & 0x3f).unwrap_or_else(|| panic!("{entry}: no {op:?}"));
+        assert_eq!(decl(Opcode::DclTessDomain), domain, "{entry}");
+        assert_eq!(decl(Opcode::DclTessPartitioning), part, "{entry}");
+        assert_eq!(decl(Opcode::DclTessOutputPrimitive), out, "{entry}");
+        assert_eq!(decl(Opcode::DclOutputControlPointCount), cps, "{entry}");
+        let phases: Vec<Opcode> = p.insts.iter().map(|i| i.op).filter(|o| matches!(o, Opcode::HsDecls | Opcode::HsControlPointPhase | Opcode::HsForkPhase | Opcode::HsJoinPhase)).collect();
+        assert_eq!(phases, [Opcode::HsDecls, Opcode::HsControlPointPhase, Opcode::HsForkPhase], "{entry}");
+        let max = p.insts.iter().find(|i| i.op == Opcode::DclHsMaxTessFactor).map(|i| f32::from_bits(i.extra[0]));
+        assert_eq!(max, if entry == "hs_tri_max" { Some(5.5) } else { None }, "{entry}");
+        // (the patch constants: the domain's tess factors, then PID)
+        let pc = dxwgsl::patch_constants(&code);
+        let want: &[u32] = match domain {
+            1 => &[16, 15],
+            2 => &[13, 13, 13, 14],
+            _ => &[11, 11, 11, 11, 12, 12],
+        };
+        let got: Vec<u32> = pc.iter().filter(|e| e.name != "PID").map(|e| e.sysval).collect();
+        assert_eq!(got, want, "{entry}: {pc:?}");
+        assert!(pc.iter().any(|e| e.name == "PID"), "{entry}");
+        assert_eq!(dxwgsl::signature(&code, true).iter().map(|e| e.name.as_str()).collect::<Vec<_>>(), ["ID", "C"], "{entry}");
+    }
+    for (entry, domain, cps) in [("ds_tri", 2, 3), ("ds_tri_one", 2, 1), ("ds_quad", 3, 4), ("ds_line", 1, 2)] {
+        let code = compile(&src, entry, "ds_5_0");
+        let p = program_of(&code);
+        assert_eq!(p.kind, dxwgsl::tpf::DOMAIN, "{entry}");
+        let decl = |op: Opcode| p.insts.iter().find(|i| i.op == op).map(|i| i.ctl & 0x3f).unwrap_or_else(|| panic!("{entry}: no {op:?}"));
+        assert_eq!(decl(Opcode::DclTessDomain), domain, "{entry}");
+        assert_eq!(decl(Opcode::DclInputControlPointCount), cps, "{entry}");
+        assert!(!dxwgsl::patch_constants(&code).is_empty(), "{entry}");
+        assert_eq!(dxwgsl::signature(&code, true).iter().map(|e| e.name.as_str()).collect::<Vec<_>>(), ["L", "B"], "{entry}");
+    }
+    let vs = compile(&src, "vs", "vs_5_0");
+    assert_eq!(program_of(&vs).kind, dxwgsl::tpf::ProgramType(1));
+}
+
+#[test]
+fn hull_shader_errors() {
+    let base = "struct CP { float4 p : P; };\nstruct PC { float e[3] : SV_TessFactor; float i : SV_InsideTessFactor; };\nPC pc(InputPatch<CP, 3> ip) { PC o; o.e[0] = 1; o.e[1] = 1; o.e[2] = 1; o.i = 1; return o; }\n";
+    let hs = |attrs: &str, body: &str| format!("{base}{attrs}\nCP hs(InputPatch<CP, 3> ip, uint c : SV_OutputControlPointID) {{ {body} }}\n");
+    let ok = "[domain(\"tri\")] [partitioning(\"integer\")] [outputtopology(\"triangle_cw\")] [outputcontrolpoints(3)] [patchconstantfunc(\"pc\")]";
+    let mut inc = |_: &str, _: bool| None;
+    assert!(super::compile(&hs(ok, "return ip[c];"), &[], &mut inc, "hs", "hs_5_0", 0).is_ok());
+    for bad in [
+        // (each attribute is needed)
+        "[partitioning(\"integer\")] [outputtopology(\"triangle_cw\")] [outputcontrolpoints(3)] [patchconstantfunc(\"pc\")]",
+        "[domain(\"tri\")] [outputtopology(\"triangle_cw\")] [outputcontrolpoints(3)] [patchconstantfunc(\"pc\")]",
+        "[domain(\"tri\")] [partitioning(\"integer\")] [outputcontrolpoints(3)] [patchconstantfunc(\"pc\")]",
+        "[domain(\"tri\")] [partitioning(\"integer\")] [outputtopology(\"triangle_cw\")] [patchconstantfunc(\"pc\")]",
+        "[domain(\"tri\")] [partitioning(\"integer\")] [outputtopology(\"triangle_cw\")] [outputcontrolpoints(3)]",
+        // (values out of range, topologies of another domain, an unknown function)
+        "[domain(\"hex\")] [partitioning(\"integer\")] [outputtopology(\"triangle_cw\")] [outputcontrolpoints(3)] [patchconstantfunc(\"pc\")]",
+        "[domain(\"tri\")] [partitioning(\"odd\")] [outputtopology(\"triangle_cw\")] [outputcontrolpoints(3)] [patchconstantfunc(\"pc\")]",
+        "[domain(\"tri\")] [partitioning(\"integer\")] [outputtopology(\"line\")] [outputcontrolpoints(3)] [patchconstantfunc(\"pc\")]",
+        "[domain(\"tri\")] [partitioning(\"integer\")] [outputtopology(\"triangle_cw\")] [outputcontrolpoints(33)] [patchconstantfunc(\"pc\")]",
+        "[domain(\"tri\")] [partitioning(\"integer\")] [outputtopology(\"triangle_cw\")] [outputcontrolpoints(3)] [patchconstantfunc(\"nope\")]",
+        "[domain(\"tri\")] [partitioning(\"integer\")] [outputtopology(\"triangle_cw\")] [outputcontrolpoints(3)] [patchconstantfunc(\"pc\")] [maxtessfactor(65)]",
+        "[domain(\"tri\")] [partitioning(\"integer\")] [outputtopology(\"triangle_cw\")] [outputcontrolpoints(3)] [patchconstantfunc(\"pc\")] [maxtessfactor(0.5)]",
+        // (the patch constant function's factors are a quad's)
+        "[domain(\"quad\")] [partitioning(\"integer\")] [outputtopology(\"triangle_cw\")] [outputcontrolpoints(3)] [patchconstantfunc(\"pc\")]",
+    ] {
+        assert!(super::compile(&hs(bad, "return ip[c];"), &[], &mut inc, "hs", "hs_5_0", 0).is_err(), "{bad}");
+    }
+    // (hull and domain shaders are shader model 5's)
+    assert!(super::compile(&hs(ok, "return ip[c];"), &[], &mut inc, "hs", "hs_4_0", 0).is_err());
+    // (SV_TessFactor outside the patch constants)
+    assert!(super::compile("float4 vs(float f : SV_TessFactor) : SV_Position { return f; }", &[], &mut inc, "vs", "vs_5_0", 0).is_err());
+}

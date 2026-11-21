@@ -34,6 +34,11 @@ pub fn signature(code: &[u8], output: bool) -> Vec<crate::dxbc::SigElement> {
     crate::dxbc::Container::parse(code).map_or_default(|c| c.signature(output))
 }
 
+/// A hull shader's output or a domain shader's input patch constants (PCSG).
+pub fn patch_constants(code: &[u8]) -> Vec<crate::dxbc::SigElement> {
+    crate::dxbc::Container::parse(code).map_or_default(|c| c.patch_constants())
+}
+
 /// What a shader binds (group = stage)
 #[derive(Clone, Debug, PartialEq)]
 pub enum Binding {

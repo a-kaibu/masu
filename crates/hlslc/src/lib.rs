@@ -38,12 +38,29 @@ pub const IEEE_STRICTNESS: u32 = 1 << 13;
 /// (not a D3DCOMPILE flag) the blob as D3D10CompileShader writes it: `sm4::Shader::d3d10`
 pub const D3D10_BLOB: u32 = 1 << 31;
 
+/// The pipeline stage a target compiles for.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Stage {
+    Vertex,
+    Pixel,
+    Geometry,
+    /// hs_5_0: the control point phase and the patch constant function's
+    Hull,
+    /// ds_5_0
+    Domain,
+    Compute,
+}
+
 pub struct Target {
-    pub pixel: bool,
-    pub compute: bool,
-    pub geometry: bool,
+    pub stage: Stage,
     pub major: u32,
     pub minor: u32,
+}
+
+impl Target {
+    pub fn pixel(&self) -> bool {
+        self.stage == Stage::Pixel
+    }
 }
 
 /// "ps_4_0", "vs_5_0", "vs_4_0_level_9_3"...
@@ -52,11 +69,13 @@ pub fn parse_target(t: &str) -> Result<Target, String> {
     if v.len() < 3 {
         return Err(format!("unknown target {t}"));
     }
-    let compute = v[0] == "cs";
-    let geometry = v.first() == Some(&"gs");
-    let pixel = match v[0] {
-        "ps" => true,
-        "vs" | "cs" | "gs" => false,
+    let stage = match v[0] {
+        "ps" => Stage::Pixel,
+        "vs" => Stage::Vertex,
+        "gs" => Stage::Geometry,
+        "hs" => Stage::Hull,
+        "ds" => Stage::Domain,
+        "cs" => Stage::Compute,
         s => return Err(format!("{s} shaders are not supported")),
     };
     let major: u32 = v[1].parse().map_err(|_| format!("unknown target {t}"))?;
@@ -65,16 +84,16 @@ pub fn parse_target(t: &str) -> Result<Target, String> {
     } else {
         v[2].parse().unwrap_or(0)
     };
-    if (compute || geometry) && (major < 4 || v.len() > 3) {
+    let min_major = match stage {
+        Stage::Vertex | Stage::Pixel => 0,
+        Stage::Geometry | Stage::Compute => 4,
+        // (hs_5_0, ds_5_0 only: tessellation is Direct3D 11's)
+        Stage::Hull | Stage::Domain => 5,
+    };
+    if stage != Stage::Vertex && stage != Stage::Pixel && (major < min_major || v.len() > 3) {
         return Err(format!("unknown target {t}"));
     }
-    Ok(Target {
-        compute,
-        geometry,
-        pixel,
-        major,
-        minor,
-    })
+    Ok(Target { stage, major, minor })
 }
 
 /// Preprocessed tokens of `src`.
@@ -132,7 +151,7 @@ fn prelude_program() -> Result<&'static ast::Program, String> {
 fn lower_entry(prog: &ast::Program, pre: &ast::Program, entry: &str, args: &[ast::Expr], t: &Target, flags: u32) -> Result<sm4::Shader, String> {
     // (the prelude shares the program's struct table: it has no structs)
     let minor = if t.major >= 5 { 0 } else if t.major == 4 { t.minor.min(1) } else { t.minor };
-    let o = lower::Opts { pixel: t.pixel, compute: t.compute, geometry: t.geometry, major: t.major.min(5), minor, row_major: flags & PACK_MATRIX_ROW_MAJOR != 0, ieee: flags & IEEE_STRICTNESS != 0 };
+    let o = lower::Opts { stage: t.stage, major: t.major.min(5), minor, row_major: flags & PACK_MATRIX_ROW_MAJOR != 0, ieee: flags & IEEE_STRICTNESS != 0 };
     lower::L::new(o, prog, pre).entry(entry, args)
 }
 

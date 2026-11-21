@@ -799,7 +799,24 @@ impl Parser {
                         m.interp = if more.interp == Interp::Linear { m.interp } else { more.interp };
                         m.prim = Some(prim);
                     }
-                    let t = self.ty()?;
+                    // (InputPatch<T, n> / OutputPatch<T, n>: an array of n T, the parameter its kind)
+                    let patch = match self.peek() {
+                        Some(Tok::Ident(s)) if s == "InputPatch" => Some(PatchKind::Input),
+                        Some(Tok::Ident(s)) if s == "OutputPatch" => Some(PatchKind::Output),
+                        _ => None,
+                    };
+                    let t = if let Some(k) = patch {
+                        self.p = self.p.saturating_add(1);
+                        self.expect("<")?;
+                        let el = self.ty()?;
+                        self.expect(",")?;
+                        let n = self.template_num()?;
+                        self.expect(">")?;
+                        m.patch = Some(k);
+                        Ty::Array(Box::new(el), n)
+                    } else {
+                        self.ty()?
+                    };
                     let name = self.ident()?;
                     let mut v = m.typed(self.array_suffix(t)?);
                     v.name = name;

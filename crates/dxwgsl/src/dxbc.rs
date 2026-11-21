@@ -58,6 +58,17 @@ impl<'a> Container<'a> {
         }
         Vec::new()
     }
+
+    /// The patch constant signature (PCSG, PSG1): a hull shader's outputs, a domain shader's
+    /// inputs, beside their control points' OSGN / ISGN.
+    pub fn patch_constants(&self) -> Vec<SigElement> {
+        for &(tag, size) in &[(b"PCSG", 24), (b"PSG1", 32)] {
+            if let Some(c) = self.chunk(tag) {
+                return parse_signature(c, size);
+            }
+        }
+        Vec::new()
+    }
 }
 
 /// Elements of `size` bytes: ISGN/OSGN 24 (name, index, sysval, type, reg, mask), OSG5 28 (a

@@ -257,7 +257,7 @@ impl Gen<'_> {
                 }
                 format!("c{n}")
             }
-            RegF::Icb(_) | RegF::X(..) | RegF::Null | RegF::Sys(_) | RegF::Uav(_) | RegF::G(_) | RegF::GsInput(..) => return Err("indexable temps and immediate constant buffers are not available in shader model 2/3".into()),
+            RegF::Icb(_) | RegF::X(..) | RegF::Null | RegF::Sys(_) | RegF::Uav(_) | RegF::G(_) | RegF::GsInput(..) | RegF::Icp(..) | RegF::Ocp(..) | RegF::Pc(_) => return Err("indexable temps and immediate constant buffers are not available in shader model 2/3".into()),
         })
     }
 

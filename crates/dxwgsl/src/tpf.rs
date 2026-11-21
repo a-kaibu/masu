@@ -33,6 +33,8 @@ impl OpType {
 pub const PIXEL: ProgramType = ProgramType(0);
 pub const VERTEX: ProgramType = ProgramType(1);
 pub const GEOMETRY: ProgramType = ProgramType(2);
+pub const HULL: ProgramType = ProgramType(3);
+pub const DOMAIN: ProgramType = ProgramType(4);
 pub const COMPUTE: ProgramType = ProgramType(5);
 
 // operand types
@@ -65,6 +67,19 @@ pub const INPUT_PRIMITIVEID: OpType = OpType(11);
 pub const STREAM: OpType = OpType(16);
 /// vGSInstanceID
 pub const INPUT_GS_INSTANCE_ID: OpType = OpType(37);
+/// a hull shader's vOutputControlPointID (its control point phase), vForkInstanceID and
+/// vJoinInstanceID (its fork and join phases)
+pub const OUTPUT_CONTROL_POINT_ID: OpType = OpType(22);
+pub const INPUT_FORK_INSTANCE_ID: OpType = OpType(23);
+pub const INPUT_JOIN_INSTANCE_ID: OpType = OpType(24);
+/// vicp[point][register]: a hull shader's input control points, a domain shader's
+pub const INPUT_CONTROL_POINT: OpType = OpType(25);
+/// vocp[point][register]: a hull shader's output control points (its fork and join phases)
+pub const OUTPUT_CONTROL_POINT: OpType = OpType(26);
+/// vpc[register]: the patch constants (a hull shader's join phases, a domain shader)
+pub const INPUT_PATCH_CONSTANT: OpType = OpType(27);
+/// vDomain: a domain shader's domain point (u, v, w)
+pub const INPUT_DOMAIN_POINT: OpType = OpType(28);
 pub const OUTPUT_DEPTH_LE: OpType = OpType(39);
 
 #[derive(Clone, Debug, PartialEq)]
@@ -346,10 +361,10 @@ opcodes! {
     SamplePos = 0x6e => Ops(3),
     SampleInfo = 0x6f => Ops(2),
     Reserved101 = 0x70 => Unchecked,
-    HsDecls = 0x71 => Unchecked,
-    HsControlPointPhase = 0x72 => Unchecked,
-    HsForkPhase = 0x73 => Unchecked,
-    HsJoinPhase = 0x74 => Unchecked,
+    HsDecls = 0x71 => Ops(0),
+    HsControlPointPhase = 0x72 => Ops(0),
+    HsForkPhase = 0x73 => Ops(0),
+    HsJoinPhase = 0x74 => Ops(0),
     EmitStream = 0x75 => Ops(1),
     CutStream = 0x76 => Ops(1),
     EmitThenCutStream = 0x77 => Ops(1),

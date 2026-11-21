@@ -177,6 +177,14 @@ pub enum StreamKind {
     Triangle,
 }
 
+/// A hull or domain shader's patch parameter: InputPatch<T, n> (the input assembler's control
+/// points) or OutputPatch<T, n> (the hull shader's control point phase's).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum PatchKind {
+    Input,
+    Output,
+}
+
 /// A geometry shader input array's primitive (`triangle V v[3]`).
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Prim {
@@ -360,6 +368,8 @@ pub struct Var<T = Ty> {
     pub interp: Interp,
     /// a geometry shader's input array: its primitive
     pub prim: Option<Prim>,
+    /// InputPatch<T, n> / OutputPatch<T, n> (the type an array of n T)
+    pub patch: Option<PatchKind>,
     /// parameters: in (false, true default), out, inout
     pub is_in: bool,
     pub is_out: bool,
@@ -425,8 +435,8 @@ impl Var {
 
 impl Mods {
     pub fn typed(self, ty: Ty) -> Var {
-        let Var { name, ty: (), init, sem, reg, packoffset, is_static, is_const, shared, coherent, uniform, row_major, interp, prim, is_in, is_out, line, annos, states, fx } = self;
-        Var { name, ty, init, sem, reg, packoffset, is_static, is_const, shared, coherent, uniform, row_major, interp, prim, is_in, is_out, line, annos, states, fx }
+        let Var { name, ty: (), init, sem, reg, packoffset, is_static, is_const, shared, coherent, uniform, row_major, interp, prim, patch, is_in, is_out, line, annos, states, fx } = self;
+        Var { name, ty, init, sem, reg, packoffset, is_static, is_const, shared, coherent, uniform, row_major, interp, prim, patch, is_in, is_out, line, annos, states, fx }
     }
 }
 

@@ -356,7 +356,7 @@ pub fn call(l: &mut L, name: &str, args: &[Expr], line: u32) -> R<Val> {
             // (a pixel shader has no thread group: only the UAV fences, DeviceMemoryBarrier and
             // AllMemoryBarrier, of shader model 5)
             let fence = matches!(name, "DeviceMemoryBarrier" | "AllMemoryBarrier");
-            if !l.o.compute && !(fence && l.o.pixel && l.x_major() >= 5) {
+            if !l.o.compute() && !(fence && l.o.pixel() && l.x_major() >= 5) {
                 return Err(format!("line {line}: {name} outside a compute shader"));
             }
             // sync flags: 1 threads in the group, 2 groupshared memory, 8 UAV memory
@@ -365,7 +365,7 @@ pub fn call(l: &mut L, name: &str, args: &[Expr], line: u32) -> R<Val> {
                 "DeviceMemoryBarrier" => 8,
                 _ => 10,
             };
-            let mem = if l.o.compute { mem } else { 8 };
+            let mem = if l.o.compute() { mem } else { 8 };
             let ctl = mem | u32::from(name.ends_with("WithGroupSync"));
             l.x_emit(SYNC, vec![], vec![]).ctl = ctl;
             Val::num(Ty::Void, vec![])
