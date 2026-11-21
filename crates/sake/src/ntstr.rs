@@ -15,6 +15,17 @@ pub enum Status {
     Success,
     BufferOverflow,
     InvalidParameter,
+    BufferTooSmall,
+    NameTooLong,
+    NoMemory,
+    NotFound,
+    /// STATUS_SOME_NOT_MAPPED: a success with characters replaced
+    SomeNotMapped,
+    InvalidParameter4,
+    InvalidParameter5,
+    /// what the functions answer when their own write faults (they catch it)
+    AccessViolation,
+    InvalidParameter2,
 }
 
 impl Status {
@@ -23,6 +34,15 @@ impl Status {
             Status::Success => 0,
             Status::BufferOverflow => 0x8000_0005,
             Status::InvalidParameter => 0xc000_000d,
+            Status::BufferTooSmall => 0xc000_0023,
+            Status::NameTooLong => 0xc000_0106,
+            Status::NoMemory => 0xc000_0017,
+            Status::NotFound => 0xc000_0225,
+            Status::SomeNotMapped => 0x107,
+            Status::InvalidParameter4 => 0xc000_00f2,
+            Status::InvalidParameter5 => 0xc000_00f3,
+            Status::AccessViolation => 0xc000_0005,
+            Status::InvalidParameter2 => 0xc000_00f0,
         }
     }
 }
@@ -215,6 +235,10 @@ fn RtlCharToInteger(c: &mut Ctx) -> u32 {
     let at = |k: usize| mem::r8(mem::ga(s) + kome::num::u32_of(k));
     let (st, v) = char_to_integer(&at, base);
     if let Some(v) = v {
+        // (the value written under the function's own exception handler: NULL faults)
+        if out == 0 {
+            return Status::AccessViolation.code();
+        }
         mem::w32(out, v);
     }
     st.code()
@@ -226,6 +250,9 @@ fn RtlUnicodeStringToInteger(c: &mut Ctx) -> u32 {
     let buf = mem::rp(mem::ga(us) + mem::ps());
     let unit = |k: usize| mem::r16(mem::ga(buf).at(kome::num::u32_of(k), 2));
     let (st, v) = unicode_to_integer(&unit, length, base);
+    if out == 0 {
+        return if st == Status::Success { Status::AccessViolation } else { st }.code();
+    }
     mem::w32(out, v);
     st.code()
 }
@@ -234,6 +261,9 @@ fn RtlIntegerToChar(c: &mut Ctx) -> u32 {
     let (value, base, length, s) = (c.a(0), c.a(1), c.a(2).cast_signed(), c.a(3));
     match integer_to_char(value, base, length) {
         Ok(b) => {
+            if s == 0 && !b.is_empty() {
+                return Status::AccessViolation.code();
+            }
             for (k, &x) in b.iter().enumerate() {
                 mem::w8(mem::ga(s) + kome::num::u32_of(k), x);
             }

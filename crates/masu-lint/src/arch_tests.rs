@@ -26,6 +26,13 @@ const GOOD_NTCRT: &str = concat!(
     "    implement(d, \"atoi\", f); implement(d, \"atol\", f); implement(d, \"_wtoi\", f); implement(d, \"_wtol\", f); implement(d, \"_atoi64\", f); implement(d, \"_wtoi64\", f);\n",
     "    implement(d, \"strtol\", f); implement(d, \"strtoul\", f); implement(d, \"wcstol\", f); implement(d, \"wcstoul\", f); implement(d, \"_wcstoi64\", f); implement(d, \"_wcstoui64\", f);\n",
     "    implement(d, \"RtlAnsiCharToUnicodeChar\", f);\n",
+    "    implement(d, \"RtlInitUnicodeStringEx\", f); implement(d, \"RtlAppendAsciizToString\", f); implement(d, \"RtlAppendStringToString\", f);\n",
+    "    implement(d, \"RtlAppendUnicodeStringToString\", f); implement(d, \"RtlAppendUnicodeToString\", f); implement(d, \"RtlCopyString\", f);\n",
+    "    implement(d, \"RtlUpperChar\", f); implement(d, \"RtlUpperString\", f); implement(d, \"RtlUpcaseUnicodeString\", f);\n",
+    "    implement(d, \"RtlDowncaseUnicodeString\", f); implement(d, \"RtlDuplicateUnicodeString\", f); implement(d, \"RtlFindCharInUnicodeString\", f);\n",
+    "    implement(d, \"RtlCompareUnicodeStrings\", f); implement(d, \"RtlGUIDFromString\", f); implement(d, \"RtlStringFromGUID\", f);\n",
+    "    implement(d, \"RtlUTF8ToUnicodeN\", f); implement(d, \"RtlUnicodeToUTF8N\", f); implement(d, \"RtlHashUnicodeString\", f);\n",
+    "    implement(d, \"RtlUnicodeStringToAnsiString\", f); implement(d, \"RtlDowncaseUnicodeChar\", f);\n",
     "}\n",
 );
 
@@ -89,6 +96,14 @@ fn fixture(r: Rule) -> Fixture {
                 GOOD_NTCRT,
             )],
             mutate: ("crates/sake/src/ntcrt.rs", |t| Some(t.replace("implement(d, \"_wtoi\",", "implement(d, \"_wtoi_gone\","))),
+        },
+        Rule::Utf8OneDecoder => Fixture {
+            bad: &[("crates/sake/src/text.rs", "fn utf8_to_w(s: &[u8]) -> Vec<u16> {\n    for ch in s.utf8_chunks() {}\n}\n")],
+            good: &[
+                ("crates/sake/src/text.rs", "fn utf8_to_w(s: &[u8]) -> (Vec<u16>, bool) {\n    crate::rtlstr::utf8_units(s) // not utf8_chunks(\n}\n"),
+                ("crates/sake/src/rtlstr.rs", "fn f(b: &[u8]) { for ch in b.utf8_chunks() {} }\n"),
+            ],
+            mutate: ("crates/sake/src/text.rs", |t| Some(t.replace("crate::rtlstr::utf8_units(s)", "{ let _ = s.utf8_chunks(); crate::rtlstr::utf8_units(s) }"))),
         },
         Rule::BooleanArg => Fixture {
             bad: &[

@@ -107,6 +107,13 @@ pub const NTDLL_OWN_CRT: &[&str] = &[
     "_itoa", "_ltoa", "_ultoa", "_i64toa", "_ui64toa", "_itow", "_ltow", "_ultow", "_i64tow", "_ui64tow",
     "atoi", "atol", "_wtoi", "_wtol", "_atoi64", "_wtoi64", "strtol", "strtoul", "wcstol", "wcstoul", "_wcstoi64", "_wcstoui64",
     "RtlAnsiCharToUnicodeChar",
+    // (rtlstr.rs, 2026-11-21: without them GetProcAddress gave Wine's ntdll:rtlstr NULL or a stub
+    // answering 0, and it hung)
+    "RtlInitUnicodeStringEx", "RtlAppendAsciizToString", "RtlAppendStringToString", "RtlAppendUnicodeStringToString",
+    "RtlAppendUnicodeToString", "RtlCopyString", "RtlUpperChar", "RtlUpperString", "RtlUpcaseUnicodeString",
+    "RtlDowncaseUnicodeString", "RtlDuplicateUnicodeString", "RtlFindCharInUnicodeString", "RtlCompareUnicodeStrings",
+    "RtlGUIDFromString", "RtlStringFromGUID", "RtlUTF8ToUnicodeN", "RtlUnicodeToUTF8N", "RtlHashUnicodeString",
+    "RtlUnicodeStringToAnsiString", "RtlDowncaseUnicodeChar",
 ];
 
 static NTDLL_IMPL: LazyLock<Option<Regex>> = LazyLock::new(|| Regex::new(r#"implement\(\s*(?:"ntdll"|d)\s*,\s*"([A-Za-z0-9_]+)""#).ok());
@@ -144,4 +151,19 @@ pub fn ntdll_own_crt(tree: &Tree) -> Hits {
     }
     let at = Rel::new("crates/sake/src/ntcrt.rs");
     NTDLL_OWN_CRT.iter().filter(|n| !have.contains(**n)).map(|n| (at.clone(), 1, format!("ntdll!{n} has no handler of its own: msvcrt's (or the unimplemented trap) would answer"))).collect()
+}
+
+/// `utf8-one-decoder`: `utf8_chunks(` in sake's code only in rtlstr.rs (Windows' UTF-8 rule)
+pub fn utf8_one_decoder(tree: &Tree) -> Hits {
+    let mut out = Hits::new();
+    for p in tree.rs(&["crates/sake/src/"]) {
+        if p.as_str() == "crates/sake/src/rtlstr.rs" {
+            continue;
+        }
+        let code = tree.code(&p, false);
+        for (at, _) in code.match_indices("utf8_chunks(") {
+            out.push((p.clone(), line_of(&code, at), "a UTF-8 decoder of its own: Windows' rule is crate::rtlstr::utf8_units".to_string()));
+        }
+    }
+    out
 }

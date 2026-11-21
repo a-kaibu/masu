@@ -3428,10 +3428,6 @@ fn RtlAnsiStringToUnicodeString(c: &mut Ctx) -> u32 {
     let w = a2w(&counted_bytes(c.a(1)));
     counted_out(c.a(0), &w, 2, c.boolean(2))
 }
-fn RtlUnicodeStringToAnsiString(c: &mut Ctx) -> u32 {
-    let a: Vec<u16> = crate::text::w2a(&counted_wide(c.a(1))).into_iter().map(|b| u16::from(b)).collect();
-    counted_out(c.a(0), &a, 1, c.boolean(2))
-}
 /// RtlMultiByteToUnicodeN(dst, dst bytes, &written bytes, src, src bytes): the ANSI code page's
 /// text as UTF-16, cut to what fits (whole characters)
 fn RtlMultiByteToUnicodeN(c: &mut Ctx) -> u32 {
@@ -5432,6 +5428,10 @@ fn guest_units(p: u32, n: u32) -> Option<Vec<u16>> {
     }
     Some(mem::bytes(p, bytes).as_chunks::<2>().0.iter().map(|&c| u16::from_le_bytes(c)).collect())
 }
+/// a code page that is UTF-8 (CP_UTF8, or the ANSI one when it is)
+fn is_utf8(cp: u32) -> bool {
+    cp == 65001 || matches!(cp, 0 | 1 | 3) && crate::text::acp() == 65001
+}
 fn MultiByteToWideChar(c: &mut Ctx) -> u32 {
     let (cp, flags, src, n, dst, cap) = (c.a(0), c.a(1), c.a(2), c.i(3), c.a(4), c.a(5));
     // (Windows: any negative length means NUL-terminated; no output buffer with a size is
@@ -5450,8 +5450,14 @@ fn MultiByteToWideChar(c: &mut Ctx) -> u32 {
     };
     let (w, bad) = crate::text::mb2w_checked(cp, &s);
     // MB_ERR_INVALID_CHARS: bytes that are no character (a lone lead byte) fail with
-    // ERROR_NO_UNICODE_TRANSLATION (mingw's btowc relies on it, winref crt_io)
+    // ERROR_NO_UNICODE_TRANSLATION (mingw's btowc relies on it, winref crt_io); UTF-8 converts
+    // into the buffer first (RtlUTF8ToUnicodeN, then the failure: Wine's ntdll:rtlstr)
     if flags & 8 != 0 && bad {
+        if is_utf8(cp) && dst != 0 {
+            for (i, ch) in w.iter().take(kome::num::us(cap)).enumerate() {
+                crate::mem::w16(mem::ga(dst).at(kome::num::u32_of(i), 2), *ch);
+            }
+        }
         last_error(1113);
         return 0;
     }
@@ -5503,12 +5509,21 @@ fn WideCharToMultiByte(c: &mut Ctx) -> u32 {
     // look-alike)
     let (a, used) = crate::text::w2mb_flags(cp, &s, &d, c.a(1) & 0x400 == 0);
     put32(pused, u32::from(used));
+    // WC_ERR_INVALID_CHARS with UTF-8: an unpaired surrogate fails with
+    // ERROR_NO_UNICODE_TRANSLATION, the text (U+FFFD for it) written first (Wine's ntdll:rtlstr)
+    if c.a(1) & 0x80 != 0 && is_utf8(cp) && crate::rtlstr::utf8_chars(&s).1 {
+        if dst != 0 {
+            mem::write(dst, a.get(..a.len().min(kome::num::us(cap))).unwrap_or(&a));
+        }
+        last_error(1113);
+        return 0;
+    }
     if cap == 0 {
         return kome::num::u32_of(a.len());
     }
     if kome::num::u32_of(a.len()) > cap {
         // (as MultiByteToWideChar: the whole characters that fit are written before the failure)
-        let utf8 = cp == 65001 || matches!(cp, 0 | 1 | 3) && crate::text::acp() == 65001;
+        let utf8 = is_utf8(cp);
         let mut fit = 0;
         let mut at = 0;
         while at < a.len() {
@@ -9832,7 +9847,7 @@ pub fn init() {
         implement("ntdll", &format!("Zw{n}"), f);
     }
     reg!("ntdll"; RtlGetCurrentPeb, RtlAcquirePebLock, RtlReleasePebLock, RtlInitUnicodeString, RtlInitAnsiString, RtlFreeUnicodeString, RtlCreateUnicodeStringFromAsciiz, RtlAnsiStringToUnicodeString,
-        RtlUnicodeStringToAnsiString, RtlDosPathNameToNtPathName_U, RtlFormatCurrentUserKeyPath, LdrGetProcedureAddress,
+        RtlDosPathNameToNtPathName_U, RtlFormatCurrentUserKeyPath, LdrGetProcedureAddress,
         NtProtectVirtualMemory);
     implement("ntdll", "RtlInitString", RtlInitAnsiString);
     implement("ntdll", "RtlFreeAnsiString", RtlFreeUnicodeString);
