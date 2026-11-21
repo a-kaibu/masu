@@ -6,3 +6,4 @@
 # everyone who runs the test benefits from these saved cases.
 cc effe73e5462bfad83de7a885daa55074e2278c8374d757309032b1bc8f13019c # shrinks to fmt = 41, ops = [Uint([0, 0, 0, 924])]
 cc 02f4894985cd86f0a8007241750fe8ee7794e17109e5b9e3f70611c479ecef8b # shrinks to fmt = 41, ops = [View([0.0, 0.0, 0.0, 0.0], [[1, 0, 1, 1]])]
+cc 047006419e97f0a5112387b010fe311405a2e4b778cba41f09a5ed175c7dd569 # shrinks to fmt = 30, ops = [View([0.0, 0.0, 0.0, 0.0], [])]

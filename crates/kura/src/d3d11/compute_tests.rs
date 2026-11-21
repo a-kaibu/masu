@@ -341,6 +341,8 @@ enum ClearOp {
     Uint([u32; 4]),
     Float([f32; 4]),
     View([f32; 4], Vec<[i32; 4]>),
+    /// ClearView with NULL rectangles but a count: Windows clears nothing (winref d3d11clear)
+    ViewNull([f32; 4], u32),
 }
 
 fn clear_op() -> impl proptest::strategy::Strategy<Value = ClearOp> {
@@ -350,7 +352,8 @@ fn clear_op() -> impl proptest::strategy::Strategy<Value = ClearOp> {
     prop_oneof![
         any::<[u32; 4]>().prop_map(ClearOp::Uint),
         proptest::array::uniform4(val.clone()).prop_map(ClearOp::Float),
-        (proptest::array::uniform4(val), proptest::collection::vec(rect, 0..3)).prop_map(|(c, r)| ClearOp::View(c, r)),
+        (proptest::array::uniform4(val.clone()), proptest::collection::vec(rect, 0..3)).prop_map(|(c, r)| ClearOp::View(c, r)),
+        (proptest::array::uniform4(val), 1u32..4).prop_map(|(c, n)| ClearOp::ViewNull(c, n)),
     ]
 }
 
@@ -383,7 +386,13 @@ proptest::proptest! {
                     let rp = mem(4 * r.len().max(1) as u32);
                     put(rp, &r.iter().flatten().map(|x| x.cast_unsigned()).collect::<Vec<_>>());
                     d.cc(132, &[uav, p, if r.is_empty() { 0 } else { rp }, r.len() as u32]);
-                    (clear::Values::Float(*f), if r.is_empty() { vec![[0, 0, 8, 8]] } else { r.clone() })
+                    (clear::Values::Color(*f), if r.is_empty() { vec![[0, 0, 8, 8]] } else { r.clone() })
+                }
+                ClearOp::ViewNull(f, n) => {
+                    let p = mem(4);
+                    put(p, &f.map(f32::to_bits));
+                    d.cc(132, &[uav, p, 0, *n]);
+                    continue;
                 }
             };
             let rects = if rects.is_empty() { vec![[0, 0, 8, 8]] } else { rects };

@@ -9,8 +9,12 @@
 //!   SNORM to -1..1, times 2^n - 1 (2^(n-1) - 1), rounded to the nearest even, NaN 0; an sRGB
 //!   format's color through the linear-to-sRGB curve first); on an integer format a Float
 //!   clear does nothing (None).
+//! - What Windows does beyond the documents (winref d3d11clear): 16-bit and the 11- and 10-bit
+//!   floats are rounded toward zero (past the largest finite value: the largest, 70000 is
+//!   0x7bff; an infinity stays one); a 16-bit NaN is the quiet 0x7e00 with its sign, an
+//!   unsigned float's NaN every exponent and mantissa bit; ClearView's color on an integer
+//!   format is each value truncated toward zero (clamped to the channel, NaN 0).
 
-use super::format::f16_bits;
 use kome::num::{lo32, trunc_i64, trunc_u32, us};
 
 /// What a channel holds.
@@ -34,6 +38,8 @@ type Ch = (u32, Kind, usize);
 pub enum Values {
     Uint([u32; 4]),
     Float([f32; 4]),
+    /// ClearView's color: a Float clear's, and integer channels get it truncated
+    Color([f32; 4]),
 }
 
 /// A DXGI format's channels from the lowest bits up, and whether its color is sRGB-encoded.
@@ -150,34 +156,63 @@ fn to_srgb(v: f32) -> f32 {
     if v <= 0.003_130_8 { v * 12.92 } else { 1.055 * v.powf(1.0 / 2.4) - 0.055 }
 }
 
+/// A finite float's magnitude `a` (not negative) as a float of 5 exponent bits (bias 15) and
+/// `m` mantissa bits, rounded toward zero: past the largest finite value the largest.
+fn rtz_bits(a: f32, m: u32) -> u32 {
+    let max = (0x1e_u32 << m) | mask(m);
+    let b = a.to_bits();
+    // (the f32 exponent rebiased to 15)
+    let e = i64::from((b >> 23) & 0xff).wrapping_sub(112);
+    if e >= 31 {
+        return max;
+    }
+    if e >= 1 {
+        let man = (b & 0x7f_ffff) >> 23u32.saturating_sub(m);
+        return (u32::try_from(e).unwrap_or(0) << m | man).min(max);
+    }
+    // (a denormal: a / 2^-14 in units of 2^-m)
+    trunc_u32((f64::from(a) * 2f64.powi(i32::try_from(m).unwrap_or(0).saturating_add(14))).trunc()).min(mask(m))
+}
+
 /// a float as an unsigned float of `m` mantissa bits and 5 exponent bits (R11G11B10's):
-/// negative values clamped at 0, past the largest to infinity, rounded to the nearest even;
-/// NaN stays NaN
+/// negative values 0, rounded toward zero, past the largest finite value the largest, an
+/// infinity one; NaN every exponent and mantissa bit
 fn uf_bits(v: f32, m: u32) -> u32 {
     if v.is_nan() {
-        return 0x1f << m | 1;
+        return 0x1f << m | mask(m);
     }
     if v <= 0.0 {
         return 0;
     }
-    let b = v.to_bits();
-    // (the f32 exponent rebiased to 15)
-    let e = i64::from((b >> 23) & 0xff).wrapping_sub(112);
-    let man = u64::from(b & 0x7f_ffff) | 0x80_0000;
-    if e >= 31 {
+    if v.is_infinite() {
         return 0x1f << m;
     }
-    // (man * 2^(e - 38): `m` mantissa bits below the hidden one; a denormal's from 2^-14)
-    let normal = e > 0;
-    let shift = if normal { 23i64.wrapping_sub(i64::from(m)) } else { 24i64.wrapping_sub(i64::from(m)).wrapping_sub(e) };
-    let Some(shift) = u32::try_from(shift).ok().filter(|s| (1..=40).contains(s)) else { return 0 };
-    let field = (1u64 << m).wrapping_sub(1);
-    let keep = if normal { (man >> shift) & field } else { man >> shift };
-    let rest = man & (1u64 << shift).wrapping_sub(1);
-    let half = 1u64 << shift.wrapping_sub(1);
-    let up = u64::from(rest > half || (rest == half && keep & 1 == 1));
-    let exp = if normal { u64::try_from(e).unwrap_or(0) << m } else { 0 };
-    lo32((exp | keep).saturating_add(up).min(0x1f << m))
+    rtz_bits(v, m)
+}
+
+/// a float as a 16-bit float: rounded toward zero, past the largest finite value the largest,
+/// an infinity one, NaN the quiet 0x7e00; the sign kept
+fn f16_rtz(v: f32) -> u32 {
+    let sign = (v.to_bits() >> 16) & 0x8000;
+    if v.is_nan() {
+        return sign | 0x7e00;
+    }
+    if v.is_infinite() {
+        return sign | 0x7c00;
+    }
+    sign | rtz_bits(v.abs(), 10)
+}
+
+/// a float to an n-bit integer channel, truncated toward zero and clamped to the channel's
+/// range (NaN 0), as ClearView gives an integer format its color
+fn int_trunc(v: f32, n: u32, signed: bool) -> u32 {
+    let v = f64::from(if v.is_nan() { 0.0 } else { v }).trunc();
+    if signed {
+        let hi = f64::from(mask(n.saturating_sub(1)));
+        lo32(trunc_i64(v.clamp(-hi - 1.0, hi))) & mask(n)
+    } else {
+        trunc_u32(v.clamp(0.0, f64::from(mask(n))))
+    }
 }
 
 /// a float to an n-bit UNORM or SNORM value (documented: clamped, scaled, rounded to the
@@ -212,12 +247,13 @@ pub fn texel(dxgi: u32, v: Values) -> Option<Vec<u8>> {
             // (an X channel: 0)
             _ if i >= 4 => 0,
             Values::Uint(u) => u.get(i).copied().unwrap_or(0) & mask(n),
-            Values::Float(f) => {
+            Values::Color(f) if matches!(kind, Kind::Uint | Kind::Sint) => int_trunc(f.get(i).copied().unwrap_or(0.0), n, kind == Kind::Sint),
+            Values::Float(f) | Values::Color(f) => {
                 let x = f.get(i).copied().unwrap_or(0.0);
                 let x = if srgb && i < 3 && !x.is_nan() { to_srgb(x.clamp(0.0, 1.0)) } else { x };
                 match kind {
                     Kind::F32 => x.to_bits(),
-                    Kind::F16 => u32::from(f16_bits(x)),
+                    Kind::F16 => f16_rtz(x),
                     Kind::UF => uf_bits(x, n.saturating_sub(5)),
                     Kind::Unorm => norm(x, n, false),
                     Kind::Snorm => norm(x, n, true),
@@ -264,6 +300,24 @@ mod tests {
         // sRGB: 0.5 linear is 0.7354 encoded: 188
         assert_eq!(texel(29, Values::Float([0.5, 0.0, 1.0, 0.5])), Some(vec![188, 0, 255, 128]));
         assert_eq!(texel(9, Values::Uint([0; 4])), None, "typeless: views have a type");
+        // Windows beyond the documents (winref d3d11clear): 16-bit floats toward zero, past
+        // the largest the largest, infinity kept, NaN the quiet one with its sign
+        assert_eq!(f16_rtz(70000.0), 0x7bff);
+        assert_eq!(f16_rtz(f32::INFINITY), 0x7c00);
+        assert_eq!(f16_rtz(f32::NEG_INFINITY), 0xfc00);
+        assert_eq!(f16_rtz(f32::NAN), 0x7e00);
+        assert_eq!(f16_rtz(-f32::NAN), 0xfe00);
+        assert_eq!(f16_rtz(1e-7), 0x0001);
+        assert_eq!(f16_rtz(1.0009), 0x3c00, "the nearest would be 0x3c01");
+        // unsigned floats: NaN every bit, negative 0, past the largest the largest
+        assert_eq!(uf_bits(f32::NAN, 6), 0x7ff);
+        assert_eq!(uf_bits(f32::NAN, 5), 0x3ff);
+        assert_eq!(uf_bits(-1.0, 6), 0);
+        assert_eq!(uf_bits(70000.0, 6), 0x7bf);
+        assert_eq!(uf_bits(f32::INFINITY, 5), 0x3e0);
+        // ClearView's color on an integer format: each value truncated
+        assert_eq!(texel(30, Values::Color([0.25, 0.75, 1.0, 300.0])), Some(vec![0, 0, 1, 255]));
+        assert_eq!(texel(32, Values::Color([-1.5, 2.9, f32::NAN, -300.0])), Some(vec![0xff, 2, 0, 0x80]));
     }
 
     proptest! {
@@ -276,15 +330,32 @@ mod tests {
             prop_assert!(err <= 0.5, "{} -> {}", v, got);
         }
 
-        /// the 11- and 10-bit floats: round to the nearest representable value (decoded back
-        /// within half a step of the mantissa)
+        /// the 11- and 10-bit floats: rounded toward zero (Windows, winref d3d11clear): the
+        /// decoded value is at most v and less than a step below it; past the largest finite
+        /// value, the largest
         #[test]
-        fn small_floats_nearest(v in 0.0f32..65000.0, m in prop_oneof![Just(6u32), Just(5u32)]) {
+        fn small_floats_toward_zero(v in 0.0f32..70000.0, m in prop_oneof![Just(6u32), Just(5u32)]) {
             let b = uf_bits(v, m);
             let (e, man) = (b >> m, b & ((1 << m) - 1));
             let dec = if e == 0 { f64::from(man) / f64::from(1u32 << m) * 2f64.powi(-14) } else { (1.0 + f64::from(man) / f64::from(1u32 << m)) * 2f64.powi(i32::try_from(e).unwrap_or(0) - 15) };
             let step = if e == 0 { 2f64.powi(-14) / f64::from(1u32 << m) } else { 2f64.powi(i32::try_from(e).unwrap_or(0) - 15) / f64::from(1u32 << m) };
-            prop_assert!((dec - f64::from(v)).abs() <= step / 2.0 + 1e-12 || e == 31, "{} -> e {} m {} = {}", v, e, man, dec);
+            prop_assert!(e < 31, "{} -> e {}", v, e);
+            let top = b == (0x1e << m | ((1 << m) - 1));
+            prop_assert!(dec <= f64::from(v) && (f64::from(v) < dec + step || top), "{} -> e {} m {} = {}", v, e, man, dec);
+        }
+
+        /// 16-bit floats: rounded toward zero too, with the sign
+        #[test]
+        fn f16_toward_zero(v in -70000.0f32..70000.0) {
+            let b = f16_rtz(v);
+            let a = b & 0x7fff;
+            prop_assert_eq!(b >> 15, u32::from(v.is_sign_negative()), "sign of {}", v);
+            let (e, man) = (a >> 10, a & 0x3ff);
+            prop_assert!(e < 31, "{} -> {:#x}", v, b);
+            let dec = if e == 0 { f64::from(man) * 2f64.powi(-24) } else { (1.0 + f64::from(man) / 1024.0) * 2f64.powi(i32::try_from(e).unwrap_or(0) - 15) };
+            let step = if e == 0 { 2f64.powi(-24) } else { 2f64.powi(i32::try_from(e).unwrap_or(0) - 25) };
+            let x = f64::from(v.abs());
+            prop_assert!(dec <= x && (x < dec + step || a == 0x7bff), "{} -> {:#x}", v, b);
         }
 
         /// every format: the texel is its size, and a Uint clear's bits read back per channel

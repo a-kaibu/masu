@@ -136,6 +136,11 @@ fn fixture(r: Rule) -> Fixture {
             good: &[("crates/dxwgsl/src/wgsl.rs", "fn load() -> String {\n    format!(\"select(vec4<f32>(), textureLoad(t{t}, {a}, {l}), {ok})\")\n}\n// textureLoad( named in a comment\n")],
             mutate: ("crates/dxwgsl/src/wgsl.rs", |t| Some(t.replace("format!(\"select(vec4<{}>(), textureLoad(t{t}, {args}), {ok})\", k.s())", "format!(\"textureLoad(t{t}, {args})\")"))),
         },
+        Rule::ClearRounding => Fixture {
+            bad: &[("crates/kura/src/d3d11/clear.rs", "use super::format::f16_bits;\nfn texel(v: f32) -> u32 { f16_bits(v) }\n")],
+            good: &[("crates/kura/src/d3d11/clear.rs", "// not f16_bits\nfn texel(v: f32) -> u32 { f16_rtz(v) }\n#[cfg(test)]\nmod tests {\n    fn t() { f16_bits(1.0); }\n}\n")],
+            mutate: ("crates/kura/src/d3d11/clear.rs", |t| Some(t.replace("sign | rtz_bits(", "f16_bits(v) | rtz_bits("))),
+        },
         Rule::DepthGuard => Fixture {
             bad: &[
                 ("crates/apitrace/src/trace.rs", "pub const MAX_DEPTH: u32 = 64;\nfn value(&mut self) { self.depth += 1; }\n"),

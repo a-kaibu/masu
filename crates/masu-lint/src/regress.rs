@@ -176,6 +176,27 @@ pub(super) fn wgsl_load_bounds(tree: &Tree) -> Hits {
     out
 }
 
+// --- clear-rounding --------------------------------------------------------------------------
+
+/// the clear texels' file: Windows rounds a clear's small floats toward zero there
+const CLEAR_RS: &str = "crates/kura/src/d3d11/clear.rs";
+
+/// kura's clear.rs (outside its tests) calling format::f16_bits, the nearest-rounding one
+pub(super) fn clear_rounding(tree: &Tree) -> Hits {
+    let mut out = Hits::new();
+    let f = Rel::new(CLEAR_RS);
+    for (n, l) in tree.text(&f).lines().enumerate() {
+        if l.trim_start().starts_with("mod tests") || l.trim_start().starts_with("#[cfg(test)]") {
+            break;
+        }
+        let code = l.split("//").next().unwrap_or_default();
+        if code.contains("f16_bits") {
+            out.push((f.clone(), n.saturating_add(1), "f16_bits rounds to the nearest: a clear rounds toward zero (f16_rtz)".to_owned()));
+        }
+    }
+    out
+}
+
 /// (for the tests: every regex here compiles)
 #[cfg(test)]
 pub(super) fn regexes() -> [&'static LazyLock<Option<Regex>>; 6] {

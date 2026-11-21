@@ -3709,9 +3709,13 @@ unsafe fn context_call2(d: &mut D11, st: &mut State, m: u32, a: &dyn Fn(usize) -
         131 => swap_state(d, st, a(1), a(2)),
         58 => deferred::execute(d, st, a(1), a(2), after),
         // ClearView(view, color[4], rects, n): a render target or unordered access view, in
-        // rectangles of the view (none or NULL: all of it), the color as a Float clear's
-        // (D3D11.1 functional spec, ClearView)
+        // rectangles of the view (none: all of it; NULL with a count: nothing, as Windows does,
+        // winref d3d11clear), the color as a Float clear's, but truncated on an integer format
+        // (D3D11.1 functional spec, ClearView; clear::Values::Color)
         132 => {
+            if a(3) == 0 && a(4) != 0 {
+                return S_OK;
+            }
             let v = d.id_of(a(1));
             // SAFETY: rd's own contract: the caller's color of four floats
             let c: [u32; 4] = std::array::from_fn(|i| unsafe { rd(a(2), i) });
@@ -3726,7 +3730,7 @@ unsafe fn context_call2(d: &mut D11, st: &mut State, m: u32, a: &dyn Fn(usize) -
                 return unsafe { context_call2(d, st, 50, &|i| if i == 1 { a(1) } else { a(2) }, after) };
             }
             // SAFETY: clear_view_texels' own contract: a view of this device
-            unsafe { clear_view_texels(d, v, clear::Values::Float(c.map(f32::from_bits)), &rects) };
+            unsafe { clear_view_texels(d, v, clear::Values::Color(c.map(f32::from_bits)), &rects) };
         }
         // ID3D11DeviceContext2: tiled resources and annotations
         134..=139 | 141..=143 => {}
