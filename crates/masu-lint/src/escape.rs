@@ -189,8 +189,19 @@ pub fn constant_handler(tree: &Tree) -> Hits {
 /// a COM method's arm (by number, or sake's `Method { .. }`) that answers a constant
 static CONST_ARM: LazyLock<Option<Regex>> = LazyLock::new(|| Regex::new(r"^\s*(?:[0-9][0-9a-fx_ |.=]*|Method \{[^}]*\})\s*=>\s*(?:\{\s*\}|S_OK|0|1|E_NOTIMPL|E_FAIL|D3DERR_INVALIDCALL|return [A-Z_0-9]+;?)\s*,?\s*(//.*)?$").ok());
 
-/// The Direct3D objects' method tables: kura's d3d9 and d3d11 and sake's Direct3D 9 glue.
-const METHOD_TABLES: [&str; 3] = ["crates/kura/src/d3d9/", "crates/kura/src/d3d11/", "crates/sake/src/d3d9.rs"];
+/// The files of the Direct3D objects' method tables: kura's d3d9 and d3d11 (not their
+/// format tables) and sake's Direct3D 9 glue.
+const METHOD_TABLES: [&str; 9] = [
+    "crates/kura/src/d3d9/device.rs",
+    "crates/kura/src/d3d9/d3d8.rs",
+    "crates/kura/src/d3d9/mod.rs",
+    "crates/kura/src/d3d11/mod.rs",
+    "crates/kura/src/d3d11/d3d10.rs",
+    "crates/kura/src/d3d11/deferred.rs",
+    "crates/kura/src/d3d11/d2d.rs",
+    "crates/sake/src/d3d9.rs",
+    "crates/sake/src/d3d11.rs",
+];
 
 /// `constant-method`: a method of a Direct3D object that does nothing and answers a constant
 /// (an empty arm, S_OK, 0, E_NOTIMPL...) whatever it is given, with no Windows evidence in its

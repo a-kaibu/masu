@@ -279,9 +279,9 @@ fn fixture(r: Rule) -> Fixture {
             mutate: ("crates/sake/src/k32.rs", |t| Some(t + "\nfn Regression(_c: &mut Ctx) -> u32 {\n    1\n}\n")),
         },
         Rule::ConstantMethod => Fixture {
-            bad: &[("crates/kura/src/d3d11/x.rs", "fn f(m: u32) -> u32 {\n    match m {\n        49 | 51 => {}\n        // GetData\n        7 => S_OK,\n        _ => 0,\n    }\n}\n")],
+            bad: &[("crates/kura/src/d3d11/d3d10.rs", "fn f(m: u32) -> u32 {\n    match m {\n        49 | 51 => {}\n        // GetData\n        7 => S_OK,\n        _ => 0,\n    }\n}\n")],
             good: &[(
-                "crates/kura/src/d3d11/x.rs",
+                "crates/kura/src/d3d11/d3d10.rs",
                 "fn f(m: u32, a: u32) -> u32 {\n    match m {\n        // SetMarkerInt: annotations, which Windows' runtime drops without a tool attached (documented)\n        141 => {}\n        12 => S_OK, // AddRef as Windows (winref d3d11api)\n        13 => a,\n        _ => E_NOTIMPL,\n    }\n}\n",
             )],
             mutate: ("crates/kura/src/d3d11/mod.rs", |t| Some(t + "\nfn regression(m: u32) -> u32 {\n    match m {\n        51 | 52 => {}\n        _ => 1,\n    }\n}\n")),

@@ -401,11 +401,6 @@ arc-count	crates/masu/src/storage.rs	if f.get(&id).is_some_and(|g| std::sync::Ar
 kome-copy	crates/sake/src/com.rs	pub fn read_guid(p: u32) -> Guid {	the (Data1, Data2, Data3, Data4) form win32md's generated IID tables use: one adapter over kome::guid::fields
 kome-copy	crates/sake/src/wic.rs	fn fmt_guid(f: Fmt) -> Guid {	a pixel format's GUID (the format table), not a GUID helper
 kome-copy	crates/shaderconf/src/ref_dxbc.rs	fn rd(b: &[u8], at: usize) -> Result<u32, String> {	the reference interpreter keeps its own decoder (independent oracle, its module doc)
-constant-method	crates/kura/src/d3d11/check.rs	1 => 1,	escape: implement Windows' behavior (this thread)
-constant-method	crates/kura/src/d3d11/check.rs	1..=4 => 1,	escape: implement Windows' behavior (this thread)
-constant-method	crates/kura/src/d3d11/check.rs	12 => 1,	escape: implement Windows' behavior (this thread)
-constant-method	crates/kura/src/d3d11/check.rs	15 => 0,	escape: implement Windows' behavior (this thread)
-constant-method	crates/kura/src/d3d11/check.rs	60 | 65 => 1,	escape: implement Windows' behavior (this thread)
 constant-method	crates/kura/src/d3d11/d3d10.rs	63 => S_OK,	escape: implement Windows' behavior (this thread)
 constant-method	crates/kura/src/d3d11/d3d10.rs	64 => S_OK,	escape: implement Windows' behavior (this thread)
 constant-method	crates/kura/src/d3d11/d3d10.rs	65 => 0,	escape: implement Windows' behavior (this thread)
@@ -418,9 +413,6 @@ constant-method	crates/kura/src/d3d11/deferred.rs	113 => 0,	escape: implement Wi
 constant-method	crates/kura/src/d3d11/deferred.rs	134..=139 | 141..=143 => S_OK,	escape: implement Windows' behavior (this thread)
 constant-method	crates/kura/src/d3d11/deferred.rs	140 => 0,	escape: implement Windows' behavior (this thread)
 constant-method	crates/kura/src/d3d11/deferred.rs	144 | 145 => 0,	escape: implement Windows' behavior (this thread)
-constant-method	crates/kura/src/d3d11/format.rs	1..=4 => 1,	escape: implement Windows' behavior (this thread)
-constant-method	crates/kura/src/d3d11/format.rs	16 => 1,	escape: implement Windows' behavior (this thread)
-constant-method	crates/kura/src/d3d11/format.rs	41 => 0,	escape: implement Windows' behavior (this thread)
 constant-method	crates/kura/src/d3d11/mod.rs	0xcafcb56c | 0x4ae63092 | 0xaba496dd => 0,	escape: implement Windows' behavior (this thread)
 constant-method	crates/kura/src/d3d11/mod.rs	1 => 0,	escape: implement Windows' behavior (this thread)
 constant-method	crates/kura/src/d3d11/mod.rs	1 => 0,	escape: implement Windows' behavior (this thread)
