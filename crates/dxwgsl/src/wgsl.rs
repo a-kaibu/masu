@@ -2791,7 +2791,9 @@ fn translate_with(code: &[u8], pixel: bool, ps: Option<&[u8]>, sprite: Option<f3
             match logic.iter().find(|l| l.target == r) {
                 // (an integer target: its output as the target stores it, the attachment's type)
                 Some(l) => {
-                    fields.push(format!("@location({r}) c{r}: vec4<{}>", l.scalar()));
+                    // (a stash is UINT whatever the target's sign)
+                    let scalar = if matches!(l.store, crate::logic::Store::Stash { .. }) { "u32" } else { l.scalar() };
+                    fields.push(format!("@location({r}) c{r}: vec4<{scalar}>"));
                     logic_output(l, r, k, &mut params, &mut post, &mut m, &mut bindings);
                 }
                 None => {
@@ -2803,8 +2805,8 @@ fn translate_with(code: &[u8], pixel: bool, ps: Option<&[u8]>, sprite: Option<f3
         // (a pixel-rate shader over a multisampled target with a logic op: the mark of the
         // samples it writes, for the resolve pass)
         if let Some(mark) = logic.iter().find_map(|l| match l.store {
-            crate::logic::Store::Stash { mark, .. } => Some(mark),
-            crate::logic::Store::Plain | crate::logic::Store::Direct(_) => None,
+            crate::logic::Store::Stash { mark: crate::logic::Mark::Slot(mark), .. } => Some(mark),
+            crate::logic::Store::Stash { mark: crate::logic::Mark::Carried { .. }, .. } | crate::logic::Store::Plain | crate::logic::Store::Direct(_) => None,
         }) {
             fields.push(format!("@location({mark}) lg_mark: u32"));
             post.push("out.lg_mark = 1u;".into());
@@ -2936,7 +2938,17 @@ fn logic_output(l: &crate::logic::Logic, r: u32, k: K, params: &mut Vec<String>,
     let max = l.max_wgsl();
     match l.store {
         Store::Plain => post.push(format!("out.c{r} = {};", l.saturate_wgsl(&o))),
-        Store::Stash { .. } => post.push(format!("out.c{r} = {};", l.bits_out_wgsl(&format!("{o} & {max}")))),
+        // (the stash is UINT: the source's bits, and the mark where this stash carries it)
+        Store::Stash { mark, .. } => {
+            let flag = match mark {
+                crate::logic::Mark::Carried { by, channel, bit } if by == r => {
+                    let f: Vec<String> = (0..4u32).map(|c| if c == channel { format!("{}u", 1u32 << bit.min(31)) } else { "0u".to_owned() }).collect();
+                    format!(" | vec4<u32>({})", f.join(", "))
+                }
+                crate::logic::Mark::Carried { .. } | crate::logic::Mark::Slot(_) => String::new(),
+            };
+            post.push(format!("out.c{r} = ({o} & {max}){flag};"));
+        }
         // (an op of the source alone (CLEAR SET COPY COPY_INVERTED): no copy read, no sample
         // index (which would make the shader run per sample))
         Store::Direct(op) if !op.reads_dst() => {

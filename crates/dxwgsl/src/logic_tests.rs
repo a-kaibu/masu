@@ -113,9 +113,13 @@ fn store_wgsl_parses() {
     for sign in [Sign::Unsigned, Sign::Signed] {
         for bits in [[8, 8, 8, 8], [16, 16, 0, 0], [32, 0, 0, 0], [10, 10, 10, 2]] {
             for op in Op::ALL {
-                let l = Logic { target: 3, store: Store::Stash { op, mark: 4 }, bits, sign, multisampled: true };
-                let src = resolve_wgsl(&l).unwrap();
-                naga::front::wgsl::parse_str(&src).unwrap_or_else(|e| panic!("{op:?} {sign:?} {bits:?}: {e}\n{src}"));
+                for mark in [Mark::Slot(4), Mark::Carried { by: 3, channel: 2, bit: 0 }, Mark::Carried { by: 1, channel: 0, bit: 10 }] {
+                    let l = Logic { target: 3, store: Store::Stash { op, mark }, bits, sign, multisampled: true };
+                    let src = resolve_wgsl(&l).unwrap();
+                    crate::valid_wgsl(&src);
+                    let (ch, bit) = mark.flag();
+                    assert!(src.contains(&format!(")[{ch}] >> {bit}u) & 1u) == 0u) {{ discard; }}")), "{src}");
+                }
             }
             let l = target(Store::Plain, bits, sign);
             let k = l.scalar();
@@ -135,5 +139,31 @@ fn wgsl_of_every_op() {
         naga::front::wgsl::parse_str(&src).unwrap_or_else(|err| panic!("{op:?}: {err}"));
         assert_eq!(e.contains('s'), op.reads_src(), "{op:?}: {e}");
         assert_eq!(e.contains('d'), op.reads_dst(), "{op:?}: {e}");
+    }
+}
+
+/// A stash that carries the mark: a format WebGPU multisamples, the target's channels kept
+/// below the mark (every value of the channels and the mark apart), none for four 16-bit or
+/// 32-bit channels.
+#[test]
+fn carried_marks() {
+    let ms = |b: [u32; 4]| b.iter().all(|&w| w == 0 || w == 8 || w == 16) && b.iter().take_while(|&&w| w != 0).count() != 3;
+    for bits in [[8, 0, 0, 0], [8, 8, 0, 0], [8, 8, 8, 8], [16, 0, 0, 0], [16, 16, 0, 0], [16, 16, 16, 16], [10, 10, 10, 2], [32, 0, 0, 0], [32, 32, 32, 32]] {
+        match carry(bits) {
+            Some((wide, ch, bit)) => {
+                assert!(ms(wide), "{bits:?} -> {wide:?}");
+                let c = usize::try_from(ch).unwrap();
+                // (the mark outside the target's channels' bits, inside the stash's)
+                assert!(bit >= bits[c] && bit < wide[c], "{bits:?}: {ch} {bit}");
+                for (w, b) in wide.iter().zip(bits) {
+                    assert!(*w >= b);
+                }
+                let l = Logic { target: 2, store: Store::Stash { op: Op::Xor, mark: Mark::Carried { by: 2, channel: ch, bit } }, bits, sign: Sign::Unsigned, multisampled: true };
+                assert_eq!(l.stash_bits(), wide);
+                let other = Logic { target: 1, ..l };
+                assert_eq!(other.stash_bits(), bits);
+            }
+            None => assert!(bits == [16; 4] || bits[0] == 32, "{bits:?}"),
+        }
     }
 }

@@ -1,6 +1,6 @@
 //! Which targets get logic ops, and a draw's primitives as draws of their own.
 use super::*;
-use dxwgsl::logic::{Logic, Op, Sign, Store};
+use dxwgsl::logic::{Logic, Mark, Op, Sign, Store};
 
 /// targets 0..2 of R8G8B8A8_UINT, R32_UINT, R8G8B8A8_UNORM; blend state words with logic ops
 fn blend(independent: bool, ops: [(u32, u32); 3]) -> Vec<u32> {
@@ -23,7 +23,7 @@ fn targets_of_integer_formats_only() {
     // (without IndependentBlendEnable every target has target 0's; a multisampled one under a
     // pixel-rate shader a stash, its mark after the targets)
     let (ops, _) = targets(&blend(false, [(1, 6), (0, 0), (0, 0)]), &fmts, &[false, true, false], false);
-    assert_eq!(ops.iter().map(|l| (l.target, l.store, l.multisampled)).collect::<Vec<_>>(), vec![(0, Store::Direct(Op::And), false), (1, Store::Stash { op: Op::And, mark: 3 }, true)]);
+    assert_eq!(ops.iter().map(|l| (l.target, l.store, l.multisampled)).collect::<Vec<_>>(), vec![(0, Store::Direct(Op::And), false), (1, Store::Stash { op: Op::And, mark: Mark::Slot(3) }, true)]);
     // (a shader of sample rate: each sample its own invocation, the op in the shader)
     let (ops, _) = targets(&blend(false, [(1, 6), (0, 0), (0, 0)]), &fmts, &[false, true, false], true);
     assert_eq!(ops.iter().map(|l| l.store).collect::<Vec<_>>(), vec![Store::Direct(Op::And), Store::Direct(Op::And)]);
@@ -50,7 +50,7 @@ proptest::proptest! {
             (Some(_), None) => proptest::prop_assert_eq!(ops.iter().map(|l| l.store).collect::<Vec<_>>(), vec![Store::Plain]),
             (Some(_), Some(Op::Noop)) => proptest::prop_assert!(ops.is_empty() && kept == vec![0]),
             (Some((bits, sign)), Some(o)) => {
-                let store = if ms && !rate && o.reads_dst() { Store::Stash { op: o, mark: 1 } } else { Store::Direct(o) };
+                let store = if ms && !rate && o.reads_dst() { Store::Stash { op: o, mark: Mark::Slot(1) } } else { Store::Direct(o) };
                 proptest::prop_assert_eq!(ops, vec![Logic { target: 0, store, bits, sign, multisampled: ms }]);
             }
         }
@@ -83,4 +83,39 @@ fn primitives_of_each_topology() {
     let cut = [false, false, false, true, false, false, false];
     assert_eq!(primitives(4, 7, &cut), vec![p(0, 3, false), p(4, 3, false)]);
     assert!(primitives(4, 2, &[]).is_empty());
+}
+
+const INTS: [u32; 7] = [f::P_RGBA8UI, f::P_RG8UI, f::P_R8UI, f::P_RGBA16UI, f::P_RG16UI, f::P_RGB10A2UI, f::P_RGBA8SI];
+
+proptest::proptest! {
+    /// Eight targets: no location free, the mark carried by the first stash that can carry it,
+    /// every stash pointing at that one, its stash format one the page multisamples; with no
+    /// stash that can carry it, the ops are the shader's.
+    #[test]
+    fn eight_targets_carry_the_mark(pages in proptest::collection::vec(0usize..7, 8), ops in proptest::collection::vec(0u32..16, 8)) {
+        let mut b = vec![0, 1];
+        for _ in 0..8 {
+            b.extend_from_slice(&[0, 2, 1, 1, 2, 1, 1, 0xf]);
+        }
+        for o in &ops {
+            b.extend_from_slice(&[1, *o]);
+        }
+        let fmts: Vec<u32> = pages.iter().map(|&p| INTS[p]).collect();
+        let (out, _) = targets(&b, &fmts, &[true; 8], false);
+        let stashes: Vec<&Logic> = out.iter().filter(|l| matches!(l.store, Store::Stash { .. })).collect();
+        let wanted: Vec<&Logic> = out.iter().filter(|l| Op::of(ops[usize::try_from(l.target).unwrap()]).is_some_and(Op::reads_dst)).collect();
+        let carrier = wanted.iter().find(|l| dxwgsl::logic::carry(l.bits).is_some());
+        match carrier {
+            Some(c) => {
+                proptest::prop_assert_eq!(stashes.len(), wanted.len());
+                for l in &stashes {
+                    let Store::Stash { mark: Mark::Carried { by, .. }, .. } = l.store else { return Err(proptest::test_runner::TestCaseError::fail("a slot of its own past 8 targets")) };
+                    proptest::prop_assert_eq!(by, c.target);
+                    let page = uint_page(l.stash_bits());
+                    proptest::prop_assert!(page.is_some_and(crate::render::d3d::page_multisamples), "{:?}", l);
+                }
+            }
+            None => proptest::prop_assert!(stashes.is_empty()),
+        }
+    }
 }
