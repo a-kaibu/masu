@@ -1,0 +1,3 @@
+threads done: 3 of 3
+BitBlt 1
+pixel in 0000ff, beside ffffff

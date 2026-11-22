@@ -1,0 +1,8 @@
+dst (0,0) src (19,19): 0 err 87, 0 pixels changed
+dst (20,20) src (1,1): 0 err 87, 0 pixels changed
+dst (0,0) src (20,10): 1 err 57005, 160 pixels changed
+dst (0,0) src (10,20): 1 err 57005, 0 pixels changed
+dst (22,0) src (30,5): 0 err 87, 0 pixels changed
+dst (0,0) src (40,40): 1 err 57005, 400 pixels changed
+dst (0,0) src (15,15): 0 err 87, 0 pixels changed
+dst (0,0) src (25,0): 1 err 57005, 400 pixels changed

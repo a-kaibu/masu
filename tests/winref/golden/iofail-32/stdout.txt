@@ -1,0 +1,33 @@
+WriteFile(h, "abcdef", 6, &n, NULL)                          = 1 err 57005
+  written 6
+WriteFile(h, bad[i], 16, &n, NULL)                           = 0 err 1784
+  written 0
+WriteFile(h, bad[i], 16, &n, NULL)                           = 0 err 1784
+  written 0
+WriteFile(h, bad[0], 0, &n, NULL)                            = 1 err 57005
+  written 0
+size 6
+ReadFile(h, bad[i], 4, &n, NULL)                             = 0 err 998
+  read 0
+ReadFile(h, bad[i], 4, &n, NULL)                             = 0 err 998
+  read 0
+ReadFile(h, buf, sizeof buf, &n, NULL)                       = 1 err 57005
+  read 6 "abcdef"
+ReadFile(h, buf, sizeof buf, &n, NULL)                       = 1 err 57005
+  read at the end 0
+_llseek(hf, 0, 2)                                            = 6 err 57005
+_lwrite(hf, (LPCCH)bad[0], 8)                                = 4294967295 err 1784
+_lwrite(hf, "gh", 2)                                         = 2 err 57005
+_llseek(hf, 0, 0)                                            = 0 err 57005
+_lread(hf, bad[0], 4)                                        = 4294967295 err 998
+_lread(hf, buf, sizeof buf)                                  = 8 err 57005
+_lread(hf, buf, sizeof buf)                                  = 0 err 57005
+_write(fd, bad[0], 8)                                        = -1 err 1784
+  errno 22
+_write(fd, "ij", 2)                                          = 2 err 57005
+_read(fd, bad[0], 4)                                         = -1 err 998
+  errno 22
+_read(fd, buf, sizeof buf)                                   = 10 err 57005
+  "abcdefghij"
+_read(fd, buf, sizeof buf)                                   = 0 err 57005
+  at the end errno 0
