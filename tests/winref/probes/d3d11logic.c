@@ -8,6 +8,8 @@
  *  - RenderTargetWriteMask with a logic op; a logic op on the second target only
  *    (IndependentBlendEnable), the first written plainly;
  *  - which formats CheckFeatureSupport(FORMAT_SUPPORT2) gives OUTPUT_MERGER_LOGIC_OP;
+ *  - sources outside the channels of SINT and 16-bit UINT targets (no logic op, COPY,
+ *    XOR, AND);
  *  - every op on targets of formats without it (UNORM, UNORM_SRGB, SNORM, SINT, FLOAT,
  *    B8G8R8A8, R11G11B10, R16_UNORM): what the output merger writes there;
  *  - two 4x multisampled R16G16B16A16_UINT targets (4 words, each in two channels), every
@@ -402,6 +404,40 @@ int main(void) {
                     show(&u, 1, 2);
                     uniform(&u);
                 }
+                puts("");
+                if (b) ID3D11BlendState_Release(b);
+            }
+            ID3D11Texture2D_Release(u.t);
+            ID3D11Texture2D_Release(u.staging);
+            ID3D11RenderTargetView_Release(u.v);
+        }
+        ID3D11DeviceContext_PSSetShader(ctx, ps, NULL, 0);
+    }
+
+    puts("sources outside the channels of SINT and 16-bit UINT targets");
+    {
+        static const struct { DXGI_FORMAT f; const char *name; UINT bpp; int kind; UINT dst[2]; } wf[] = {
+            { DXGI_FORMAT_R8G8B8A8_SINT, "rgba8_sint", 4, 1, { 0xc3a55a3c } },
+            { DXGI_FORMAT_R16G16_SINT, "rg16_sint", 4, 1, { 0xf00f0ff0 } },
+            { DXGI_FORMAT_R16G16B16A16_SINT, "rgba16_sint", 8, 1, { 0xf00f0ff0, 0x12345678 } },
+            { DXGI_FORMAT_R16G16B16A16_UINT, "rgba16_uint", 8, 0, { 0xf00f0ff0, 0x12345678 } },
+        };
+        static const UINT wide[4] = { 0x12345601, 0x1ff, 0xffff7f38, 0x80 };
+        constants(wide, NULL, NULL);
+        for (int i = 0; i < 4; i++) {
+            struct target u;
+            if (!target(&u, wf[i].f, wf[i].bpp)) continue;
+            ID3D11DeviceContext_OMSetRenderTargets(ctx, 1, &u.v, NULL);
+            ID3D11DeviceContext_PSSetShader(ctx, wf[i].kind ? psi : ps, NULL, 0);
+            static const D3D11_LOGIC_OP wo[4] = { D3D11_LOGIC_OP_COPY, D3D11_LOGIC_OP_COPY, D3D11_LOGIC_OP_XOR, D3D11_LOGIC_OP_AND };
+            static const char *wn[4] = { "no logic op", "copy", "xor", "and" };
+            for (int m = 0; m < 4; m++) {
+                fill(&u, wf[i].dst);
+                ID3D11BlendState *b = blend(FALSE, 0, m > 0, wo[m], 0xf);
+                ID3D11DeviceContext_OMSetBlendState(ctx, b, zero, 0xffffffff);
+                ID3D11DeviceContext_Draw(ctx, 3, 0);
+                printf("  %s %s:", wf[i].name, wn[m]);
+                show(&u, 0, 0);
                 puts("");
                 if (b) ID3D11BlendState_Release(b);
             }
