@@ -1,7 +1,6 @@
 //! ImageHlp certificate-table access. These functions read actual WIN_CERTIFICATE
 //! records; they do not assert that a certificate or file signature is trusted.
 #![allow(non_snake_case)]
-use kome::locks::Lock as _;
 use std::io::{Read, Seek, SeekFrom, Write};
 use crate::api::{implement, Ctx};
 use crate::mem::{self, r32, w32};
@@ -91,7 +90,7 @@ fn certificates(img: &mut dyn Image) -> Option<Vec<Vec<u8>>> {
 /// `f` on the open file `h` read as an image, its position kept
 fn with_file<R>(h: u32, f: impl FnOnce(&mut dyn Image) -> R) -> Result<R, u32> {
     let file = crate::obj::file(h).ok_or(6u32)?;
-    let mut g = file.f.locked();
+    let mut g = file.host();
     let position = g.stream_position().map_err(|_| 87u32)?;
     let r = f(&mut FileImage(&mut g));
     g.seek(SeekFrom::Start(position)).map_err(|_| 87u32)?;
@@ -256,7 +255,7 @@ fn too_big(e: std::num::TryFromIntError) -> u32 {
 fn rewrite(h: u32, entries: &[Vec<u8>]) -> Result<(), u32> {
     let entry = with_file(h, |img| security_entry(img))?.ok_or(193u32)?;
     let file = crate::obj::file(h).ok_or(6u32)?;
-    let mut g = file.f.locked();
+    let mut g = file.host();
     let pos = g.stream_position().map_err(io_failed)?;
     let mut cur = [0u8; 8];
     g.seek(SeekFrom::Start(kome::num::u64_of(entry))).and_then(|_| g.read_exact(&mut cur)).map_err(io_failed)?;
