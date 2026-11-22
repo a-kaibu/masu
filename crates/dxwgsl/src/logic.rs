@@ -157,8 +157,10 @@ pub enum Store {
 }
 
 /// Where a draw's stash pass marks the samples it covers:
-/// - `Slot`: an R8_UINT attachment of its own at that output location, 1 at a covered sample
-///   (a draw with a location free: fewer than 8 targets);
+/// - `Slot`: an R8_UINT attachment at that output location, 1 at a covered sample: a location
+///   of its own (fewer than 8 targets), or a stash target's, that target's source then in a
+///   storage buffer ([`LOGIC_SRC`]: 8 targets and no stash that can carry the mark; the shader
+///   still once a pixel, its source a pixel's);
 /// - `Carried`: bit `bit` of channel `channel` of target `by`'s stash, a stash wider than its
 ///   target ([`carry`]: 8 targets, no location free).
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Hash, PartialOrd, Ord)]
@@ -213,6 +215,11 @@ impl Logic {
             Store::Plain | Store::Snorm(_) => None,
             Store::Direct(op) | Store::Stash { op, .. } => Some(op),
         }
+    }
+
+    /// Whether the target's location is the mark's: its source in the [`LOGIC_SRC`] buffer.
+    pub fn buffered(&self) -> bool {
+        matches!(self.store, Store::Stash { mark: Mark::Slot(at), .. } if at == self.target)
     }
 
     /// The channels of the target's stash: its own, or [`carry`]'s when it carries the mark.
@@ -334,6 +341,10 @@ pub const LOGIC_STASH: u32 = 970;
 /// The resolve pass's mark of the samples the shader wrote (an r8uint multisampled texture, or
 /// the stash that carries it: [`Mark`]).
 pub const LOGIC_MARK: u32 = 980;
+/// A stash target's source when its location is the mark's ([`Mark::Slot`] at the target's own
+/// location): a storage buffer of u32, word 0 the target's width, then 4 words a pixel (row by
+/// row from word 4).
+pub const LOGIC_SRC: u32 = 990;
 
 /// The WGSL of the resolve pass of a `Stash` target (None for the others): `vs_resolve` the
 /// full-target triangle, `fs_resolve` run for each sample: the sample the shader wrote (its
@@ -344,13 +355,19 @@ pub fn resolve_wgsl(l: &Logic) -> Option<String> {
     let (ch, bit) = mark.flag();
     let (dst, stash, mark) = (LOGIC_DST.saturating_add(l.target), LOGIC_STASH.saturating_add(l.target), LOGIC_MARK);
     let load = |t: &str, z: &str| format!("select({z}, textureLoad({t}, q, i32(si)), all(vec2<u32>(q) < textureDimensions({t})))");
-    let s = format!("({} & {})", load("stash", "vec4<u32>()"), l.max_wgsl());
+    let (stash_decl, s) = if l.buffered() {
+        let at = "(4u + (u32(q.y) * stash[0] + u32(q.x)) * 4u)";
+        let word = |c: u32| format!("select(0u, stash[{at} + {c}u], {at} + 3u < arrayLength(&stash))");
+        (format!("@group(0) @binding({stash}) var<storage, read> stash: array<u32>;"), format!("(vec4<u32>({}, {}, {}, {}) & {})", word(0), word(1), word(2), word(3), l.max_wgsl()))
+    } else {
+        (format!("@group(0) @binding({stash}) var stash: texture_multisampled_2d<u32>;"), format!("({} & {})", load("stash", "vec4<u32>()"), l.max_wgsl()))
+    };
     let d = l.bits_in_wgsl(&load("dst", &format!("vec4<{k}>()")));
     let m = load("mark", "vec4<u32>()");
     let out = l.bits_out_wgsl(&format!("({}) & {}", op.wgsl("s", "d"), l.max_wgsl()));
     Some(format!(
         "@group(0) @binding({dst}) var dst: texture_multisampled_2d<{k}>;\n\
-         @group(0) @binding({stash}) var stash: texture_multisampled_2d<u32>;\n\
+         {stash_decl}\n\
          @group(0) @binding({mark}) var mark: texture_multisampled_2d<u32>;\n\
          @vertex fn vs_resolve(@builtin(vertex_index) i: u32) -> @builtin(position) vec4<f32> {{\n\
          \x20 return vec4<f32>(f32(i >> 1u) * 4.0 - 1.0, f32(i & 1u) * 4.0 - 1.0, 0.0, 1.0);\n\

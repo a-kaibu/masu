@@ -65,3 +65,9 @@ export const SAVE_SOON_MS = 300;
 export const HELLO_WAIT_MS = 15_000;
 /** When the frame asks again for the saves, ms after its first ask */
 export const HELLO_AGAIN = [500, 1000, 2000, 4000, 8000];
+
+/** Whether the game's page at `pathname` (with `hash`) runs with Node (frame.ts): NW.js pages
+ * (beside the exe) do, Electron's (under resources/app/) when the app's page says #masu-node
+ * (html.ts frameWiring, which gives that page the synchronous reads then). */
+export const pageHasNode = (pathname: string, hash: string): boolean =>
+  !/\/resources\/app\//i.test(decodeURIComponent(pathname)) || hash === "#masu-node";

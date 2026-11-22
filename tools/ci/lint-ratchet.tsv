@@ -492,7 +492,7 @@ file	crates/kura/src/render/gpu.rs	indexing_slicing	4
 file	crates/kura/src/render/gpu.rs	missing_safety_doc	1
 file	crates/kura/src/render/gpu.rs	multiple_unsafe_ops_per_block	1
 file	crates/kura/src/render/gpu.rs	not_unsafe_ptr_arg_deref	2
-file	crates/kura/src/render/gpu.rs	undocumented_unsafe_blocks	41
+file	crates/kura/src/render/gpu.rs	undocumented_unsafe_blocks	40
 file	crates/kura/src/render/gpu.rs	unsafe_op_in_unsafe_fn	1
 file	crates/kura/src/render/mod.rs	arithmetic_side_effects	83
 file	crates/kura/src/render/mod.rs	as_conversions	61
@@ -970,8 +970,8 @@ file	crates/sake/src/crt.rs	maybe_infinite_iter	1
 file	crates/sake/src/crt.rs	string_slice	7
 file	crates/sake/src/crt.rs	undocumented_unsafe_blocks	6
 file	crates/sake/src/crt_io.rs	arithmetic_side_effects	69
-file	crates/sake/src/crt_io.rs	as_conversions	141
-file	crates/sake/src/crt_io.rs	cast_possible_truncation	71
+file	crates/sake/src/crt_io.rs	as_conversions	138
+file	crates/sake/src/crt_io.rs	cast_possible_truncation	68
 file	crates/sake/src/crt_io.rs	cast_possible_wrap	2
 file	crates/sake/src/crt_io.rs	cast_sign_loss	16
 file	crates/sake/src/crt_io.rs	checked_conversions	1

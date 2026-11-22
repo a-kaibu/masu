@@ -13,6 +13,7 @@
 // `PUT /bench-log` (masu serve keeps them in <jit>/bench-results.jsonl) when it ends, and
 // `GET /bench-results` gives them all back for the comparison.
 
+import { PLAN_KEYS, writePlan } from "./launch-plan";
 import { getUi, setBench, setStart, setUi } from "./ui/store";
 import { renderShell } from "./ui/Shell";
 import {
@@ -62,7 +63,7 @@ function saveRun(run: BenchRun): void {
 }
 
 /** The page's own parameters left out of the next step's address; the rest pass through. */
-const OWN = ["step", "profile", "run", "args", "mount", "env", "autostart", "jit", "memory"];
+const OWN = ["step", "profile", ...PLAN_KEYS, "autostart", "jit", "memory"];
 function stepUrl(i: number): string {
   const next = new URLSearchParams();
   for (const [k, v] of params) if (!OWN.includes(k)) next.append(k, v);
@@ -345,12 +346,14 @@ async function exeStep(step: Step, made: (p: OutputParser) => void): Promise<voi
   addEventListener("vnvm-print", (e) => p.line((e as CustomEvent<string>).detail));
   // (the program ended before its last line: play.ts says so before it leaves for the list)
   addEventListener("vnvm-exit", () => p.end());
-  params.set("run", `Z:\\masu\\game\\${step.exe}`);
-  params.set("mount", "/masu/game=bench");
-  params.set("args", step.args ?? "");
-  params.append("env", "MASU_NOPACE=1");
+  // (a step's arguments are its list, comma-separated in the bench's own steps)
+  writePlan(params, {
+    run: `Z:\\masu\\game\\${step.exe}`,
+    args: { kind: "list", list: step.args ? step.args.split(",") : [] },
+    mounts: ["/masu/game=bench"],
+    env: ["MASU_NOPACE=1", ...(step.env ? [step.env] : [])],
+  });
   if (step.env) {
-    params.append("env", step.env);
     // (its own saved translations: they depend on it)
     params.set("jit", `bench-${step.env.replace(/[^A-Za-z0-9]/g, "_")}`);
   }

@@ -22,7 +22,13 @@ pub struct Saves {
     /// slow bucket holds up only its own name (review D-1: it was one lock for every save of
     /// every game and device).
     pub lock: NameLocks,
+    /// Made only by [`Saves::open`], which sets up the tables: a struct literal elsewhere had
+    /// its own CREATE TABLE and missed every table added after it (save_covers).
+    _schema: Schema,
 }
+
+/// [`Saves::_schema`]: only this module can make one.
+struct Schema;
 
 /// A lock for each name that has a holder or waiters (gone with the last of them).
 #[derive(Default)]
@@ -66,14 +72,17 @@ impl Drop for NameGuard<'_> {
 impl Saves {
     pub fn new(store: &FsPath) -> anyhow::Result<Arc<Self>> {
         let db = Library::new(store)?;
+        let remote = Storage::configured(db.clone())?;
+        Ok(Arc::new(Self::open(db, remote)?))
+    }
+
+    /// The saves of `db` (its tables made or brought up to date), their data in `remote` when
+    /// there is one.
+    pub fn open(db: Library, remote: Option<Storage>) -> anyhow::Result<Self> {
         db.connect()?.execute_batch("CREATE TABLE IF NOT EXISTS saves(name TEXT PRIMARY KEY, revision INTEGER NOT NULL, data BLOB);")?;
         written_column(&db)?;
-        let remote = Storage::configured(db.clone())?;
-        Ok(Arc::new(Self {
-            db,
-            remote,
-            lock: NameLocks::default(),
-        }))
+        covers_table(&db)?;
+        Ok(Self { db, remote, lock: NameLocks::default(), _schema: Schema })
     }
     pub async fn read(&self, name: &str) -> anyhow::Result<Option<(i64, Vec<u8>)>> {
         // (the row, a blob of up to 256 MiB, read on a blocking thread: review b01)
@@ -101,12 +110,28 @@ impl Saves {
 
     #[cfg_attr(not(test), allow(dead_code))]
     pub async fn write(&self, name: &str, expected: i64, data: &[u8]) -> anyhow::Result<bool> {
-        self.write_bytes(name, expected, Bytes::copy_from_slice(data)).await
+        self.write_bytes(name, expected, Bytes::copy_from_slice(data), None).await
+    }
+
+    /// Whether a write named `generation` (a record of a browser, [`Generation`]) as one its
+    /// bytes hold or supersede.
+    pub async fn covered(&self, name: &str, generation: &Generation) -> anyhow::Result<bool> {
+        let (db, n, g) = (self.db.clone(), name.to_string(), generation.0.clone());
+        tokio::task::spawn_blocking(move || -> anyhow::Result<bool> {
+            Ok(db.connect()?.query_row("SELECT EXISTS(SELECT 1 FROM save_covers WHERE name=? AND generation=?)", [n, g], |r| r.get(0))?)
+        })
+        .await?
     }
 
     /// [`Saves::write`] of a request's body (not copied). The database's parts run on blocking
     /// threads (a 256 MiB blob held a request thread for its whole write: review b01).
-    pub async fn write_bytes(&self, name: &str, expected: i64, data: Bytes) -> anyhow::Result<bool> {
+    ///
+    /// `covers`: the record of the writing browser these bytes hold or supersede, kept with the
+    /// revision in the same transaction: a start of that browser whose record still says unsent
+    /// learns that it was superseded, though the browser could write nothing of it (review
+    /// b5dacf4 1.1: the browser's own acknowledgement was the only trace, and a failed one let
+    /// the older unsent copy win the next start and go back up).
+    pub async fn write_bytes(&self, name: &str, expected: i64, data: Bytes, covers: Option<Generation>) -> anyhow::Result<bool> {
         let _guard = self.lock.lock(name).await;
         let (db, n) = (self.db.clone(), name.to_string());
         let revision: i64 = tokio::task::spawn_blocking(move || -> anyhow::Result<i64> {
@@ -123,7 +148,13 @@ impl Saves {
         let local = self.remote.is_none().then_some(data);
         let (db, n) = (self.db.clone(), name.to_string());
         tokio::task::spawn_blocking(move || -> anyhow::Result<()> {
-            db.connect()?.execute("INSERT INTO saves(name,revision,data,written_ms) VALUES(?,?,?,?) ON CONFLICT(name) DO UPDATE SET revision=excluded.revision,data=excluded.data,written_ms=excluded.written_ms", rusqlite::params![n,next,local.as_deref(),now_ms()])?;
+            let mut c = db.connect()?;
+            let t = c.transaction()?;
+            t.execute("INSERT INTO saves(name,revision,data,written_ms) VALUES(?,?,?,?) ON CONFLICT(name) DO UPDATE SET revision=excluded.revision,data=excluded.data,written_ms=excluded.written_ms", rusqlite::params![n,next,local.as_deref(),now_ms()])?;
+            if let Some(g) = covers {
+                t.execute("INSERT OR REPLACE INTO save_covers(name,generation,revision) VALUES(?,?,?)", rusqlite::params![n, g.0, next])?;
+            }
+            t.commit()?;
             Ok(())
         })
         .await??;
@@ -205,11 +236,48 @@ impl Saves {
                     let revs: Vec<String> = (1..=revision).map(|r| format!("saves/{name}/{r}")).collect();
                     remote.forget_all(&revs)?;
                 }
-                self.db.connect()?.execute("DELETE FROM saves WHERE name=?", [name])?;
+                let mut c = self.db.connect()?;
+                let t = c.transaction()?;
+                t.execute("DELETE FROM saves WHERE name=?", [name])?;
+                t.execute("DELETE FROM save_covers WHERE name=?", [name])?;
+                t.commit()?;
                 gone += 1;
             }
         }
         Ok(gone)
+    }
+}
+
+/// The table of the browsers' records each write held or superseded ([`Saves::write_bytes`]).
+fn covers_table(db: &Library) -> anyhow::Result<()> {
+    db.connect()?.execute_batch("CREATE TABLE IF NOT EXISTS save_covers(name TEXT NOT NULL, generation TEXT NOT NULL, revision INTEGER NOT NULL, PRIMARY KEY(name, generation));")?;
+    Ok(())
+}
+
+/// A browser's record of a save (web/src/saves.ts: the generation of the write that made it, a
+/// UUID): only that shape is taken, so a header cannot store or ask for anything else.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Generation(String);
+
+impl Generation {
+    pub fn parse(s: &str) -> Option<Self> {
+        let b = s.as_bytes();
+        let shaped = b.len() == 36
+            && b.iter().enumerate().all(|(i, &c)| if matches!(i, 8 | 13 | 18 | 23) { c == b'-' } else { c.is_ascii_hexdigit() && !c.is_ascii_uppercase() });
+        shaped.then(|| Self(s.to_string()))
+    }
+}
+
+/// The request headers naming a record (web/src/save-transport.ts COVERS, ASK, COVERED).
+pub const COVERS: &str = "x-masu-covers";
+pub const ASK: &str = "x-masu-ask";
+pub const COVERED: &str = "x-masu-covered";
+
+/// The header `name` as a [`Generation`]: absent is None, present and not one is an error.
+fn generation_header(headers: &HeaderMap, name: &str) -> Result<Option<Generation>, ()> {
+    match headers.get(name) {
+        None => Ok(None),
+        Some(v) => v.to_str().ok().and_then(Generation::parse).map(Some).ok_or(()),
     }
 }
 
@@ -264,19 +332,38 @@ fn failure(e: anyhow::Error) -> Response {
     eprintln!("saves: {e}");
     StatusCode::BAD_GATEWAY.into_response()
 }
-async fn get_save(State(s): State<Arc<Saves>>, Path(name): Path<String>) -> Response {
+async fn get_save(State(s): State<Arc<Saves>>, Path(name): Path<String>, headers: HeaderMap) -> Response {
     if !valid(&name) {
         return StatusCode::BAD_REQUEST.into_response();
     }
+    let Ok(asked) = generation_header(&headers, ASK) else {
+        return StatusCode::BAD_REQUEST.into_response();
+    };
     match s.read(&name).await {
-        Ok(Some((rev, data))) => (
-            [
-                (header::ETAG, format!("\"{rev}\"")),
-                (header::CACHE_CONTROL, "no-store".into()),
-            ],
-            data,
-        )
-            .into_response(),
+        Ok(Some((rev, data))) => {
+            let covered = match &asked {
+                Some(g) => match s.covered(&name, g).await {
+                    Ok(c) => c,
+                    Err(e) => return failure(e),
+                },
+                None => false,
+            };
+            let mut r = (
+                [
+                    (header::ETAG, format!("\"{rev}\"")),
+                    (header::CACHE_CONTROL, "no-store".into()),
+                ],
+                data,
+            )
+                .into_response();
+            if let (true, Some(g)) = (covered, asked) {
+                // (a generation is hex digits and dashes: always a header value)
+                if let Ok(v) = header::HeaderValue::from_str(&g.0) {
+                    r.headers_mut().insert(COVERED, v);
+                }
+            }
+            r
+        }
         Ok(None) => StatusCode::NOT_FOUND.into_response(),
         Err(e) => failure(e),
     }
@@ -297,7 +384,10 @@ async fn put_save(
     else {
         return StatusCode::PRECONDITION_REQUIRED.into_response();
     };
-    match s.write_bytes(&name, expected, body).await {
+    let Ok(covers) = generation_header(&headers, COVERS) else {
+        return StatusCode::BAD_REQUEST.into_response();
+    };
+    match s.write_bytes(&name, expected, body, covers).await {
         Ok(true) => (
             StatusCode::NO_CONTENT,
             [(header::ETAG, format!("\"{}\"", expected + 1))],
@@ -327,17 +417,7 @@ mod tests {
     async fn http_save_preconditions_and_persistence() {
         let dir = std::env::temp_dir().join(format!("masu-save-http-{}", uuid::Uuid::new_v4()));
         let db = Library::new(&dir).unwrap();
-        db.connect()
-            .unwrap()
-            .execute_batch(
-                "CREATE TABLE saves(name TEXT PRIMARY KEY, revision INTEGER NOT NULL, data BLOB, written_ms INTEGER);",
-            )
-            .unwrap();
-        let state = Arc::new(Saves {
-            db,
-            remote: None,
-            lock: Default::default(),
-        });
+        let state = Arc::new(Saves::open(db, None).unwrap());
         let app = router(state.clone());
         let request = |method, path: &str, revision: Option<&str>, bytes: &[u8]| {
             let mut r = Request::builder().method(method).uri(path);
@@ -393,6 +473,71 @@ mod tests {
             Some((1, b"\0\xffsave".to_vec()))
         );
         std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// A browser's record named by a PUT (x-masu-covers) is answered as covered to a GET that
+    /// asks for it, from then on and after the store is opened again; a record no PUT named,
+    /// a failed PUT's (412) and another save name's are not; a header that is no generation is
+    /// refused, never stored or looked up (web/src/saves.ts, review b5dacf4 1.1).
+    #[tokio::test]
+    async fn http_save_covers() {
+        let dir = std::env::temp_dir().join(format!("masu-save-covers-{}", uuid::Uuid::new_v4()));
+        let app = router(Arc::new(Saves::open(Library::new(&dir).unwrap(), None).unwrap()));
+        let g = |n: u8| format!("{:08x}-0000-4000-8000-{:012x}", n, n);
+        let send = |app: Router, method: &'static str, path: &'static str, headers: Vec<(&'static str, String)>| async move {
+            let mut r = Request::builder().method(method).uri(path);
+            for (k, v) in headers {
+                r = r.header(k, v);
+            }
+            app.oneshot(r.body(Body::from(&b"save"[..])).unwrap()).await.unwrap()
+        };
+        let put = send(app.clone(), "PUT", "/saves/game", vec![("if-match", "\"0\"".into()), (COVERS, g(1))]).await;
+        assert_eq!(put.status(), StatusCode::NO_CONTENT);
+        let stale = send(app.clone(), "PUT", "/saves/game", vec![("if-match", "\"0\"".into()), (COVERS, g(2))]).await;
+        assert_eq!(stale.status(), StatusCode::PRECONDITION_FAILED);
+        send(app.clone(), "PUT", "/saves/other", vec![("if-match", "\"0\"".into()), (COVERS, g(3))]).await;
+        let ask = |app: Router, n: u8| async move { send(app, "GET", "/saves/game", vec![(ASK, g(n))]).await.headers().get(COVERED).map(|v| v.to_str().unwrap().to_string()) };
+        assert_eq!(ask(app.clone(), 1).await, Some(g(1)));
+        assert_eq!(ask(app.clone(), 2).await, None, "a refused write supersedes nothing");
+        assert_eq!(ask(app.clone(), 3).await, None, "another save's record");
+        assert_eq!(ask(app.clone(), 4).await, None);
+        for bad in ["1", "0000000-0000-4000-8000-0000000000001", "ABCDEF00-0000-4000-8000-000000000000", "../../etc/passwd"] {
+            let r = send(app.clone(), "GET", "/saves/game", vec![(ASK, bad.into())]).await;
+            assert_eq!(r.status(), StatusCode::BAD_REQUEST, "{bad}");
+            let r = send(app.clone(), "PUT", "/saves/game", vec![("if-match", "\"1\"".into()), (COVERS, bad.into())]).await;
+            assert_eq!(r.status(), StatusCode::BAD_REQUEST, "{bad}");
+        }
+        let reopened = router(Arc::new(Saves::open(Library::new(&dir).unwrap(), None).unwrap()));
+        assert_eq!(ask(reopened, 1).await, Some(g(1)));
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    proptest::proptest! {
+        #![proptest_config(proptest::prelude::ProptestConfig::with_cases(48))]
+        /// Random writes (expected revisions right or wrong, a generation named or not) against
+        /// a model: a generation is covered exactly when a write that went through named it.
+        #[test]
+        fn covered_is_what_accepted_writes_named(ops in proptest::collection::vec((proptest::bool::ANY, proptest::option::of(0u8..6), 0u8..6), 1..24)) {
+            let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+            rt.block_on(async {
+                let dir = std::env::temp_dir().join(format!("masu-save-covers-pbt-{}", uuid::Uuid::new_v4()));
+                let s = Saves::open(Library::new(&dir).unwrap(), None).unwrap();
+                let g = |n: u8| Generation::parse(&format!("{:08x}-0000-4000-8000-{:012x}", n, n)).unwrap();
+                let (mut revision, mut named) = (0i64, std::collections::BTreeSet::new());
+                for (right, covers, asked) in ops {
+                    let expected = if right { revision } else { revision + 1 };
+                    let took = s.write_bytes("game", expected, Bytes::from_static(b"x"), covers.map(g)).await.unwrap();
+                    proptest::prop_assert_eq!(took, right);
+                    if took {
+                        revision += 1;
+                        named.extend(covers);
+                    }
+                    proptest::prop_assert_eq!(s.covered("game", &g(asked)).await.unwrap(), named.contains(&asked));
+                }
+                std::fs::remove_dir_all(dir).unwrap();
+                Ok(())
+            })?;
+        }
     }
 
     fn index(hashes: &[(u32, &str)]) -> Vec<u8> {

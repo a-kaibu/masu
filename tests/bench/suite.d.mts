@@ -3,3 +3,4 @@
 export const VERSION: number;
 export const MIN_ROUNDS: Record<string, number>;
 export const GROUPS: Record<string, { exe: string; args: string }[]>;
+export function argParams(args: string): string;

@@ -1,7 +1,8 @@
 // The game list's data (play.html without ?run=; shown by ui/Library.tsx): the games `masu add` (or
 // add-game) put in the store, served as one list by masu serve (GET /games). Picking one fills
-// play.html's parameters (run, mount, args, env) and starts it in the same page, from the same
-// click (the audio and fullscreen need a user gesture).
+// play.html's parameters (its launch plan: launch-plan.ts) and starts it in the same page, from
+// the same click (the audio and fullscreen need a user gesture).
+import { readPlan, writePlan } from "./launch-plan";
 
 /** From ErogameScape (批評空間) / VNDB: `masu meta` (crates/masu/src/meta.rs, Info) */
 export interface GameMeta {
@@ -80,18 +81,9 @@ export function coverUrl(g: GameEntry): string | null {
 /** Sets play.html's parameters for `g` (other parameters, e.g. &debug, stay). */
 export function applyGame(params: URLSearchParams, g: GameEntry): void {
   params.set("game", g.id);
-  params.set("run", g.run);
   if (g.launcher) params.set("launcher", g.launcher);
   else params.delete("launcher");
-  params.delete("mount");
-  for (const m of g.mounts) params.append("mount", m);
-  if (g.args.length) params.set("args", g.args.join(","));
-  else params.delete("args");
-  // the game's environment, then the address's own &env= (a trace asked for, as
-  // &env=MASU_D3D_TRACE=1: later wins, so it can also override the game's)
-  const asked = params.getAll("env").filter((e) => !g.env.includes(e));
-  params.delete("env");
-  for (const e of [...g.env, ...asked]) params.append("env", e);
+  writePlan(params, { run: g.run, args: { kind: "list", list: g.args }, mounts: g.mounts, env: g.env });
   markPlayed(g.id);
 }
 
@@ -101,13 +93,11 @@ export function applyGame(params: URLSearchParams, g: GameEntry): void {
  * with that program and its arguments. A memory state stays with the program it was taken of.
  * It starts by itself (autostart): the player already pressed 起動 for the launcher, and the
  * sound starts on their next touch or key (audio.ts). */
-export function nextRunUrl(href: string, params: URLSearchParams, run: string, args: string): URL {
+export function nextRunUrl(href: string, params: URLSearchParams, run: string, line: string): URL {
   const url = new URL(href);
   const next = new URLSearchParams(params);
-  next.set("run", run);
-  const list = args.split(/\s+/).filter(Boolean);
-  if (list.length) next.set("args", list.join(","));
-  else next.delete("args");
+  // (the program's own text after the program's name: its quotes as it wrote them)
+  writePlan(next, { ...readPlan(next), run, args: { kind: "line", line } });
   next.delete("state");
   next.set("autostart", "");
   url.search = `?${next}`;

@@ -1017,7 +1017,7 @@ pub struct D3d {
     resolve_pipes: HashMap<Tf, (Id, Id)>,
     /// LOGIC_RESOLVE's pipelines (logic_resolve): by its words after the textures and the
     /// target's format; pipeline, its bind group layout
-    logic_pipes: HashMap<([u32; 9], Tf), (Id, Id)>,
+    logic_pipes: HashMap<([u32; 10], Tf), (Id, Id)>,
     /// Direct3D 11 depth textures a shader reads as floats (R16_UNORM, R32_FLOAT and the like
     /// views of typeless ones): depth texture -> (its r32float copy, the depth texture's stamp
     /// when copied); see depth_twin
@@ -1612,9 +1612,9 @@ impl D3d {
                     i += 6;
                 }
                 LOGIC_RESOLVE => {
-                    let w: [u32; 9] = std::array::from_fn(|k| a(k.saturating_add(5)));
+                    let w: [u32; 10] = std::array::from_fn(|k| a(k.saturating_add(5)));
                     self.logic_resolve(a(1), a(2), a(3), a(4), w);
-                    i = i.saturating_add(14);
+                    i = i.saturating_add(15);
                 }
                 QUERY_BEGIN => {
                     self.query_begin(a(1));
@@ -3405,13 +3405,18 @@ impl D3d {
     /// mark texture `mark` marks; `w`: the target's write mask, the op (its place in
     /// dxwgsl::logic::Op::ALL), the bits of its channels, their sign (1: signed), the mark's
     /// channel and bit.
-    fn logic_resolve(&mut self, tex: u32, copy: u32, stash: u32, mark: u32, w: [u32; 9]) {
+    fn logic_resolve(&mut self, tex: u32, copy: u32, stash: u32, mark: u32, w: [u32; 10]) {
         let ok = |t: Option<&Tex>| t.is_some_and(|t| t.samples > 1);
-        if !(ok(self.textures.get(&tex)) && ok(self.textures.get(&copy)) && ok(self.textures.get(&stash)) && ok(self.textures.get(&mark))) {
+        // (buffered: the stash a page buffer, dxwgsl::logic::LOGIC_SRC)
+        let buffered = w[9] != 0;
+        let src = if buffered { self.buffers.get(&stash).copied() } else { None };
+        let stash_ok = if buffered { src.is_some() } else { ok(self.textures.get(&stash)) };
+        if !(ok(self.textures.get(&tex)) && ok(self.textures.get(&copy)) && stash_ok && ok(self.textures.get(&mark))) {
             return;
         }
         let Some(fmt) = self.textures.get(&tex).map(|t| t.format) else { return };
-        for id in [tex, copy, stash, mark] {
+        let textures: Vec<u32> = if buffered { vec![tex, copy, mark] } else { vec![tex, copy, stash, mark] };
+        for &id in &textures {
             self.settle(id);
         }
         self.end_pass();
@@ -3419,10 +3424,17 @@ impl D3d {
         let view = |s: &Self, id: u32| s.textures.get(&id).map_or(0, |t| t.view);
         let group = gpu::bind_group(
             layout,
-            &[(dxwgsl::logic::LOGIC_DST, Res::Obj(view(self, copy))), (dxwgsl::logic::LOGIC_STASH, Res::Obj(view(self, stash))), (dxwgsl::logic::LOGIC_MARK, Res::Obj(view(self, mark)))],
+            &[
+                (dxwgsl::logic::LOGIC_DST, Res::Obj(view(self, copy))),
+                (dxwgsl::logic::LOGIC_STASH, match src {
+                    Some((b, size)) => Res::Buffer(b, 0, size),
+                    None => Res::Obj(view(self, stash)),
+                }),
+                (dxwgsl::logic::LOGIC_MARK, Res::Obj(view(self, mark))),
+            ],
         );
         let dv = self.view2(tex, 1, 0, 1, 0, 1, false);
-        for id in [tex, copy, stash, mark] {
+        for &id in &textures {
             self.use_tex(id);
         }
         self.traffic(tex, 0, true, true);
@@ -3439,14 +3451,14 @@ impl D3d {
 
     /// LOGIC_RESOLVE's pipeline for words `w` (see logic_resolve) into a target of `format`:
     /// pipeline, its bind group layout. None: words of no op.
-    fn logic_pipe(&mut self, w: [u32; 9], format: Tf) -> Option<(Id, Id)> {
+    fn logic_pipe(&mut self, w: [u32; 10], format: Tf) -> Option<(Id, Id)> {
         if let Some(&p) = self.logic_pipes.get(&(w, format)) {
             return Some(p);
         }
-        let [mask, op, b0, b1, b2, b3, sign, channel, bit] = w;
+        let [mask, op, b0, b1, b2, b3, sign, channel, bit, buffered] = w;
         let op = *dxwgsl::logic::Op::ALL.get(us(op))?;
         let sign = if sign == 0 { dxwgsl::logic::Sign::Unsigned } else { dxwgsl::logic::Sign::Signed };
-        let l = dxwgsl::logic::Logic { target: 0, store: dxwgsl::logic::Store::Stash { op, mark: dxwgsl::logic::Mark::Carried { by: u32::MAX, channel, bit } }, bits: [b0, b1, b2, b3], sign, multisampled: true };
+        let l = dxwgsl::logic::Logic { target: 0, store: dxwgsl::logic::Store::Stash { op, mark: if buffered != 0 { dxwgsl::logic::Mark::Slot(0) } else { dxwgsl::logic::Mark::Carried { by: u32::MAX, channel, bit } } }, bits: [b0, b1, b2, b3], sign, multisampled: true };
         let m = gpu::shader(&dxwgsl::logic::resolve_wgsl(&l)?);
         let kind = match sign {
             dxwgsl::logic::Sign::Unsigned => "uint",
@@ -3456,7 +3468,7 @@ impl D3d {
         let layout = gpu::bind_group_layout(&format!(
             r#"{{"entries":[{},{},{}]}}"#,
             e(dxwgsl::logic::LOGIC_DST, kind),
-            e(dxwgsl::logic::LOGIC_STASH, "uint"),
+            if buffered != 0 { format!(r#"{{"binding":{},"visibility":2,"buffer":{{"type":"read-only-storage"}}}}"#, dxwgsl::logic::LOGIC_STASH) } else { e(dxwgsl::logic::LOGIC_STASH, "uint") },
             e(dxwgsl::logic::LOGIC_MARK, "uint")
         ));
         let pl = gpu::pipeline_layout(&format!(r#"{{"bindGroupLayouts":[{layout}]}}"#));

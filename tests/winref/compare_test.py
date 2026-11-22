@@ -8,6 +8,7 @@ import tempfile
 import unittest
 
 import compare
+import plan
 
 HERE = Path(__file__).resolve().parent
 ISSUE = "https://github.com/a-kaibu/masu/issues/105"
@@ -34,6 +35,7 @@ class Quarantine(unittest.TestCase):
             if text is not None:
                 (d / "stdout.txt").write_text(text)
             (d / "exit").write_text(code + "\n")
+        plan.write(str(self.got), "test", "compare_test", sorted(plan.probes(str(self.got))))
 
     def run_compare(self, quarantine=True):
         args = [sys.executable, str(HERE / "compare.py"), str(self.ref), str(self.got)]
@@ -121,6 +123,105 @@ class Quarantine(unittest.TestCase):
                 compare.read_quarantine(self.quarantine)
 
 
+class Plan(unittest.TestCase):
+    """A run that compared nothing, or less than it planned, fails."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name)
+        self.ref, self.got = self.root / "ref", self.root / "got"
+        for n in ("a-32", "b-32"):
+            d = self.ref / n
+            d.mkdir(parents=True)
+            (d / "stdout.txt").write_text("same\n")
+            (d / "exit").write_text("0\n")
+        self.got.mkdir()
+
+    def result(self, n):
+        d = self.got / n
+        d.mkdir()
+        (d / "stdout.txt").write_text("same\n")
+        (d / "exit").write_text("0\n")
+
+    def run_compare(self, *extra):
+        return subprocess.run([sys.executable, str(HERE / "compare.py"), str(self.ref), str(self.got), *extra],
+                              capture_output=True, text=True, check=False)
+
+    def test_empty_result_directory_fails(self):
+        # (the review's reproduction: one Windows answer, nothing on sake's side)
+        p = self.run_compare()
+        self.assertEqual(p.returncode, 1, p.stdout)
+        self.assertIn("no run plan", p.stdout)
+
+    def test_all_planned_and_answered_passes(self):
+        for n in ("a-32", "b-32"):
+            self.result(n)
+        plan.write(str(self.got), "node", "test", ["a-32", "b-32"])
+        p = self.run_compare("--require-plan", "node")
+        self.assertEqual(p.returncode, 0, p.stdout)
+        self.assertIn("2 ok", p.stdout)
+
+    def test_planned_probe_without_result_fails(self):
+        self.result("a-32")
+        plan.write(str(self.got), "node", "test", ["a-32", "b-32"])
+        p = self.run_compare()
+        self.assertEqual(p.returncode, 1, p.stdout)
+        self.assertIn("b-32: planned but not run", p.stdout)
+
+    def test_planned_probe_without_windows_answer_or_result_fails(self):
+        self.result("a-32")
+        plan.write(str(self.got), "node", "test", ["a-32", "c-32"])
+        self.assertEqual(self.run_compare().returncode, 1)
+
+    def test_unselected_probes_are_counted_not_failed(self):
+        self.result("a-32")
+        plan.write(str(self.got), "node-a", "filter a", ["a-32"])
+        p = self.run_compare()
+        self.assertEqual(p.returncode, 0, p.stdout)
+        self.assertIn("1 not selected", p.stdout)
+
+    def test_plan_listing_nothing_fails(self):
+        plan.write(str(self.got), "node", "filter matched nothing", [])
+        p = self.run_compare()
+        self.assertEqual(p.returncode, 1, p.stdout)
+        self.assertIn("list no probe", p.stdout)
+
+    def test_intentionally_empty_shard_is_fine_beside_others(self):
+        self.result("a-32")
+        plan.write(str(self.got), "node", "test", ["a-32"])
+        plan.write(str(self.got), "browser-3of4", "no GPU probe in this shard", [])
+        p = self.run_compare("--require-plan", "node", "--require-plan", "browser-3of4")
+        self.assertEqual(p.returncode, 0, p.stdout)
+
+    def test_lost_shard_fails(self):
+        self.result("a-32")
+        plan.write(str(self.got), "node", "test", ["a-32"])
+        p = self.run_compare("--require-plan", "node", "--require-plan", "browser-0of4")
+        self.assertEqual(p.returncode, 1, p.stdout)
+        self.assertIn("'browser-0of4' missing", p.stdout)
+
+    def test_malformed_plan_is_rejected(self):
+        (self.got / ".plan").mkdir()
+        (self.got / ".plan" / "node").write_text("a-32\n")
+        with self.assertRaises(ValueError):
+            plan.read(str(self.got))
+
+    def test_run_sh_writes_its_plan_before_running(self):
+        exe = self.root / "exe"
+        exe.mkdir()
+        for n in ("x-32", "y-32"):
+            (exe / f"{n}.exe").write_text("")
+        (exe / "browser.txt").write_text("y-32\n")
+        out = self.root / "out"
+        # (SAKE set: the node runner; a stand-in that exits at once)
+        fake = self.root / "fake.js"
+        fake.write_text("process.exit(0)\n")
+        subprocess.run(["bash", str(HERE / "run.sh"), str(exe), str(out)], env={**__import__("os").environ, "SAKE": str(fake)},
+                       capture_output=True, text=True, check=True)
+        self.assertEqual(plan.read(str(out)), {"node": {"x-32"}})
+
+
 class EnvironmentPolicy(unittest.TestCase):
     """Exercise the shipped exclusions with real Windows output and injected faults."""
 
@@ -149,6 +250,7 @@ class EnvironmentPolicy(unittest.TestCase):
                     else:
                         (got / "stdout.txt").write_text(output)
                     (got / "exit").write_text(code + "\n")
+                    plan.write(str(got.parent), "test", "compare_test", [name])
                     p = subprocess.run([
                         sys.executable, str(HERE / "compare.py"), str(ref.parent), str(got.parent),
                         "--known", str(HERE / "known.txt"),

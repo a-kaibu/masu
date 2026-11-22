@@ -105,6 +105,67 @@ export function fileVersion(url: string): Promise<string> {
   );
 }
 
+/** sake's builds' ids (crates/sake/build.sh: "<name> <id>" lines; savestate.ts builds). */
+export const buildIdsUrl = () => `${sakeBase()}build-id.txt`;
+/** The translator's version (translatorVersion). */
+export const translatorUrl = () => `${sakeBase()}jit-version.txt`;
+
+/**
+ * The runtime's files a start of `build` reads before the game's own (review 22bb061 §4): the
+ * builds' ids (runtimeWasm refuses to start without its id), the translator's version, sake.js
+ * and sake.wasm at their versioned URLs. play.ts starts from these and offline.ts saveApp saves
+ * these, so what 端末に保存 keeps is what a start offline asks for.
+ */
+export interface RuntimeManifest {
+  readonly build: SakeBuild;
+  readonly buildIds: string;
+  readonly translator: string;
+  readonly script: string;
+  readonly wasm: string;
+  /** sake.wasm's version (fileVersion): the saved regions' names follow it without a translator version */
+  readonly wasmVersion: string;
+}
+
+export async function runtimeManifest(build: SakeBuild): Promise<RuntimeManifest> {
+  const base = sakeBase();
+  const [scriptVersion, wasmVersion] = await Promise.all([
+    fileVersion(`${base}${build.name}.js`),
+    fileVersion(`${base}${build.name}.wasm`),
+  ]);
+  return {
+    build,
+    buildIds: buildIdsUrl(),
+    translator: translatorUrl(),
+    script: new URL(versioned(`${base}${build.name}.js`, scriptVersion), location.href).href,
+    wasm: new URL(versioned(`${base}${build.name}.wasm`, wasmVersion), location.href).href,
+    wasmVersion,
+  };
+}
+
+/** Every file of `m`. */
+export const manifestFiles = (m: RuntimeManifest): string[] => [m.buildIds, m.translator, m.script, m.wasm];
+
+/** The build a start of `build` goes on with when it fails (growRetry): sake-grow for sake. */
+export const fallbackBuild = (build: Pick<SakeBuild, "name">): SakeBuild | null =>
+  build.name === "sake" ? { name: "sake-grow", jit: "g" } : null;
+
+/** The state files' zstd (savestate.ts: a state taken or loaded offline needs it too). */
+export const snapzUrl = () => `${sakeBase()}snapz.mjs`;
+
+/** The runtime's files that let `build` start with no connection: its manifest's, its
+ * fallback's (a device whose 4 GB fails starts on sake-grow) and the states' zstd. */
+export async function offlineRuntime(
+  build: SakeBuild,
+): Promise<{ manifest: RuntimeManifest; files: string[] }> {
+  const fallback = fallbackBuild(build);
+  const [manifest, other] = await Promise.all([
+    runtimeManifest(build),
+    fallback ? runtimeManifest(fallback) : Promise.resolve(null),
+  ]);
+  const files = [...manifestFiles(manifest), ...(other ? manifestFiles(other) : []), snapzUrl()];
+  return { manifest, files: [...new Set(files)] };
+}
+
 /** `url` with its version: the browser keeps it for good (and sw.ts on the device). */
 export const versioned = (url: string, version: string) =>
   version ? `${url}?v=${encodeURIComponent(version)}` : url;
@@ -115,7 +176,7 @@ export const versioned = (url: string, version: string) =>
  * sake.wasm's version.
  */
 export function translatorVersion(wasmVersion: Promise<string>): Promise<string> {
-  return fetch(`${sakeBase()}jit-version.txt`, { cache: "no-cache" })
+  return fetch(translatorUrl(), { cache: "no-cache" })
     .then((r) => (r.ok ? r.text() : Promise.reject(new Error(`HTTP ${r.status}`))))
     .then((t) => (/^[0-9a-f]{8}$/.test(t.trim()) ? t.trim() : Promise.reject(new Error("bad version"))))
     .catch(() => wasmVersion.then((v) => fnv(new TextEncoder().encode(v))));

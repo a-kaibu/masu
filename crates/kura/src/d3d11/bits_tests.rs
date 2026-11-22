@@ -288,7 +288,7 @@ fn x_channels_sample_as_one() {
         let rb = mem(64);
         gpu::pump();
         gpu::record(|b| b.cmd(&[gpu::READBACK, 0x5300_0000 | f, g, 0, 0, 0, 4, 4, rb, 16]));
-        assert!(gpu::wait_readback(0x5300_0000 | f));
+        assert!(gpu::wait_readback(gpu::Readback::of_word(0x5300_0000 | f)));
         let page = unsafe { std::slice::from_raw_parts(rb as *const u8, 64) }.to_vec();
         let want: Vec<u8> = data[0].iter().enumerate().map(|(i, &b)| if i % 4 == 3 { 255 } else { b }).collect();
         assert_eq!(page, want, "page texels of format {f}");
@@ -384,7 +384,7 @@ fn page_read(g: u32, word: u32, w: u32, h: u32, req: u32) -> Option<Vec<u8>> {
     unsafe { std::ptr::write_bytes(rb as *mut u8, 0xa5, (4 * w * h) as usize) };
     gpu::pump();
     gpu::record(|b| b.cmd(&[gpu::READBACK, req, g, word, 0, 0, w, h, rb, 4 * w]));
-    assert!(gpu::wait_readback(req));
+    assert!(gpu::wait_readback(gpu::Readback::of_word(req)));
     let v = unsafe { std::slice::from_raw_parts(rb as *const u8, (4 * w * h) as usize) }.to_vec();
     (!v.iter().all(|&b| b == 0xa5)).then_some(v)
 }
@@ -452,7 +452,7 @@ fn page_copies_and_readbacks_stay_inside() {
         gpu::pump();
         let req = 0x5400_0007 + k as u32;
         gpu::record(|b| b.cmd(&[gpu::READBACK, req, ga, 1, x, y, w, h, rb, 16]));
-        assert!(gpu::wait_readback(req));
+        assert!(gpu::wait_readback(gpu::Readback::of_word(req)));
         assert!(unsafe { std::slice::from_raw_parts(rb as *const u8, 64) }.iter().all(|&b| b == 0xa5), "box {x},{y} {w}x{h} of a 2x2 level read");
     }
     // page COPY commands past the textures, or stretching layers: nothing
@@ -906,7 +906,7 @@ fn page_texels_of(g: u32, w: u32, h: u32, bpp: u32, req: u32) -> Vec<u8> {
     let rb = mem(w * h * bpp);
     gpu::pump();
     gpu::record(|b| b.cmd(&[gpu::READBACK, req, g, 0, 0, 0, w, h, rb, w * bpp]));
-    assert!(gpu::wait_readback(req));
+    assert!(gpu::wait_readback(gpu::Readback::of_word(req)));
     unsafe { std::slice::from_raw_parts(rb as *const u8, (w * h * bpp) as usize) }.to_vec()
 }
 

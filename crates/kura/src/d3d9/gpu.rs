@@ -81,8 +81,9 @@ pub const GEN_MIPS_POINT: u32 = 42; // tex
 /// dxwgsl::logic::Op::ALL) over its bits in `stash` (the shader's source) and `copy` (the
 /// target before the primitive), masked to the channels' bits, under write mask `mask`
 /// (textures of the same size, 4 samples; the stash and mark UINT; sign 1: signed channels); a
-/// sample is marked where bit `bit` of channel `ch` of its mark texel is 1 (dxwgsl::logic::Mark).
-pub const LOGIC_RESOLVE: u32 = 43; // tex copy stash mark mask op bits0 bits1 bits2 bits3 sign ch bit
+/// sample is marked where bit `bit` of channel `ch` of its mark texel is 1 (dxwgsl::logic::Mark);
+/// `buffered` 1: `stash` a page buffer of the sources by pixel (dxwgsl::logic::LOGIC_SRC).
+pub const LOGIC_RESOLVE: u32 = 43; // tex copy stash mark mask op bits0 bits1 bits2 bits3 sign ch bit buffered
 
 /// What a QUERY_END ends.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -257,10 +258,59 @@ fn queue(g: &mut Option<Queue>) -> &mut Queue {
     })
 }
 
+/// A readback request's id as the page answers it (vnhost_d3d9_readback_done). Issued only by
+/// [`Readback::new`]: every API (D3D9 devices, D3D11, GL) sends its readbacks through this one
+/// queue and its one set of finished ids, so the queue numbers them; a number per device (D3D9's
+/// `readbacks`) or per API (D3D11's 0x4000_0000 | n beside GL's page ids from 0x4000_0000) made
+/// two outstanding requests share one, and one's answer let the other go on before its pixels
+/// came (review of 6852be1).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct Readback(u32);
+
+impl Readback {
+    /// The next id (never 0, which the page's commands never carry).
+    pub fn new() -> Self {
+        static NEXT: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(1);
+        loop {
+            let n = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            if n != 0 {
+                return Readback(n);
+            }
+        }
+    }
+    /// The word the READBACK / READ_BUFFER command carries.
+    pub fn word(self) -> u32 {
+        self.0
+    }
+    /// Tests: the id a command written by hand carries (each test keeps its own range).
+    #[cfg(test)]
+    pub fn of_word(w: u32) -> Self {
+        Readback(w)
+    }
+}
+
 /// Tests: whether readback `id` was said to be done (and not taken by its waiter yet).
 #[cfg(test)]
-pub fn readback_is_done(id: u32) -> bool {
-    with(|q| q.readbacks_done.contains(&id))
+pub fn readback_is_done(id: Readback) -> bool {
+    with(|q| q.readbacks_done.contains(&id.0))
+}
+
+// Tests: readbacks on this thread are given up (wait_readback answers false), as when the page
+// stalls or goes: what their callers keep must survive it.
+#[cfg(test)]
+thread_local! {
+    pub static GIVE_UP: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Tests: ids from many threads at once are all different (the one numbering every API's
+/// readbacks share).
+#[cfg(test)]
+#[test]
+fn readback_ids_are_never_shared() {
+    let ids: Vec<Vec<Readback>> = std::thread::scope(|s| (0..8).map(|_| s.spawn(|| (0..20_000).map(|_| Readback::new()).collect::<Vec<_>>())).collect::<Vec<_>>().into_iter().map(|h| h.join().unwrap_or_default()).collect());
+    let all: std::collections::HashSet<u32> = ids.iter().flatten().map(|r| r.word()).collect();
+    assert_eq!(all.len(), 8 * 20_000);
+    assert!(!all.contains(&0));
 }
 
 // Tests: the page's executor in the same thread, run where the guest would wait for it.
@@ -588,11 +638,18 @@ pub extern "C" fn vnhost_d3d9_done() {
 }
 
 /// Waits until the page has done readback `id` (or gave up).
-pub fn wait_readback(id: u32) -> bool {
+pub fn wait_readback(id: Readback) -> bool {
+    let id = id.0;
     flush();
     #[cfg(test)]
     pump();
     let mut g = QUEUE.lock().unwrap_or_else(|e| e.into_inner());
+    // (tests: a page that gives up on this readback, as a stalled or gone one does)
+    #[cfg(test)]
+    if GIVE_UP.with(std::cell::Cell::get) {
+        queue(&mut g).readbacks_dropped.push(id);
+        return false;
+    }
     // (10 s without the page finishing a batch: a slow GPU with frames queued before the
     // readback, or shaders compiling, is still making progress)
     let mut deadline = now() + 10000.0;
@@ -891,7 +948,7 @@ mod hidden_tests {
             match first {
                 0 => present(1),
                 1 => wait_done(3),
-                _ => assert!(!wait_readback(7)),
+                _ => assert!(!wait_readback(Readback(7))),
             }
             present(1);
             wait_done(0);

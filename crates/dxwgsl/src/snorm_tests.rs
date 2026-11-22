@@ -67,21 +67,28 @@ fn factors_read_what_they_say() {
 }
 
 proptest! {
-    /// a store is the nearest of the 255 values (-127..=127) to the clamped value, ties to
-    /// the even byte; NaN 0; a load of it the value again
+    /// a store is the nearest of the 255 values (-127..=127) to the clamped value (of the f32
+    /// product), halves away from zero; NaN -127; a load of it the value again
     #[test]
     fn store_is_nearest(bits in any::<u32>()) {
         let v = f32::from_bits(bits);
         let b = store(v);
         prop_assert!(b >= -127);
         if v.is_nan() {
-            prop_assert_eq!(b, 0);
+            prop_assert_eq!(b, -127);
         } else {
-            let x = f64::from(v.clamp(-1.0, 1.0)) * 127.0;
+            let x = f64::from(v.clamp(-1.0, 1.0) * 127.0);
             let e = (f64::from(b) - x).abs();
-            prop_assert!(e <= 0.5 + 1e-6, "{} -> {}", v, b);
+            prop_assert!(e < 0.5 || (e == 0.5 && f64::from(b).abs() > x.abs()), "{} -> {}", v, b);
         }
         prop_assert_eq!(store(load(b)), b);
+    }
+
+    /// the shader's hidden zero (snorm::helpers' sn_r): bit 30 of every clamped value is 0, so
+    /// or-ing it into a product's bits leaves the product
+    #[test]
+    fn clamped_values_have_no_bit_30(bits in any::<u32>()) {
+        prop_assert_eq!(clamp_src(f32::from_bits(bits)).to_bits() & 0x4000_0000, 0);
     }
 
     /// a blend that reads no destination gives the same bytes over any destination, one with
@@ -107,7 +114,7 @@ proptest! {
     fn blend_wgsl_validates(sc in 0usize..17, dc in 0usize..17, oc in 0usize..5, sa in 0usize..17, da in 0usize..17, oa in 0usize..5) {
         let b = Blend { color: Equation { src: FACTORS[sc], dst: FACTORS[dc], op: OPS[oc] }, alpha: Equation { src: FACTORS[sa], dst: FACTORS[da], op: OPS[oa] } };
         let body = blend_wgsl(&b, "s", "s1", "d", "o");
-        let src = format!("{HELPERS}fn f(s: vec4<f32>, s1: vec4<f32>, d: vec4<i32>, sn_k: vec4<f32>) -> vec4<i32> {{ var o: vec4<i32>; {} return o; }}\n", body.join(" "));
+        let src = format!("{}fn f(s: vec4<f32>, s1: vec4<f32>, d: vec4<i32>, sn_k: vec4<f32>) -> vec4<i32> {{ var o: vec4<i32>; {} return o; }}\n", helpers(), body.join(" "));
         let m = naga::front::wgsl::parse_str(&src).unwrap_or_else(|e| panic!("{b:?}: {}\n{src}", e.emit_to_string(&src)));
         naga::valid::Validator::new(naga::valid::ValidationFlags::all(), naga::valid::Capabilities::all()).validate(&m).unwrap_or_else(|e| panic!("{b:?}: {e:?}\n{src}"));
     }
@@ -174,13 +181,22 @@ fn warp_answers() {
                     let names: &[&str] = if alpha { &ALPHA_NAMES } else { &COLOR_NAMES };
                     let factors: Vec<Factor> = names.iter().map(|n| FACTORS[COLOR_NAMES.iter().position(|c| c == n).unwrap()]).collect();
                     let sf = factors[names.iter().position(|n| *n == src.trim_end_matches(':')).unwrap()];
-                    // (min and max: one row, their factors ignored)
-                    for (df, w) in factors.iter().copied().zip(words) {
+                    // (min and max: one row, their factors ignored; an entry WARP refused:
+                    // "CreateBlendState failed <hr> <what the target held>")
+                    let mut words = words.iter();
+                    for df in factors.iter().copied() {
                         let e = Equation { src: sf, dst: df, op };
                         let plain = Equation { src: Factor::One, dst: Factor::Zero, op: BlendOp::Add };
                         let b = if alpha { Blend { color: plain, alpha: e } } else { Blend { color: e, alpha: plain } };
-                        let got = blend(&b, s, s1, bytes(d), k);
-                        assert_eq!(word(got), hex(w), "{name}: {} {op:?} {sf:?} {df:?} over {d:08x}", if alpha { "alpha" } else { "color" });
+                        let what = format!("{name}: {} {op:?} {sf:?} {df:?} over {d:08x}", if alpha { "alpha" } else { "color" });
+                        let w = words.next().unwrap_or_else(|| panic!("{what}: no answer"));
+                        if *w == "CreateBlendState" {
+                            assert!(!b.takes(), "{what}: WARP refuses it");
+                            words.nth(2);
+                        } else {
+                            assert!(b.takes(), "{what}: WARP takes it");
+                            assert_eq!(word(blend(&b, s, s1, bytes(d), k)), hex(w), "{what}");
+                        }
                         checked += 1;
                     }
                 }

@@ -144,7 +144,7 @@ export async function runtimeWasm(
   const candidate = serverOnly
     ? { from: "server" as const, bytes: null }
     : await sakeWasmBytes(name, url, store, { ...deps, buildId: async () => id });
-  if (candidate.bytes) return { ...candidate, verified: true as const };
+  if (candidate.bytes) return { bytes: candidate.bytes, from: candidate.from, verified: true as const };
   const response = await (deps.request ?? fetch)(url);
   if (!response.ok) throw new Error(`${name}: HTTP ${response.status}`);
   const bytes = new Uint8Array(await response.arrayBuffer());

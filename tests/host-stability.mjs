@@ -53,6 +53,7 @@ function jit(table) {
   const { lib, context } = library("vnjit.js", { HEAPU8, WebAssembly, err: (l) => errors.push(l) });
   context.VNJIT.table = table ?? new WebAssembly.Table({ element: "anyfunc", initial: 0 });
   context.VNJIT.env = {};
+  context.VNJIT.slots = 1 << 20;
   const load = (n) => {
     const b = moduleOf(n);
     HEAPU8.set(b, 0);
@@ -83,20 +84,34 @@ test("vnjit: a table V8 will not grow answers TABLE_FULL instead of killing the 
   assert.equal(j.VNJIT.used, 200);
 });
 
-test("vnjit: past 2^20 slots with half of them freed, the thread starts over (TABLE_FULL)", () => {
+test("vnjit: no slot past koji's TABLE_SLOTS is handed out, however much room the table has", () => {
   const fake = (length) => ({ length, grow(n) { this.length += n; }, set() {}, get() { return null; } });
-  const j = jit(fake(1 << 20));
-  j.VNJIT.used = (1 << 20) - 4;
-  j.VNJIT.freed = 1 << 18;
-  // (a quarter freed: grown)
-  assert.equal(j.load(8), (1 << 20) - 4);
-  assert.ok(j.VNJIT.table.length > 1 << 20);
-  const k = jit(fake(1 << 20));
-  k.VNJIT.used = (1 << 20) - 4;
-  k.VNJIT.freed = 1 << 19;
-  assert.equal(k.load(8), -2);
-  // (init: a fresh table, the counts again from 0)
-  assert.equal(k.VNJIT.used, (1 << 20) - 4);
+  // (koji::jit::TABLE_SLOTS: 1 << ENTRY_SHIFT, read from the Rust source: the one definition)
+  const koji = readFileSync(new URL("../crates/koji/src/jit/mod.rs", import.meta.url), "utf8");
+  const shift = Number(/pub const ENTRY_SHIFT: u32 = (\d+);/.exec(koji)[1]);
+  assert.match(koji, /pub const TABLE_SLOTS: u32 = 1 << ENTRY_SHIFT;/);
+  const slots = 2 ** shift;
+  for (const [used, freed, n] of [[slots - 4, 0, 4], [slots - 4, 0, 5], [slots - 4, slots >> 2, 8], [slots - 1, 0, 1], [slots, 0, 1]]) {
+    const j = jit(fake(slots * 2));
+    j.VNJIT.slots = slots;
+    j.VNJIT.used = used;
+    j.VNJIT.freed = freed;
+    const base = j.load(n);
+    if (used + n <= slots) {
+      assert.equal(base, used);
+      // (every slot handed out decodes as itself: index & (2^shift - 1))
+      assert.equal((base + n - 1) & (slots - 1), base + n - 1);
+    } else {
+      assert.equal(base, -2, `used ${used} + ${n} past ${slots}`);
+      assert.equal(j.VNJIT.used, used);
+    }
+  }
+  // (and init takes the bound from kura: vnvm_jit_init(ptr, len, slots))
+  const vnjit = read("vnjit.js");
+  assert.match(vnjit, /vnvm_jit_init: \(ptr, len, slots\) =>/);
+  assert.doesNotMatch(vnjit, /1 << 20/);
+  const kura = readFileSync(new URL("../crates/kura/src/jit.rs", import.meta.url), "utf8");
+  assert.match(kura, /vnvm_jit_init\(d\.as_ptr\(\), d\.len\(\), jit::TABLE_SLOTS\)/);
 });
 
 // ---- host/pre.js (each instance as emscripten's MODULARIZE has it: its own function scope, the

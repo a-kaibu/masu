@@ -126,7 +126,12 @@ another device wrote it meanwhile (the newer entry of each slot wins). So a slot
 and a phone at once never leaves the index naming a file that was replaced
 (tests/savestate-slots-browser.mjs, every order of the two uploads). States from before (no
 `hash`) are read from `<slot>.snap` / `state.<game>.<slot>`. This browser removes its own files
-no index names. The server removes its own (`Saves::prune_states`, when `masu serve` starts and in
+no index names. Here only web/src/snapshot-store.ts writes `states/<game>/` (lint
+web/tools/boundaries.mjs): the body, the index read again and written, and the removal of bodies
+it no longer names all under one Web Lock per game (`masu-states:<game>`), so two tabs saving two
+slots at once keep both. A body fetched from the server (`cache`) moves its slot only when its
+entry is newer than the slot's here: a slow download of an older state never takes back a slot
+saved meanwhile (simulation tests: web/src/snapshot-store.test.ts). The server removes its own (`Saves::prune_states`, when `masu serve` starts and in
 `masu storage gc`) once written a week ago (`--grace-days` for gc: a device uploads the file before
 the index naming it): kept is every file the index names, with S3 also the files its kept older
 revisions name (a device may still be listing one), all files of a game whose index does not

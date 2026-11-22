@@ -196,6 +196,14 @@ pub struct Equation {
 }
 
 impl Equation {
+    /// Whether CreateBlendState takes it: MIN and MAX ignore their factors, but WARP refuses
+    /// either of them with a dual-source factor (E_INVALIDARG; winref d3d11snorm).
+    pub fn takes(&self) -> bool {
+        match self.op {
+            BlendOp::Min | BlendOp::Max => !self.src.reads_src1() && !self.dst.reads_src1(),
+            BlendOp::Add | BlendOp::Subtract | BlendOp::RevSubtract => true,
+        }
+    }
     fn reads_dst(&self) -> bool {
         match self.op {
             BlendOp::Min | BlendOp::Max => true,
@@ -228,6 +236,10 @@ impl Blend {
             alpha: Equation { src: Factor::of(sa)?, dst: Factor::of(da)?, op: BlendOp::of(oa)? },
         })
     }
+    /// Whether CreateBlendState takes both equations ([`Equation::takes`]).
+    pub fn takes(&self) -> bool {
+        self.color.takes() && self.alpha.takes()
+    }
     /// Whether the result depends on the target's texel (the draw then reads its copy).
     pub fn reads_dst(&self) -> bool {
         self.color.reads_dst() || self.alpha.reads_dst()
@@ -242,14 +254,12 @@ impl Blend {
     }
 }
 
-/// The channel's byte of a shader's output `v`, as the output merger converts it: NaN 0, else
-/// clamped to -1..1, times 127, rounded to the nearest integer (ties to even).
+/// The channel's byte of a shader's output `v`, as the output merger converts it: clamped to
+/// -1..1 (NaN -1), times 127, rounded to the nearest integer (halves away from zero).
 pub fn store(v: f32) -> i8 {
-    if v.is_nan() {
-        return 0;
-    }
-    // (within -127..=127 after the clamp: exact)
-    kome::num::trunc_i8((v.clamp(-1.0, 1.0) * 127.0).round_ties_even())
+    // (the product in f32, its halves away from zero: winref d3d11snorm's sweeps; within
+    // -127..=127 after the clamp)
+    kome::num::trunc_i8((clamp_src(v) * 127.0).round())
 }
 
 /// The value of an SNORM byte: b / 127, -128 as -1 (as -127).
@@ -257,9 +267,10 @@ pub fn load(b: i8) -> f32 {
     (f32::from(b) / 127.0).max(-1.0)
 }
 
-/// A source value as the blend takes it: clamped to the format's range (NaN 0).
+/// A value as the output merger takes it: clamped to the format's range, NaN as -1 (WARP
+/// writes NaN as -127: winref d3d11snorm).
 pub fn clamp_src(v: f32) -> f32 {
-    if v.is_nan() { 0.0 } else { v.clamp(-1.0, 1.0) }
+    if v.is_nan() { -1.0 } else { v.clamp(-1.0, 1.0) }
 }
 
 /// What a channel holds after blend `b` of sources `s`, `s1` (the shader's SV_Target0 and 1)
@@ -275,26 +286,58 @@ pub fn blend(b: &Blend, s: [f32; 4], s1: [f32; 4], d: [i8; 4], k: [f32; 4]) -> [
     })
 }
 
-/// The binding of the blend state's constant (a uniform vec4<f32>) in the pixel shader's group.
-pub const SNORM_CONSTANT: u32 = 990;
+/// The binding of the blend state's constant (a uniform vec4<f32>) in the pixel shader's group:
+/// past every logic op binding (LOGIC_DST's 8 targets, LOGIC_STASH, LOGIC_MARK, LOGIC_SRC), so
+/// one draw can hold an SNORM blend and a stashed logic op together.
+pub const SNORM_CONSTANT: u32 = 995;
+const _: () = {
+    use crate::logic::{LOGIC_DST, LOGIC_MARK, LOGIC_SRC, LOGIC_STASH};
+    assert!(SNORM_CONSTANT >= LOGIC_DST + 8 || SNORM_CONSTANT < LOGIC_DST);
+    assert!(SNORM_CONSTANT >= LOGIC_STASH + 8 || SNORM_CONSTANT < LOGIC_STASH);
+    assert!(SNORM_CONSTANT >= LOGIC_MARK + 8 || SNORM_CONSTANT < LOGIC_MARK);
+    assert!(SNORM_CONSTANT >= LOGIC_SRC + 1 || SNORM_CONSTANT < LOGIC_SRC);
+    // (WebGPU's default maxBindingsPerBindGroup: 1000)
+    assert!(SNORM_CONSTANT < 1000);
+};
 
-/// The WGSL of the conversions and blend (module scope).
-pub const HELPERS: &str = "fn sn_store(v: vec4<f32>) -> vec4<i32> {\n\
+/// The WGSL of the conversions and blend (module scope). A load is a table of [`load`]'s
+/// values (a WGSL division is within 2.5 ULP, not exact: the blend would differ from WARP's in
+/// the last bit, and the byte with it). Each product goes through `sn_r`: its bits or'd with
+/// a zero the compiler cannot see (bit 30 of a value within -1..1: its exponent's top bit), so
+/// it is rounded as WARP rounds it and no driver fuses it with the add after it (an FMA blends
+/// 1.9 * -5/127 to -10, WARP to -9).
+pub fn helpers() -> String {
+    let table: Vec<String> = (i8::MIN..=i8::MAX).map(|b| format!("0x{:08x}u", load(b).to_bits())).collect();
+    format!(
+        "const SN_LOAD = array<u32, 256>({});\n\
+fn sn_store(v: vec4<f32>) -> vec4<i32> {{\n\
+\x20 let c = sn_clamp(v);\n\
+\x20 let x = sn_r(c * 127.0f, bitcast<vec4<u32>>(c) & vec4<u32>(0x40000000u));\n\
+\x20 let t = trunc(x);\n\
+\x20 return vec4<i32>(t + select(vec4<f32>(0.0f), sign(x), abs(x - t) >= vec4<f32>(0.5f)));\n\
+}}\n\
+fn sn_load(b: vec4<i32>) -> vec4<f32> {{\n\
+\x20 let i = (vec4<u32>(b + vec4<i32>(128))) & vec4<u32>(255u);\n\
+\x20 return bitcast<vec4<f32>>(vec4<u32>(SN_LOAD[i.x], SN_LOAD[i.y], SN_LOAD[i.z], SN_LOAD[i.w]));\n\
+}}\n\
+fn sn_r(p: vec4<f32>, z: vec4<u32>) -> vec4<f32> {{\n\
+\x20 return bitcast<vec4<f32>>(bitcast<vec4<u32>>(p) | z);\n\
+}}\n\
+fn sn_r1(p: f32, z: u32) -> f32 {{\n\
+\x20 return bitcast<f32>(bitcast<u32>(p) | z);\n\
+}}\n\
+fn sn_clamp(v: vec4<f32>) -> vec4<f32> {{\n\
 \x20 let nan = (bitcast<vec4<u32>>(v) & vec4<u32>(0x7fffffffu)) > vec4<u32>(0x7f800000u);\n\
-\x20 return select(vec4<i32>(round(clamp(v, vec4<f32>(-1.0f), vec4<f32>(1.0f)) * 127.0f)), vec4<i32>(0), nan);\n\
-}\n\
-fn sn_load(b: vec4<i32>) -> vec4<f32> {\n\
-\x20 return max(vec4<f32>(b) / 127.0f, vec4<f32>(-1.0f));\n\
-}\n\
-fn sn_clamp(v: vec4<f32>) -> vec4<f32> {\n\
-\x20 let nan = (bitcast<vec4<u32>>(v) & vec4<u32>(0x7fffffffu)) > vec4<u32>(0x7f800000u);\n\
-\x20 return select(clamp(v, vec4<f32>(-1.0f), vec4<f32>(1.0f)), vec4<f32>(0.0f), nan);\n\
-}\n";
+\x20 return select(clamp(v, vec4<f32>(-1.0f), vec4<f32>(1.0f)), vec4<f32>(-1.0f), nan);\n\
+}}\n",
+        table.join(", ")
+    )
+}
 
 /// The WGSL of equation `e`'s result in channel `c` over sn_s, sn_s1, sn_d, sn_k.
 fn equation_wgsl(e: &Equation, c: &str) -> String {
     let (s, d) = (format!("sn_s.{c}"), format!("sn_d.{c}"));
-    let (st, dt) = (format!("{s} * {}", e.src.wgsl(c)), format!("{d} * {}", e.dst.wgsl(c)));
+    let (st, dt) = (format!("sn_r1({s} * {}, sn_z)", e.src.wgsl(c)), format!("sn_r1({d} * {}, sn_z)", e.dst.wgsl(c)));
     match e.op {
         BlendOp::Add => format!("{st} + {dt}"),
         BlendOp::Subtract => format!("{st} - {dt}"),
@@ -311,6 +354,8 @@ pub fn blend_wgsl(b: &Blend, src: &str, src1: &str, dst: &str, out: &str) -> Vec
     let [x, y, z] = ["x", "y", "z"].map(|c| equation_wgsl(&b.color, c));
     vec![
         format!("let sn_s = sn_clamp({src});"),
+        // (a zero the compiler cannot see: sn_r)
+        "let sn_z = bitcast<u32>(sn_s.x) & 0x40000000u;".to_owned(),
         format!("let sn_s1 = sn_clamp({src1});"),
         format!("let sn_d = sn_load({dst});"),
         format!("{out} = sn_store(vec4<f32>({x}, {y}, {z}, {}));", equation_wgsl(&b.alpha, "w")),

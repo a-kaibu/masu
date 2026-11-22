@@ -442,3 +442,231 @@ fn reserved2_layout_is_the_crts() {
     let b = encode_inherited(&[Inherited { flags: 0x09, handle: 0x10 }, Inherited { flags: 0x89, handle: 0x14 }], false);
     assert_eq!(b, [2, 0, 0, 0, 0x09, 0x89, 0x10, 0, 0, 0, 0x14, 0, 0, 0]);
 }
+
+/// __pioinfo says the descriptor table at every step (Wine msvcrt:file reads it): an open
+/// descriptor's handle is _get_osfhandle's and its wxflag has WX_OPEN (and WX_PIPE for a pipe
+/// end), a closed one is INVALID_HANDLE_VALUE with no flags
+mod pioinfo_mirror {
+    use super::*;
+    use crate::test_guest::{call, enter, guest_thread};
+
+    fn entry(fd: u32) -> (u32, u8) {
+        let base = pioinfo();
+        let block = rp(base + 4 * (fd / 32));
+        assert_ne!(block, 0, "fd {fd}'s block");
+        let e = block + 36 * (fd % 32);
+        (rp(e), mem::r8(e + 4))
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(24))]
+        #[test]
+        fn the_table_follows_open_and_close(ops in prop::collection::vec(any::<bool>(), 1..24), text in any::<bool>()) {
+            let _g = enter();
+            guest_thread();
+            let fds = mem::heap_alloc(8, true);
+            let mut open: Vec<u32> = Vec::new();
+            for make in ops {
+                if make || open.is_empty() {
+                    prop_assert_eq!(call(_pipe, &[fds, 256, if text { O_TEXT } else { O_BINARY }]), 0);
+                    open.push(rp(fds));
+                    open.push(rp(fds + 4));
+                } else {
+                    let fd = open.remove(0);
+                    prop_assert_eq!(call(_close, &[fd]), 0);
+                    prop_assert_eq!(entry(fd), (u32::MAX, 0));
+                }
+                for &fd in &open {
+                    let (h, flag) = entry(fd);
+                    prop_assert_eq!(h, call(_get_osfhandle, &[fd]));
+                    prop_assert_eq!(flag, WX_OPEN | WX_PIPE | if text { WX_TEXT } else { 0 });
+                }
+            }
+            for fd in open {
+                call(_close, &[fd]);
+            }
+            mem::heap_free(fds);
+        }
+    }
+}
+
+/// _mktemp's names (msvcrt file.c test_mktemp / Windows): only a template ending in six X's is
+/// taken; the name keeps the head, then the first letter a..z whose name is free, then the
+/// pid's last five digits; when all 26 are taken there is none
+mod mktemp_names {
+    use super::*;
+
+    proptest! {
+        #[test]
+        fn the_first_free_letter_and_the_pid(head in "[A-Za-z0-9\\\\]{0,8}", pid in any::<u32>(), taken in 0usize..28) {
+            let t = [head.as_bytes(), b"XXXXXX"].concat();
+            let digits = format!("{:05}", pid % 100_000);
+            let name = |l: u8| [head.as_bytes(), &[l], digits.as_bytes()].concat();
+            let got = mktemp_name(&t, pid, |n| (b'a'..=b'z').take(taken).any(|l| name(l) == n));
+            if taken >= 26 {
+                prop_assert_eq!(got, None);
+            } else {
+                prop_assert_eq!(got, Some(name(b'a' + u8::try_from(taken).unwrap_or(0))));
+            }
+        }
+
+        #[test]
+        fn a_template_without_six_xs_is_refused(t in "[A-Za-z0-9X]{0,10}", pid in any::<u32>()) {
+            prop_assume!(!t.ends_with("XXXXXX"));
+            prop_assert_eq!(mktemp_name(t.as_bytes(), pid, |_| false), None);
+        }
+    }
+}
+
+/// Streams over descriptors, as msvcrt keeps them (Wine msvcrt:file test_fgetwc and ucrtbase:file
+/// test_std_stream_buffering): a binary stream's wide characters are two raw bytes each, and a
+/// stream follows its descriptor when _dup2 points it elsewhere
+mod streams_on_fds {
+    use super::*;
+    use crate::test_guest::{call, enter, guest_thread};
+
+    fn pipe(fds: u32) -> (u32, u32) {
+        assert_eq!(call(_pipe, &[fds, 4096, O_BINARY]), 0);
+        (rp(fds), rp(fds + 4))
+    }
+    fn mode(s: &str) -> u32 {
+        let m = mem::heap_alloc(8, true);
+        mem::write(m, s.as_bytes());
+        m
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(16))]
+        #[test]
+        fn binary_wide_characters_are_their_bytes(ws in prop::collection::vec(0u16..0xffff, 1..16)) {
+            let _g = enter();
+            guest_thread();
+            let fds = mem::heap_alloc(8, true);
+            let (r, w) = pipe(fds);
+            let (wb, rb) = (mode("wb"), mode("rb"));
+            let (fw, fr) = (call(_fdopen, &[w, wb]), call(_fdopen, &[r, rb]));
+            prop_assert!(fw != 0 && fr != 0);
+            for &u in &ws {
+                prop_assert_eq!(call(fputwc, &[u32::from(u), fw]), u32::from(u));
+            }
+            call(fclose, &[fw]);
+            let want: Vec<u8> = ws.iter().flat_map(|u| u.to_le_bytes()).collect();
+            for &b in &want {
+                prop_assert_eq!(call(fgetc, &[fr]), u32::from(b));
+            }
+            prop_assert_eq!(call(fgetc, &[fr]), u32::MAX);
+            call(fclose, &[fr]);
+            for p in [fds, wb, rb] {
+                mem::heap_free(p);
+            }
+        }
+
+        #[test]
+        fn a_stream_follows_dup2(bytes in prop::collection::vec(any::<u8>(), 1..16)) {
+            let _g = enter();
+            guest_thread();
+            let fds = mem::heap_alloc(8, true);
+            let (ra, wa) = pipe(fds);
+            let (rb, wb) = pipe(fds);
+            let m = mode("wb");
+            let s = call(_fdopen, &[wa, m]);
+            prop_assert!(s != 0);
+            prop_assert_eq!(call(_dup2, &[wb, wa]), 0);
+            for &b in &bytes {
+                prop_assert_eq!(call(fputc, &[u32::from(b), s]), u32::from(b));
+            }
+            let buf = mem::heap_alloc(64, true);
+            prop_assert_eq!(call(_read, &[rb, buf, 64]), kome::num::u32_of(bytes.len()));
+            prop_assert_eq!(mem::bytes(buf, kome::num::u32_of(bytes.len())), bytes);
+            call(fclose, &[s]);
+            for fd in [ra, rb, wb] {
+                call(_close, &[fd]);
+            }
+            for p in [fds, m, buf] {
+                mem::heap_free(p);
+            }
+        }
+    }
+}
+
+/// Text-mode _read and _write (Wine msvcrt:file test_file_write_read, test_pipes): CR LF reads as
+/// LF, even one byte at a time; LF writes as CR LF; a Ctrl+Z ends what is read
+mod text_mode_io {
+    use super::*;
+    use crate::test_guest::{call, enter, guest_thread};
+
+    fn crlf_to_lf(raw: &[u8]) -> Vec<u8> {
+        let mut out = Vec::new();
+        let mut i = 0;
+        while i < raw.len() {
+            if raw[i] == b'\r' && raw.get(i + 1) == Some(&b'\n') {
+                out.push(b'\n');
+                i += 2;
+            } else {
+                out.push(raw[i]);
+                i += 1;
+            }
+        }
+        out
+    }
+
+    proptest! {
+        #[test]
+        fn text_in_is_crlf_to_lf_up_to_ctrl_z(raw in prop::collection::vec(prop::sample::select(vec![b'\r', b'\n', b'a', 0x1a]), 0..32)) {
+            let (out, end) = text_in(&raw);
+            match raw.iter().position(|&b| b == 0x1a) {
+                Some(z) => {
+                    prop_assert_eq!(end, TextEnd::CtrlZ(z));
+                    prop_assert_eq!(out, crlf_to_lf(&raw[..z]));
+                }
+                None if raw.last() == Some(&b'\r') => {
+                    prop_assert_eq!(end, TextEnd::Cr);
+                    prop_assert_eq!(out, crlf_to_lf(&raw[..raw.len() - 1]));
+                }
+                None => {
+                    prop_assert_eq!(end, TextEnd::All);
+                    prop_assert_eq!(out, crlf_to_lf(&raw));
+                }
+            }
+        }
+
+        #[test]
+        fn text_out_then_text_in_is_the_identity(b in prop::collection::vec(prop::sample::select(vec![b'\r', b'\n', b'x']), 0..32)) {
+            let (out, end) = text_in(&text_out(&b));
+            prop_assert_eq!(end, if b.last() == Some(&b'\r') { TextEnd::Cr } else { TextEnd::All });
+            let whole = if end == TextEnd::Cr { [out, vec![b'\r']].concat() } else { out };
+            prop_assert_eq!(whole, b);
+        }
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(16))]
+        #[test]
+        fn a_text_pipe_gives_back_what_was_written_in_any_chunks(b in prop::collection::vec(prop::sample::select(vec![b'\r', b'\n', b'x']), 1..24), chunk in 1u32..5) {
+            let _g = enter();
+            guest_thread();
+            let fds = mem::heap_alloc(8, true);
+            prop_assert_eq!(call(_pipe, &[fds, 4096, O_TEXT]), 0);
+            let (r, w) = (rp(fds), rp(fds + 4));
+            let src = mem::heap_alloc(64, true);
+            mem::write(src, &b);
+            prop_assert_eq!(call(_write, &[w, src, kome::num::u32_of(b.len())]), kome::num::u32_of(b.len()));
+            prop_assert_eq!(call(_close, &[w]), 0);
+            let dst = mem::heap_alloc(64, true);
+            let mut got = Vec::new();
+            loop {
+                let n = call(_read, &[r, dst, chunk]);
+                prop_assert!(n <= chunk);
+                if n == 0 {
+                    break;
+                }
+                got.extend(mem::bytes(dst, n));
+            }
+            prop_assert_eq!(got, b);
+            call(_close, &[r]);
+            for p in [fds, src, dst] {
+                mem::heap_free(p);
+            }
+        }
+    }
+}

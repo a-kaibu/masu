@@ -238,7 +238,7 @@ pub(super) fn ps_quads(tree: &Tree) -> Hits {
 
 /// Direct3D 11.1's logic ops (2026-11-22: kura answered OutputMergerLogicOp 0 and drew a
 /// logic-op blend state as a plain write, known.txt holding WARP's 1 as a difference)
-const LOGIC_SITES: [(&str, &str, &str); 17] = [
+const LOGIC_SITES: [(&str, &str, &str); 19] = [
     ("crates/kura/src/d3d11/mod.rs", "for k in 0..10 {", "D3D11_OPTIONS does not answer every BOOL from OutputMergerLogicOp (0) on"),
     ("crates/kura/src/d3d11/mod.rs", "dxwgsl::translate_logic(", "the pixel shader of a draw with logic ops is not dxwgsl::translate_logic"),
     ("crates/kura/src/d3d11/mod.rs", "logic::targets(", "a draw's logic ops are not taken from its blend state (logic::targets)"),
@@ -250,6 +250,8 @@ const LOGIC_SITES: [(&str, &str, &str); 17] = [
     ("crates/kura/src/d3d11/logic.rs", "f::P_RGBA8SI => ([8, 8, 8, 8], s),", "SINT targets get no logic ops (WARP applies them, though FORMAT_SUPPORT2 lists UINT formats only)"),
     ("crates/dxwgsl/src/logic.rs", "None => saturate(bits, l.sign, sv),", "an integer target's plain write is not saturated (WARP: min of the value and the channel's largest)"),
     ("crates/kura/src/d3d11/logic.rs", "dxwgsl::logic::carry(l.bits)", "eight multisampled targets have no location for a stash's mark and it is not carried by a stash (dxwgsl::logic::carry)"),
+    ("crates/kura/src/d3d11/logic.rs", "stashes().next().map(|l| Mark::Slot(l.target))", "eight targets whose stashes cannot carry the mark get no mark (the shader would have to run per sample, Windows runs it per pixel): the first stash's location is the mark's, its source in LOGIC_SRC"),
+    ("crates/dxwgsl/src/wgsl.rs", "var<storage, read_write> lg_src: array<u32>", "a stash at the mark's location does not write its source to LOGIC_SRC"),
     ("host/vngpu.js", "maxColorAttachmentBytesPerSample", "the page's device keeps WebGPU's 32 color bytes a sample (Direct3D 11 draws to 8 targets of 16 bytes, a stash's mark adds to them)"),
     ("crates/kura/src/render/d3d.rs", "LOGIC_RESOLVE => {", "the page does not do LOGIC_RESOLVE (a multisampled target's op per sample)"),
     ("crates/dxwgsl/src/wgsl.rs", "logic_output(l, r, k,", "a logic target's output does not go through logic_output"),
@@ -278,7 +280,7 @@ pub(super) fn logic_ops(tree: &Tree) -> Hits {
 
 /// 8-bit SNORM render targets (2026-11-22: kura dropped every clear of and draw to them,
 /// WebGPU rendering to no SNORM format)
-const SNORM_SITES: [(&str, &str, &str); 9] = [
+const SNORM_SITES: [(&str, &str, &str); 16] = [
     ("crates/kura/src/d3d11/mod.rs", "logic::twin_of(", "a draw to an SNORM target is not drawn to its SINT twin (logic::twin_of)"),
     ("crates/kura/src/d3d11/mod.rs", "logic::snorm_twin(*fmt).is_some()", "ClearRenderTargetView of an SNORM view does not write its texels (the page clears no SNORM pass)"),
     ("crates/kura/src/d3d11/mod.rs", "logic::split(&w, &copies, stash.as_ref(), &twins,", "a draw's SNORM twins are not loaded before its primitives and stored back after (logic::split)"),
@@ -287,6 +289,13 @@ const SNORM_SITES: [(&str, &str, &str); 9] = [
     ("crates/kura/src/d3d11/logic.rs", "63 => Some((f::P_R8SI, [8, 0, 0, 0])),", "R8_SNORM views have no SINT twin"),
     ("crates/kura/src/d3d11/logic.rs", "store: Store::Snorm(b)", "an SNORM target's store does not carry its blend (logic::targets)"),
     ("crates/dxwgsl/src/wgsl.rs", "Store::Snorm(blend) =>", "an SNORM target's output does not go through logic_output's store and blend"),
+    ("crates/dxwgsl/src/snorm.rs", "kome::num::trunc_i8((clamp_src(v) * 127.0).round())", "an SNORM store no longer rounds WARP's way (the f32 product, halves away from zero; winref d3d11snorm)"),
+    ("crates/dxwgsl/src/snorm.rs", "if v.is_nan() { -1.0 } else { v.clamp(-1.0, 1.0) }", "a NaN output to an SNORM target is not -127 (WARP writes NaN as -127; winref d3d11snorm)"),
+    ("crates/kura/src/d3d11/clear.rs", "let q = trunc_i64(f64::from((v.clamp(-1.0, 1.0) * max).round()));", "an SNORM clear no longer rounds halves away from zero (winref d3d11snorm: 2.5 / 127 clears to 3)"),
+    ("crates/dxwgsl/src/snorm.rs", "format!(\"sn_r1({s} * {}, sn_z)\", e.src.wgsl(c))", "an SNORM blend's products are no longer kept from fusing with the add (an FMA rounds once: 1.9 * -5/127 blends to -10, WARP to -9)"),
+    ("crates/dxwgsl/src/snorm.rs", "const SN_LOAD = array<u32, 256>(", "the shader's SNORM load divides (WGSL's division is not exact: the blend's last bit differs from WARP's); it reads load()'s table"),
+    ("crates/dxwgsl/src/wgsl.rs", "\"let sn_k = sn_clamp(sn_kv);\"", "an SNORM blend's constant is not clamped to -1..1 in the shader (WARP blends 1.5 as 1; winref d3d11snorm)"),
+    ("crates/kura/src/d3d11/mod.rs", "and_then(dxwgsl::snorm::Blend::of).is_some_and(|b| b.takes()))?;", "CreateBlendState takes MIN / MAX with a dual-source factor (WARP: E_INVALIDARG; winref d3d11snorm)"),
     ("crates/dxwgsl/src/snorm.rs", "#[path = \"snorm_tests.rs\"]", "the SNORM conversions and blend are no longer checked against WARP's answers (snorm_tests.rs)"),
 ];
 
@@ -672,7 +681,7 @@ pub(super) fn stage_run(tree: &Tree) -> Hits {
 }
 
 /// A file's code without its comments, cut at its first inline #[cfg(test)] module.
-fn product_code(tree: &Tree, f: &Rel) -> String {
+pub(super) fn product_code(tree: &Tree, f: &Rel) -> String {
     let code = tree.code(f, true);
     let mut end = code.len();
     for (at, _) in code.match_indices("#[cfg(test)]") {

@@ -198,7 +198,7 @@ msvcrt:cpp	fail	6	541
 msvcrt:data	fail	6	17
 msvcrt:dir	fail	61	367
 msvcrt:environ	crash	5	0
-msvcrt:file	crash	284	13
+msvcrt:file	fail	219	1228
 msvcrt:heap	fail	7	1136
 msvcrt:locale	fail	44	144
 msvcrt:misc	fail	394	563
@@ -331,7 +331,7 @@ shlwapi:thread	crash	3	0
 shlwapi:url	fail	13188	93379
 ucrtbase:cpp	fail	6	35
 ucrtbase:environ	fail	19	89
-ucrtbase:file	fail	31	59
+ucrtbase:file	fail	25	59
 ucrtbase:misc	ok	0	2
 ucrtbase:printf	fail	228	1942
 ucrtbase:scanf	fail	19	381

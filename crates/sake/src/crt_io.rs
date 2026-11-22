@@ -45,6 +45,9 @@ struct Fd {
     append: bool,
     /// the handle _get_osfhandle gives (0: none made yet); closed with the descriptor
     osf: u32,
+    /// a text-mode pipe's byte read past a CR to see whether LF came (msvcrt's pipech): the
+    /// next _read starts with it
+    peek: Option<u8>,
 }
 
 static FDS: Mutex<Vec<Option<Fd>>> = Mutex::new(Vec::new());
@@ -58,11 +61,108 @@ fn with_fds<R>(f: impl FnOnce(&mut Vec<Option<Fd>>) -> R) -> R {
                 text: true,
                 append: false,
                 osf: 0,
+                peek: None,
             }));
         }
         inherit_fds(&mut g);
     }
-    f(&mut g)
+    let r = f(&mut g);
+    if PIOINFO.load(Ordering::Acquire) != 0 {
+        mirror(&mut g);
+    }
+    r
+}
+
+/// msvcrt's __pioinfo: 64 pointers to blocks of 32 ioinfo { HANDLE handle; BYTE wxflag;
+/// char lookahead[3]; int exflag; CRITICAL_SECTION crit } (36 bytes, 56 on x64), NULL for a
+/// block no descriptor reached. Made when a program asks for the export; FDS is written
+/// into it after every change from then on (Wine msvcrt:file reads it).
+static PIOINFO: AtomicU32 = AtomicU32::new(0);
+/// how far the guest table was written (descriptors past FDS's end are cleared once)
+static MIRRORED: AtomicU32 = AtomicU32::new(0);
+const FD_BLOCK: u32 = 32;
+const FD_BLOCKS: u32 = 64;
+const WX_OPEN: u8 = 0x01;
+const WX_PIPE: u8 = 0x08;
+const WX_APPEND: u8 = 0x20;
+const WX_TTY: u8 = 0x40;
+const WX_TEXT: u8 = 0x80;
+fn ioinfo_size() -> u32 {
+    if mem::x64() { 56 } else { 36 }
+}
+/// The address of __pioinfo (the table made and filled at the first ask)
+pub(super) fn pioinfo() -> u32 {
+    let a = PIOINFO.load(Ordering::Acquire);
+    if a != 0 {
+        return a;
+    }
+    let a = mem::heap_alloc(FD_BLOCKS.saturating_mul(mem::ps()), true);
+    PIOINFO.store(a, Ordering::Release);
+    with_fds(|_| ());
+    a
+}
+/// The ioinfo of descriptor `fd` in the guest table (its block made, every entry closed, when
+/// first reached)
+fn ioinfo_at(fd: u32) -> Option<u32> {
+    let base = PIOINFO.load(Ordering::Acquire);
+    let (b, i) = (fd.checked_div(FD_BLOCK)?, fd.checked_rem(FD_BLOCK)?);
+    if base == 0 || b >= FD_BLOCKS {
+        return None;
+    }
+    let slot = mem::ga(base).at(b, mem::ps());
+    let mut block = mem::rp(slot.get());
+    if block == 0 {
+        block = mem::heap_alloc(FD_BLOCK.saturating_mul(ioinfo_size()), true);
+        for k in 0..FD_BLOCK {
+            mem::wp(mem::ga(block).at(k, ioinfo_size()).get(), u32::MAX);
+        }
+        mem::wp(slot.get(), block);
+    }
+    Some(mem::ga(block).at(i, ioinfo_size()).get())
+}
+/// msvcrt's wxflag of a descriptor
+fn wxflag(d: &Fd) -> u8 {
+    let mut f = WX_OPEN;
+    if d.text {
+        f |= WX_TEXT;
+    }
+    if d.append {
+        f |= WX_APPEND;
+    }
+    match d.kind {
+        Kind::Std(_) => f |= WX_TTY,
+        Kind::Pipe(_) => f |= WX_PIPE,
+        Kind::File(_) => {}
+    }
+    f
+}
+/// Writes FDS into the guest's __pioinfo (a file's handle is made, as msvcrt has one for each)
+fn mirror(t: &mut [Option<Fd>]) {
+    let n = kome::num::u32_of(t.len());
+    for (fd, slot) in (0u32..).zip(t.iter_mut()) {
+        let Some(e) = ioinfo_at(fd) else { break };
+        let (h, flag) = match slot {
+            Some(d) => {
+                if d.osf == 0 {
+                    d.osf = match &d.kind {
+                        Kind::Std(i) => crate::k32::std_handle(*i),
+                        Kind::File(f) => obj::add(Obj::File(f.clone())),
+                        Kind::Pipe(p) => crate::pipe::crt_dup(*p),
+                    };
+                }
+                (d.osf, wxflag(d))
+            }
+            None => (u32::MAX, 0),
+        };
+        mem::wp(e, h);
+        mem::w8(mem::ga(e).at(1, mem::ps()).get(), flag);
+    }
+    for fd in n..MIRRORED.swap(n, Ordering::AcqRel) {
+        if let Some(e) = ioinfo_at(fd) {
+            mem::wp(e, u32::MAX);
+            mem::w8(mem::ga(e).at(1, mem::ps()).get(), 0);
+        }
+    }
 }
 
 /// ioinfo flags of the descriptors a spawned process inherits (STARTUPINFO lpReserved2)
@@ -114,7 +214,7 @@ pub(crate) fn decode_inherited(b: &[u8], x64: bool) -> Vec<Inherited> {
 /// inheritable (sake hands other processes pipes, not files); none past the last
 fn inherited_fds() -> Vec<Inherited> {
     let mut out: Vec<Inherited> = with_fds(|t| t.iter().map(|d| match d {
-        Some(Fd { kind: Kind::Pipe(_), text, append, osf }) if *osf != 0 && obj::inherits(*osf) => {
+        Some(Fd { kind: Kind::Pipe(_), text, append, osf, .. }) if *osf != 0 && obj::inherits(*osf) => {
             let mut flags = FOPEN | FPIPE;
             if *text {
                 flags |= FTEXT;
@@ -146,7 +246,7 @@ fn inherit_fds(t: &mut Vec<Option<Fd>>) {
             t.resize(i.saturating_add(1), None);
         }
         if let Some(slot) = t.get_mut(i) {
-            *slot = Some(Fd { kind: Kind::Pipe(p), text: d.flags & FTEXT != 0, append: d.flags & FAPPEND != 0, osf: d.handle });
+            *slot = Some(Fd { kind: Kind::Pipe(p), text: d.flags & FTEXT != 0, append: d.flags & FAPPEND != 0, osf: d.handle, peek: None });
         }
     }
 }
@@ -178,6 +278,7 @@ pub(super) fn fd_of_file(f: Arc<File>) -> u32 {
         text: false,
         append: false,
         osf: 0,
+        peek: None,
     })
 }
 
@@ -186,6 +287,14 @@ pub(super) fn file_of(fd: u32) -> Option<Arc<File>> {
     match get(fd)?.kind {
         Kind::File(f) => Some(f),
         Kind::Std(_) | Kind::Pipe(_) => None,
+    }
+}
+
+/// The pipe end behind descriptor `fd` (None: not a pipe, or no such descriptor).
+pub(super) fn pipe_of(fd: u32) -> Option<crate::pipe::Handle> {
+    match get(fd)?.kind {
+        Kind::Pipe(p) => Some(p),
+        Kind::Std(_) | Kind::File(_) => None,
     }
 }
 
@@ -236,6 +345,7 @@ fn open(path: &str, oflag: u32) -> u32 {
             text: oflag & O_BINARY == 0 && oflag & O_TEXT != 0,
             append: oflag & O_APPEND != 0,
             osf: 0,
+            peek: None,
         }),
         Err(e) => {
             set_errno(errno_for(e));
@@ -283,6 +393,9 @@ fn _close(c: &mut Ctx) -> u32 {
 /// _read(fd, buf, count): bytes read, 0 at the end (standard input: always at its end)
 fn _read(c: &mut Ctx) -> u32 {
     let (fd, buf, n) = (c.a(0), c.a(1), c.a(2));
+    if let Some(d) = get(fd).filter(|d| d.text && !matches!(d.kind, Kind::Std(_))) {
+        return text_read(fd, d, buf, n.min(i32::MAX as u32));
+    }
     match get(fd).map(|d| d.kind) {
         Some(Kind::File(f)) => f.read_into(buf, n.min(i32::MAX as u32)),
         Some(Kind::Std(0)) => 0,
@@ -294,6 +407,104 @@ fn _read(c: &mut Ctx) -> u32 {
         },
         _ => bad(),
     }
+}
+/// How text_in's bytes ended
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum TextEnd {
+    /// all of them were read
+    All,
+    /// at a Ctrl+Z (the end of a text file; it and what follows are not read)
+    CtrlZ(usize),
+    /// at a CR that was the last byte: the next one says whether it is a CR LF
+    Cr,
+}
+/// msvcrt's text-mode _read of raw bytes (Wine msvcrt:file test_file_write_read): CR LF reads as
+/// LF, a CR before anything else stays, and a Ctrl+Z ends the data
+pub(crate) fn text_in(raw: &[u8]) -> (Vec<u8>, TextEnd) {
+    let mut out = Vec::with_capacity(raw.len());
+    let mut i = 0;
+    while let Some(&b) = raw.get(i) {
+        match (b, raw.get(i.saturating_add(1))) {
+            (0x1a, _) => return (out, TextEnd::CtrlZ(i)),
+            (b'\r', None) => return (out, TextEnd::Cr),
+            (b'\r', Some(b'\n')) => {
+                out.push(b'\n');
+                i = i.saturating_add(2);
+                continue;
+            }
+            _ => out.push(b),
+        }
+        i = i.saturating_add(1);
+    }
+    (out, TextEnd::All)
+}
+/// Up to `n` raw bytes of a file or pipe descriptor (an empty read at the end; None: an error)
+fn raw_read(kind: &Kind, n: u32) -> Option<Vec<u8>> {
+    match kind {
+        Kind::File(f) => Some(f.read_vec(kome::num::us(n))),
+        Kind::Pipe(p) => match crate::pipe::crt_read_vec(*p, n) {
+            Ok(v) => Some(v),
+            Err(crate::kern::PIPE_BROKEN) => Some(Vec::new()),
+            Err(_) => None,
+        },
+        Kind::Std(_) => None,
+    }
+}
+/// _read of a text-mode descriptor: text_in of what is there; a CR at the end of it reads one
+/// byte more (a file seeks back over it when it is no LF, a pipe keeps it for the next _read)
+fn text_read(fd: u32, d: Fd, buf: u32, n: u32) -> u32 {
+    if n == 0 {
+        return 0;
+    }
+    let peek = with_fds(|t| t.get_mut(kome::num::us(fd)).and_then(|s| s.as_mut()).and_then(|s| s.peek.take()));
+    let mut raw: Vec<u8> = peek.into_iter().collect();
+    let more = n.saturating_sub(kome::num::u32_of(raw.len()));
+    if more > 0 {
+        let Some(v) = raw_read(&d.kind, more) else { return bad() };
+        raw.extend(v);
+    }
+    let (mut out, end) = text_in(&raw);
+    match end {
+        TextEnd::All => {}
+        // (the Ctrl+Z stays next: a later read stops at it again)
+        TextEnd::CtrlZ(at) => {
+            if let Kind::File(f) = &d.kind {
+                let back = i64::try_from(raw.len().saturating_sub(at)).unwrap_or(0);
+                f.seek(SeekFrom::Current(back.saturating_neg()));
+            }
+        }
+        TextEnd::Cr => match raw_read(&d.kind, 1).unwrap_or_default().first() {
+            Some(b'\n') => out.push(b'\n'),
+            Some(&b) => {
+                out.push(b'\r');
+                match &d.kind {
+                    Kind::File(f) => {
+                        f.seek(SeekFrom::Current(-1));
+                    }
+                    Kind::Pipe(_) => with_fds(|t| {
+                        if let Some(Some(s)) = t.get_mut(kome::num::us(fd)) {
+                            s.peek = Some(b);
+                        }
+                    }),
+                    Kind::Std(_) => {}
+                }
+            }
+            None => out.push(b'\r'),
+        },
+    }
+    mem::write(buf, &out);
+    kome::num::u32_of(out.len())
+}
+/// msvcrt's text-mode _write: every LF goes out as CR LF
+pub(crate) fn text_out(b: &[u8]) -> Vec<u8> {
+    let mut v = Vec::with_capacity(b.len().saturating_add(b.len() / 8));
+    for &x in b {
+        if x == b'\n' {
+            v.push(b'\r');
+        }
+        v.push(x);
+    }
+    v
 }
 /// _write(fd, buf, count): standard output and error go to the log
 fn _write(c: &mut Ctx) -> u32 {
@@ -313,10 +524,15 @@ fn _write(c: &mut Ctx) -> u32 {
                 f.seek(SeekFrom::End(0));
             }
             crate::k32::echo_write(&f.path, buf, n);
+            if d.text {
+                // (the count written is the caller's, before LF became CR LF)
+                let v = text_out(&mem::bytes(buf, n));
+                return if f.write_bytes(&v) == kome::num::u32_of(v.len()) { n } else { u32::MAX };
+            }
             f.write_from(buf, n)
         }
         // (the reader closed: ERROR_NO_DATA, which the UCRT gives as EPIPE)
-        Kind::Pipe(p) => match crate::pipe::crt_write(p, buf, n) {
+        Kind::Pipe(p) => match if d.text { crate::pipe::crt_write_vec(p, &text_out(&mem::bytes(buf, n))).map(|_| n) } else { crate::pipe::crt_write(p, buf, n) } {
             Ok(n) => n,
             Err(crate::kern::PIPE_CLOSING) => {
                 set_errno(EPIPE);
@@ -486,6 +702,7 @@ fn _open_osfhandle(c: &mut Ctx) -> u32 {
             text: flags & O_TEXT != 0,
             append: flags & O_APPEND != 0,
             osf: h,
+            peek: None,
         }),
         None => bad(),
     }
@@ -497,7 +714,7 @@ fn dup_of(d: Fd) -> Fd {
         Kind::Pipe(p) => crate::pipe::crt_dup(*p),
         _ => 0,
     };
-    Fd { osf, ..d }
+    Fd { osf, peek: None, ..d }
 }
 fn _dup(c: &mut Ctx) -> u32 {
     match get(c.a(0)) {
@@ -530,6 +747,8 @@ fn _dup2(c: &mut Ctx) -> u32 {
         }
         t[to as usize] = Some(n);
     });
+    // a stream on `to` (stdout after freopen) now reads and writes what `to` names
+    super::follow_fd(to);
     0
 }
 /// _pipe(int pfds[2], psize, textmode): descriptors of a new anonymous pipe's read and write
@@ -546,7 +765,7 @@ fn _pipe(c: &mut Ctx) -> u32 {
         set_errno(24); // EMFILE
         return u32::MAX;
     };
-    let fd = |h: u32, end: crate::pipe::Handle| add(Fd { kind: Kind::Pipe(end), text: mode & O_BINARY == 0, append: false, osf: h });
+    let fd = |h: u32, end: crate::pipe::Handle| add(Fd { kind: Kind::Pipe(end), text: mode & O_BINARY == 0, append: false, osf: h, peek: None });
     let r = fd(hr, er);
     if r == u32::MAX {
         obj::close(hr);
@@ -2073,7 +2292,7 @@ fn clearerr(c: &mut Ctx) -> u32 {
 /// fputwc(wc, stream): the character's bytes in the locale, WEOF (EILSEQ) when it has none
 fn fputwc(c: &mut Ctx) -> u32 {
     let u = c.a(0) as u16;
-    let Some(b) = wc_bytes(u) else {
+    let Some(b) = stream_wc_bytes(c.a(1), u) else {
         set_errno(42);
         return 0xffff;
     };
@@ -2086,19 +2305,180 @@ fn fputws(c: &mut Ctx) -> u32 {
 }
 /// fgetwc(stream): one character from the locale's bytes (as mbtowc); WEOF at the end
 fn fgetwc(c: &mut Ctx) -> u32 {
-    let fp = c.a(0);
+    getwc_of(c.a(0))
+}
+/// fgetws(buf, n, stream): fgetwc's characters to a newline (kept) or n - 1 of them, then a
+/// NUL; NULL when none came
+fn fgetws(c: &mut Ctx) -> u32 {
+    let (buf, n, fp) = (c.a(0), c.a(1), c.a(2));
+    if buf == 0 || n == 0 {
+        return 0;
+    }
+    let mut i = 0u32;
+    while i.saturating_add(1) < n {
+        let u = getwc_of(fp);
+        if u == 0xffff {
+            break;
+        }
+        mem::w16(mem::ga(buf).at(i, 2).get(), kome::num::lo16(u));
+        i = i.saturating_add(1);
+        if u == u32::from(b'\n') {
+            break;
+        }
+    }
+    if i == 0 {
+        return 0;
+    }
+    mem::w16(mem::ga(buf).at(i, 2).get(), 0);
+    buf
+}
+/// A text stream (msvcrt's WX_TEXT): its wide characters are the locale's bytes; a binary
+/// stream's are the characters themselves, two bytes each (Wine msvcrt:file test_fgetwc)
+fn stream_is_text(fp: u32) -> bool {
+    with_file(fp, |s| s.text).unwrap_or(true)
+}
+/// fputwc's bytes for `u` on stream `fp`: the character itself on a binary stream, the locale's
+/// bytes on a text one (None: the locale lacks it)
+fn stream_wc_bytes(fp: u32, u: u16) -> Option<Vec<u8>> {
+    if stream_is_text(fp) { wc_bytes(u) } else { Some(u.to_le_bytes().to_vec()) }
+}
+/// One fgetwc character of stream `fp` (WEOF 0xffff at the end)
+fn getwc_of(fp: u32) -> u32 {
+    if !stream_is_text(fp) {
+        // a binary stream holds the characters themselves (two bytes each); half of one is WEOF
+        let (lo, hi) = (getc_of(fp), getc_of(fp));
+        return if lo == u32::MAX || hi == u32::MAX { 0xffff } else { u32::from(u16::from_le_bytes([kome::num::lo8(lo), kome::num::lo8(hi)])) };
+    }
     let b = getc_of(fp);
     if b == u32::MAX {
         return 0xffff;
     }
-    let mut bytes = vec![b as u8];
-    if lead(b as u8) {
+    let mut bytes = vec![kome::num::lo8(b)];
+    if lead(kome::num::lo8(b)) {
         let t = getc_of(fp);
         if t != u32::MAX {
-            bytes.push(t as u8);
+            bytes.push(kome::num::lo8(t));
         }
     }
-    to_wide(&bytes).first().map_or(0xffff, |&u| u as u32)
+    to_wide(&bytes).first().map_or(0xffff, |&u| u32::from(u))
+}
+/// _getw(stream): the next four bytes as an int; EOF when they are not all there
+fn _getw(c: &mut Ctx) -> u32 {
+    let fp = c.a(0);
+    let mut v = [0u8; 4];
+    for b in &mut v {
+        let ch = getc_of(fp);
+        if ch == u32::MAX {
+            return u32::MAX;
+        }
+        *b = kome::num::lo8(ch);
+    }
+    u32::from_le_bytes(v)
+}
+/// _putw(w, stream): its four bytes; w
+fn _putw(c: &mut Ctx) -> u32 {
+    let (w, fp) = (c.a(0), c.a(1));
+    if with_file(fp, |s| s.write(&w.to_le_bytes())).unwrap_or(false) { w } else { u32::MAX }
+}
+/// _filbuf(stream): what msvcrt's getc macro calls on an empty buffer: the next character
+fn _filbuf(c: &mut Ctx) -> u32 {
+    getc_of(c.a(0))
+}
+/// _flsbuf(ch, stream): what its putc macro calls on a full buffer: writes the byte, gives
+/// it (EOF on a stream not open for writing)
+fn _flsbuf(c: &mut Ctx) -> u32 {
+    let (ch, fp) = (kome::num::lo8(c.a(0)), c.a(1));
+    let ok = with_file(fp, |s| {
+        if s.f.as_ref().is_some_and(|f| !f.write) {
+            return false;
+        }
+        s.write(&[ch])
+    });
+    if ok == Some(true) { u32::from(ch) } else { u32::MAX }
+}
+/// _fcloseall(): closes every stream but stdin, stdout and stderr; how many
+fn _fcloseall(_: &mut Ctx) -> u32 {
+    let std = (0..3).map(|i| var_at(Var::Iob).saturating_add(file_size().saturating_mul(i))).collect::<Vec<u32>>();
+    let all: Vec<u32> = FILES.locked().get_or_insert_with(HashMap::default).keys().copied().filter(|fp| !std.contains(fp)).collect();
+    let mut n = 0u32;
+    for fp in all {
+        if close_stream(fp) {
+            n = n.saturating_add(1);
+        }
+    }
+    n
+}
+/// _flushall(): the streams open (they hold nothing to flush)
+fn _flushall(_: &mut Ctx) -> u32 {
+    let std = (0..3).map(|i| var_at(Var::Iob).saturating_add(file_size().saturating_mul(i))).collect::<Vec<u32>>();
+    let others = FILES.locked().get_or_insert_with(HashMap::default).keys().filter(|fp| !std.contains(fp)).count();
+    kome::num::u32_of(others).saturating_add(3)
+}
+/// _get_fmode(&mode): _fmode; EINVAL for no pointer
+fn _get_fmode(c: &mut Ctx) -> u32 {
+    let p = c.a(0);
+    if p == 0 {
+        set_errno(EINVAL);
+        return EINVAL;
+    }
+    w32(p, r32(var_at(Var::Fmode)));
+    0
+}
+/// _creat / _wcreat (path, pmode): _open(path, _O_CREAT | _O_TRUNC | _O_RDWR)
+fn _creat(c: &mut Ctx) -> u32 {
+    open(&path_arg(c.a(0), false), O_CREAT | O_TRUNC | O_RDWR)
+}
+fn _wcreat(c: &mut Ctx) -> u32 {
+    open(&path_arg(c.a(0), true), O_CREAT | O_TRUNC | O_RDWR)
+}
+/// _mktemp's name for `template` (its last six characters "XXXXXX", the rest kept): a letter
+/// from 'a' and the process id's last five digits; None for a template that does not end in
+/// six X, or when every letter's name exists
+pub(crate) fn mktemp_name(template: &[u8], pid: u32, exists: impl Fn(&[u8]) -> bool) -> Option<Vec<u8>> {
+    let cut = template.len().checked_sub(6)?;
+    let (head, xs) = template.split_at(cut);
+    if xs != b"XXXXXX" {
+        return None;
+    }
+    let mut digits = [b'0'; 5];
+    let mut id = pid;
+    for d in digits.iter_mut().rev() {
+        *d = b'0'.saturating_add(kome::num::lo8(id % 10));
+        id /= 10;
+    }
+    (b'a'..=b'z').map(|l| [head, &[l], &digits].concat()).find(|n| !exists(n))
+}
+/// _mktemp / _wmktemp (template): the name made in place, NULL (EINVAL / EEXIST) when it can't
+fn mktemp(c: &mut Ctx, wide: bool) -> u32 {
+    let p = c.a(0);
+    if p == 0 {
+        set_errno(EINVAL);
+        return 0;
+    }
+    let t: Vec<u8> = if wide { wstr(p).iter().map(|&u| kome::num::lo8(u)).collect() } else { cstr(p) };
+    let exists = |n: &[u8]| crate::files::resolve(&a2s(n)).is_some();
+    match mktemp_name(&t, crate::pid(), exists) {
+        Some(n) => {
+            for (i, &b) in (0u32..).zip(&n) {
+                if wide {
+                    mem::w16(mem::ga(p).at(i, 2).get(), u16::from(b));
+                } else {
+                    mem::w8(mem::ga(p).at(i, 1).get(), b);
+                }
+            }
+            p
+        }
+        None => {
+            set_errno(if t.ends_with(b"XXXXXX") { EEXIST } else { EINVAL });
+            0
+        }
+    }
+}
+fn _mktemp(c: &mut Ctx) -> u32 {
+    mktemp(c, false)
+}
+fn _wmktemp(c: &mut Ctx) -> u32 {
+    mktemp(c, true)
 }
 /// ungetwc(wc, stream): a character below 0x80 goes back (others are not kept)
 fn ungetwc(c: &mut Ctx) -> u32 {
@@ -2129,7 +2509,7 @@ fn write_wide(fp: u32, s: &[u16]) -> bool {
     let mut out = Vec::with_capacity(s.len() * 2);
     let mut ok = true;
     for &u in s {
-        let Some(b) = wc_bytes(u) else {
+        let Some(b) = stream_wc_bytes(fp, u) else {
             set_errno(42);
             ok = false;
             break;
@@ -2383,6 +2763,7 @@ pub(super) fn init() {
         implement("msvcrt", n, zero);
     }
     reg!(setbuf, clearerr, fputwc, fputws, fgetwc, ungetwc, getchar, putc, wprintf);
+    reg!(fgetws, _getw, _putw, _filbuf, _flsbuf, _fcloseall, _flushall, _get_fmode, _creat, _wcreat, _mktemp, _wmktemp);
     reg!(fwprintf, fwprintf_s, vfwprintf, vfwprintf_s, vwprintf, vwprintf_s);
     implement("msvcrt", "_fputwc_nolock", fputwc);
     implement("msvcrt", "_putc_nolock", putc);

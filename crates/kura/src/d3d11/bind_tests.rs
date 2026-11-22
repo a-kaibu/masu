@@ -1,7 +1,9 @@
 //! Random input and output binds of views of the same resources through the real entry point
 //! (`d3d11::call`): shader resource views (pixel, vertex, compute shader), render targets and
-//! depth views (writable and read-only), the compute shader's UAV, a buffer as vertex buffer
-//! and stream output target; and what the slots hold after each. Recorded as a trace for TLC
+//! depth views (writable and read-only), the compute shader's UAV, the output merger's UAV set
+//! with the render targets kept (OMSetRenderTargetsAndUnorderedAccessViews' KEEP), a buffer as
+//! vertex buffer (slot 0 and the last slot, 31) and stream output target; and what the slots
+//! hold after each. Recorded as a trace for TLC
 //! to check against formal/tla/Binds11.tla (formal/trace.sh).
 //!
 //! Views: 1 SRV of texture A's mip 0, 2 of its mip 1, 3 SRV of depth texture Z; 4 / 5 render
@@ -42,8 +44,9 @@ fn release(a: u32) {
 }
 
 /// The slots: the SRV slots (pixel 0 and 1, vertex 0, compute 0), the render target, the
-/// depth view, the compute UAV, vertex buffer 0, stream output target 0.
-const SLOTS: [&str; 9] = ["ps0", "ps1", "vs0", "cs0", "rt", "ds", "uav", "vb", "so"];
+/// depth view, the compute UAV, vertex buffer 0, stream output target 0, vertex buffer 31, the
+/// output merger's UAV 1.
+const SLOTS: [&str; 11] = ["ps0", "ps1", "vs0", "cs0", "rt", "ds", "uav", "vb", "so", "vb31", "omuav"];
 
 #[derive(Default)]
 struct Step {
@@ -97,7 +100,7 @@ fn run(seed: u64) -> Vec<Step> {
     let mut steps = Vec::new();
     for _ in 0..250 {
         let mut t = Step::default();
-        match r.below(10) {
+        match r.below(12) {
             0..=2 => {
                 // an SRV slot
                 let s = r.below(4) as u32;
@@ -118,6 +121,21 @@ fn run(seed: u64) -> Vec<Step> {
                 put(arr, &[views[v]]);
                 call1(m(IF_CONTEXT, 68), &[ctx, 0, 1, arr, 0]);
                 (t.op, t.v) = ("SetUAV", v as u32);
+            }
+            10 => {
+                // vertex buffer slot 31 (the last of D3D11_IA_VERTEX_INPUT_RESOURCE_SLOT_COUNT)
+                let v = [0, 9][r.below(2)];
+                put(arr, &[views[v]]);
+                let so = mem(2);
+                call1(m(IF_CONTEXT, 18), &[ctx, 31, 1, arr, so, so]);
+                (t.op, t.v) = ("SetVB31", v as u32);
+            }
+            11 => {
+                // the output merger's UAV 1, render targets and depth view kept
+                let v = [0, 8][r.below(2)];
+                put(arr, &[views[v]]);
+                call1(m(IF_CONTEXT, 34), &[ctx, 0xffff_ffff, 0, 0, 1, 1, arr, 0]);
+                (t.op, t.v) = ("SetOMUAV", v as u32);
             }
             6 => {
                 let v = [0, 9][r.below(2)];
@@ -143,6 +161,8 @@ fn run(seed: u64) -> Vec<Step> {
                     "ds" => call1(m(IF_CONTEXT, 89), &[ctx, 0, 0, arr]),
                     "uav" => call1(m(IF_CONTEXT, 106), &[ctx, 0, 1, arr]),
                     "vb" => call1(m(IF_CONTEXT, 79), &[ctx, 0, 1, arr, st, st]),
+                    "vb31" => call1(m(IF_CONTEXT, 79), &[ctx, 31, 1, arr, st, st]),
+                    "omuav" => call1(m(IF_CONTEXT, 90), &[ctx, 0, 0, 0, 1, 1, arr]),
                     _ => call1(m(IF_CONTEXT, 93), &[ctx, 1, arr]),
                 };
                 let got = rd1(arr);
@@ -168,33 +188,56 @@ fn run(seed: u64) -> Vec<Step> {
 fn check(steps: &[Step], seed: u64) {
     // per view: (resource, mip); 1..3 inputs, 4..8 outputs (7 read-only), 9 the buffer
     let span = |v: u32| [(0, 0), (1, 0), (1, 1), (2, 0), (1, 0), (1, 1), (2, 0), (2, 0), (1, 0), (3, 0)][v as usize];
-    let mut slots = [0u32; 9];
+    let mut slots = [0u32; 11];
+    // (the output slots: rt, ds unless read-only, uav, so, omuav)
+    let outs = |slots: &[u32; 11]| -> Vec<(u32, u32)> { [slots[4], if slots[5] == 7 { 0 } else { slots[5] }, slots[6], slots[8], slots[10]].into_iter().filter(|&v| v != 0).map(span).collect() };
+    let reads = |v: u32, slots: &[u32; 11]| v != 0 && outs(slots).contains(&span(v));
+    let resolve = |slots: &mut [u32; 11]| {
+        for s in [0, 1, 2, 3, 7, 9] {
+            if reads(slots[s], slots) {
+                slots[s] = 0;
+            }
+        }
+    };
     for (n, t) in steps.iter().enumerate() {
-        let outs = |slots: &[u32; 9]| -> Vec<(u32, u32)> { [slots[4], if slots[5] == 7 { 0 } else { slots[5] }, slots[6]].into_iter().filter(|&v| v != 0).map(span).collect() };
-        let reads = |v: u32, slots: &[u32; 9]| v != 0 && outs(slots).contains(&span(v));
         match t.op {
             "SetSRV" => slots[t.s as usize] = if reads(t.v, &slots) { 0 } else { t.v },
-            "SetOM" | "SetUAV" => {
-                if t.op == "SetOM" {
-                    (slots[4], slots[5]) = (t.v, t.w);
-                } else {
-                    slots[6] = t.v;
+            "SetVB" => slots[7] = if reads(t.v, &slots) { 0 } else { t.v },
+            "SetVB31" => slots[9] = if reads(t.v, &slots) { 0 } else { t.v },
+            "SetOM" | "SetUAV" | "SetSO" | "SetOMUAV" => {
+                match t.op {
+                    // (OMSetRenderTargets unbinds the output merger's UAVs)
+                    "SetOM" => (slots[4], slots[5], slots[10]) = (t.v, t.w, 0),
+                    "SetUAV" => slots[6] = t.v,
+                    "SetSO" => slots[8] = t.v,
+                    _ => slots[10] = t.v,
                 }
-                for s in 0..4 {
-                    if reads(slots[s], &slots) {
-                        slots[s] = 0;
-                    }
-                }
-            }
-            "SetVB" => slots[7] = if t.v != 0 && slots[8] == t.v { 0 } else { t.v },
-            "SetSO" => {
-                slots[8] = t.v;
-                if t.v != 0 && slots[7] == t.v {
-                    slots[7] = 0;
-                }
+                resolve(&mut slots);
             }
             _ => assert_eq!(t.got, slots[t.s as usize], "seed {seed} step {n}: Get {}", SLOTS[t.s as usize]),
         }
+    }
+}
+
+/// The two binds the review of 6852be1 found kept (both through the real entry point): a
+/// stream output target's buffer as vertex buffer 31, and the output merger's UAV of a
+/// texture an SRV reads, set with the render targets kept.
+#[test]
+fn late_vertex_slots_and_kept_targets_resolve_too() {
+    let _g = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+    let vt = mem(256);
+    put(vt, &(1..=256).map(|i| 0x1000 * i).collect::<Vec<_>>());
+    call1(INIT, &[vt, 256]);
+    let steps = |ops: &[(&'static str, u32, u32)]| -> Vec<Step> { ops.iter().map(|&(op, s, v)| Step { op, s, v, ..Step::default() }).collect() };
+    // (the model alone: an SO target then the same buffer in slot 31 is NULL; an OM UAV of
+    // A mip 0 with targets kept unbinds ps0's SRV of A mip 0)
+    check(&steps(&[("SetSO", 0, 9), ("SetVB31", 0, 9), ("Get", 9, 0)]), 0);
+    check(&steps(&[("SetSRV", 0, 1), ("SetOMUAV", 0, 8), ("Get", 0, 0)]), 0);
+    // (and the real context agrees with the model on many runs that reach those ops)
+    for seed in 100..100 + seeds() {
+        let st = run(seed);
+        assert!(st.iter().any(|t| t.op == "SetVB31") && st.iter().any(|t| t.op == "SetOMUAV"), "seed {seed} reaches neither");
+        check(&st, seed);
     }
 }
 

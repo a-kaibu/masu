@@ -103,14 +103,63 @@ pub fn ticks_ms() -> u32 {
 
 static CMDLINE: Mutex<(u32, u32)> = Mutex::new((0, 0));
 
+/// The command line of the first process: the program, then each of `args` one argument
+/// (quoted as CommandLineToArgvW splits it again: web/src/launch-plan.ts gives them as a list);
+/// or, with SAKE_COMMAND_TAIL set, that text as it is after the program (what a program wrote
+/// when it started the next one in its place: exec, the page's `cmdline`).
 pub fn set_command_line(exe: &str, args: &[String]) {
-    let mut s = format!("\"{exe}\"");
-    for a in args {
-        s += " ";
-        s += a;
-    }
-    set_command_line_raw(&s);
+    set_command_line_raw(&command_line(exe, args, std::env::var("SAKE_COMMAND_TAIL").ok().as_deref()));
 }
+fn command_line(exe: &str, args: &[String], tail: Option<&str>) -> String {
+    let mut s = format!("\"{exe}\"");
+    match tail {
+        Some(t) if !t.is_empty() => {
+            s += " ";
+            s += t;
+        }
+        Some(_) => {}
+        None => {
+            for a in args {
+                s += " ";
+                s += &crate::process::quote(a);
+            }
+        }
+    }
+    s
+}
+#[cfg(test)]
+mod command_line_tests {
+    use super::command_line;
+    use crate::process::argv;
+    use proptest::prelude::*;
+
+    #[test]
+    fn the_review_s_list_comes_back() {
+        // (review 22bb061 §4: a comma, an empty one and one with a space)
+        let args: Vec<String> = ["--title=a,b", "", "two words"].map(String::from).to_vec();
+        let line = command_line("Z:\\masu\\game\\a b.exe", &args, None);
+        assert_eq!(line, "\"Z:\\masu\\game\\a b.exe\" --title=a,b \"\" \"two words\"");
+        assert_eq!(argv(&line)[1..], args[..]);
+    }
+
+    #[test]
+    fn a_tail_is_kept_as_written() {
+        assert_eq!(command_line("C:\\p.exe", &[], Some("  /x \"a\"b ")), "\"C:\\p.exe\"   /x \"a\"b ");
+        assert_eq!(command_line("C:\\p.exe", &["ignored".into()], Some("")), "\"C:\\p.exe\"");
+    }
+
+    proptest! {
+        /// Whatever the list, CommandLineToArgvW's split of the line gives it back.
+        #[test]
+        fn any_list_comes_back(args in prop::collection::vec("[a-z,=\\\\\" \t/あ]{0,8}", 0..6)) {
+            let line = command_line("Z:\\g\\p.exe", &args, None);
+            let got = argv(&line);
+            prop_assert_eq!(&got[0], "Z:\\g\\p.exe");
+            prop_assert_eq!(&got[1..], &args[..]);
+        }
+    }
+}
+
 /// The command line as it is (a process another one started: CreateProcess's)
 pub fn set_command_line_raw(s: &str) {
     let a = crate::text::s2a(&s);

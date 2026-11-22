@@ -175,7 +175,10 @@ export async function loadSaves(
   try {
     // (offline: no tries at all; started from the app kept on the device, sw.ts)
     if (!navigator.onLine) throw new Error("offline");
-    remote = await withRetries(() => transport.load(url), 3);
+    // (e18bf44's load kept the GET's revision whatever it took: adopt, as that transport did)
+    const copy = await withRetries(() => transport.load(url, null), 3);
+    transport.adopt(url, copy);
+    remote = copy.data;
   } catch (e) {
     console.warn(`saves: server out of reach, starting from this browser's copy: ${String(e)}`);
     return localLock(name, async () => {
@@ -302,7 +305,7 @@ export function storeSaves(
       return local ? null : false;
     });
     if (!upload || staged === false) return false;
-    await transport.store(url, data);
+    await transport.store(url, data, null);
     if (staged)
       await acknowledgeSave(name, staged.generation, transport.revision(url) ?? null).catch((e: unknown) =>
         console.warn("saves: local cache", e),
