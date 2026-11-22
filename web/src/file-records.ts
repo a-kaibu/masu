@@ -1,35 +1,50 @@
-// VFS records are path length, UTF-8 path, mtime, data length, data (little endian).
+// VFS records (crates/kura/src/vfs/saves.rs), little endian: a file kura holds in memory is
+// path length, UTF-8 path, mtime, data length, data. Any other record (a name of the store's tree
+// gone, a directory, a store file or a link at a name, a file's mode) starts with a tag word:
+// TAG | its kind, path length, path, body length, body. Both are decided on by their path.
+export const TAG = 0xffff_ff00;
 
 // (one decoder for every record, not fatal: a path that is not UTF-8 (a guest's raw bytes) is
 // decided on as decoded with U+FFFD and its record kept byte for byte; a fatal decoder threw for
 // it and failed the whole set: no saves and no installation at all for one odd name)
 const paths = new TextDecoder("utf-8");
-export function selectRecords(
-  data: Uint8Array | null,
-  keep: (path: string) => boolean,
-): Uint8Array<ArrayBuffer> | null {
-  if (!data) return null;
+
+/** One record of a set: where it starts and ends, and where its path is (its length the word
+ * before it). */
+interface Span {
+  readonly at: number;
+  readonly path: number;
+  readonly pathEnd: number;
+  readonly end: number;
+}
+
+const broken = () => new Error("ファイル保存データが破損しています。");
+
+/** The records of `data` in order; throws on one cut short. */
+function* spans(data: Uint8Array): Generator<Span> {
   const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
-  const parts: Uint8Array[] = [];
-  let size = 0;
   for (let at = 0; at < data.length;) {
-    if (at + 16 > data.length) throw new Error("ファイル保存データが破損しています。");
-    const n = view.getUint32(at, true);
-    if (at + 16 + n > data.length) throw new Error("ファイル保存データが破損しています。");
-    const len = view.getUint32(at + 12 + n, true);
-    const end = at + 16 + n + len;
-    if (end > data.length) throw new Error("ファイル保存データが破損しています。");
-    const path = paths.decode(data.subarray(at + 4, at + 4 + n));
-    if (keep(path)) {
-      const part = data.subarray(at, end);
-      parts.push(part);
-      size += part.length;
-    }
+    if (at + 4 > data.length) throw broken();
+    const first = view.getUint32(at, true);
+    const tagged = (first & TAG) >>> 0 === TAG;
+    // (a file: path length, then the mtime and length after the path; a tagged one: its tag,
+    // path length, then the body length after the path)
+    const path = at + (tagged ? 8 : 4);
+    if (path + (tagged ? 4 : 12) > data.length) throw broken();
+    const n = tagged ? view.getUint32(at + 4, true) : first;
+    const pathEnd = path + n;
+    const lenAt = pathEnd + (tagged ? 0 : 8);
+    if (lenAt + 4 > data.length) throw broken();
+    const end = lenAt + 4 + view.getUint32(lenAt, true);
+    if (end > data.length) throw broken();
+    yield { at, path, pathEnd, end };
     at = end;
   }
-  // (every record kept: the set itself, not a copy)
-  if (size === data.length && data instanceof Uint8Array && data.buffer instanceof ArrayBuffer)
-    return data as Uint8Array<ArrayBuffer>;
+}
+
+const pathOf = (data: Uint8Array, s: Span) => paths.decode(data.subarray(s.path, s.pathEnd));
+
+function concat(parts: Uint8Array[], size: number): Uint8Array<ArrayBuffer> {
   const out = new Uint8Array(size);
   let at = 0;
   for (const part of parts) {
@@ -37,6 +52,26 @@ export function selectRecords(
     at += part.length;
   }
   return out;
+}
+
+export function selectRecords(
+  data: Uint8Array | null,
+  keep: (path: string) => boolean,
+): Uint8Array<ArrayBuffer> | null {
+  if (!data) return null;
+  const parts: Uint8Array[] = [];
+  let size = 0;
+  for (const s of spans(data)) {
+    if (keep(pathOf(data, s))) {
+      const part = data.subarray(s.at, s.end);
+      parts.push(part);
+      size += part.length;
+    }
+  }
+  // (every record kept: the set itself, not a copy)
+  if (size === data.length && data instanceof Uint8Array && data.buffer instanceof ArrayBuffer)
+    return data as Uint8Array<ArrayBuffer>;
+  return concat(parts, size);
 }
 const prefix = "/masu/prefix/drive_c/";
 const users = `${prefix}users/`;
@@ -100,31 +135,25 @@ export function renameRecords(
   move: (path: string) => string = movedPath,
 ): Uint8Array<ArrayBuffer> | null {
   if (!data) return null;
-  const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
   const parts: Uint8Array[] = [];
   let size = 0;
-  for (let at = 0; at < data.length;) {
-    if (at + 16 > data.length) throw new Error("ファイル保存データが破損しています。");
-    const n = view.getUint32(at, true);
-    if (at + 16 + n > data.length) throw new Error("ファイル保存データが破損しています。");
-    const len = view.getUint32(at + 12 + n, true);
-    const end = at + 16 + n + len;
-    if (end > data.length) throw new Error("ファイル保存データが破損しています。");
-    const path = paths.decode(data.subarray(at + 4, at + 4 + n));
+  for (const s of spans(data)) {
+    const path = pathOf(data, s);
     // (a path that is not UTF-8 stays as its bytes are)
     const to = path.includes("\uFFFD") ? path : move(path);
     if (to === path) {
-      parts.push(data.subarray(at, end));
+      parts.push(data.subarray(s.at, s.end));
     } else {
       const p = new TextEncoder().encode(to);
-      const part = new Uint8Array(16 + p.length + len);
-      new DataView(part.buffer).setUint32(0, p.length, true);
-      part.set(p, 4);
-      part.set(data.subarray(at + 4 + n, end), 4 + p.length);
+      const head = s.path - 4 - s.at;
+      const part = new Uint8Array(head + 4 + p.length + (s.end - s.pathEnd));
+      part.set(data.subarray(s.at, s.path - 4));
+      new DataView(part.buffer).setUint32(head, p.length, true);
+      part.set(p, head + 4);
+      part.set(data.subarray(s.pathEnd, s.end), head + 4 + p.length);
       parts.push(part);
     }
     size += parts[parts.length - 1]!.length;
-    at = end;
   }
   if (
     size === data.length &&
@@ -132,13 +161,7 @@ export function renameRecords(
     data.buffer instanceof ArrayBuffer
   )
     return data as Uint8Array<ArrayBuffer>;
-  const out = new Uint8Array(size);
-  let at = 0;
-  for (const part of parts) {
-    out.set(part, at);
-    at += part.length;
-  }
-  return out;
+  return concat(parts, size);
 }
 /** The saves' name of before the rename for a program and its mounts (play.ts saveName). */
 export function legacyNames(run: string, mounts: string[]): { run: string; mounts: string[] } | null {
