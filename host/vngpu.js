@@ -52,6 +52,9 @@ addToLibrary({
         maxComputeWorkgroupSizeX: Math.min(L.maxComputeWorkgroupSizeX, 1024),
         maxComputeWorkgroupSizeY: Math.min(L.maxComputeWorkgroupSizeY, 1024),
         maxComputeWorkgroupSizeZ: Math.min(L.maxComputeWorkgroupSizeZ, 64),
+        // (Direct3D 11's 8 targets of R32G32B32A32 are 128 bytes a sample, WebGPU's default 32;
+        // a multisampled target's logic op adds its mark: d3d11/logic.rs)
+        maxColorAttachmentBytesPerSample: Math.min(L.maxColorAttachmentBytesPerSample, 128),
       };
       const device = await adapter.requestDevice({ requiredFeatures: features, requiredLimits });
       // (a new device may lack a feature the old one had: render/ asks has_feature again only

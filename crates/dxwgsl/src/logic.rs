@@ -142,14 +142,54 @@ pub enum Sign {
 /// - `Plain`: its output saturated (no logic op);
 /// - `Direct`: the logic op's result over the target's copy (a target that is not
 ///   multisampled, or a shader of sample rate);
-/// - `Stash`: the source's bits into a multisampled stash of the target's format, and a mark
-///   of 1 at output location `mark` (a pixel-rate shader over a multisampled target: the
-///   resolve pass, [`resolve_wgsl`], applies the op to each sample it marked).
+/// - `Stash`: the source's bits into a multisampled UINT stash of the target's channels
+///   ([`Logic::stash_bits`]), the samples it covers marked (`mark`) (a pixel-rate shader over a
+///   multisampled target: the resolve pass, [`resolve_wgsl`], applies the op to each sample it
+///   marked).
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Hash, PartialOrd, Ord)]
 pub enum Store {
     Plain,
     Direct(Op),
-    Stash { op: Op, mark: u32 },
+    Stash { op: Op, mark: Mark },
+}
+
+/// Where a draw's stash pass marks the samples it covers:
+/// - `Slot`: an R8_UINT attachment of its own at that output location, 1 at a covered sample
+///   (a draw with a location free: fewer than 8 targets);
+/// - `Carried`: bit `bit` of channel `channel` of target `by`'s stash, a stash wider than its
+///   target ([`carry`]: 8 targets, no location free).
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Hash, PartialOrd, Ord)]
+pub enum Mark {
+    Slot(u32),
+    Carried { by: u32, channel: u32, bit: u32 },
+}
+
+impl Mark {
+    /// The channel and bit of the mark's texel that says covered.
+    pub fn flag(self) -> (u32, u32) {
+        match self {
+            Mark::Slot(_) => (0, 0),
+            Mark::Carried { channel, bit, .. } => (channel, bit),
+        }
+    }
+}
+
+/// A stash of channels `bits` that carries the mark: its channels (a format WebGPU
+/// multisamples: 8 or 16 bits a channel, one or two or four channels), the mark's channel and
+/// bit; None when no such format is wider (four 16-bit or any 32-bit channels).
+/// - one or two channels of 8 or 16 bits: a channel more (R to RG, RG to RGBA), the mark its
+///   bit 0;
+/// - four channels of 10 bits or less (RGBA8, RGB10A2): RGBA16, the mark the bit above
+///   channel 0's.
+pub fn carry(bits: [u32; 4]) -> Option<([u32; 4], u32, u32)> {
+    let n = bits.iter().take_while(|&&b| b != 0).count();
+    let w = bits[0];
+    match (n, w) {
+        (1, 8 | 16) => Some(([w, w, 0, 0], 1, 0)),
+        (2, 8 | 16) => Some(([w, w, w, w], 2, 0)),
+        (4, _) if bits.iter().all(|&b| b <= 10) => Some(([16, 16, 16, 16], 0, w)),
+        _ => None,
+    }
 }
 
 /// An integer target for the pixel shader: its slot, how it is written, the bits of each of
@@ -169,6 +209,14 @@ impl Logic {
         match self.store {
             Store::Plain => None,
             Store::Direct(op) | Store::Stash { op, .. } => Some(op),
+        }
+    }
+
+    /// The channels of the target's stash: its own, or [`carry`]'s when it carries the mark.
+    pub fn stash_bits(&self) -> [u32; 4] {
+        match self.store {
+            Store::Stash { mark: Mark::Carried { by, .. }, .. } if by == self.target => carry(self.bits).map_or(self.bits, |c| c.0),
+            Store::Plain | Store::Direct(_) | Store::Stash { .. } => self.bits,
         }
     }
 
@@ -263,31 +311,33 @@ pub fn result(l: &Logic, s: [u32; 4], d: [u32; 4]) -> [u32; 4] {
 /// The first binding of the multisampled stashes of a pixel-rate shader's sources (the
 /// resolve pass's): LOGIC_STASH + the target's slot.
 pub const LOGIC_STASH: u32 = 970;
-/// The resolve pass's mark of the samples the shader wrote (an r8uint multisampled texture).
+/// The resolve pass's mark of the samples the shader wrote (an r8uint multisampled texture, or
+/// the stash that carries it: [`Mark`]).
 pub const LOGIC_MARK: u32 = 980;
 
 /// The WGSL of the resolve pass of a `Stash` target (None for the others): `vs_resolve` the
 /// full-target triangle, `fs_resolve` run for each sample: the sample the shader wrote (its
 /// mark 1) gets the op of the stash's source over the target's copy, the rest nothing.
 pub fn resolve_wgsl(l: &Logic) -> Option<String> {
-    let Store::Stash { op, .. } = l.store else { return None };
+    let Store::Stash { op, mark } = l.store else { return None };
     let k = l.scalar();
+    let (ch, bit) = mark.flag();
     let (dst, stash, mark) = (LOGIC_DST.saturating_add(l.target), LOGIC_STASH.saturating_add(l.target), LOGIC_MARK);
-    let zero = format!("vec4<{k}>()");
-    let load = |t: &str| format!("select({zero}, textureLoad({t}, q, i32(si)), all(vec2<u32>(q) < textureDimensions({t})))");
-    let s = l.bits_in_wgsl(&load("stash"));
-    let d = l.bits_in_wgsl(&load("dst"));
+    let load = |t: &str, z: &str| format!("select({z}, textureLoad({t}, q, i32(si)), all(vec2<u32>(q) < textureDimensions({t})))");
+    let s = format!("({} & {})", load("stash", "vec4<u32>()"), l.max_wgsl());
+    let d = l.bits_in_wgsl(&load("dst", &format!("vec4<{k}>()")));
+    let m = load("mark", "vec4<u32>()");
     let out = l.bits_out_wgsl(&format!("({}) & {}", op.wgsl("s", "d"), l.max_wgsl()));
     Some(format!(
         "@group(0) @binding({dst}) var dst: texture_multisampled_2d<{k}>;\n\
-         @group(0) @binding({stash}) var stash: texture_multisampled_2d<{k}>;\n\
+         @group(0) @binding({stash}) var stash: texture_multisampled_2d<u32>;\n\
          @group(0) @binding({mark}) var mark: texture_multisampled_2d<u32>;\n\
          @vertex fn vs_resolve(@builtin(vertex_index) i: u32) -> @builtin(position) vec4<f32> {{\n\
          \x20 return vec4<f32>(f32(i >> 1u) * 4.0 - 1.0, f32(i & 1u) * 4.0 - 1.0, 0.0, 1.0);\n\
          }}\n\
          @fragment fn fs_resolve(@builtin(position) p: vec4<f32>, @builtin(sample_index) si: u32) -> @location(0) vec4<{k}> {{\n\
          \x20 let q = vec2<i32>(p.xy);\n\
-         \x20 if (select(vec4<u32>(), textureLoad(mark, q, i32(si)), all(vec2<u32>(q) < textureDimensions(mark))).x == 0u) {{ discard; }}\n\
+         \x20 if (((({m})[{ch}] >> {bit}u) & 1u) == 0u) {{ discard; }}\n\
          \x20 let s = {s};\n\
          \x20 let d = {d};\n\
          \x20 return {out};\n\

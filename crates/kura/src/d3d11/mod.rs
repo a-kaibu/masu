@@ -4955,7 +4955,9 @@ unsafe fn draw_with(d: &mut D11, st: &State, indexed: bool, count: u32, instance
     // (a stash's pass (logic.rs): the stash written whole where the target is, then the mark)
     let stashed: Vec<&dxwgsl::logic::Logic> = logic_ops.iter().filter(|l| matches!(l.store, dxwgsl::logic::Store::Stash { .. })).collect();
     let plain = |f: u32| [f, 0, blend_factor(2, false).code(), blend_factor(1, false).code(), 1, blend_factor(2, true).code(), blend_factor(1, true).code(), 1, 0xf];
-    key.push(lo32(formats.len()).saturating_add(u32::from(!stashed.is_empty())));
+    // (a mark of its own after the targets: logic::stash_of)
+    let mark_slot = stashed.iter().any(|l| matches!(l.store, dxwgsl::logic::Store::Stash { mark: dxwgsl::logic::Mark::Slot(_), .. }));
+    key.push(lo32(formats.len()).saturating_add(u32::from(mark_slot)));
     let mut masks = Vec::new();
     for (i, f) in formats.iter().enumerate() {
         let rt = if b[1] != 0 { i } else { 0 };
@@ -4963,13 +4965,13 @@ unsafe fn draw_with(d: &mut D11, st: &State, indexed: bool, count: u32, instance
         // (a NOOP logic op: the target written with nothing)
         let mask = if logic_kept.contains(&lo32(i)) { 0 } else { t[7] & 0xf };
         masks.push(mask);
-        if stashed.iter().any(|l| l.target == lo32(i)) {
-            key.extend_from_slice(&plain(*f));
+        if let Some(l) = stashed.iter().find(|l| l.target == lo32(i)) {
+            key.extend_from_slice(&plain(logic::uint_page(l.stash_bits()).unwrap_or(*f)));
         } else {
             key.extend_from_slice(&[*f, t[0], blend_factor(t[1], false).code(), blend_factor(t[2], false).code(), t[3], blend_factor(t[4], true).code(), blend_factor(t[5], true).code(), t[6], mask]);
         }
     }
-    if !stashed.is_empty() {
+    if mark_slot {
         key.extend_from_slice(&plain(format::P_R8UI));
     }
     // multisampling: AlphaToCoverageEnable, the sample mask (render::d3d pipeline2)

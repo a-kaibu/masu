@@ -1017,7 +1017,7 @@ pub struct D3d {
     resolve_pipes: HashMap<Tf, (Id, Id)>,
     /// LOGIC_RESOLVE's pipelines (logic_resolve): by its words after the textures and the
     /// target's format; pipeline, its bind group layout
-    logic_pipes: HashMap<([u32; 7], Tf), (Id, Id)>,
+    logic_pipes: HashMap<([u32; 9], Tf), (Id, Id)>,
     /// Direct3D 11 depth textures a shader reads as floats (R16_UNORM, R32_FLOAT and the like
     /// views of typeless ones): depth texture -> (its r32float copy, the depth texture's stamp
     /// when copied); see depth_twin
@@ -1612,9 +1612,9 @@ impl D3d {
                     i += 6;
                 }
                 LOGIC_RESOLVE => {
-                    let w: [u32; 7] = std::array::from_fn(|k| a(k.saturating_add(5)));
+                    let w: [u32; 9] = std::array::from_fn(|k| a(k.saturating_add(5)));
                     self.logic_resolve(a(1), a(2), a(3), a(4), w);
-                    i = i.saturating_add(12);
+                    i = i.saturating_add(14);
                 }
                 QUERY_BEGIN => {
                     self.query_begin(a(1));
@@ -3403,8 +3403,9 @@ impl D3d {
     /// LOGIC_RESOLVE (d3d11/logic.rs): the op over the bits of stash texture `stash` and copy
     /// `copy` (the target before the primitive) into multisampled target `tex`, at the samples
     /// mark texture `mark` marks; `w`: the target's write mask, the op (its place in
-    /// dxwgsl::logic::Op::ALL), the bits of its channels, their sign (1: signed).
-    fn logic_resolve(&mut self, tex: u32, copy: u32, stash: u32, mark: u32, w: [u32; 7]) {
+    /// dxwgsl::logic::Op::ALL), the bits of its channels, their sign (1: signed), the mark's
+    /// channel and bit.
+    fn logic_resolve(&mut self, tex: u32, copy: u32, stash: u32, mark: u32, w: [u32; 9]) {
         let ok = |t: Option<&Tex>| t.is_some_and(|t| t.samples > 1);
         if !(ok(self.textures.get(&tex)) && ok(self.textures.get(&copy)) && ok(self.textures.get(&stash)) && ok(self.textures.get(&mark))) {
             return;
@@ -3438,14 +3439,14 @@ impl D3d {
 
     /// LOGIC_RESOLVE's pipeline for words `w` (see logic_resolve) into a target of `format`:
     /// pipeline, its bind group layout. None: words of no op.
-    fn logic_pipe(&mut self, w: [u32; 7], format: Tf) -> Option<(Id, Id)> {
+    fn logic_pipe(&mut self, w: [u32; 9], format: Tf) -> Option<(Id, Id)> {
         if let Some(&p) = self.logic_pipes.get(&(w, format)) {
             return Some(p);
         }
-        let [mask, op, b0, b1, b2, b3, sign] = w;
+        let [mask, op, b0, b1, b2, b3, sign, channel, bit] = w;
         let op = *dxwgsl::logic::Op::ALL.get(us(op))?;
         let sign = if sign == 0 { dxwgsl::logic::Sign::Unsigned } else { dxwgsl::logic::Sign::Signed };
-        let l = dxwgsl::logic::Logic { target: 0, store: dxwgsl::logic::Store::Stash { op, mark: 0 }, bits: [b0, b1, b2, b3], sign, multisampled: true };
+        let l = dxwgsl::logic::Logic { target: 0, store: dxwgsl::logic::Store::Stash { op, mark: dxwgsl::logic::Mark::Carried { by: u32::MAX, channel, bit } }, bits: [b0, b1, b2, b3], sign, multisampled: true };
         let m = gpu::shader(&dxwgsl::logic::resolve_wgsl(&l)?);
         let kind = match sign {
             dxwgsl::logic::Sign::Unsigned => "uint",
@@ -3455,7 +3456,7 @@ impl D3d {
         let layout = gpu::bind_group_layout(&format!(
             r#"{{"entries":[{},{},{}]}}"#,
             e(dxwgsl::logic::LOGIC_DST, kind),
-            e(dxwgsl::logic::LOGIC_STASH, kind),
+            e(dxwgsl::logic::LOGIC_STASH, "uint"),
             e(dxwgsl::logic::LOGIC_MARK, "uint")
         ));
         let pl = gpu::pipeline_layout(&format!(r#"{{"bindGroupLayouts":[{layout}]}}"#));
