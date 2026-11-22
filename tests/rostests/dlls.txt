@@ -1,0 +1,35 @@
+# ReactOS API test programs (modules/rostests/apitests/<name>, <name>_apitest.exe) that
+# tests/rostests runs on sake: the ones for DLLs sake implements itself and for what the
+# loader, the CRT and the compiler's exception handling do. One per line; only:<arch> limits a
+# line to that architecture; the rest of a line is a note.
+advapi32
+apisets        api set names resolved by the loader
+comctl32
+compiler       SEH (PSEH and the compiler's own __try)
+crypt32
+dbghelp
+delayimp_globalhook   delay-load helper with a global hook
+delayimp_nohook       delay-load helper without hooks
+delayimp_runtimehook  delay-load helper with a hook set at run time
+dnsapi
+gdi32
+imm32
+iphlpapi
+kernel32
+loadconfig     the image's load config directory
+msvcrt
+crtdll  only:i386
+ntdll
+ole32
+opengl32
+pefile         PE images the loader accepts
+psapi
+setupapi
+shell32
+shlwapi
+ucrtbase
+user32
+user32_dynamic
+uxtheme
+version
+ws2_32

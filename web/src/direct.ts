@@ -6,6 +6,7 @@
 // chunks are (the server never sends one); it answers each object after ~2 s whatever its size
 // but takes many at once, so saving a whole game to the device (offline.ts) goes many at a time.
 
+import { MASU_PACK_MAX, MASU_PACK_SPAN, masuDirectValid, masuPackValid } from "../../host/net-core.mjs";
 import { blake3Hex } from "./blake3";
 import { CLASS } from "./budget";
 import { fetchRetry, HttpError, type RetryOptions } from "./net";
@@ -28,24 +29,12 @@ export interface PackSpan {
   len: number;
 }
 
-/** Whether `v` is a well-formed pack place (host/fetch-bridge.js masuPackValid). */
-export function isPackSpan(v: unknown): v is PackSpan {
-  const p = v as Partial<PackSpan> | null;
-  return (
-    !!p &&
-    typeof p.url === "string" &&
-    typeof p.id === "string" &&
-    /^[0-9a-f-]{36}$/.test(p.id) &&
-    Number.isSafeInteger(p.offset) &&
-    p.offset! >= 0 &&
-    Number.isSafeInteger(p.len) &&
-    p.len! >= 28
-  );
-}
+/** Whether `v` is a well-formed pack place (host/net-core.mjs, the worker's check too). */
+export const isPackSpan = (v: unknown): v is PackSpan => masuPackValid(v);
 
 /** A save's one ranged GET of a pack at most: bytes, chunks (host/fetch-bridge.js MASU_PACK_SPAN). */
-export const PACK_RUN_BYTES = 32 << 20;
-export const PACK_RUN_MAX = 64;
+export const PACK_RUN_BYTES = MASU_PACK_SPAN[CLASS.save]!;
+export const PACK_RUN_MAX = MASU_PACK_MAX;
 
 /** How long the server may take to say how to fetch a chunk from the bucket. */
 export const DIRECT_ASK_MS = 10000;
@@ -146,17 +135,7 @@ export async function openSealed(info: DirectInfo, cipher: Uint8Array): Promise<
 }
 
 /** Whether `v` is what /store-direct answers. */
-export function isDirectInfo(v: unknown): v is DirectInfo {
-  const i = v as Partial<DirectInfo> | null;
-  return (
-    !!i &&
-    typeof i.url === "string" &&
-    typeof i.key === "string" &&
-    /^[0-9a-f]{64}$/.test(i.key) &&
-    typeof i.object === "string" &&
-    /^[0-9a-f-]{36}$/.test(i.object)
-  );
-}
+export const isDirectInfo = (v: unknown): v is DirectInfo => masuDirectValid(v);
 
 /** Chunks one POST /store-direct asks for (host/fetch-bridge.js MASU_DIRECT_MANY). */
 export const DIRECT_MANY = 512;

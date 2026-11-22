@@ -9,8 +9,13 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import vm from 'node:vm';
+import { bridgeScript } from '../host/bridge-source.mjs';
 
-const source = await readFile(new URL('../host/fetch-bridge.js', import.meta.url), 'utf8');
+// (as sake.js has it: host/net-core.mjs before it)
+const source = bridgeScript(
+  await readFile(new URL('../host/net-core.mjs', import.meta.url), 'utf8'),
+  await readFile(new URL('../host/fetch-bridge.js', import.meta.url), 'utf8'),
+);
 const vectors = (await readFile(new URL('../testdata/blake3.tsv', import.meta.url), 'utf8')).trim().split('\n').slice(1).map((l) => l.split('\t'));
 const input = (kind, n) => {
   let x = n >>> 0;

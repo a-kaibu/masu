@@ -1,5 +1,8 @@
 import { expect, test, vi } from "vite-plus/test";
-import source from "../../host/fetch-bridge.js?raw";
+import bridgeJs from "../../host/fetch-bridge.js?raw";
+import core from "../../host/net-core.mjs?raw";
+import { bridgeScript } from "../../host/bridge-source.mjs";
+
 import {
   BURST,
   BYTES,
@@ -16,6 +19,9 @@ import {
   take,
   waitFor,
 } from "./budget";
+
+// (as sake.js has it: host/net-core.mjs before it)
+const source = bridgeScript(core, bridgeJs);
 
 // host/fetch-bridge.js's copy, run on the same buffer: the page and the network worker share it
 interface Bridge {

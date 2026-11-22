@@ -100,6 +100,29 @@ tests/winetest/run.py --update               # record the new results
 PLAYWRIGHT=.../playwright/index.js WEB=web/dist FONTS=<Fonts dir> tests/winetest/run.py --browser -j 3
 ```
 
+## ReactOS's API tests (tests/rostests)
+
+ReactOS's `modules/rostests/apitests` check the user-mode APIs (ntdll, kernel32, user32, gdi32,
+the CRTs, the loader, SEH, ...) from angles Wine's tests do not. They were written against
+ReactOS as much as Windows, so sake is held only to what Windows itself passes.
+
+- `tests/rostests/build.sh` fetches the ReactOS commit it pins and builds the test programs of
+  `tests/rostests/dlls.txt` (`<name>_apitest.exe`, i386 and x86_64; `only:<arch>` limits a line)
+  with ReactOS's own CMake build and the distribution's mingw-w64, beside the files ReactOS puts
+  in its `bin` directory for them (test DLLs, manifests, `testdata/`). Nothing of ReactOS is in
+  this repository (the tests are GPL-2.0-or-later, LGPL-2.1-or-later and MIT); CI caches the
+  built programs. ~4 min for both architectures on 4 cores, needs `mingw-w64 cmake ninja-build
+  flex bison libgmp-dev libmpc-dev`.
+- `tests/winetest/run.py --suite rostests --native` runs them on Windows (CI job
+  `rostests-windows`, windows-2025) and compares with `tests/rostests/windows-<arch>.tsv`:
+  Windows' answers must stay the recorded ones. Each test runs in its own hard-linked copy of
+  the bin directory, from there, as ReactOS runs them.
+- `tests/winetest/run.py --suite rostests` runs on sake only the tests `windows-<arch>.tsv`
+  records as ok; a test the programs list that the file lacks fails the run (not measured on
+  Windows). The results on sake are in `tests/rostests/expected-<arch>.tsv`, compared as
+  Wine's are (a regression fails; `--update` records improvements). masu-lint's `run-plan`
+  rule keeps both parts (crates/masu-lint/src/rebuild.rs).
+
 ## Differential GDI test (tests/diff)
 
 `tests/diff/gdidiff.c` draws random operations (SetPixel, PatBlt with its ROPs, rectangles,

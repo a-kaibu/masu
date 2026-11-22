@@ -9,6 +9,7 @@ import { Toaster } from "@/components/ui/sonner";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { cn } from "@/lib/utils";
 import { States } from "./States";
+import { statusText, type Status } from "../status";
 import { useUi, type BenchView } from "./store";
 
 function BenchPanel({ bench }: { bench: BenchView }) {
@@ -68,6 +69,17 @@ function BenchPanel({ bench }: { bench: BenchView }) {
   );
 }
 
+/** The status line: the spinner while the page is working, never guessed from the words. */
+export function StatusLine({ status }: { status: Status }) {
+  if (status.phase === "none") return null;
+  return (
+    <div className="pointer-events-none fixed bottom-3 left-3 z-30 flex max-w-[calc(100%-1.5rem)] items-center gap-2 rounded-full border bg-background/80 px-3 py-1.5 text-sm shadow backdrop-blur">
+      {status.phase === "working" && <Loader2 className="size-3.5 shrink-0 animate-spin" />}
+      <span className="truncate">{statusText(status)}</span>
+    </div>
+  );
+}
+
 function Shell({ children }: { children?: ReactNode }) {
   const ui = useUi();
   return (
@@ -91,12 +103,7 @@ function Shell({ children }: { children?: ReactNode }) {
           </Button>
         </div>
       )}
-      {ui.status && (
-        <div className="pointer-events-none fixed bottom-3 left-3 z-30 flex max-w-[calc(100%-1.5rem)] items-center gap-2 rounded-full border bg-background/80 px-3 py-1.5 text-sm shadow backdrop-blur">
-          {!/^エラー|ません/.test(ui.status) && <Loader2 className="size-3.5 shrink-0 animate-spin" />}
-          <span className="truncate">{ui.status}</span>
-        </div>
-      )}
+      <StatusLine status={ui.status} />
       {ui.net && (
         <div
           role="status"
