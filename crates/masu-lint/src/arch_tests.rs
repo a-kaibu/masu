@@ -644,6 +644,28 @@ fn fixture(r: Rule) -> Fixture {
             ],
             mutate: ("crates/kura/src/d3d11/expand.rs", |t| Some(t.replace("let wants_setup = setup_wanted(d, st);", "let wants_setup = false;"))),
         },
+        Rule::JitExitContract => Fixture {
+            bad: &[
+                ("crates/koji/src/jit/mod.rs", "// self.exit_contract(at); let esp = esp_unknown(list);\nfn exit_with(&mut self) { self.c.br(self.depth); }\nfn jump_dyn(&mut self, need: u32) { self.exit_contract(ExitAt::Jump(need)); }\nfn fallback(&mut self) { self.exit_contract(ExitAt::Before); }\nfn f() { call_reads.insert(k, r); let starts_leave = |k: usize| g.hoist.contains_key(&k) || fresh(k); }\n"),
+                ("crates/koji/src/jit/rot.rs", "fn rotate(&mut self) { self.c.get(L_FR).u32c(RflagsBits::CF | RflagsBits::OF).and(); }\n"),
+            ],
+            good: &[
+                ("crates/koji/src/jit/mod.rs", "fn exit_with(&mut self, at: ExitAt) { self.exit_contract(at); }\nfn jump_dyn(&mut self, need: u32) { self.exit_contract(ExitAt::Jump(need)); }\nfn fallback(&mut self) { self.exit_contract(ExitAt::Before); }\nfn liveness(list: &[Instruction]) { let esp = esp_unknown(list); }\nfn f() { call_reads.insert(k, r); let starts_leave = |k: usize| fresh(k); let live = self.flags_live(RflagsBits::CF); }\n"),
+                ("crates/koji/src/jit/rot.rs", "fn rotate(&mut self) { let (cf, of) = (crate::flags::CF, crate::flags::OF); self.c.get(L_FR).u32c(cf | of).and(); }\n"),
+            ],
+            mutate: ("crates/koji/src/jit/mod.rs", |t| Some(t.replace("self.exit_contract(at);", ""))),
+        },
+        Rule::JitHarnessImports => Fixture {
+            bad: &[
+                ("tools/jit64test/src/main.rs", "fn new() { linker.define(&store, \"env\", \"table\", table).unwrap(); }\n"),
+                ("tools/jit32test/src/main.rs", "fn new() { linker.define(&store, \"env\", \"table\", table).unwrap(); linker.define(&store, \"env\", \"pages\", pages).unwrap(); }\nfn translate(&mut self, base: usize, eip: u32) -> Result<(), String> {}\n"),
+            ],
+            good: &[
+                ("tools/jit64test/src/main.rs", "fn new() { linker.define(&store, \"env\", \"table\", table).unwrap(); linker.define(&store, \"env\", \"pages\", pages).unwrap(); }\n"),
+                ("tools/jit32test/src/main.rs", "fn new() { linker.define(&store, \"env\", \"table\", table).unwrap(); linker.define(&store, \"env\", \"pages\", pages).unwrap(); }\nfn translate(&mut self, base: usize, eip: u32) -> Result<Made, String> {}\nfn main() { if loaded == 0 && count > 0 { fails += 1; } }\n"),
+            ],
+            mutate: ("tools/jit64test/src/main.rs", |t| Some(t.replace("linker.define(&store, \"env\", \"pages\", pages).unwrap();", ""))),
+        },
         Rule::DllSearch => Fixture {
             bad: &[
                 ("crates/sake/src/pe.rs", "pub static DLL_DIRS: Mutex<Vec<String>> = Mutex::new(Vec::new());\nfn find_dll_file(dll: &str) {\n    let mut dirs = vec![exe_dir];\n    dirs.extend(crate::dllpath::user_dirs().into_iter().rev());\n    dirs.push(crate::files::cwd().trim_end_matches('\\\\').to_string());\n    dirs.push(\"C:\\\\windows\\\\system32\".into());\n}\n// for d in search.folders() image_resolver(search.of_dependency(&win))\n"),

@@ -31,7 +31,7 @@ pub mod long;
 use crate::lazy::{Kind, Op, Size};
 use crate::{Cpu, Fpu, Memory};
 use alloc::boxed::Box;
-use alloc::collections::{BTreeMap, VecDeque};
+use alloc::collections::{BTreeMap, BTreeSet, VecDeque};
 use alloc::string::String;
 use alloc::vec::Vec;
 use core::mem::offset_of;
@@ -291,6 +291,11 @@ fn fresh_at(a: u32) -> bool {
     FRESH.get().is_some_and(|f| f(a))
 }
 
+/// Whether the block at `a` checks its stores for code written (Gen::smc, Gen::fresh).
+fn watched_at(a: u32) -> bool {
+    WATCH.get().is_some_and(|w| w(a)) || fresh_at(a)
+}
+
 /// Code never translated, inlined callees' too (the host's: pages the interpreter keeps, see
 /// kura's jit::debug_allowed).
 static DENY: spin_once::Once = spin_once::Once::new();
@@ -417,7 +422,7 @@ pub fn translate_region16<M: Memory>(module: &mut Module, mem: &mut M, root: u32
     let _alone = Excl::enter();
     SEG16.store(cs_base, core::sync::atomic::Ordering::Relaxed);
     SEG16_ON.store(true, core::sync::atomic::Ordering::Relaxed);
-    let r = translate_seen(module, Snapshot::new(mem), &[root], max_blocks, MAX_REGION_INS, accept, None, &|_| None, &|_| false);
+    let r = translate_exits(module, Snapshot::new(mem), &[root], max_blocks, MAX_REGION_INS, accept, None, &|_| None, &|_| false);
     SEG16_ON.store(false, core::sync::atomic::Ordering::Relaxed);
     r
 }
@@ -648,6 +653,20 @@ pub fn profile_key(ins: &Instruction) -> String {
 /// Debugging: fill [`Region::layout`].
 pub static LAYOUT: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
 
+/// A CMP/TEST done again at the start of a block (Gen::remat)
+#[derive(Clone, Copy, Debug)]
+struct Remat<'a> {
+    /// the CMP/TEST (in a block before)
+    at: &'a Instruction,
+    /// the block is also an entry of the function, its flags then the Cpu's: the jumps back
+    /// to it set L_OP to L_OP_REMAT, and it does the CMP/TEST again only for those
+    entry: bool,
+}
+
+/// L_OP of a jump back to a block that does its CMP/TEST again (Remat::entry): the lazy
+/// locals are dead (0), so V8 keeps none of them around the loop
+const L_OP_REMAT: i32 = -2;
+
 /// Where the status flags are at a point of the block.
 #[derive(Clone, Copy, PartialEq)]
 enum Flags {
@@ -684,6 +703,13 @@ struct Gen<'a> {
     /// functions: per block, the blocks with an edge to it, and the lazy operation each block
     /// emitted so far ends with (see [`Gen::predict`])
     preds: Vec<Vec<u32>>,
+    /// per block, the CMP/TEST every way into it left its flags from, with its operands
+    /// unchanged since: done again at the block's start (see remat_heads), so the blocks
+    /// before need not keep them for it
+    remat: Vec<Option<Remat<'a>>>,
+    /// an entry's CMP/TEST (Remat::entry) not done yet: L_OP may be L_OP_REMAT, and then the
+    /// flags are its own, of the registers as they still are (see Gen::remat_out)
+    pending: Option<Remat<'a>>,
     flags_out: Vec<Option<Op>>,
     /// the block's stores are tested for rewriting translated code (see [`WATCH`])
     smc: bool,
@@ -726,7 +752,10 @@ struct Gen<'a> {
     ret_to: &'a [u32],
     /// call blocks with an inlined callee: (its entry block, the target an indirect call checks)
     inlined: &'a BTreeMap<usize, (usize, Option<u32>)>,
-    /// status flags live at the end of each block
+    /// per call block: the flags the (not inlined) callee observes (callee_reads)
+    call_reads: BTreeMap<usize, u32>,
+    /// status flags live at the start and at the end of each block (block_liveness)
+    live_in: Vec<u32>,
     live_out: Vec<u32>,
     loops: &'a BTreeMap<usize, usize>,
     /// per block: the (absolute) depth of an open wasm label just before it, for forward
@@ -739,6 +768,13 @@ struct Gen<'a> {
     ins: &'a Instruction,
     /// status flags read after this instruction (iced RflagsBits)
     live_after: u32,
+    /// and before it (all of them where it may leave: see liveness)
+    live_before: u32,
+    /// exits made where the flags are not all live (see exit_contract): the translation is
+    /// made again with them (translate_exits)
+    missed: Exits,
+    /// those found by the translations before
+    exits: Exits,
     temps: u32,
     /// Registers whose value was checked to be at least SAFE_MARGIN inside the guest range,
     /// with how far they moved since (push/pop): accesses near them need no check.
@@ -1185,8 +1221,14 @@ impl<'a> Gen<'a> {
         self.ins.ip32()
     }
 
-    /// Leaves the block: continue at the address on top of the stack with status `st`.
-    fn exit_with(&mut self, st: i32) {
+    /// Leaves the block: continue at the address on top of the stack with status `st`, which
+    /// is `at` the current instruction. The exit contract (docs/translator.md "Exits"): the
+    /// guest's state where it leaves is the architectural one, the status flags included (an
+    /// exception handler reads them from its CONTEXT, the interpreter may fault before it
+    /// writes them); so all of them are live there, else the translation is refused.
+    fn exit_with(&mut self, st: i32, at: ExitAt) {
+        self.exit_contract(at);
+        self.remat_out();
         let _site = wasm::MemSite::new(4);
         self.mmx_flush();
         self.xmm_flush();
@@ -1325,7 +1367,7 @@ impl<'a> Gen<'a> {
         self.c.get(L_CPU).u32c(size.max(1)).store32(Off::smc_len());
         let next = self.ins.next_ip32();
         self.c.u32c(next);
-        self.exit_with(RET_INTERP);
+        self.exit_with(RET_INTERP, ExitAt::After);
         self.depth -= 1;
         self.c.end();
     }
@@ -1378,7 +1420,7 @@ impl<'a> Gen<'a> {
         self.depth += 1;
         self.c.get(L_CPU).u32c(a).store32(Off::stale());
         self.c.u32c(a);
-        self.exit_with(RET_INTERP);
+        self.exit_with(RET_INTERP, ExitAt::Before);
         self.depth -= 1;
         self.c.end();
     }
@@ -1396,7 +1438,7 @@ impl<'a> Gen<'a> {
         self.c.get(L_CPU).u32c(n.max(1)).store32(Off::smc_len());
         let next = self.ins.next_ip32();
         self.c.u32c(next);
-        self.exit_with(RET_INTERP);
+        self.exit_with(RET_INTERP, ExitAt::After);
         self.depth -= 1;
         self.c.end();
     }
@@ -1454,7 +1496,7 @@ impl<'a> Gen<'a> {
     fn bail(&mut self) {
         let eip = self.eip();
         self.c.u32c(eip);
-        self.exit_with(RET_INTERP);
+        self.exit_with(RET_INTERP, ExitAt::Before);
     }
 
     // ---- x87 (the f64 model of crate::fpu, cached per block: FCache)
@@ -1943,25 +1985,33 @@ impl<'a> Gen<'a> {
     /// interpreter at the loop's first block when one fails (as that block's own check would).
     fn loop_checks(&mut self, x: usize) {
         let Some(&(m, at)) = self.hoist.get(&x) else { return };
-        let saved = (self.flags, self.fc, self.mmx, self.xmm, self.block_index, self.ctx, self.mx_checked, self.mx_seen);
+        let saved = (self.flags, self.fc, self.mmx, self.xmm, self.block_index, self.ctx, self.mx_checked, self.mx_seen, self.live_after);
         self.mx_checked = None;
         self.mx_seen = [[None; 2]; 8];
-        // (the state as the block starts)
+        // (the state as the block starts: one with hoisted checks has every flag live, see
+        // block_liveness)
         self.flags = Flags::Entry;
+        self.live_after = STATUS_BITS;
         self.fc = self.fc_in.get(&x).copied().unwrap_or_default();
         self.mmx = (0, 0);
         self.xmm = (0, 0);
         self.block_index = lo32(x);
         self.ctx = self.ctxs[x];
+        // (a head that does its CMP/TEST again: the ways in left L_OP_REMAT, or an entry's
+        // the Cpu's flags; see Remat)
+        let pending = core::mem::replace(&mut self.pending, self.remat.get(x).copied().flatten());
         for r in (0..8).filter(|r| m & (1 << r) != 0) {
             self.c.get(L_REG + r).u32c(GUEST_LO + lo32(SAFE_MARGIN)).sub().u32c(GUEST_HI - GUEST_LO - 2 * lo32(SAFE_MARGIN)).gt_u().if_();
             self.depth += 1;
             self.c.u32c(at);
-            self.exit_with(RET_INTERP);
+            // (on the way into the loop, for its first block: everything live there, see
+            // block_liveness)
+            self.exit_with(RET_INTERP, ExitAt::Jump(self.live_in[x]));
             self.depth -= 1;
             self.c.end();
         }
-        (self.flags, self.fc, self.mmx, self.xmm, self.block_index, self.ctx, self.mx_checked, self.mx_seen) = saved;
+        self.pending = pending;
+        (self.flags, self.fc, self.mmx, self.xmm, self.block_index, self.ctx, self.mx_checked, self.mx_seen, self.live_after) = saved;
     }
 
     /// Whether [reg + disp, + size) is inside the guest range by what is known of `reg`,
@@ -2213,6 +2263,111 @@ impl<'a> Gen<'a> {
 
     // ---- flags
 
+    /// The exit contract at an exit `at` the current instruction: the status flags there must
+    /// all be live (the lazy locals hold them), else the translation is refused (`broken`).
+    fn exit_contract(&mut self, at: ExitAt) {
+        let (live, need) = match at {
+            ExitAt::Before => (self.live_before, STATUS_BITS),
+            ExitAt::After => (self.live_after, STATUS_BITS),
+            ExitAt::Jump(need) => (self.live_after, need),
+        };
+        if live & need != need {
+            let ip = self.ins.ip32();
+            match at {
+                ExitAt::Before => self.missed.before.insert(ip),
+                ExitAt::After | ExitAt::Jump(_) => self.missed.after.insert(ip),
+            };
+        }
+    }
+
+    /// The lazy locals of `p` (a CMP/TEST of 32-bit registers and immediates, see
+    /// remat_heads) from the registers as they are; with `entry`, only where L_OP is
+    /// L_OP_REMAT (selects: no branch for V8 to lay out on the exits' ways).
+    fn remat_lazy(&mut self, p: &Instruction, entry: bool) {
+        let kind = if p.mnemonic() == Mnemonic::Cmp { Kind::Sub } else { Kind::Logic };
+        let operand = |c: &mut Code, o: u32| {
+            if p.op_kind(o) == OpKind::Register {
+                c.get(L_REG + lo32(p.op_register(o).number()));
+            } else {
+                c.u32c(lo32(p.immediate(o)));
+            }
+        };
+        let keep = |c: &mut Code, l: u32| {
+            if entry {
+                c.get(l).get(L_OP).i32c(L_OP_REMAT).eq().select();
+            }
+        };
+        operand(&mut self.c, 0);
+        keep(&mut self.c, L_FA);
+        self.c.set(L_FA);
+        operand(&mut self.c, 1);
+        keep(&mut self.c, L_FB);
+        self.c.set(L_FB);
+        self.c.get(L_FA).get(L_FB);
+        if kind == Kind::Sub {
+            self.c.sub();
+        } else {
+            self.c.and();
+        }
+        keep(&mut self.c, L_FR);
+        self.c.set(L_FR);
+        self.c.u32c(Op::new(kind, Size::of_bits32(32)).raw());
+        keep(&mut self.c, L_OP);
+        self.c.set(L_OP);
+    }
+
+    /// Where code reads L_OP (an exit, the Cpu's flags written): the pending CMP/TEST's lazy
+    /// operation into the Cpu, L_OP -1 (an entry's where L_OP says so: the ways back into
+    /// the loop), Gen's state as it was. (Into the Cpu, not the lazy locals: values of the
+    /// registers in those, for the exits' shared code, cost the loop itself a quarter in V8.)
+    fn remat_out(&mut self) {
+        use crate::lazy::Lazy;
+        let Some(r) = self.pending else { return };
+        let p = r.at;
+        if r.entry {
+            self.c.get(L_OP).i32c(L_OP_REMAT).eq().if_();
+        }
+        let kind = if p.mnemonic() == Mnemonic::Cmp { Kind::Sub } else { Kind::Logic };
+        let operand = |c: &mut Code, o: u32| {
+            if p.op_kind(o) == OpKind::Register {
+                c.get(L_REG + lo32(p.op_register(o).number()));
+            } else {
+                c.u32c(lo32(p.immediate(o)));
+            }
+        };
+        let lo = Off::lazy();
+        self.c.get(L_CPU).u32c(Op::new(kind, Size::of_bits32(32)).raw()).store32(lo);
+        self.c.get(L_CPU);
+        operand(&mut self.c, 0);
+        self.c.i64_extend_u().store64(lo + lo32(offset_of!(Lazy, a)));
+        self.c.get(L_CPU);
+        operand(&mut self.c, 1);
+        self.c.i64_extend_u().store64(lo + lo32(offset_of!(Lazy, b)));
+        self.c.get(L_CPU);
+        operand(&mut self.c, 0);
+        operand(&mut self.c, 1);
+        if kind == Kind::Sub {
+            self.c.sub();
+        } else {
+            self.c.and();
+        }
+        self.c.i64_extend_u().store64(lo + lo32(offset_of!(Lazy, r)));
+        self.c.get(L_CPU).i32c(0).store32(lo + lo32(offset_of!(Lazy, c)));
+        self.c.i32c(-1).set(L_OP);
+        if r.entry {
+            self.c.end();
+        }
+    }
+
+    /// The pending CMP/TEST done, into the lazy locals for what reads them next (Flags::Entry:
+    /// an entry's own flags may be the Cpu's).
+    fn remat_now(&mut self) {
+        if let Some(r) = self.pending.take() {
+            self.remat_lazy(r.at, r.entry);
+            self.flags = Flags::Entry;
+        }
+    }
+
     fn flags_live(&self, bits: u32) -> bool {
         self.live_after & bits != 0
     }
@@ -2235,6 +2390,38 @@ impl<'a> Gen<'a> {
             self.c.get(c).set(L_FC);
         }
         self.flags = Flags::Known(op);
+    }
+
+    /// The flags after ROL/ROR (`rol`) of `bits` bits, its result in `r` and EFLAGS before in
+    /// `old`, into the Cpu (exact: L_OP -1): CF the bit rotated in, OF CF xor the top bit (ROL)
+    /// or the top two bits' xor (ROR), as the interpreter; a count `n` known at run time that
+    /// is 0 (mod 32) keeps `old`.
+    fn rotate_flags(&mut self, bits: u32, rol: bool, old: u32, r: u32, n: Option<u32>) {
+        // (EFLAGS' bits: crate::flags, not iced's RflagsBits of the liveness)
+        let (cf, of, status) = (crate::flags::CF, crate::flags::OF, crate::flags::STATUS);
+        // (eflags() of a lazy operation has the status flags alone: the others from the Cpu)
+        self.c.get(L_CPU);
+        self.c.get(L_CPU).load32(Off::eflags()).u32c(!status).and();
+        self.c.get(old).u32c(status & !(cf | of)).and().or();
+        if rol {
+            // CF = r & 1; OF = top ^ CF
+            self.c.get(r).i32c(1).and();
+            self.c.get(r).u32c(bits - 1).shr_u().get(r).xor().i32c(1).and().u32c(11).shl();
+        } else {
+            // CF = top; OF = top ^ next
+            self.c.get(r).u32c(bits - 1).shr_u().i32c(1).and();
+            self.c.get(r).u32c(bits - 1).shr_u().get(r).u32c(bits - 2).shr_u().xor().i32c(1).and().u32c(11).shl();
+        }
+        self.c.or().or();
+        if let Some(n) = n {
+            self.c.get(L_CPU).load32(Off::eflags()).u32c(!status).and();
+            self.c.get(old).u32c(status).and().or();
+            self.c.get(n).select();
+        }
+        self.c.store32(Off::eflags());
+        self.c.get(L_CPU).i32c(0).store32(Off::lazy());
+        self.c.i32c(-1).set(L_OP);
+        self.flags = Flags::Entry;
     }
 
     /// Pushes EFLAGS (exact status flags).
@@ -2601,6 +2788,8 @@ impl<'a> Gen<'a> {
     /// Runs the current instruction through the `step` import. With `ends`, leaves the
     /// block afterwards at whatever EIP the instruction produced.
     fn fallback(&mut self, ends: bool) {
+        // (the interpreter may stop at it: an exit before it)
+        self.exit_contract(ExitAt::Before);
         self.fell_back = true;
         self.modes = false;
         self.fc_flush();
@@ -2609,9 +2798,19 @@ impl<'a> Gen<'a> {
         self.xmm = (0, 0);
         self.mx_checked = None;
         self.mx_seen = [[None; 2]; 8];
+        // (ESP's track goes on over an instruction that leaves it alone or only moves it by
+        // a push or pop's size: may_leave_before takes the stack near it as checked, see
+        // esp_unknown)
+        let ins = self.ins;
+        let esp = match esp_moved(&mut self.info, ins) {
+            EspMove::Kept => self.safe[4],
+            EspMove::By(n) => self.safe[4].map(|o| o + n),
+            EspMove::Set => None,
+        };
         self.spill(self.eip());
         self.c.get(L_CPU).call(F_STEP).set(L_ST);
         self.reload();
+        self.safe[4] = esp;
         self.modes_changed();
         self.c.i32c(-1).set(L_OP);
         self.flags = Flags::Entry;
@@ -2623,13 +2822,15 @@ impl<'a> Gen<'a> {
         self.c.end();
         if ends {
             self.c.get(L_CPU).load32(Off::eip());
-            self.jump_dyn();
+            // (the interpreter's flags: in the Cpu, exact)
+            self.jump_dyn(0);
         }
     }
 
     /// The lazy flags into the Cpu if they are live after this instruction (L_OP -1 after).
     fn flags_to_cpu(&mut self) {
         let _site = wasm::MemSite::new(7);
+        self.remat_now();
         if !self.flags_live(STATUS_BITS) {
             return;
         }
@@ -2649,6 +2850,7 @@ impl<'a> Gen<'a> {
 
     /// Writes registers, EIP and the lazy flags back to the Cpu.
     fn spill(&mut self, eip: u32) {
+        self.remat_now();
         let _site = wasm::MemSite::new(4);
         self.store_regs();
         self.c.get(L_CPU).u32c(eip).store32(Off::eip());
@@ -2838,7 +3040,7 @@ impl<'a> Gen<'a> {
         self.c.get(L_REG + 4).u32c(GUEST_LO + lo32(SAFE_MARGIN)).sub().u32c(GUEST_HI - GUEST_LO - 2 * lo32(SAFE_MARGIN)).gt_u().if_();
         self.depth += 1;
         self.c.u32c(eip);
-        self.exit_with(RET_INTERP);
+        self.exit_with(RET_INTERP, if eip == self.eip() { ExitAt::Before } else { ExitAt::After });
         self.depth -= 1;
         self.c.end();
         self.safe[4] = Some(0);
@@ -3293,14 +3495,20 @@ impl<'a> Gen<'a> {
                 let imm = ins.op_kind(1) != OpKind::Register;
                 let count = if imm { lo32(ins.immediate(1)) & 31 } else { 0 };
                 let rot = matches!(ins.mnemonic(), Rol | Ror);
-                // flags that depend on a count only known at run time (or rotates, which keep
-                // the other flags) go through the interpreter when anyone reads them
-                if (imm && count == 0) && !rot {
+                // (rotates keep the other flags: their CF and OF go into the exact EFLAGS when
+                // anyone reads them, or when the code may leave before they are written again)
+                if imm && count == 0 {
                     // no-op, flags unchanged
-                } else if rot && self.flags_live(STATUS_BITS) {
-                    self.fallback(false);
                 } else {
                     let addr = self.mem_addr();
+                    let old = if rot && self.flags_live(STATUS_BITS) {
+                        let t = self.temp();
+                        self.eflags();
+                        self.c.set(t);
+                        Some(t)
+                    } else {
+                        None
+                    };
                     let (a, n, r) = (self.temp(), self.temp(), self.temp());
                     self.read_op(0, addr);
                     self.c.set(a);
@@ -3360,6 +3568,9 @@ impl<'a> Gen<'a> {
                         // than the width is handled by the masks above)
                     }
                     self.write_op(0, addr, r);
+                    if let Some(old) = old {
+                        self.rotate_flags(bits, ins.mnemonic() == Rol, old, r, (!imm).then_some(n));
+                    }
                     if !rot {
                         let kind = match ins.mnemonic() {
                             Shl | Sal => Kind::Shl,
@@ -3890,7 +4101,7 @@ impl<'a> Gen<'a> {
                 }
                 self.ras_push(next);
                 self.c.get(t);
-                self.jump_dyn();
+                self.jump_dyn(STATUS_BITS);
                 return false;
             }
             Jmp if self.structured && self.jnode.contains_key(&(us(self.block_index))) => {
@@ -3931,7 +4142,7 @@ impl<'a> Gen<'a> {
                     ring_sample(&mut self.c, h, e, t, site);
                 }
                 self.c.get(t);
-                self.jump_dyn();
+                self.jump_dyn(STATUS_BITS);
                 return false;
             }
             Ret => {
@@ -3975,7 +4186,8 @@ impl<'a> Gen<'a> {
                 self.c.get(L_BUD).i32c(1).sub().tee(L_BUD).i32c(0).le_s().if_();
                 self.depth += 1;
                 self.c.get(t);
-                self.exit_with(RET_CONTINUE);
+                // (to a return address the region knows only at run time)
+                self.exit_with(RET_CONTINUE, ExitAt::Jump(STATUS_BITS));
                 self.depth -= 1;
                 self.c.end();
                 bump(&mut self.c, 11);
@@ -3991,7 +4203,7 @@ impl<'a> Gen<'a> {
                     self.c.end();
                 }
                 self.c.get(t);
-                self.jump_dyn();
+                self.jump_dyn(STATUS_BITS);
                 return false;
             }
 
@@ -4025,7 +4237,7 @@ impl<'a> Gen<'a> {
         let Some(k) = self.block_of(target) else {
             // maybe another region's
             self.c.u32c(target);
-            self.jump_dyn();
+            self.jump_dyn(STATUS_BITS);
             return;
         };
         self.goto_block(k, target);
@@ -4048,22 +4260,50 @@ impl<'a> Gen<'a> {
 
     /// [`Self::goto_block`] in a structured layout: to the open label, else out.
     fn goto_structured(&mut self, k: usize, target: u32) {
+        // (a block that does its CMP/TEST again: the blocks before keep no flags for it, so
+        // they are done here where the way out leaves, and dead on the way in, see Remat)
+        let remat = self.remat.get(k).copied().flatten().map(|r| r.at);
         if let Some(p) = self.back[k] {
             // (pending signals are noticed when the budget runs out)
             self.c.get(L_BUD).i32c(1).sub().tee(L_BUD).i32c(0).le_s();
             self.c.if_();
             self.depth += 1;
             self.push_target(target);
-            self.exit_with(RET_CONTINUE);
+            let need = self.live_in.get(k).copied().unwrap_or(STATUS_BITS);
+            self.leave_remat(remat, |g| g.exit_with(RET_CONTINUE, ExitAt::Jump(need)));
             self.depth -= 1;
             self.c.end();
+            self.enter_remat(remat);
             self.c.br(self.depth - p);
         } else if let Some(p) = self.fwd[k] {
+            self.enter_remat(remat);
             self.c.br(self.depth - p);
         } else {
             // not a way the layout has (irreducible): leave the function
             self.push_target(target);
-            self.jump_dyn();
+            let need = self.live_in.get(k).copied().unwrap_or(STATUS_BITS);
+            self.leave_remat(remat, |g| g.jump_dyn(need));
+        }
+    }
+
+    /// A way out to a block that does CMP/TEST `p` again (see goto_structured): its lazy
+    /// locals first.
+    fn leave_remat(&mut self, p: Option<&'a Instruction>, out: impl FnOnce(&mut Self)) {
+        let Some(p) = p else { return out(self) };
+        let pending = self.pending.replace(Remat { at: p, entry: false });
+        let live = core::mem::replace(&mut self.live_after, STATUS_BITS);
+        out(self);
+        self.live_after = live;
+        self.pending = pending;
+    }
+
+    /// A jump into a block that does its CMP/TEST again: the lazy locals dead (L_OP_REMAT).
+    fn enter_remat(&mut self, p: Option<&'a Instruction>) {
+        if p.is_some() {
+            self.c.i32c(L_OP_REMAT).set(L_OP);
+            for l in L_FA..=L_FC {
+                self.c.i32c(0).set(l);
+            }
         }
     }
 
@@ -4123,7 +4363,8 @@ impl<'a> Gen<'a> {
             self.c.if_();
             self.depth += 1;
             self.c.u32c(target);
-            self.exit_with(RET_CONTINUE);
+            let need = self.live_in.get(k).copied().unwrap_or(STATUS_BITS);
+            self.exit_with(RET_CONTINUE, ExitAt::Jump(need));
             self.depth -= 1;
             self.c.end();
         }
@@ -4275,7 +4516,8 @@ impl<'a> Gen<'a> {
         bump(&mut self.c, 1);
         // (callmiss put (FN_TAG, target) in the ring: the host makes the callee a function)
         self.c.get(t);
-        self.exit_with(RET_CONTINUE);
+        let need = self.call_reads.get(&us(self.block_index)).copied().unwrap_or(STATUS_BITS);
+        self.exit_with(RET_CONTINUE, ExitAt::Jump(need));
         self.temps -= 2;
     }
 
@@ -4286,7 +4528,11 @@ impl<'a> Gen<'a> {
     }
 
     /// Jumps to the address on the stack (looked up by the region's shared code).
-    fn jump_dyn(&mut self) {
+    /// Leaves for the address on the stack (the dispatcher's way): an exit whose target code
+    /// observes `need` (see ExitAt::Jump).
+    fn jump_dyn(&mut self, need: u32) {
+        self.exit_contract(ExitAt::Jump(need));
+        self.remat_out();
         self.fc_flush();
         self.c.set(L_NEXT);
         if self.fnm && self.ctx != 0 {
@@ -4395,7 +4641,8 @@ fn emit_dispatch(g: &mut Gen<'_>, t: &structure::Table, node: usize) {
     g.c.end(); // miss
     g.depth -= 1;
     g.c.get(L_NEXT);
-    g.jump_dyn();
+    // (the shared lookup's miss: its jumps checked their exits)
+    g.jump_dyn(0);
 }
 
 /// A function's first node with more entries than its root (`entries[0]`): `br_table` on
@@ -5417,13 +5664,25 @@ fn emit_block<'a>(g: &mut Gen<'a>, blocks: &'a [(u32, Insns)], k: usize, count: 
         _ => 0,
     };
     g.xmm = (g.xm_loop, g.xm_loop);
-    let (live, live_in) = liveness(list, g.live_out[k]);
+    let (live, live_before) = liveness(list, g.live_out[k], &g.exits);
+    let live_in = g.live_in[k];
     if live_in == 0 {
-        // dead here: tell V8 so (the lazy state is not kept in registers through the block)
+        // dead here (no exit reads them before they are written: see block_liveness): tell
+        // V8 so (the lazy state is not kept in registers through the block)
         g.c.i32c(-1).set(L_OP);
         for l in L_FA..=L_FC {
             g.c.i32c(0).set(l);
         }
+    }
+    // (an exit at the block's start: what block_liveness made live there)
+    g.live_before = live_in;
+    g.live_after = live_in;
+    g.pending = None;
+    if let Some(r) = g.remat.get(k).copied().flatten() {
+        // (the flags of the CMP/TEST every way here left them from, its operands as they
+        // were: live here, not kept by the blocks before; an entry's own are the Cpu's, the
+        // CMP/TEST then done where something reads them: see pending)
+        g.pending = Some(r);
     }
     if g.fresh.is_some() {
         g.ins = &list[0];
@@ -5444,12 +5703,30 @@ fn emit_block<'a>(g: &mut Gen<'a>, blocks: &'a [(u32, Insns)], k: usize, count: 
         }
         g.fuse_zx = i + 2 < m && set_movzx(ins, &list[i + 1]);
         skip = g.fuse_zx;
+        // (the pending CMP/TEST over what neither reads the flags nor writes its registers,
+        // up to what writes all of them: see remat_keeps)
+        let mut overwrites = false;
+        if let Some(r) = g.pending {
+            match remat_keeps(&mut g.info, r.at, ins, i + 1 == m || g.fuse_zx) {
+                RematKeep::Over => {}
+                RematKeep::Overwrites => overwrites = true,
+                RematKeep::Now => g.remat_now(),
+            }
+        }
         g.ins = ins;
         g.live_after = live[i];
+        g.live_before = live_before[i];
         *count += 1;
         let b0 = g.c.b.len();
         g.fell_back = false;
         let go = g.emit(i + 1 == m);
+        if overwrites {
+            // (its flags written: L_OP has them, or they are dead and the Cpu's stand)
+            g.pending = None;
+            if !g.flags_live(STATUS_BITS) {
+                g.c.i32c(-1).set(L_OP);
+            }
+        }
         if LAYOUT.load(core::sync::atomic::Ordering::Relaxed) {
             let k = alloc::format!("{:?}{}", ins.mnemonic(), if g.fell_back { "*" } else { "" });
             let e = g.sizes.entry(k).or_insert((0, 0));
@@ -5519,42 +5796,204 @@ fn successors(last: &Instruction) -> Vec<u32> {
     next
 }
 
-/// Liveness of the status flags after each instruction, given those live at the end; and
-/// those live at the start.
-fn liveness(list: &[Instruction], out: u32) -> (Vec<u32>, u32) {
-    let mut live = alloc::vec![0u32; list.len()];
-    let mut l = out;
-    for (i, ins) in list.iter().enumerate().rev() {
-        live[i] = l;
-        let written = ins.rflags_modified() & STATUS_BITS;
-        let mut read = ins.rflags_read() & STATUS_BITS;
-        let by_cl = (0..ins.op_count()).any(|o| ins.op_kind(o) == OpKind::Register && ins.op_register(o) == Register::CL);
-        // a shift by 0 or a REP with ECX 0 keeps them: those live after stay live
-        let keeps = by_cl || ins.has_rep_prefix() || ins.has_repne_prefix();
-        if ins.mnemonic() == Mnemonic::Inc || ins.mnemonic() == Mnemonic::Dec {
-            read |= RflagsBits::CF; // the lazy INC/DEC carries CF along
-        }
-        if ins.condition_code() != ConditionCode::None {
-            read |= cc_reads(Cond::of(ins.condition_code()).test);
-        }
-        // 16-bit code the interpreter steps (see ok16) reads them all: it may leave the region
-        // there (HLT, INT, a fault), the flags of what came before in the Cpu
-        if seg16().is_some() && !ok16(ins) {
-            read = STATUS_BITS;
-        }
-        l = if keeps { l | read } else { (l & !written) | read };
-    }
-    (live, l)
+/// Translations refused for an exit where the status flags were not all live (see
+/// Gen::exit_contract): may_leave_before missed an instruction that leaves. The tests want 0.
+pub static EXIT_REFUSED: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
+
+/// Translations made again with the exits their first try found (see translate_exits).
+pub static EXIT_AGAIN: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
+
+/// Where an exit leaves, relative to the instruction being translated (see Gen::exit_with):
+/// the guest state there is the architectural one, the status flags included.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum ExitAt {
+    /// before it (it runs again in the interpreter: a fault, a bail, an instruction the
+    /// interpreter steps)
+    Before,
+    /// after it (it ran: a store into code, ESP out of range)
+    After,
+    /// at a jump's target, for the dispatcher (the budget ran out, a call's function not in
+    /// the call cache, a loop's hoisted checks): the flags the code there observes (`need`:
+    /// the target block's live-in, callee_reads) are the architectural ones. Those it writes
+    /// before it reads them or may leave are dead to every reader and every synchronous exit;
+    /// an asynchronous look at the thread there (a debugger) may see them stale.
+    Jump(u32),
 }
 
-/// Status flags live at the start and at the end of each block, over the region's jumps
-/// (everything is live where it is left or jumps dynamically).
-/// The status flags a function called at `target` reads before it writes them (hand-written
-/// code passes a result that way: the static CRT's log10, _CIlog10, calls a helper that
-/// returns "is it inf/NaN" in ZF, then its body, which branches on that ZF first thing; with
-/// the flags taken for dead at the call the helper's CMP left none, the body took the inf/NaN
-/// path for 1743, and %g printed it as "0e+00"). Its code up to the first branch that is not
-/// a direct jump, a call or a return: the flags live after that are taken for dead.
+/// Whether the translation of `ins` may leave before it ran (see [`ExitAt::Before`]): unless
+/// it is a register-only instruction of a kind [`Gen::emit`] translates in place, without the
+/// interpreter. A wrong `false` here is no wrong state: the exit contract refuses the
+/// translation (Gen::exit_contract); a wrong `true` keeps flags that could go.
+fn may_leave_before(ins: &Instruction) -> bool {
+    use Mnemonic::*;
+    let memory = (0..ins.op_count()).any(|i| {
+        matches!(ins.op_kind(i), OpKind::Memory | OpKind::MemorySegSI | OpKind::MemorySegESI | OpKind::MemorySegRSI | OpKind::MemorySegDI | OpKind::MemorySegEDI | OpKind::MemoryESDI | OpKind::MemoryESEDI)
+    });
+    if memory && ins.mnemonic() != Lea && !near_esp(ins) || ins.has_lock_prefix() {
+        return true;
+    }
+    // (IMUL: the 32-bit forms; MUL's EDX:EAX one is IMUL's sibling)
+    if matches!(ins.mnemonic(), Imul | Mul) {
+        return op_bits(ins, 0) != 32;
+    }
+    !inline_only(ins.mnemonic())
+}
+
+/// An access [ESP + small] (the stack near ESP is in the guest's range: Gen::near_safe, ESP
+/// checked where it is set, its track kept over the interpreter's instructions that leave it
+/// alone: see esp_unknown).
+fn near_esp(ins: &Instruction) -> bool {
+    ins.memory_base() == Register::ESP
+        && ins.memory_index() == Register::None
+        && !matches!(ins.memory_segment(), Register::FS | Register::GS)
+        && (lo32(ins.memory_displacement32()).cast_signed()).unsigned_abs() < lo32(SAFE_MARGIN) / 4
+}
+
+/// The instructions Gen::emit translates without an exit of their own (with registers or the
+/// stack near ESP for operands).
+fn inline_only(m: Mnemonic) -> bool {
+    use Mnemonic::*;
+    matches!(
+        m,
+        Mov | Movzx | Movsx | Add | Sub | Adc | Sbb | And | Or | Xor | Cmp | Test | Inc | Dec | Neg | Not | Shl | Shr | Sar | Rol | Ror | Lea | Xchg | Bswap | Nop
+            | Cdq | Cwde | Push | Pop | Call | Ret
+            | Seto | Setno | Setb | Setae | Sete | Setne | Setbe | Seta | Sets | Setns | Setp | Setnp | Setl | Setge | Setle | Setg
+            | Cmovo | Cmovno | Cmovb | Cmovae | Cmove | Cmovne | Cmovbe | Cmova | Cmovs | Cmovns | Cmovp | Cmovnp | Cmovl | Cmovge | Cmovle | Cmovg
+            | Jo | Jno | Jb | Jae | Je | Jne | Jbe | Ja | Js | Jns | Jp | Jnp | Jl | Jge | Jle | Jg | Jmp
+    )
+}
+
+/// What an instruction does to ESP, for its track (Gen::safe[4]) where the interpreter runs it.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum EspMove {
+    Kept,
+    /// moved by a push or pop's size
+    By(i32),
+    Set,
+}
+
+fn esp_moved(info: &mut iced_x86::InstructionInfoFactory, ins: &Instruction) -> EspMove {
+    use Mnemonic::*;
+    if reg_writes(info, ins).0 & 1 << 4 == 0 {
+        return EspMove::Kept;
+    }
+    let explicit = (0..ins.op_count()).any(|i| ins.op_kind(i) == OpKind::Register && ins.op_register(i).full_register32() == Register::ESP);
+    match ins.mnemonic() {
+        Push | Pop | Pushfd | Popfd | Pushad | Popad | Pushf | Popf | Pusha | Popa if !explicit && ins.memory_base() != Register::ESP => EspMove::By(ins.stack_pointer_increment()),
+        _ => EspMove::Set,
+    }
+}
+
+/// Per instruction of a block, whether ESP's track is lost before it: an instruction that may
+/// go to the interpreter and writes ESP (PUSH/POP's own way among them) leaves Gen::safe[4]
+/// unknown, and the next access near ESP checks it (a bail: ExitAt::Before).
+fn esp_unknown(list: &[Instruction]) -> Vec<bool> {
+    let mut info = iced_x86::InstructionInfoFactory::new();
+    let mut known = true;
+    list.iter()
+        .map(|ins| {
+            let lost = !known;
+            if near_esp(ins) || matches!(ins.mnemonic(), Mnemonic::Push | Mnemonic::Pop) {
+                known = true;
+            }
+            // (Gen::emit checks ESP where its own code sets it; the interpreter's keeps the
+            // track only when it moves ESP by a push or pop: Gen::fallback)
+            if (!inline_only(ins.mnemonic()) || matches!(ins.mnemonic(), Mnemonic::Push | Mnemonic::Pop)) && esp_moved(&mut info, ins) == EspMove::Set {
+                known = false;
+            }
+            lost && (near_esp(ins) || matches!(ins.mnemonic(), Mnemonic::Push | Mnemonic::Pop))
+        })
+        .collect()
+}
+
+/// Whether it may leave after it ran (see [`ExitAt::After`]): a store (into code), a write of
+/// ESP (out of the guest's range: Gen::emit's check_esp).
+fn may_leave_after(ins: &Instruction) -> bool {
+    let store = (0..ins.op_count()).any(|i| ins.op_kind(i) == OpKind::Memory) && ins.mnemonic() != Mnemonic::Lea && ins.op0_kind() == OpKind::Memory;
+    // (ESP written as an operand: Gen::emit checks it after, but for ADD/SUB/AND by an
+    // immediate, which drift; XCHG writes both)
+    let imm = ins.op_count() == 2 && matches!(ins.op_kind(1), OpKind::Immediate8to32 | OpKind::Immediate32);
+    let esp = |i: u32| ins.op_count() > i && ins.op_kind(i) == OpKind::Register && ins.op_register(i).full_register32() == Register::ESP;
+    let drift = imm && matches!(ins.mnemonic(), Mnemonic::Add | Mnemonic::Sub | Mnemonic::And);
+    store || esp(0) && !drift || ins.mnemonic() == Mnemonic::Xchg && esp(1)
+}
+
+/// Liveness of the status flags in a block, given those live at its end: after each
+/// instruction and before each. Every exit is a place they are all live at (the exit
+/// contract, see [`ExitAt`]): before and after the instructions that may leave there, and the
+/// block boundaries where something leaves (see block_liveness). So a flag result is left out
+/// only where the code writes them again with no way out in between.
+fn liveness(list: &[Instruction], out: u32, exits: &Exits) -> (Vec<u32>, Vec<u32>) {
+    liveness_of(&flag_effects(list, exits), out)
+}
+
+/// What an instruction does with the status flags, for [`liveness`].
+#[derive(Clone, Copy, Debug)]
+struct FlagEffect {
+    /// it may leave after it ran: all live after it
+    leaves_after: bool,
+    read: u32,
+    written: u32,
+    /// those live after stay live (a shift by CL, which may be 0; a REP, ECX maybe 0)
+    keeps: bool,
+}
+
+fn flag_effects(list: &[Instruction], exits: &Exits) -> Vec<FlagEffect> {
+    // (code that may be rewritten checks its stores after them: Gen::watch_after)
+    let watched = list.first().is_some_and(|i| watched_at(i.ip32()));
+    let mut info = iced_x86::InstructionInfoFactory::new();
+    let esp = esp_unknown(list);
+    list.iter()
+        .enumerate()
+        .map(|(i, ins)| {
+            let stores = watched && info.info(ins).used_memory().iter().any(|u| matches!(u.access(), iced_x86::OpAccess::Write | iced_x86::OpAccess::CondWrite | iced_x86::OpAccess::ReadWrite | iced_x86::OpAccess::ReadCondWrite));
+            let mut read = ins.rflags_read() & STATUS_BITS;
+            let by_cl = (0..ins.op_count()).any(|o| ins.op_kind(o) == OpKind::Register && ins.op_register(o) == Register::CL);
+            if ins.mnemonic() == Mnemonic::Inc || ins.mnemonic() == Mnemonic::Dec {
+                read |= RflagsBits::CF; // the lazy INC/DEC carries CF along
+            }
+            if ins.condition_code() != ConditionCode::None {
+                read |= cc_reads(Cond::of(ins.condition_code()).test);
+            }
+            // 16-bit code the interpreter steps (see ok16) reads them all: it may leave the
+            // region there (HLT, INT, a fault), the flags of what came before in the Cpu
+            if seg16().is_some() && !ok16(ins) || may_leave_before(ins) || esp[i] || exits.before.contains(&ins.ip32()) {
+                read = STATUS_BITS;
+            }
+            FlagEffect {
+                leaves_after: may_leave_after(ins) || stores || exits.after.contains(&ins.ip32()),
+                read,
+                written: ins.rflags_modified() & STATUS_BITS,
+                keeps: by_cl || ins.has_rep_prefix() || ins.has_repne_prefix(),
+            }
+        })
+        .collect()
+}
+
+/// [`liveness`] of the instructions' effects.
+fn liveness_of(fx: &[FlagEffect], out: u32) -> (Vec<u32>, Vec<u32>) {
+    let mut live = alloc::vec![0u32; fx.len()];
+    let mut before = alloc::vec![0u32; fx.len()];
+    let mut l = out;
+    for (i, f) in fx.iter().enumerate().rev() {
+        if f.leaves_after {
+            l = STATUS_BITS;
+        }
+        live[i] = l;
+        l = if f.keeps { l | f.read } else { (l & !f.written) | f.read };
+        before[i] = l;
+    }
+    (live, before)
+}
+
+/// The status flags a function called at `target` observes before it writes them: those it
+/// reads (hand-written code passes a result that way: the static CRT's log10, _CIlog10, calls a
+/// helper that returns "is it inf/NaN" in ZF, then its body, which branches on that ZF first
+/// thing; with the flags taken for dead at the call the helper's CMP left none, the body took
+/// the inf/NaN path for 1743, and %g printed it as "0e+00"), and all of them where it may leave
+/// first (the exit contract: see ExitAt). Its code up to the first branch that is not a direct
+/// jump or call (followed into the callee), at most 4 blocks; the flags it has not written by
+/// then are live.
 fn callee_reads<M: Memory>(mem: &mut M, target: u32) -> u32 {
     let mut reads = 0;
     let mut written = 0;
@@ -5564,22 +6003,126 @@ fn callee_reads<M: Memory>(mem: &mut M, target: u32) -> u32 {
         let Some(last) = list.last() else { break };
         let ends = match last.flow_control() {
             FlowControl::ConditionalBranch => None,
-            FlowControl::UnconditionalBranch if last.op0_kind() == OpKind::NearBranch32 => Some(last.near_branch32()),
+            // (a call of its own: on into that callee, whose flags are the ones then)
+            FlowControl::UnconditionalBranch | FlowControl::Call if last.op0_kind() == OpKind::NearBranch32 => Some(last.near_branch32()),
             FlowControl::Next => Some(last.next_ip32()),
             _ => None,
         };
-        reads |= liveness(&list, 0).1 & !written;
+        reads |= liveness(&list, 0, &Exits::default()).1.first().copied().unwrap_or(0) & !written;
         for ins in &list {
             written |= ins.rflags_modified() & STATUS_BITS;
         }
         match ends {
             Some(a) if written != STATUS_BITS => at = a,
-            _ => break,
+            // (where it goes on unseen, the flags not written yet are live: the code there
+            // may read them, or leave before it writes them)
+            _ => return reads | (STATUS_BITS & !written),
         }
     }
-    reads
+    reads | (STATUS_BITS & !written)
 }
 
+/// What the instruction `ins` does to a pending CMP/TEST `p` (Gen::pending).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum RematKeep {
+    /// it stays pending (a MOV, LEA, SSE...: no flags, none of p's registers)
+    Over,
+    /// pending in it (its exits before it), then its own flags (all of them)
+    Overwrites,
+    /// done before it
+    Now,
+}
+
+fn remat_keeps(info: &mut iced_x86::InstructionInfoFactory, p: &Instruction, ins: &Instruction, last: bool) -> RematKeep {
+    use Mnemonic::*;
+    if last {
+        return RematKeep::Now;
+    }
+    let regs: u32 = (0..p.op_count()).filter(|&o| p.op_kind(o) == OpKind::Register).fold(0, |a, o| a | 1 << p.op_register(o).number());
+    match ins.mnemonic() {
+        // (all the status flags written, none read: the memory forms may leave before)
+        Add | Sub | And | Or | Xor | Cmp | Test | Neg => RematKeep::Overwrites,
+        // (the flags neither read nor written, p's registers kept, no jump: its exits are
+        // Gen::exit_with's, jump_dyn's and spill's, which do p there; MOVs, SSE and MMX,
+        // x87 loads and arithmetic)
+        _ if ins.flow_control() == FlowControl::Next
+            && (ins.rflags_read() | ins.rflags_modified()) & STATUS_BITS == 0
+            && ins.condition_code() == ConditionCode::None
+            && reg_writes(info, ins).0 & regs == 0 =>
+        {
+            RematKeep::Over
+        }
+        _ => RematKeep::Now,
+    }
+}
+
+/// Per block of a function, the CMP or TEST to do again at its start (see Gen::remat): the one
+/// all its predecessors (blocks only: not an entry, a jump table's, a call's return) end their
+/// flags with, of registers and immediates, none of them written after it. A loop's head
+/// reached from its end so has its flags without the lazy state kept around the loop (V8 keeps
+/// that in registers: sort's inner loop, header rotated to the load after its TEST, +30%).
+fn remat_heads<'a>(blocks: &'a [(u32, Insns)], l: &structure::Layout, entries: &[usize], tables: usize) -> Vec<Option<Remat<'a>>> {
+    let n = blocks.len();
+    let mut info = iced_x86::InstructionInfoFactory::new();
+    let ends: Vec<Option<usize>> = (0..n)
+        .map(|k| {
+            let list = &blocks[k].1;
+            if matches!(list.last().flow_control(), FlowControl::Call | FlowControl::IndirectCall | FlowControl::Return | FlowControl::Interrupt | FlowControl::Exception) {
+                return None;
+            }
+            let i = list.iter().rposition(|ins| ins.rflags_modified() != 0)?;
+            let ins = &list[i];
+            let regs = op_bits(ins, 0) == 32 && (0..ins.op_count()).all(|o| match ins.op_kind(o) {
+                OpKind::Register => ins.op_register(o).is_gpr32(),
+                OpKind::Immediate8 | OpKind::Immediate16 | OpKind::Immediate32 | OpKind::Immediate8to16 | OpKind::Immediate8to32 => true,
+                _ => false,
+            });
+            let probed = PROBES.iter().any(|p| p.load(core::sync::atomic::Ordering::Relaxed) == ins.ip32());
+            if !matches!(ins.mnemonic(), Mnemonic::Cmp | Mnemonic::Test) || !regs || probed || ins.has_lock_prefix() {
+                return None;
+            }
+            let read: u32 = (0..ins.op_count()).filter(|&o| ins.op_kind(o) == OpKind::Register).fold(0, |a, o| a | 1 << ins.op_register(o).full_register32().number());
+            let kept = list[i + 1..].iter().all(|later| reg_writes(&mut info, later).0 & read == 0);
+            kept.then_some(i)
+        })
+        .collect();
+    let mut preds: Vec<Vec<usize>> = alloc::vec![Vec::new(); n];
+    let mut outside = alloc::vec![false; n];
+    for (v, ws) in l.succ.iter().enumerate() {
+        for &w in ws.iter().filter(|&&w| w < n) {
+            // (the function's node for its entries: an entry's other way in, its flags the Cpu's)
+            if v < n {
+                preds[w].push(v);
+            } else if v != n + tables {
+                outside[w] = true;
+            }
+        }
+    }
+    (0..n)
+        .map(|k| {
+            if outside[k] || preds[k].is_empty() {
+                return None;
+            }
+            let (p0, i0) = (preds[k][0], ends[preds[k][0]]?);
+            let first = &blocks[p0].1[i0];
+            let same = preds[k].iter().all(|&p| {
+                ends[p].is_some_and(|i| {
+                    let ins = &blocks[p].1[i];
+                    ins.ip32() == first.ip32() && ins.code() == first.code()
+                })
+            });
+            // (an entry: only for the jumps back to it, see Remat)
+            let entry = entries.contains(&k);
+            (same && (!entry || l.header(k))).then_some(Remat { at: first, entry })
+        })
+        .collect()
+}
+
+/// Status flags live at the start and at the end of each block, over the region's jumps.
+/// All of them where code leaves at a boundary for code unknown here (the exit contract, see
+/// [`ExitAt`]): a jump out of the region or a dynamic one, and the start of a block checked for
+/// fresh code on entry (it leaves for code rewritten). Elsewhere what the blocks after observe (a jump back may leave there
+/// when the budget runs out: ExitAt::Jump with the target's live-in), a call's callee too.
 fn block_liveness(g: &Gen, blocks: &[(u32, Insns)], tables: &[structure::Table], call_reads: &BTreeMap<usize, u32>) -> (Vec<u32>, Vec<u32>) {
     let n = blocks.len();
     let succ: Vec<Option<Vec<usize>>> = (0..n)
@@ -5588,9 +6131,7 @@ fn block_liveness(g: &Gen, blocks: &[(u32, Insns)], tables: &[structure::Table],
             let ctx = g.ctxs[k];
             let find = |a: u32| g.targets.get(&(ctx, a)).or_else(|| g.targets.get(&(0, a))).map(|&b| us(b));
             // a function's call (not inlined) goes on at the return address with the flags
-            // the callee left, or those from before when it kept them (some hand-written code
-            // returns a result in ZF): the callee stores them at its RET, which can return to
-            // any caller (everything live there)
+            // the callee left; it observes call_reads
             if g.fnm && matches!(last.flow_control(), FlowControl::Call | FlowControl::IndirectCall) && !g.inlined.contains_key(&k) {
                 return find(last.next_ip32()).map(|b| alloc::vec![b]);
             }
@@ -5615,17 +6156,22 @@ fn block_liveness(g: &Gen, blocks: &[(u32, Insns)], tables: &[structure::Table],
             }
         })
         .collect();
+    // (a loop's hoisted checks leave at its head for that same code: ExitAt::Jump with its
+    // live-in; a block checked for fresh code leaves for code not seen here)
+    let starts_leave = |k: usize| g.fresh_code.get(k).is_some_and(Option::is_some);
+    let fx: Vec<Vec<FlagEffect>> = blocks.iter().map(|(_, list)| flag_effects(list, &g.exits)).collect();
     let mut live_in = alloc::vec![0u32; n];
     let mut live_out = alloc::vec![0u32; n];
     loop {
         let mut changed = false;
         for k in (0..n).rev() {
             let out = match &succ[k] {
-                Some(s) => s.iter().fold(0, |a, &b| a | live_in[b]) | call_reads.get(&k).copied().unwrap_or(0),
+                Some(s) => s.iter().fold(0, |a, &b| a | if g.remat.get(b).is_some_and(Option::is_some) { 0 } else { live_in[b] }) | call_reads.get(&k).copied().unwrap_or(0),
                 None => STATUS_BITS,
             };
             live_out[k] = out;
-            let l = liveness(&blocks[k].1, out).1;
+            let before = liveness_of(&fx[k], out).1;
+            let l = if starts_leave(k) { STATUS_BITS } else { before.first().copied().unwrap_or(out) };
             if l != live_in[k] {
                 live_in[k] = l;
                 changed = true;
@@ -5879,11 +6425,31 @@ fn translate<M: Memory>(
     ran: &dyn Fn(u32) -> bool,
 ) -> Option<Region> {
     let _shared = Shared::enter();
-    translate_seen(module, Snapshot::new(mem), roots, max_blocks, max_ins, accept, fn_trap, hints, ran)
+    translate_exits(module, Snapshot::new(mem), roots, max_blocks, max_ins, accept, fn_trap, hints, ran)
 }
 
+/// Instructions that left where [`may_leave_before`] / [`may_leave_after`] said they would not
+/// (found by the exit contract, Gen::exit_contract): liveness takes every flag live there.
+#[derive(Default, Clone, PartialEq, Eq, Debug)]
+struct Exits {
+    before: BTreeSet<u32>,
+    after: BTreeSet<u32>,
+}
+
+impl Exits {
+    fn is_empty(&self) -> bool {
+        self.before.is_empty() && self.after.is_empty()
+    }
+}
+
+/// How many times a translation is made again with the exits it found (each adds some; the
+/// code's are few): then it is refused ([`EXIT_REFUSED`]).
+const EXIT_ROUNDS: usize = 4;
+
+/// [`translate_seen`] made again while its exit contract finds exits the liveness did not
+/// expect, with those taken in.
 #[allow(clippy::too_many_arguments)]
-fn translate_seen<M: Memory>(
+fn translate_exits<M: Memory>(
     module: &mut Module,
     mut mem: Snapshot<'_, M>,
     roots: &[u32],
@@ -5894,9 +6460,41 @@ fn translate_seen<M: Memory>(
     hints: &dyn Fn(u32) -> Option<u32>,
     ran: &dyn Fn(u32) -> bool,
 ) -> Option<Region> {
+    let mut exits = Exits::default();
+    for _ in 0..EXIT_ROUNDS {
+        match translate_seen(module, &mut mem, roots, max_blocks, max_ins, &mut accept, fn_trap, hints, ran, &exits) {
+            Ok(r) => return r,
+            Err(more) => {
+                EXIT_AGAIN.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+                let before = exits.clone();
+                exits.before.extend(more.before);
+                exits.after.extend(more.after);
+                if exits == before {
+                    break;
+                }
+            }
+        }
+    }
+    EXIT_REFUSED.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+    None
+}
+
+/// The translation; Err: exits the liveness did not expect (see translate_exits).
+#[allow(clippy::too_many_arguments)]
+fn translate_seen<M: Memory>(
+    module: &mut Module,
+    mem: &mut Snapshot<'_, M>,
+    roots: &[u32],
+    max_blocks: usize,
+    max_ins: usize,
+    mut accept: impl FnMut(u32) -> bool,
+    fn_trap: Option<(u32, u32)>,
+    hints: &dyn Fn(u32) -> Option<u32>,
+    ran: &dyn Fn(u32) -> bool,
+    exits: &Exits,
+) -> Result<Option<Region>, Exits> {
     let exact = mx_exact();
     let pages = Pages::now();
-    let mem = &mut mem;
     let fnm = fn_trap.is_some();
     // blocks of small callees to inline (functions)
     let mut forced: Vec<u32> = Vec::new();
@@ -5966,7 +6564,7 @@ fn translate_seen<M: Memory>(
         blocks.push((a, list));
     }
     if blocks.is_empty() {
-        return None;
+        return Ok(None);
     }
     let code: Vec<(u32, u32)> = blocks
         .iter()
@@ -6135,19 +6733,26 @@ fn translate_seen<M: Memory>(
         ctxs: &ctxs,
         ret_to: &ret_to,
         inlined: &inlined,
-        live_out: Vec::new(),
         loops: &loops,
         fwd: alloc::vec![None; nodes],
         back: alloc::vec![None; nodes],
         head,
         returns: &returns,
         ins: &blocks[0].1[0],
+        call_reads: BTreeMap::new(),
+        live_in: Vec::new(),
+        live_out: Vec::new(),
         live_after: 0,
+        live_before: STATUS_BITS,
+        missed: Exits::default(),
+        exits: exits.clone(),
         small: [None; 8],
         info: iced_x86::InstructionInfoFactory::new(),
         safe_in: Vec::new(),
         hoist: BTreeMap::new(),
         preds: Vec::new(),
+        remat: Vec::new(),
+        pending: None,
         flags_out: Vec::new(),
         smc: false,
         fresh_code,
@@ -6195,22 +6800,24 @@ fn translate_seen<M: Memory>(
             profile.push((*a, at, list.iter().map(profile_key).collect()));
         }
     }
-    // (what the functions called read of the flags at the call: see callee_reads)
+    // (what the functions called observe of the flags at the call: see callee_reads; an
+    // indirect call's, unknown, are all of them)
     let mut call_reads = BTreeMap::new();
     if fnm {
         let mut by_target = BTreeMap::new();
         for (k, (_, list)) in blocks.iter().enumerate() {
             let last = list.last();
+            if last.flow_control() == FlowControl::IndirectCall && !inlined.contains_key(&k) {
+                call_reads.insert(k, STATUS_BITS);
+            }
             if last.flow_control() == FlowControl::Call && last.op0_kind() == OpKind::NearBranch32 && !inlined.contains_key(&k) {
                 let t = last.near_branch32();
                 let r = *by_target.entry(t).or_insert_with(|| if hle_at(mem, t).is_some() { 0 } else { callee_reads(mem, t) });
-                if r != 0 {
-                    call_reads.insert(k, r);
-                }
+                call_reads.insert(k, r);
             }
         }
     }
-    g.live_out = block_liveness(&g, &blocks, &tables, &call_reads).1;
+    g.call_reads = call_reads;
     // functions: the layout, entered at the root and (when the dispatcher comes back to the
     // middle, as at a return address after the call left, or a loop's head after the budget
     // ran out) at blocks outside loops but the outermost's heads
@@ -6270,6 +6877,9 @@ fn translate_seen<M: Memory>(
     if let Some(l) = fl {
         let entry = us(starts[0].1);
         (g.safe_in, g.hoist) = safe_in(&g, &blocks, &l);
+        let entries: Vec<usize> = core::iter::once(entry).chain(extra.iter().copied()).collect();
+        g.remat = remat_heads(&blocks, &l, &entries, tables.len());
+        (g.live_in, g.live_out) = block_liveness(&g, &blocks, &tables, &g.call_reads);
         g.preds = alloc::vec![Vec::new(); blocks.len()];
         for (v, ws) in l.succ.iter().enumerate().take(blocks.len()) {
             for &w in ws.iter().filter(|&&w| w < blocks.len()) {
@@ -6295,7 +6905,6 @@ fn translate_seen<M: Memory>(
                 }
             })
         }
-        let entries: Vec<usize> = core::iter::once(entry).chain(extra.iter().copied()).collect();
         // with x87 code: emitted to see the caches its jumps come with (as in emit_level's
         // loops), as many times as these change, then for real with those
         if blocks.iter().any(|b| b.1.iter().any(fc_handles)) {
@@ -6335,7 +6944,10 @@ fn translate_seen<M: Memory>(
                     g.c.and().or().i32c(0xff).and().if_();
                     g.depth += 1;
                     g.c.u32c(blocks[entry].0);
-                    g.exit_with(RET_INTERP);
+                    // (at the function's start, before any of its code: the flags are the
+                    // Cpu's, L_OP -1)
+                    g.live_before = STATUS_BITS;
+                    g.exit_with(RET_INTERP, ExitAt::Before);
                     g.depth -= 1;
                     g.c.end();
                 }
@@ -6346,6 +6958,7 @@ fn translate_seen<M: Memory>(
         g.fc_fn = None;
         g.fc_in.clear();
     } else {
+        (g.live_in, g.live_out) = block_liveness(&g, &blocks, &tables, &g.call_reads);
         let items = level(0, us(n) - 1, &loops);
         emit_level(&mut g, &blocks, &loops, &items, None, &mut count);
     }
@@ -6365,6 +6978,10 @@ fn translate_seen<M: Memory>(
         push_fn_state(&mut g.c);
     }
 
+    // (exits where the flags were not all kept: see Gen::exit_contract)
+    if !g.missed.is_empty() {
+        return Err(g.missed);
+    }
     let mut locals = alloc::vec![I32; if fnm { us(N_PARAMS) - 1 } else { 0 } + us(N_LOCALS_I32)];
     locals.extend_from_slice(&[I64, F64, F64, V128, V128, I32]);
     locals.extend_from_slice(&[F64; 8]);
@@ -6394,7 +7011,7 @@ fn translate_seen<M: Memory>(
     if LAYOUT.load(core::sync::atomic::Ordering::Relaxed) {
         use core::fmt::Write;
         for (k, (a, list)) in blocks.iter().enumerate() {
-            let _ = writeln!(layout, "{k} {a:08x}-{:08x} ctx {} {}", list.last().ip32(), ctxs[k], loops.get(&k).map_or_default(|e| alloc::format!("loop ..{e}")));
+            let _ = writeln!(layout, "{k} {a:08x}-{:08x} ctx {} {} flags in {:#x} out {:#x}{}", list.last().ip32(), ctxs[k], loops.get(&k).map_or_default(|e| alloc::format!("loop ..{e}")), g.live_in.get(k).copied().unwrap_or(0), g.live_out.get(k).copied().unwrap_or(0), g.remat.get(k).copied().flatten().map_or_default(|r| alloc::format!(" again {:08x}{}", r.at.ip32(), if r.entry { " (entry)" } else { "" })));
         }
         for (a, h) in &g.hle {
             let _ = writeln!(layout, "HLE {a:08x} {h:?}");
@@ -6411,7 +7028,7 @@ fn translate_seen<M: Memory>(
         Vec::new()
     };
     let text = code_text(mem, &code);
-    Some(Region { starts, instructions: count, code, text, layout, profile, sites, exact, pages })
+    Ok(Some(Region { starts, instructions: count, code, text, layout, profile, sites, exact, pages }))
 }
 
 #[cfg(test)]
@@ -6705,25 +7322,31 @@ mod tests {
         }
     }
 
-    /// What a callee reads of the flags at its call (see callee_reads), from its code.
+    /// What a callee observes of the flags at its call (see callee_reads), from its code: what
+    /// it reads, and everything where it may leave first or goes on unseen.
     #[test]
     fn callee_flag_reads() {
-        let zf_cf = RflagsBits::ZF | RflagsBits::CF;
-        let cases: [(&str, &[u8], u32); 7] = [
-            // _CIlog10's body (サクラノ刻 0x6e37b8): push edx; wait; fnstcw [esp]; je: ZF
-            ("branch first", &[0x52, 0x9b, 0xd9, 0x3c, 0x24, 0x74, 0x10, 0xc3], RflagsBits::ZF),
-            // a compiler's prologue: sub esp writes them all before anything reads
+        let all = STATUS_BITS;
+        let cases: [(&str, &[u8], u32); 9] = [
+            // _CIlog10's body (サクラノ刻 0x6e37b8): push edx; wait (the interpreter's: it may
+            // leave there); fnstcw [esp]; je
+            ("branch first", &[0x52, 0x9b, 0xd9, 0x3c, 0x24, 0x74, 0x10, 0xc3], all),
+            // a compiler's prologue: sub esp writes them all before anything reads or leaves
             ("prologue", &[0x55, 0x89, 0xe5, 0x83, 0xec, 0x10, 0x74, 0x00, 0xc3], 0),
-            // cmc reads CF, then a jump on to a block whose cmovz reads ZF
-            ("jmp on", &[0xf5, 0xeb, 0x01, 0x90, 0x0f, 0x44, 0xc1, 0xc3], RflagsBits::CF | RflagsBits::ZF),
-            // adc reads CF and writes ZF before the cmovz
+            // a stack argument read first: near ESP, no way out there
+            ("argument", &[0x8b, 0x44, 0x24, 0x04, 0x85, 0xc0, 0xc3], 0),
+            // a load through another register first: it may fault
+            ("load", &[0x8b, 0x01, 0x85, 0xc0, 0xc3], all),
+            // adc reads CF and writes the rest before the cmovz
             ("written", &[0x11, 0xc0, 0xeb, 0x01, 0x90, 0x0f, 0x44, 0xc1, 0xc3], RflagsBits::CF),
-            // jbe at once: CF and ZF
-            ("jbe", &[0x76, 0x00, 0xc3], zf_cf),
-            // nothing read before the RET
-            ("ret", &[0x89, 0xc8, 0xc3], 0),
-            // a call first: what the callee's callee reads is not followed
-            ("call", &[0xe8, 0x00, 0x00, 0x00, 0x00, 0xc3], 0),
+            // jbe at once: CF and ZF read, the others go on unseen
+            ("jbe", &[0x76, 0x00, 0xc3], all),
+            // nothing written before the RET: the caller's go back to it
+            ("ret", &[0x89, 0xc8, 0xc3], all),
+            // a call first: on into its callee (here the next instruction, the RET: unseen)
+            ("call", &[0xe8, 0x00, 0x00, 0x00, 0x00, 0xc3], all),
+            // a call of a callee that writes them all first (IMUL)
+            ("call on", &[0xe8, 0x00, 0x00, 0x00, 0x00, 0x69, 0xc0, 0x37, 0x9e, 0x00, 0x00, 0xc3], 0),
         ];
         for (name, bytes, want) in cases {
             assert_eq!(callee_reads(&mut crate::Rom::<0x10_0000>(bytes.to_vec()), 0x10_0000), want, "{name}");

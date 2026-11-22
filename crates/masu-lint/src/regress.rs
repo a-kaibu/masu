@@ -1054,3 +1054,80 @@ pub(super) fn short_name_table(tree: &Tree) -> Hits {
     }
     out
 }
+
+// --- jit-exit-contract -----------------------------------------------------------------------
+
+/// koji's exit contract (jit::ExitAt): at an exit before or after an instruction every status
+/// flag is exact (a guest exception handler reads EFLAGS: `xor eax,eax / mov ecx,[0]` left
+/// 0x202 where the interpreter has 0x246), at a jump only those code there reads. (file, what its
+/// code outside the tests says): each exit checks the contract, the liveness sees the bails of
+/// an ESP not checked (1063 translations redone in 600 jit32test programs), a callee reading no
+/// flags is recorded so (calls +22% with all of them kept for it).
+pub const JIT_EXIT_CONTRACT: [(&str, &str); 5] = [
+    ("crates/koji/src/jit/mod.rs", "self.exit_contract(at);"),
+    ("crates/koji/src/jit/mod.rs", "self.exit_contract(ExitAt::Jump(need));"),
+    ("crates/koji/src/jit/mod.rs", "self.exit_contract(ExitAt::Before);"),
+    ("crates/koji/src/jit/mod.rs", "let esp = esp_unknown(list);"),
+    ("crates/koji/src/jit/mod.rs", "call_reads.insert(k, r);"),
+];
+
+/// What JIT_EXIT_CONTRACT's files must not say: all flags taken live at a loop's head for its
+/// hoisted checks (they leave for that same head: ExitAt::Jump with its live-in; sort +30%).
+pub const JIT_EXIT_CONTRACT_NOT: [(&str, &str); 1] = [("crates/koji/src/jit/mod.rs", "g.hoist.contains_key(&k) ||")];
+
+/// A line of koji's JIT emitting a constant made of iced's RflagsBits (STATUS_BITS among them):
+/// those are the liveness' bits (CF 0x10, OF 0x01), not EFLAGS' (crate::flags: CF 0x01, OF
+/// 0x800); rotate_flags wrote EFLAGS from them once.
+fn rflags_emitted(line: &str) -> bool {
+    (line.contains("RflagsBits") || line.contains("STATUS_BITS")) && ["u32c(", "i32c(", "i64c(", "u64c("].iter().any(|c| line.contains(c))
+}
+
+/// Each of JIT_EXIT_CONTRACT missing from its file's code, each of JIT_EXIT_CONTRACT_NOT in it,
+/// each line of the JIT emitting RflagsBits.
+/// What jit32test must say: a module that does not load fails the test (Made, not a refusal),
+/// and a run in which no translation loaded fails
+pub const JIT_HARNESS_LOADED: [(&str, &str); 2] = [("tools/jit32test/src/main.rs", "fn translate(&mut self, base: usize, eip: u32) -> Result<Made, String>"), ("tools/jit32test/src/main.rs", "if loaded == 0 && count > 0")];
+
+/// koji's test harnesses: each that defines env.table defines env.pages (see Rule::JitHarnessImports)
+pub(super) fn jit_harness_imports(tree: &Tree) -> Hits {
+    let mut out = Hits::new();
+    for f in tree.rs(&["tools/", "fuzz/"]) {
+        let t = product_code(tree, &f);
+        if let Some(k) = t.lines().position(|l| l.contains("\"env\", \"table\"")) {
+            if !t.contains("\"env\", \"pages\"") {
+                out.push((f.clone(), k.saturating_add(1), "env.table defined, env.pages not: every module of koji imports the page marks and none loads".into()));
+            }
+        }
+    }
+    for (file, want) in JIT_HARNESS_LOADED {
+        let f = Rel::new(file);
+        if !product_code(tree, &f).contains(want) {
+            out.push((f, 1, format!("no `{want}`: jit32test could pass without running a translation")));
+        }
+    }
+    out
+}
+
+pub(super) fn jit_exit_contract(tree: &Tree) -> Hits {
+    let mut out = Hits::new();
+    for (file, want) in JIT_EXIT_CONTRACT {
+        let f = Rel::new(file);
+        if !product_code(tree, &f).contains(want) {
+            out.push((f, 1, format!("no `{want}` in the code: an exit whose status flags are not checked to be exact (jit::ExitAt)")));
+        }
+    }
+    for (file, bad) in JIT_EXIT_CONTRACT_NOT {
+        let f = Rel::new(file);
+        if product_code(tree, &f).contains(bad) {
+            out.push((f, 1, format!("`{bad}`: a loop's hoisted checks leave for its own head, which reads what its live-in says (ExitAt::Jump)")));
+        }
+    }
+    for f in tree.rs(&["crates/koji/src/jit/"]) {
+        for (k, l) in product_code(tree, &f).lines().enumerate() {
+            if rflags_emitted(l) {
+                out.push((f.clone(), k.saturating_add(1), "iced's RflagsBits emitted into the code: EFLAGS' bits are crate::flags'".into()));
+            }
+        }
+    }
+    out
+}

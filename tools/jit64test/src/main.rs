@@ -860,6 +860,10 @@ impl Jit {
         linker.define(&store, "env", "memory", memory.clone()).unwrap();
         let table = Table::new(&mut store, TableType::new(RefType::FUNCREF, 0, None), Ref::Func(None)).unwrap();
         linker.define(&store, "env", "table", table).unwrap();
+        // (the page marks every module imports, jit::PAGES: the checks are off here, jit::PAGE_CHECK,
+        // so no module reads them)
+        let pages = Global::new(&mut store, GlobalType::new(ValType::I32, Mutability::Const), Val::I32(0)).unwrap();
+        linker.define(&store, "env", "pages", pages).unwrap();
         linker
             .func_wrap("env", "step", move |cpu: i32| -> i32 {
                 let m = base as *mut u8;
@@ -1287,8 +1291,16 @@ fn run_case(engine: &Engine, memory: &SharedMemory, base: usize, list0: &[Instru
         if !exact && !reads && koji::jit::mx_exact() {
             diffs.push("mx: the JIT switched to the flag checks, the program read no flags".into());
         }
-        if want.is_err() && got.is_err() {
-            return (diffs, code); // (both stopped: where differs)
+        // both stopped at an exception: the same exception at the same place, with the same
+        // state, flags too (the exit contract, jit::ExitAt: masu's SEH gives them to the
+        // guest's handler); other stops (no end, the fuel) are not compared
+        let (want_e, got_e) = (want.as_ref().err(), got.as_ref().err());
+        let fault = |e: Option<&String>| e.is_some_and(|e| e.starts_with("interpreter exit Fault"));
+        if want_e.is_some() && got_e.is_some() && !(fault(want_e) && fault(got_e)) {
+            return (diffs, code);
+        }
+        if fault(want_e) && fault(got_e) && want_e != got_e {
+            diffs.push(format!("exceptions: interp {want:?} jit {got:?}"));
         }
         if want.is_err() || got.is_err() {
             if want.is_ok() != got.is_ok() {
