@@ -4825,7 +4825,11 @@ mod proofs {
         let vp: [f32; 6] = kani::any();
         let sc: [u32; 4] = kani::any();
         let clip: Option<[u32; 4]> = kani::any();
-        if let Some((v, s)) = super::rects9(tw, th, vp, sc, clip) {
+        let got = super::rects9(tw, th, vp, sc, clip);
+        kani::cover!(got.is_some(), "a viewport WebGPU takes");
+        kani::cover!(got.is_none(), "one drawn as nothing");
+        kani::cover!(got.is_some() && clip.is_some() && !(vp[4] >= 0.0), "a clipped draw with a NaN or negative MinZ");
+        if let Some((v, s)) = got {
             assert!(v.iter().all(|x| x.is_finite()));
             assert!(v[0] >= 0.0 && v[1] >= 0.0 && v[2] > 0.0 && v[3] > 0.0);
             assert!(v[0] as f64 + v[2] as f64 <= tw as f64 && v[1] as f64 + v[3] as f64 <= th as f64);
@@ -4841,7 +4845,11 @@ mod proofs {
         kani::assume(tw >= 1 && tw <= 16384 && th >= 1 && th <= 16384);
         let vp: [f32; 6] = kani::any();
         let sc: [u32; 4] = kani::any();
-        if let Some((v, s)) = super::rects11(tw, th, vp, sc, kani::any()) {
+        let got = super::rects11(tw, th, vp, sc, kani::any());
+        kani::cover!(got.is_some(), "a viewport WebGPU takes");
+        kani::cover!(got.is_none(), "one drawn as nothing");
+        kani::cover!(got.is_some() && vp[0] < 0.0, "a viewport starting left of the target");
+        if let Some((v, s)) = got {
             assert!(v.iter().all(|x| x.is_finite()));
             assert!(v[0] >= 0.0 && v[1] >= 0.0 && v[2] > 0.0 && v[3] > 0.0);
             assert!(v[0] as f64 + v[2] as f64 <= tw as f64 && v[1] as f64 + v[3] as f64 <= th as f64);

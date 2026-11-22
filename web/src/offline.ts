@@ -10,6 +10,7 @@ import { coverUrl, type GameEntry } from "./launcher";
 import { gameBusy } from "./budget";
 import { listChunks } from "./chunkstore";
 import { directFetcher, type Unzstd } from "./direct";
+import { workers } from "./jobs";
 import { shared } from "./poll";
 import {
   chunkCache,
@@ -537,20 +538,20 @@ export async function saveOffline(
       report(done, hashes.length);
     };
     /** Chunk `h` alone, from the bucket. */
-    const alone = (h: string) => {
+    const alone = (h: string, stop: AbortSignal) => {
       const url = new URL(chunkPath(h), base).href;
       // (one fetch of a chunk the game's network worker fetches too: its Web Lock, host/fetch-bridge.js masuWhole)
       return withChunkLock(h, async () => {
         if (await cache.match(url).catch(() => undefined)) return;
-        const data = await direct.get(h, { signal, request: opt.request });
+        const data = await direct.get(h, { signal: stop, request: opt.request });
         if (!data) throw new Error(`chunk ${h}: the bucket did not give it`);
         await keep(url, data);
       });
     };
-    const one = async (i: number) => {
-      while (next < missing.length && !signal.aborted && !full) {
+    const one = async (i: number, stop: AbortSignal) => {
+      while (next < missing.length && !stop.aborted && !full) {
         // (a game playing meanwhile waits for a read of its own: SAVE_BUSY_WIDTH go on)
-        while (i >= SAVE_BUSY_WIDTH && gameBusy() && !signal.aborted)
+        while (i >= SAVE_BUSY_WIDTH && gameBusy() && !stop.aborted)
           await new Promise((r) => setTimeout(r, 50));
         // (how to fetch the next ones from the bucket, asked for at once a window ahead; every
         // fetcher waits for its window's answer, not only the one that asked)
@@ -558,7 +559,7 @@ export async function saveOffline(
           w = Math.floor(next / PRIME_WINDOW);
           await window(w);
         }
-        if (next >= missing.length || signal.aborted) break;
+        if (next >= missing.length || stop.aborted) break;
         // (the next ones side by side in a delivery pack: one ranged GET for them all)
         const k = next;
         const n = direct.span(missing, k);
@@ -567,7 +568,7 @@ export async function saveOffline(
         p.now = files.get(run[0]!) ?? "";
         tell();
         if (n === 1) {
-          await alone(run[0]!);
+          await alone(run[0]!, stop);
           finished(run[0]!);
           continue;
         }
@@ -579,7 +580,7 @@ export async function saveOffline(
           // (the range and its chunks decoded: about twice their bytes, held at once)
           const bytes = 2 * todo.reduce((a, h) => a + (sizes.get(h) ?? chunk), 0);
           const got = todo.length
-            ? await held(bytes, () => direct.getRun(todo, { signal, request: opt.request }))
+            ? await held(bytes, () => direct.getRun(todo, { signal: stop, request: opt.request }))
             : new Map<string, Uint8Array<ArrayBuffer>>();
           const left: string[] = [];
           for (const h of run) {
@@ -595,13 +596,14 @@ export async function saveOffline(
           return left;
         });
         for (const h of later) {
-          await alone(h);
+          await alone(h, stop);
           finished(h);
         }
       }
     };
-    await Promise.all(Array.from({ length: DIRECT_AT_ONCE }, (_, i) => one(i))).catch((e: unknown) => {
-      if (!full) throw e;
+    // (every runner stopped before the save says how it ended: one that failed stops the others)
+    await workers(DIRECT_AT_ONCE, one, signal).catch((e: unknown) => {
+      if (!full && !signal.aborted) throw e;
     });
     if (signal.aborted) throw signal.reason;
     if (full)
@@ -634,12 +636,10 @@ export async function dropOffline(g: GameEntry): Promise<void> {
   // (DROP_AT_ONCE at a time: not thousands of file removals started together)
   const go = hashes.filter((h) => !keep.has(h));
   let next = 0;
-  await Promise.all(
-    Array.from({ length: Math.min(DROP_AT_ONCE, go.length) }, async () => {
-      while (next < go.length)
-        await cache.delete(new URL(chunkPath(go[next++]!), store()).href).catch(() => false);
-    }),
-  );
+  await workers(Math.min(DROP_AT_ONCE, go.length), async () => {
+    while (next < go.length)
+      await cache.delete(new URL(chunkPath(go[next++]!), store()).href).catch(() => false);
+  });
   void onDevice(true).catch(() => undefined);
 }
 

@@ -276,6 +276,96 @@ pub(super) fn logic_ops(tree: &Tree) -> Hits {
     out
 }
 
+// --- snorm-targets ------------------------------------------------------------------------------
+
+/// 8-bit SNORM render targets (2026-11-22: kura dropped every clear of and draw to them,
+/// WebGPU rendering to no SNORM format)
+const SNORM_SITES: [(&str, &str, &str); 16] = [
+    ("crates/kura/src/d3d11/mod.rs", "logic::twin_of(", "a draw to an SNORM target is not drawn to its SINT twin (logic::twin_of)"),
+    ("crates/kura/src/d3d11/mod.rs", "logic::snorm_twin(*fmt).is_some()", "ClearRenderTargetView of an SNORM view does not write its texels (the page clears no SNORM pass)"),
+    ("crates/kura/src/d3d11/mod.rs", "logic::split(&w, &copies, stash.as_ref(), &twins,", "a draw's SNORM twins are not loaded before its primitives and stored back after (logic::split)"),
+    ("crates/kura/src/d3d11/logic.rs", "31 => Some((f::P_RGBA8SI, [8, 8, 8, 8])),", "R8G8B8A8_SNORM views have no SINT twin"),
+    ("crates/kura/src/d3d11/logic.rs", "51 => Some((f::P_RG8SI, [8, 8, 0, 0])),", "R8G8_SNORM views have no SINT twin"),
+    ("crates/kura/src/d3d11/logic.rs", "63 => Some((f::P_R8SI, [8, 0, 0, 0])),", "R8_SNORM views have no SINT twin"),
+    ("crates/kura/src/d3d11/logic.rs", "store: Store::Snorm(b)", "an SNORM target's store does not carry its blend (logic::targets)"),
+    ("crates/dxwgsl/src/wgsl.rs", "Store::Snorm(blend) =>", "an SNORM target's output does not go through logic_output's store and blend"),
+    ("crates/dxwgsl/src/snorm.rs", "kome::num::trunc_i8((clamp_src(v) * 127.0).round())", "an SNORM store no longer rounds WARP's way (the f32 product, halves away from zero; winref d3d11snorm)"),
+    ("crates/dxwgsl/src/snorm.rs", "if v.is_nan() { -1.0 } else { v.clamp(-1.0, 1.0) }", "a NaN output to an SNORM target is not -127 (WARP writes NaN as -127; winref d3d11snorm)"),
+    ("crates/kura/src/d3d11/clear.rs", "let q = trunc_i64(f64::from((v.clamp(-1.0, 1.0) * max).round()));", "an SNORM clear no longer rounds halves away from zero (winref d3d11snorm: 2.5 / 127 clears to 3)"),
+    ("crates/dxwgsl/src/snorm.rs", "format!(\"sn_r1({s} * {}, sn_z)\", e.src.wgsl(c))", "an SNORM blend's products are no longer kept from fusing with the add (an FMA rounds once: 1.9 * -5/127 blends to -10, WARP to -9)"),
+    ("crates/dxwgsl/src/snorm.rs", "const SN_LOAD = array<u32, 256>(", "the shader's SNORM load divides (WGSL's division is not exact: the blend's last bit differs from WARP's); it reads load()'s table"),
+    ("crates/dxwgsl/src/wgsl.rs", "\"let sn_k = sn_clamp(sn_kv);\"", "an SNORM blend's constant is not clamped to -1..1 in the shader (WARP blends 1.5 as 1; winref d3d11snorm)"),
+    ("crates/kura/src/d3d11/mod.rs", "and_then(dxwgsl::snorm::Blend::of).is_some_and(|b| b.takes()))?;", "CreateBlendState takes MIN / MAX with a dual-source factor (WARP: E_INVALIDARG; winref d3d11snorm)"),
+    ("crates/dxwgsl/src/snorm.rs", "#[path = \"snorm_tests.rs\"]", "the SNORM conversions and blend are no longer checked against WARP's answers (snorm_tests.rs)"),
+];
+
+/// SNORM targets dropped
+pub(super) fn snorm_targets(tree: &Tree) -> Hits {
+    let mut out = Hits::new();
+    for (path, needle, why) in SNORM_SITES {
+        let f = Rel::new(path);
+        if tree.is_made_up() && !tree.has(&f) {
+            continue;
+        }
+        let code = tree.code(&f, true);
+        if !code.contains(needle) {
+            out.push((f, 1, why.to_owned()));
+        }
+    }
+    out
+}
+
+// --- kura-review-6852be1 ------------------------------------------------------------------------
+
+/// What the review of kura at 6852be1 found wrong, fixed (2026-11-22), each by its spelling in
+/// the code (comments left out): (file, text it must hold, what is wrong without it).
+pub(super) const REVIEW_6852BE1_HAS: [(&str, &str, &str); 15] = [
+    ("crates/kura/src/d3d11/hazards.rs", "out.extend(st.so.iter()", "stream output targets are not outputs: a vertex buffer of one stays bound (D3D11 unbinds it)"),
+    ("crates/kura/src/d3d11/hazards.rs", "for vb in st.vbs.iter_mut()", "the vertex buffers checked are not all 32 slots"),
+    ("crates/kura/src/d3d11/mod.rs", "hazards::after_outputs(d, st);\n        }\n        35 => {", "OMSetRenderTargetsAndUnorderedAccessViews with KEEP render targets does not resolve its new UAVs"),
+    ("crates/kura/src/jit.rs", "struct SharedCache", "the shared JIT cache's byte count is kept apart from its map (it drifted)"),
+    ("crates/kura/src/jit.rs", "jit::TABLE_SLOTS", "the JIT table's size is not koji's (the loader's 20-bit index)"),
+    ("host/vnjit.js", "VNJIT.slots", "vnjitRoom does not refuse a table index past the slots the loader encodes"),
+    ("crates/kura/src/vfs.rs", "fn change<R: Refused>", "a change of the shared namespace answers success whether or not it was published"),
+    ("crates/kura/src/vfs/shared.rs", "fs.undo();", "a change the shared buffer could not take is kept here (lost at the next snapshot)"),
+    ("crates/kura/src/vfs.rs", "x.allows(Use::Read, false)?", "a handle is read without the access it was opened with"),
+    ("crates/kura/src/d3d9/gpu.rs", "pub struct Readback(u32)", "readback ids are a number each device counts (two devices waited on each other's)"),
+    ("crates/kura/src/snap.rs", "fn wait_resume(", "a stop the page gave up on waits for RESUME for ever"),
+    ("web/src/savestate.ts", "word(CANCEL)", "the page does not cancel a stop request it gave up on"),
+    ("crates/kura/src/vfs/saves.rs", "Out::Gone(was)", "a store file deleted or renamed is not in the saves (it comes back at the next start)"),
+    ("crates/kura/src/vfs.rs", "fs.base = fs.entries();", "the saves are not told against the namespace the store gave"),
+    ("web/src/file-records.ts", "(first & TAG) >>> 0 === TAG", "the page does not read kura's tagged records (gone names, directories, store files)"),
+];
+
+/// (file, text it must not hold, what is wrong with it)
+pub(super) const REVIEW_6852BE1_NOT: [(&str, &str, &str); 7] = [
+    ("crates/kura/src/d3d11/hazards.rs", "0..16", "a fixed slot count: the slots past it are not checked"),
+    ("crates/kura/src/d3d11/hazards.rs", "0..128", "a fixed slot count: the slots past it are not checked"),
+    ("crates/kura/src/jit.rs", "SHARED_BYTES", "a byte count of the shared cache apart from what the map holds"),
+    ("host/vnjit.js", "1 << 20", "a table limit of its own, not the loader's (VNJIT.slots)"),
+    ("crates/kura/src/vfs.rs", "fn with<R>(", "an operation whose result does not say that its change was not published"),
+    ("crates/kura/src/snap.rs", "wait_cmd(CMD_RESUME)", "a wait for RESUME the page cannot cancel"),
+    ("crates/kura/src/adec.rs", "LIST_FROM", "the stream list's start kept between calls (a page of it taken for the whole)"),
+];
+
+/// a fix of the review of 6852be1 taken back
+pub(super) fn review_6852be1(tree: &Tree) -> Hits {
+    let mut out = Hits::new();
+    let sites = REVIEW_6852BE1_HAS.iter().map(|x| (x, true)).chain(REVIEW_6852BE1_NOT.iter().map(|x| (x, false)));
+    for ((path, needle, why), has) in sites {
+        let f = Rel::new(path);
+        if tree.is_made_up() && !tree.has(&f) {
+            continue;
+        }
+        let code = tree.code(&f, true);
+        if code.contains(needle) != has {
+            let line = if has { 1 } else { code.split(needle).next().map_or(1, |b| b.lines().count().max(1)) };
+            out.push((f, line, (*why).to_owned()));
+        }
+    }
+    out
+}
+
 // --- d3d9-status-codes ------------------------------------------------------------------------
 
 /// d3d9.h's codes by name: MAKE_D3DHRESULT(code) = 0x8876_0000 | code (D3DERR_), MAKE_D3DSTATUS
@@ -436,10 +526,15 @@ static KANI_FOR: LazyLock<Option<Regex>> = LazyLock::new(|| rx(r"(?m)^\s*for\s+c
 static KANI_GATE: LazyLock<Option<Regex>> = LazyLock::new(|| rx(r"#!\[\s*cfg_attr\s*\(\s*kani\s*,\s*feature\s*\(([^)]*)\)\s*\)\s*\]"));
 static KANI_USES: LazyLock<Vec<(&'static str, Option<Regex>)>> = LazyLock::new(|| KANI_UNSTABLE.iter().map(|(f, r)| (*f, rx(r))).collect());
 
+/// the crates formal/kani.sh runs `cargo kani` in (`crates/x`)
+fn kani_roots(tree: &Tree) -> Vec<String> {
+    let script = tree.text(&Rel::new(KANI_SCRIPT));
+    KANI_FOR.as_ref().and_then(|r| r.captures(&script)).and_then(|c| c.get(1)).map_or_default(|m| m.as_str().split_whitespace().map(|c| format!("crates/{c}")).collect())
+}
+
 /// the crates `cargo kani` compiles: the script's and every crate they link by path
 pub(super) fn kani_crates(tree: &Tree) -> BTreeSet<String> {
-    let script = tree.text(&Rel::new(KANI_SCRIPT));
-    let roots: Vec<String> = KANI_FOR.as_ref().and_then(|r| r.captures(&script)).and_then(|c| c.get(1)).map_or_default(|m| m.as_str().split_whitespace().map(|c| format!("crates/{c}")).collect());
+    let roots = kani_roots(tree);
     let mut seen = BTreeSet::new();
     let mut todo = roots;
     while let Some(c) = todo.pop() {
@@ -485,6 +580,76 @@ pub(super) fn kani_features(tree: &Tree) -> Hits {
                     out.push((f.clone(), l, format!("uses {feature}, unstable in Kani's compiler: {lib} needs `#![cfg_attr(kani, feature({feature}))]`")));
                 }
             }
+        }
+    }
+    out
+}
+
+// --- kani-cover -------------------------------------------------------------------------------
+
+/// The `#[kani::proof]` fns of a file (in any module, `#[cfg(kani)]` ones included): (name,
+/// line, whether it narrows its inputs, whether it has a `kani::cover!`)
+fn kani_proofs(file: &syn::File) -> Vec<(String, usize, bool, bool)> {
+    use quote::ToTokens;
+    use syn::visit::Visit;
+    struct V(Vec<(String, usize, bool, bool)>);
+    impl<'a> Visit<'a> for V {
+        fn visit_item_fn(&mut self, f: &'a syn::ItemFn) {
+            let proof = f.attrs.iter().any(|a| {
+                let p: Vec<String> = a.path().segments.iter().map(|s| s.ident.to_string()).collect();
+                p == ["kani", "proof"]
+            });
+            if proof {
+                let toks = f.block.to_token_stream().to_string();
+                let words: Vec<&str> = toks.split_whitespace().collect();
+                let body: String = words.concat();
+                let narrows = body.contains("kani::assume(") || words.contains(&"return");
+                let covers = body.contains("kani::cover!(");
+                self.0.push((f.sig.ident.to_string(), crate::syntax::line(f.sig.ident.span()), narrows, covers));
+            }
+            syn::visit::visit_item_fn(self, f);
+        }
+    }
+    let mut v = V(Vec::new());
+    v.visit_file(file);
+    v.0
+}
+
+pub(super) fn kani_cover(tree: &Tree) -> Hits {
+    let mut out = Hits::new();
+    // (the script's own crates: `cargo kani` in a crate checks that crate's proofs, not those of
+    // the crates it links)
+    let run: BTreeSet<String> = kani_roots(tree).into_iter().collect();
+    for f in tree.rs(&["crates/"]) {
+        let Ok(file) = syn::parse_file(&tree.text(&f)) else { continue };
+        let proofs = kani_proofs(&file);
+        for (name, l, narrows, covers) in &proofs {
+            if *narrows && !covers {
+                out.push((f.clone(), *l, format!("Kani proof `{name}` narrows its inputs (assume / return / let-else) but has no `kani::cover!`: show the cases it is about are reached")));
+            }
+        }
+        // (crates/<c>/src/..: the crate is crates/<c>)
+        let mut parts = f.0.splitn(3, '/');
+        let (Some(_), Some(c)) = (parts.next(), parts.next()) else { continue };
+        let krate = format!("crates/{c}");
+        if let Some((name, l, ..)) = proofs.first()
+            && !run.contains(&krate)
+        {
+            out.push((f.clone(), *l, format!("Kani proof `{name}` is in {krate}, which formal/kani.sh does not run (`for c in ...; do`)")));
+        }
+    }
+    out
+}
+
+// --- verus-mirror -----------------------------------------------------------------------------
+
+pub(super) fn verus_mirror(tree: &Tree) -> Hits {
+    let mut out = Hits::new();
+    let read: String = tree.rs(&["crates/"]).iter().map(|f| tree.text(f)).filter(|t| t.contains("formal/verus/")).collect();
+    for f in tree.rs(&["formal/verus/"]) {
+        let Some(name) = f.as_str().rsplit('/').next() else { continue };
+        if !read.contains(&format!("formal/verus/{name}\")")) {
+            out.push((f.clone(), 1, format!("no test reads {f} (`include_str!(\"../../../formal/verus/{name}\")` in a test of the code it is a copy of, comparing the two)")));
         }
     }
     out

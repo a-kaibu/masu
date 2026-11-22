@@ -4,6 +4,7 @@
 
 import { useSyncExternalStore } from "react";
 import type { AutoMode } from "../autoadvance";
+import type { Status } from "../status";
 
 export interface BenchView {
   /** what is running, or the result */
@@ -19,7 +20,7 @@ export interface BenchView {
 }
 
 export interface UiState {
-  status: string;
+  status: Status;
   start: { label: string; shown: boolean; disabled: boolean; onClick?: () => void };
   /** the game's cover behind the loading messages, until it draws */
   splash: string | null;
@@ -60,7 +61,7 @@ export interface StatesView {
 }
 
 let state: UiState = {
-  status: "準備中",
+  status: { phase: "working", text: "準備中" },
   start: { label: "起動", shown: false, disabled: false },
   splash: null,
   stats: [],

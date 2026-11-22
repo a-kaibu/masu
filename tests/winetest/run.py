@@ -1,6 +1,14 @@
 #!/usr/bin/env python3
 """Runs Wine's conformance tests (built by tests/winetest/build.sh) on sake's node build and
-compares the results with tests/winetest/expected-<arch>.tsv.
+compares the results with tests/winetest/expected-<arch>.tsv. --suite rostests does the same
+for ReactOS's API tests (tests/rostests/build.sh, tests/rostests/expected-<arch>.tsv).
+
+ReactOS's tests were written against ReactOS as much as Windows, so a rostests run on sake
+takes only the tests Windows passes: tests/rostests/windows-<arch>.tsv, written by --native on
+a Windows machine (the test programs run there directly, no sake). A test Windows fails is not
+run on sake; a test its program lists that Windows' results lack fails the run (not measured).
+Each rostests test runs in its own copy of the bin directory (hard links), as ReactOS runs them
+from theirs (cwd there): the files they read and the ones they write stay theirs.
 
 Every test program is asked for its tests (--list) and each test runs as its own process, in a
 fresh C:\\ (SAKE_C), with a time limit. A test's result is one of
@@ -22,8 +30,8 @@ A run fails (exit 1) on a regression against the expected file: a test that got 
 least). Better results are
 listed; --update writes the new results as the expected ones.
 
-  tests/winetest/run.py [--arch i386] [--update] [-j N] [--shard i/n] [dll[:test] ...]
-  SAKE=target/sake-out/sake.js WINETEST=target/winetest
+  tests/winetest/run.py [--suite rostests] [--arch i386] [--update] [-j N] [--shard i/n] [--native] [dll[:test] ...]
+  SAKE=target/sake-out/sake.js WINETEST=target/winetest ROSTESTS=target/rostests
 
 Also written: $WINETEST/report-<arch>.md (per-dll totals, the most-called unimplemented
 functions, the first failure messages of each test) and results-<arch>.tsv.
@@ -42,16 +50,29 @@ import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(os.path.dirname(HERE))
+# per suite: its directory (dlls.txt, expected-<arch>.tsv), its test program's name, the
+# variable naming its build directory, what its result files say they hold, and whether its
+# tests take only what Windows passes (windows-<arch>.tsv) and run in a copy of their bin dir
+SUITES = {
+    "winetest": dict(dir=HERE, exe="{}_test.exe", env="WINETEST", title="Wine 11.20 tests", windows=False),
+    "rostests": dict(dir=os.path.join(ROOT, "tests", "rostests"), exe="{}_apitest.exe", env="ROSTESTS",
+                     title="ReactOS 303d27d6 API tests", windows=True),
+}
 RANK = {"ok": 0, "fail": 1, "crash": 2, "timeout": 2}
 SUMMARY = re.compile(r"^(?:([0-9a-f]{4,}):)?([^\s:]+): (\d+) tests executed \((\d+) marked as todo, (?:(\d+) as flaky, )?(\d+) failures?\), (\d+) skipped\.")
-FAILED = re.compile(r"^(?:[0-9a-f]{4}:)?\S+\.c:\d+:(?:\d+\.\d+ )?(?: Test failed:|Test failed:| unhandled exception)")
+FAILED = re.compile(r"^(?:[0-9a-f]{4}:)?\S+\.(?:c|cpp):\d+:(?:\d+\.\d+ )?(?: Test failed:|Test failed:| unhandled exception)")
 CRASH = re.compile(r"panicked|RuntimeError|Aborted|unhandled|sake: .*(exception|fault|unknown|not supported)")
 PID = re.compile(r"^([0-9a-f]{4,}):")
 UNIMPL = re.compile(r"^sake: unimplemented (\S+?) ")
 
 
+def command(sake, exe, *args):
+    """the command running a test program: on sake (node) or, with no sake (--native), itself"""
+    return ([exe] if sake is None else ["node", sake, exe]) + list(args)
+
+
 def list_tests(sake, exe, env):
-    p = subprocess.run(["node", sake, exe, "--list"], capture_output=True, text=True, errors="replace", env=env, timeout=120)
+    p = subprocess.run(command(sake, exe, "--list"), capture_output=True, text=True, errors="replace", env=env, timeout=120)
     out = p.stdout + p.stderr
     names = [l.strip() for l in out.split("Valid test names:", 1)[-1].splitlines() if l.startswith("    ")]
     return names
@@ -61,8 +82,26 @@ HOSTS = "".join(f"127.0.0.1 {n}\n" for n in (
     "winehq.org", "test.winehq.org", "source.winehq.org", "www.kernel.org", "xn--zckzah.winehq.org"))
 
 
-def run_one(sake, exe, test, timeout, fonts, no_exec=False):
+def link_tree(src, dst):
+    """dst: a copy of src's files as hard links (copies where the file system has none)"""
+    for d, _, files in os.walk(src):
+        o = os.path.join(dst, os.path.relpath(d, src))
+        os.makedirs(o, exist_ok=True)
+        for f in files:
+            try:
+                os.link(os.path.join(d, f), os.path.join(o, f))
+            except OSError:
+                shutil.copy2(os.path.join(d, f), os.path.join(o, f))
+
+
+def run_one(sake, exe, test, timeout, fonts, no_exec=False, own_bin=None):
+    """own_bin: the directory to run the test from, a fresh copy of exe's (rostests)"""
     c = tempfile.mkdtemp(prefix="winetest-c-")
+    cwd = c
+    if own_bin is not None:
+        cwd = tempfile.mkdtemp(prefix="bin-", dir=own_bin)
+        link_tree(os.path.dirname(exe), cwd)
+        exe = os.path.join(cwd, os.path.basename(exe))
     for d in ("windows/temp", "windows/system32", "users/user/desktop"):
         os.makedirs(os.path.join(c, d), exist_ok=True)
     if fonts:
@@ -78,7 +117,8 @@ def run_one(sake, exe, test, timeout, fonts, no_exec=False):
     t0 = time.time()
     # (its own process group: the children it started end with it, and none outlives the run
     # holding the output pipe open)
-    p = subprocess.Popen(["node", sake, exe, test], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, env=env, cwd=c, start_new_session=True)
+    p = subprocess.Popen(command(sake, exe, test), stdout=subprocess.PIPE, stderr=subprocess.STDOUT, env=env, cwd=cwd,
+                         **({} if os.name == "nt" else dict(start_new_session=True)))
     try:
         raw, _ = p.communicate(timeout=timeout)
         timed_out = False
@@ -89,11 +129,18 @@ def run_one(sake, exe, test, timeout, fonts, no_exec=False):
     finally:
         killpg(p.pid)
         shutil.rmtree(c, ignore_errors=True)
+        if cwd != c:
+            shutil.rmtree(cwd, ignore_errors=True)
     out = (raw or b"").decode(errors="replace")
     return parse(test, out, timed_out, time.time() - t0)
 
 
 def killpg(pid):
+    """ends the process and every process it started"""
+    if os.name == "nt":
+        # (Windows: the tree by parent ids; a finished one is already gone, taskkill says so)
+        subprocess.run(["taskkill", "/F", "/T", "/PID", str(pid)], capture_output=True, check=False)
+        return
     try:
         os.killpg(pid, signal.SIGKILL)
     except (ProcessLookupError, PermissionError):
@@ -127,12 +174,41 @@ def parse(test, out, timed_out, secs):
 def read_tsv(path):
     res = {}
     if os.path.exists(path):
-        for l in open(path):
+        for l in open(path, encoding="utf-8"):
             if l.startswith("#") or not l.strip():
                 continue
             k, status, failures, *rest = l.rstrip("\n").split("\t")
             res[k] = (status, int(failures), rest[0] if rest else "")
     return res
+
+
+def adopt(jobs, windows):
+    """rostests: the planned tests Windows passes, and the ones it fails or was not asked.
+    windows: {dll:test: (status, failures, executed)} of --native on Windows.
+    -> ([(dll, exe, test)] Windows passes, [dll:test] Windows fails, [problem])"""
+    keep, dropped, problems = [], [], []
+    for d, exe, t in jobs:
+        k = f"{d}:{t}"
+        if k not in windows:
+            problems.append(f"{k}: not measured on Windows (windows file lacks it: run --native on Windows, --update)")
+        elif windows[k][0] == "ok":
+            keep.append((d, exe, t))
+        else:
+            dropped.append(k)
+    return keep, dropped, problems
+
+
+def dll_list(path, arch):
+    """the dlls of a dlls.txt: the first word of each line; only:<arch> keeps a line to that arch"""
+    out = []
+    for l in open(path):
+        w = l.split()
+        if not w or l.startswith("#"):
+            continue
+        only = [x[5:] for x in w[1:] if x.startswith("only:") and len(x) > 5]
+        if not only or arch in only:
+            out.append(w[0])
+    return out
 
 
 def plan(listed, sel, expected, explicit):
@@ -172,6 +248,9 @@ def plan(listed, sel, expected, explicit):
 
 def main():
     ap = argparse.ArgumentParser()
+    ap.add_argument("--suite", choices=sorted(SUITES), default="winetest")
+    ap.add_argument("--native", action="store_true",
+                    help="run the test programs themselves, not on sake (on Windows): the results are windows-<arch>.tsv's")
     ap.add_argument("--arch", default="i386")
     ap.add_argument("--update", action="store_true")
     ap.add_argument("--expected", help="explicit baseline (all its tests must run)")
@@ -183,13 +262,23 @@ def main():
     ap.add_argument("--no-exec", action="store_true", help="start no child processes (SAKE_NO_EXEC)")
     ap.add_argument("only", nargs="*")
     a = ap.parse_args()
-    sake = os.path.abspath(os.environ.get("SAKE", os.path.join(ROOT, "target/sake-out/sake.js")))
-    w = os.path.abspath(os.environ.get("WINETEST", os.path.join(ROOT, "target/winetest")))
+    suite = SUITES[a.suite]
+    sdir = suite["dir"]
+    if a.native and not suite["windows"]:
+        ap.error("--native: only for a suite measured on Windows (rostests)")
+    if a.native and os.name == "nt":
+        # (inherited by the tests: a crash ends the test with its exception code, not with
+        # Windows' error report dialog waiting out the time limit)
+        import ctypes
+        ctypes.windll.kernel32.SetErrorMode(0x0001 | 0x0002 | 0x8000)  # FAILCRITICALERRORS NOGPFAULTERRORBOX NOOPENFILEERRORBOX
+    sake = None if a.native else os.path.abspath(os.environ.get("SAKE", os.path.join(ROOT, "target/sake-out/sake.js")))
+    w = os.path.abspath(os.environ.get(suite["env"], os.path.join(ROOT, "target", a.suite)))
     bindir = os.path.join(w, "bin", a.arch)
-    dlls = [l.split()[0] for l in open(os.path.join(HERE, "dlls.txt")) if l.strip() and not l.startswith("#")]
-    gpu = [l.split()[0] for l in open(os.path.join(HERE, "browser.txt")) if l.strip() and not l.startswith("#")]
+    dlls = dll_list(os.path.join(sdir, "dlls.txt"), a.arch)
+    browser_txt = os.path.join(sdir, "browser.txt")
+    gpu = dll_list(browser_txt, a.arch) if os.path.exists(browser_txt) else []
     dlls = [d for d in dlls if (d in gpu) == a.browser]
-    suffix = "-browser" if a.browser else ""
+    suffix = ("-browser" if a.browser else "") + ("-windows" if a.native else "")
     sel = collections.defaultdict(set)
     for o in a.only:
         d, _, t = o.partition(":")
@@ -197,17 +286,28 @@ def main():
     if sel:
         dlls = [d for d in dlls if d in sel] + [d for d in sel if d not in dlls]
 
-    exp_path = a.expected or os.path.join(HERE, f"expected-{a.arch}{suffix}.tsv")
+    # (--native measures Windows: its baseline is the Windows file)
+    exp_path = a.expected or os.path.join(sdir, f"windows-{a.arch}.tsv" if a.native else f"expected-{a.arch}{suffix}.tsv")
     if a.expected and not os.path.isfile(exp_path):
         raise FileNotFoundError(exp_path)
     expected = read_tsv(exp_path)
     env = dict(os.environ, SAKE_C=tempfile.mkdtemp(prefix="winetest-c-"), SAKE_NO_EXEC="1")  # (listing only)
     listed = {}
     for d in dlls:
-        exe = os.path.join(bindir, d.split(".")[0] + "_test.exe")
+        exe = os.path.join(bindir, suite["exe"].format(d.split(".")[0]))
         listed[d] = (exe, list_tests(sake, exe, env) if os.path.exists(exe) else None)
     shutil.rmtree(env["SAKE_C"], ignore_errors=True)
     all_jobs, unplanned = plan(listed, sel, expected, bool(a.expected))
+    not_adopted = []
+    if suite["windows"] and not a.native:
+        win_path = os.path.join(sdir, f"windows-{a.arch}.tsv")
+        if not os.path.isfile(win_path):
+            raise FileNotFoundError(win_path)
+        all_jobs, not_adopted, missing = adopt(all_jobs, read_tsv(win_path))
+        unplanned += missing
+        # (an expected row of a test Windows fails is not planned, and it is no problem)
+        unplanned = [p for p in unplanned if p.split(": ", 1)[0] not in not_adopted]
+        print(f"windows: {len(not_adopted)} tests Windows fails are not run", file=sys.stderr)
     si, sn = map(int, a.shard.split("/"))
     jobs = all_jobs[si::sn]
     print(f"plan: {len(jobs)} of {len(all_jobs)} tests (shard {a.shard})", file=sys.stderr)
@@ -226,8 +326,12 @@ def main():
             results[f"{d}:{t}"] = r
             print(f"{r['status']:7} {d}:{t} {r['executed']} tests, {r['failures']} failures", flush=True)
         shutil.rmtree(out, ignore_errors=True)
+    own_bin = None
+    if suite["windows"]:
+        own_bin = os.path.join(w, "run", a.arch)
+        os.makedirs(own_bin, exist_ok=True)
     with concurrent.futures.ThreadPoolExecutor(a.j) as pool:
-        futs = {pool.submit(run_one, sake, exe, t, a.timeout, a.fonts, a.no_exec): (d, t) for d, exe, t in ([] if a.browser else jobs)}
+        futs = {pool.submit(run_one, sake, exe, t, a.timeout, a.fonts, a.no_exec, own_bin): (d, t) for d, exe, t in ([] if a.browser else jobs)}
         for f in concurrent.futures.as_completed(futs):
             d, t = futs[f]
             r = f.result()
@@ -235,7 +339,8 @@ def main():
             print(f"{r['status']:7} {d}:{t} {r['executed']} tests, {r['failures']} failures ({r['secs']:.0f}s)", flush=True)
 
     # tests whose failure count depends on thread timing: only their status is compared
-    flaky = {l.split()[0] for l in open(os.path.join(HERE, "flaky.txt")) if l.strip() and not l.startswith("#")}
+    flaky_txt = os.path.join(sdir, "flaky.txt")
+    flaky = {l.split()[0] for l in open(flaky_txt) if l.strip() and not l.startswith("#")} if os.path.exists(flaky_txt) else set()
     worse, better = list(unplanned), []
     # (every planned test answered: a job that left no result is a test that did not run)
     worse.extend(f"{d}:{t}: planned, no result" for d, _, t in jobs if f"{d}:{t}" not in results)
@@ -252,8 +357,10 @@ def main():
     new = sorted(k for k in results if k not in expected)
 
     def tsv(path):
-        with open(path, "w") as f:
-            f.write(f"# tests/winetest/run.py --arch {a.arch}: <dll>:<test> status failures executed (Wine 11.20 tests on sake)\n")
+        with open(path, "w", encoding="utf-8", errors="replace") as f:
+            where = "on Windows" if a.native else "on sake"
+            f.write(f"# tests/winetest/run.py --suite {a.suite} --arch {a.arch}{' --native' if a.native else ''}: "
+                    f"<dll>:<test> status failures executed ({suite['title']} {where})\n")
             keep = {k: v for k, v in expected.items() if k not in results} if path == exp_path else {}
             rows = {k: (r["status"], r["failures"], r["executed"]) for k, r in results.items()}
             # (the rows not run this time stay as they were, their executed count too)
@@ -263,11 +370,13 @@ def main():
                 f.write(f"{k}\t{s}\t{n}\t{e}\n")
 
     tsv(os.path.join(w, f"results-{a.arch}{suffix}.tsv"))
-    report(os.path.join(w, f"report-{a.arch}{suffix}.md"), a.arch, results, worse, better)
+    report(os.path.join(w, f"report-{a.arch}{suffix}.md"), suite["title"] + (" on Windows" if a.native else " on sake"),
+           a.arch, results, worse, better, not_adopted)
     if a.update:
         tsv(exp_path)
     counts = collections.Counter(r["status"] for r in results.values())
-    print(f"\n{len(results)} tests: " + ", ".join(f"{counts[s]} {s}" for s in RANK))
+    print(f"\n{len(results)} tests: " + ", ".join(f"{counts[s]} {s}" for s in RANK)
+          + (f" ({len(not_adopted)} Windows fails not run)" if not_adopted else ""))
     for l in better:
         print(f"better  {l}")
     for k in new:
@@ -284,7 +393,7 @@ def main():
     return 0
 
 
-def report(path, arch, results, worse, better):
+def report(path, title, arch, results, worse, better, not_adopted=()):
     by_dll = collections.defaultdict(list)
     for k, r in results.items():
         by_dll[k.split(":")[0]].append(r)
@@ -293,8 +402,8 @@ def report(path, arch, results, worse, better):
     for r in results.values():
         unimpl.update(r["unimpl"])
         unimpl_tests.update(r["unimpl"].keys())
-    with open(path, "w") as f:
-        f.write(f"# Wine 11.20 conformance tests on sake ({arch})\n\n")
+    with open(path, "w", encoding="utf-8", errors="replace") as f:
+        f.write(f"# {title} ({arch})\n\n")
         f.write("| dll | tests | ok | fail | crash | timeout | checks run | failed checks |\n|---|---|---|---|---|---|---|---|\n")
         tot = collections.Counter()
         for d in sorted(by_dll):
@@ -309,6 +418,8 @@ def report(path, arch, results, worse, better):
         f.write(f"| **all** | {tot['tests']} | {tot['ok']} | {tot['fail']} | {tot['crash']} | {tot['timeout']} | {tot['executed']} | {tot['failures']} |\n\n")
         if worse or better:
             f.write("## Changes against the expected results\n\n" + "".join(f"- worse: {l}\n" for l in worse) + "".join(f"- better: {l}\n" for l in better) + "\n")
+        if not_adopted:
+            f.write("## Not run: Windows fails them\n\n" + "".join(f"- {k}\n" for k in sorted(not_adopted)) + "\n")
         f.write("## Unimplemented functions, by the number of tests that called them\n\n")
         for fn, n in unimpl_tests.most_common(150):
             f.write(f"- {fn}: {n} tests ({unimpl[fn]} calls)\n")

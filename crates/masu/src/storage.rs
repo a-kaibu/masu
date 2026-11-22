@@ -145,6 +145,7 @@ mod tests {
 #[cfg(test)]
 pub(crate) mod gc_tests {
     use super::*;
+    mod saves_trace;
     use axum::{body::Bytes, extract::{Path as UrlPath, State}, http::StatusCode, response::IntoResponse, routing::get, Router};
     use std::sync::{atomic::{AtomicUsize, Ordering::SeqCst}, Arc, Mutex};
 

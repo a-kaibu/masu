@@ -168,6 +168,42 @@ pub fn ntdll_own_crt(tree: &Tree) -> Hits {
     NTDLL_OWN_CRT.iter().filter(|n| !have.contains(**n)).map(|n| (at.clone(), 1, format!("ntdll!{n} has no handler of its own: msvcrt's (or the unimplemented trap) would answer"))).collect()
 }
 
+/// The msvcrt imports of mingw-w64's startup code (gcc 13, i686 and x86_64 `int main(){}`) and of
+/// ReactOS's apitests (their startup code and wine/test.h): every program built either way calls
+/// them before or around main.
+pub const CRT_STARTUP: &[&str] = &[
+    "__C_specific_handler", "__dllonexit", "__getmainargs", "__initenv", "__iob_func", "__lconv_init",
+    "__p__commode", "__p__fmode", "__set_app_type", "__setusermatherr", "_acmdln", "_amsg_exit", "_cexit",
+    "_commode", "_fmode", "_fpreset", "_initterm", "_iob", "_lock", "_onexit", "_strdup", "_swprintf", "_unlock",
+    "abort", "atoi", "calloc", "exit", "fflush", "fprintf", "free", "fwrite", "malloc", "memcpy", "memmove",
+    "memset", "setvbuf", "signal", "sprintf", "strcmp", "strcpy", "strlen", "strncmp", "strrchr", "vfprintf",
+    "wcscat", "wcscmp", "wcscpy",
+];
+
+static REG_LIST: LazyLock<Option<Regex>> = LazyLock::new(|| Regex::new(r"(?:reg|noreturn)!\(([^)]*)\)").ok());
+
+/// `crt-startup`: each CRT_STARTUP name has a handler or a variable in sake's product code: a
+/// string literal naming it (implement("msvcrt", "name", ..), a (name, handler) table, a data
+/// export's name) or an entry of a reg!(..) / noreturn!(..; ..) list
+pub fn crt_startup(tree: &Tree) -> Hits {
+    let mut have = std::collections::BTreeSet::new();
+    for p in tree.rs(&["crates/sake/src/"]) {
+        let code = tree.code(&p, true);
+        for n in CRT_STARTUP {
+            if code.contains(&format!("\"{n}\"")) {
+                have.insert((*n).to_string());
+            }
+        }
+        for c in REG_LIST.as_ref().into_iter().flat_map(|re| re.captures_iter(&code)) {
+            for n in c.get(1).map_or("", |m| m.as_str()).split([',', ';']) {
+                have.insert(n.trim().to_string());
+            }
+        }
+    }
+    let at = Rel::new("crates/sake/src/crt.rs");
+    CRT_STARTUP.iter().filter(|n| !have.contains(**n)).map(|n| (at.clone(), 1, format!("msvcrt!{n} has no handler: every program's startup code gets the unimplemented stub's answer"))).collect()
+}
+
 /// `utf8-one-decoder`: `utf8_chunks(` in sake's code only in rtlstr.rs (Windows' UTF-8 rule)
 pub fn utf8_one_decoder(tree: &Tree) -> Hits {
     let mut out = Hits::new();

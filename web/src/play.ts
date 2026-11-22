@@ -23,7 +23,7 @@ import { chunkCacheMb } from "./chunkcache";
 import { keepSaving, loadSaves, movedSaves, type LoadOutcome, type SavesModule } from "./saves";
 import { memGate } from "./memgate";
 import { startWebGame } from "./html";
-import { inputTarget, ProcessTable } from "./session";
+import { inputTarget, pageGame, ProcessTable } from "./session";
 import { argsText, hasRun, missingFeature, readPlan, SAKE_NEEDS, sakeArguments } from "./launch-plan";
 import { linuxKeycode } from "./keymap";
 import { AutoAdvance, DEFAULT_SETTINGS, parseSettings, type AutoSettings } from "./autoadvance";
@@ -40,6 +40,7 @@ import {
   nextRunUrl,
   type GameEntry,
 } from "./launcher";
+import { NO_STATUS, statusText, type Status } from "./status";
 import { getUi, setStart, setUi } from "./ui/store";
 import { renderShell } from "./ui/Shell";
 import { showLibrary } from "./ui/Library";
@@ -69,7 +70,8 @@ import {
   versioned,
 } from "./runtime";
 import { checkOnline, startApp } from "./pwa";
-import { Budget, pool } from "./ahead";
+import { Budget } from "./ahead";
+import { pool, workers } from "./jobs";
 import { startWarm, warmAllowed, warmBusyWidth, warmMax, type Warm } from "./warm";
 import { savedChunks } from "./offline";
 import { keepServerWasm } from "./wasmkeep";
@@ -176,11 +178,15 @@ const MOUSE_MOVE = 1,
   KEY_DOWN = 5,
   KEY_UP = 6;
 
-function log(line: string): void {
+function say(status: Status): void {
+  const line = statusText(status);
   console.log(line);
   if (line) recorder?.note(`status: ${line}`);
-  setUi({ status: line });
+  setUi({ status });
 }
+const working = (text: string) => say({ phase: "working", text });
+const notice = (text: string) => say({ phase: "notice", text });
+const failed = (e: unknown) => say({ phase: "error", error: e instanceof Error ? e.message : String(e) });
 
 /** KeyboardEvent.code -> Windows virtual-key code. */
 function virtualKey(code: string): number {
@@ -257,7 +263,7 @@ async function loadSavesOrOld(
   if (saves.data?.length || !old) return saves;
   const moved = renameRecords((await loadSaves(old, notice)).data);
   if (!moved) return saves;
-  if (moved.length) log(`以前のセーブを引き継ぎました (${old})`);
+  if (moved.length) notice(`以前のセーブを引き継ぎました (${old})`);
   // (written under this name by the keeper: neither side of it holds them yet)
   return movedSaves(moved);
 }
@@ -294,14 +300,14 @@ async function boot(audio: Promise<AudioOut>): Promise<void> {
   params.set("saves", saveName);
   const nosave = params.has("nosave");
   // a web game (NW.js): its own page, no sake
-  if (await startWebGame(run, mounts, nosave ? null : saveName, log, oldSaves)) {
+  if (await startWebGame(run, mounts, nosave ? null : saveName, say, oldSaves)) {
     if (!nosave && params.get("game")) stopPlay = trackPlay(params.get("game")!);
     return;
   }
   // (what sake needs of the browser: checked for this start, the list works without it)
   const problem = missingFeature(SAKE_NEEDS);
   if (problem) throw new Error(problem);
-  log("sake を読み込み中");
+  working("sake を読み込み中");
   const BASE = sakeBase();
   // a save state to go on from (&state=<slot>: the states dialog starts the page again so), in
   // the build it is of
@@ -318,7 +324,7 @@ async function boot(audio: Promise<AudioOut>): Promise<void> {
   const stateFile =
     slot !== null && !nosave
       ? await (async () => {
-          log("ステートを読み込み中");
+          working("ステートを読み込み中");
           const info = (await listStates(saveName)).find(
             (s) => s.slot === Number(slot) && (!fromHidden || s.hash === autoHash),
           );
@@ -332,7 +338,7 @@ async function boot(audio: Promise<AudioOut>): Promise<void> {
           if (!loadable(await builds(), info)) {
             const app = (await keptApps()).get(info.build);
             if (app && !location.href.startsWith(app)) {
-              log("このステートを保存したバージョンで開いています");
+              working("このステートを保存したバージョンで開いています");
               location.replace(`${app}play.html${location.search}`);
               return new Promise<never>(() => {});
             }
@@ -414,7 +420,7 @@ async function boot(audio: Promise<AudioOut>): Promise<void> {
   // (what each side holds goes to the keeper: the bytes below are what the game starts from)
   const savesLoaded = nosave
     ? null
-    : await loadSavesOrOld(saveName, oldSaves, (m) => (log(m), toast.warning(m)));
+    : await loadSavesOrOld(saveName, oldSaves, (m) => (notice(m), toast.warning(m)));
   const saved = savesLoaded && withRegistry(selectRecords(savesLoaded.data, portablePath), legacyRegistry);
   let stateMem: WebAssembly.Memory | undefined;
   // sake.wasm got its 4 GB and still did not start (runtime.ts growRetry): again on sake-grow
@@ -425,7 +431,7 @@ async function boot(audio: Promise<AudioOut>): Promise<void> {
     console.log(`sake.wasm did not start with 4 GB (${String(why)}): sake-grow`);
     recorder?.note(`sake.wasm did not start with 4 GB: ${String(why)}; again on sake-grow`);
     started = true;
-    log("メモリの少ない設定で起動し直しています");
+    working("メモリの少ない設定で起動し直しています");
     location.replace(to);
     return true;
   };
@@ -518,7 +524,7 @@ async function boot(audio: Promise<AudioOut>): Promise<void> {
       (l) => recorder?.note(l),
       (e) => {
         if (startOnGrow(e)) return;
-        log(`エラー: ゲームを起動できませんでした（${e instanceof Error ? e.message : String(e)}）`);
+        failed(`ゲームを起動できませんでした（${e instanceof Error ? e.message : String(e)}）`);
         setUi({ back: leave });
       },
     )),
@@ -706,7 +712,7 @@ async function boot(audio: Promise<AudioOut>): Promise<void> {
       })
       .catch(failed);
   }
-  log(`${run} を起動中`);
+  working(`${run} を起動中`);
   const sake = await factory(moduleArg);
   // (from here on a failure is the game's, not the start's: no retry on sake-grow)
   started = true;
@@ -752,7 +758,7 @@ async function boot(audio: Promise<AudioOut>): Promise<void> {
       saveRoots,
       savesLoaded ?? movedSaves(null),
       {
-        notice: (m) => (log(m), toast.warning(m, { duration: 15_000 })),
+        notice: (m) => (notice(m), toast.warning(m, { duration: 15_000 })),
       },
     );
     saveNow = () => save(true);
@@ -1217,7 +1223,7 @@ function readAhead(
         else got.push([hash, c.data]);
       }
     };
-    await Promise.all(Array.from({ length: 4 }, (_, i) => one(i)));
+    await workers(4, (i) => one(i));
   })().catch((e) => console.log(`read-ahead: ${String(e)}`));
   return (w) => {
     sake = w;
@@ -1279,7 +1285,7 @@ function watch(
       serial = s!;
       // game.html looks at the frames
       dispatchEvent(new CustomEvent("vnvm-frame", { detail: { heap: sake.HEAPU8, bits, width, height } }));
-      if (getUi().status) log("");
+      if (getUi().status.phase !== "none") say(NO_STATUS);
     }
   };
   // (the page's one frame loop, frames.ts)
@@ -1446,12 +1452,13 @@ function attachInput(current: () => SakeModule): void {
 const library = !!document.querySelector("#ui[data-library]");
 
 const start = () => {
+  pageGame.begin();
   setStart({ shown: false });
   if (library) renderShell();
   // the AudioContext comes from this click (autoplay rules)
   boot(AudioOut.create()).catch((e) => {
     recorder?.note(`boot failed: ${e instanceof Error ? (e.stack ?? e.message) : e}`);
-    log(`エラー: ${e instanceof Error ? e.message : e}`);
+    failed(e);
     setUi({ back: leave });
   });
 };
@@ -1480,7 +1487,7 @@ async function main(): Promise<void> {
   // the list: picking a game starts it from that click
   if (library && !hasRun(params) && !params.has("game")) {
     setStart({ shown: false });
-    log("");
+    say(NO_STATUS);
     const games = await fetchGames();
     void checkOnline();
     showLibrary(games, (g) => {
@@ -1516,7 +1523,7 @@ async function main(): Promise<void> {
     setStart({ label: `${g.title} を起動` });
     splash(g);
   }
-  log("");
+  say(NO_STATUS);
   setStart({
     shown: true,
     onClick: () => {
@@ -1532,7 +1539,7 @@ async function main(): Promise<void> {
 }
 
 main().catch((e) => {
-  log(`エラー: ${e instanceof Error ? e.message : e}`);
+  failed(e);
   setUi({ back: leave });
 });
 
@@ -1556,7 +1563,7 @@ function closeGame(): void {
   setUi({ auto: null });
   if (nextRun) {
     const { run, args } = nextRun;
-    log(`${run} に切り替えます`);
+    working(`${run} に切り替えます`);
     // (from params, not the address bar: a game picked from the list has only ?game= there,
     // and the next page would start without its mounts)
     const url = nextRunUrl(location.href, params, run, args);
@@ -1569,7 +1576,7 @@ function closeGame(): void {
     stopPlay?.();
     return;
   }
-  log("ゲームが終了しました。一覧に戻ります");
+  working("ゲームが終了しました。一覧に戻ります");
   void wrapUp().finally(leave);
 }
 
@@ -1588,7 +1595,7 @@ let leaving = false;
 function backToList(): void {
   if (leaving) return;
   leaving = true;
-  log("一覧に戻ります");
+  working("一覧に戻ります");
   void wrapUp("the player went back to the list (the browser's back button)").finally(() =>
     location.reload(),
   );

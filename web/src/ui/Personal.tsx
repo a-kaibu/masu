@@ -9,40 +9,62 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { api, resetSessions, type Profile, type Session } from "../library-data";
 import { coverUrl, type GameEntry } from "../launcher";
 import { duration, playTotals, when } from "../library-view";
+import {
+  emptyProfile,
+  favoriteBody,
+  noteBody,
+  profileStep,
+  shown,
+  type ProfileAction,
+  type ProfileModel,
+} from "../profile-draft";
 
 const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
-/** A game's record: loaded once, the favorite flag saved at once, the note on 保存. */
+/** A game's record: loaded once, the favorite flag saved at once, the note on 保存 (the
+ * server's copy, the note typed and the flag asked for kept apart: profile-draft.ts). */
 export function useProfile(game: string, onFavorite?: (on: boolean) => void) {
-  const [profile, setProfile] = useState<Profile | null>(null);
+  const [model, setModel] = useState<ProfileModel>(emptyProfile);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
-  const saved = useRef<Profile | null>(null);
+  // (the latest model for the handlers: a PUT's body is built from what is saved now)
+  const latest = useRef(model);
+  const step = (a: ProfileAction) => {
+    latest.current = profileStep(latest.current, a);
+    setModel(latest.current);
+  };
   const load = () =>
     api<Profile>(`library/${encodeURIComponent(game)}`).then((p) => {
-      saved.current = p;
-      setProfile(p);
+      step({ kind: "loaded", profile: p });
       setError("");
     });
   useEffect(() => {
     let active = true;
-    setProfile(null);
+    latest.current = emptyProfile;
+    setModel(emptyProfile);
     api<Profile>(`library/${encodeURIComponent(game)}`)
-      .then((p) => {
-        if (!active) return;
-        saved.current = p;
-        setProfile(p);
-      })
+      .then((p) => active && step({ kind: "loaded", profile: p }))
       .catch((e: unknown) => active && setError(message(e)));
     return () => {
       active = false;
     };
   }, [game]);
+  // (one PUT at a time, each built when it goes from what is saved then: a note sent while the
+  // flag's PUT was out does not take the flag back on the server)
+  const chain = useRef<Promise<unknown>>(Promise.resolve());
+  const queued = (body: () => Profile | null): Promise<boolean> => {
+    const go = () => {
+      const b = body();
+      return b ? put(b) : Promise.resolve(false);
+    };
+    const r = chain.current.then(go, go);
+    chain.current = r;
+    return r;
+  };
   const put = async (next: Profile) => {
     setBusy(true);
     try {
       await api(`library/${encodeURIComponent(game)}`, next);
-      saved.current = next;
       return true;
     } catch (e) {
       toast.error(`保存できませんでした: ${message(e)}`);
@@ -51,23 +73,30 @@ export function useProfile(game: string, onFavorite?: (on: boolean) => void) {
       setBusy(false);
     }
   };
+  const profile = shown(model);
   return {
     profile,
     error,
     busy,
-    dirty: !!profile && !!saved.current && profile.note !== saved.current.note,
-    setNote: (note: string) => profile && setProfile({ ...profile, note }),
+    dirty: model.draft !== null,
+    setNote: (note: string) => step({ kind: "typed", note }),
     toggleFavorite: async () => {
-      if (!profile || !saved.current) return;
-      // (only the flag changes: an unsaved note stays unsaved)
-      const next = { ...saved.current, favorite: !profile.favorite };
-      setProfile({ ...profile, favorite: next.favorite });
-      if (await put(next)) onFavorite?.(next.favorite);
-      else setProfile({ ...profile });
+      if (!latest.current.saved) return;
+      const on = !shown(latest.current)?.favorite;
+      step({ kind: "favorite-asked", on });
+      const ok = await queued(() => favoriteBody(latest.current, on));
+      step({ kind: "favorite-done", ok, on });
+      if (ok) onFavorite?.(on);
     },
     saveNote: async () => {
-      if (!profile || !saved.current) return;
-      if (await put({ ...saved.current, note: profile.note })) toast.success("メモを保存しました");
+      const body = noteBody(latest.current);
+      if (!body) return;
+      step({ kind: "note-sent", note: body.note });
+      const ok = await queued(() =>
+        latest.current.saved ? { ...latest.current.saved, note: body.note } : null,
+      );
+      step({ kind: "note-done", ok, note: body.note });
+      if (ok) toast.success("メモを保存しました");
     },
     reload: load,
   };

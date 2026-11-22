@@ -522,7 +522,10 @@ impl Seek for File {
 impl Drop for File {
     fn drop(&mut self) {
         if let Inner::Vfs(h) = self.0 {
-            vfs::release(h);
+            // (closed whatever the answer: vfs::release)
+            match vfs::release(h) {
+                Ok(()) | Err(_) => {}
+            }
         }
     }
 }

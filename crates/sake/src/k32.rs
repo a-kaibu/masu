@@ -7136,10 +7136,14 @@ fn create_file(c: &mut Ctx, wide: bool) -> u32 {
         return h;
     }
     let h = open_file(name, c.a(1), c.a(2), c.a(4), c.a(5));
-    if h != 0xffff_ffff && c.a(5) & 0x4000_0000 != 0 {
+    if h == 0xffff_ffff {
+        return h;
+    }
+    if c.a(5) & 0x4000_0000 != 0 {
         crate::iocp::mark_overlapped(h);
     }
-    h
+    // (lpSecurityAttributes's bInheritHandle: a child CreateProcess starts gets it)
+    sa_inherit(c.a(3), h)
 }
 
 /// CreateFileW's work: `attrs` is dwFlagsAndAttributes.
@@ -7361,7 +7365,7 @@ fn _lwrite(c: &mut Ctx) -> u32 {
     }
     if n == 0 {
         let p = f.seek(SeekFrom::Current(0)).unwrap_or(0);
-        return if f.f.locked().set_len(p).is_ok() { 0 } else { 0xffff_ffff };
+        return if f.host().set_len(p).is_ok() { 0 } else { 0xffff_ffff };
     }
     match f.write_from(buf, n) {
         w if w == n => n,
@@ -7650,7 +7654,7 @@ fn GetFileSizeEx(c: &mut Ctx) -> u32 {
 fn SetEndOfFile(c: &mut Ctx) -> u32 {
     let Some(f) = obj::file(c.a(0)) else { return 0 };
     let p = f.seek(SeekFrom::Current(0)).unwrap_or(0);
-    let r = f.f.locked().set_len(p);
+    let r = f.host().set_len(p);
     // (no room for it: ERROR_DISK_FULL, as Windows says of a file past the free space)
     if r.as_ref().is_err_and(|e| matches!(e.raw_os_error(), Some(libc::ENOSPC | libc::EFBIG))) {
         last_error(112);
@@ -7727,7 +7731,7 @@ fn unlock_file(h: u32, off: u64, len: u64) -> u32 {
 }
 fn GetFileTime(c: &mut Ctx) -> u32 {
     let Some(f) = obj::file(c.a(0)) else { return 0 };
-    let m = f.f.locked().metadata().ok();
+    let m = f.host().metadata().ok();
     let t = m.map_or(0, |m| files::write_time(&f.path, &m));
     for i in 1..4 {
         if c.a(i) != 0 {
@@ -7754,7 +7758,7 @@ fn SetFileTime(c: &mut Ctx) -> u32 {
 }
 fn GetFileInformationByHandle(c: &mut Ctx) -> u32 {
     let Some(f) = obj::file(c.a(0)) else { return 0 };
-    let Ok(m) = f.f.locked().metadata() else { return 0 };
+    let Ok(m) = f.host().metadata() else { return 0 };
     let p = c.a(1);
     mem::fill(p, 52, 0);
     w32(p, files::attrs(&m));
@@ -9029,7 +9033,7 @@ fn create_file_mapping(c: &mut Ctx, wide: bool) -> u32 {
     let want = u64::from(c.a(4)) | u64::from(c.a(3)) << 32;
     if let (Some(f), true) = (&f, write) && want > f.size() {
         // (a file that cannot grow: the view still maps, its tail reads zero as before)
-        if f.f.locked().set_len(want).is_err() {}
+        if f.host().set_len(want).is_err() {}
     }
     sa_inherit(c.a(1), create_named(named(c.a(5), wide), Obj::Mapping { file: f, size, view: 0, write }))
 }
@@ -9667,6 +9671,22 @@ fn RtlFillMemory(c: &mut Ctx) -> u32 {
     mem::fill(c.a(0), c.a(1), kome::num::lo8(c.a(2)));
     0
 }
+/// RtlCompareMemory(a, b, length): how many bytes from the start are equal (all of length when
+/// none differs)
+fn RtlCompareMemory(c: &mut Ctx) -> u32 {
+    let n = c.a(2);
+    let (x, y) = (mem::bytes(c.a(0), n), mem::bytes(c.a(1), n));
+    let same = x.iter().zip(&y).take_while(|(p, q)| p == q).count();
+    u32::try_from(same).unwrap_or(n)
+}
+/// RtlCompareMemoryUlong(source, length, pattern): the bytes of the leading ULONGs equal to
+/// pattern; length is taken in whole ULONGs, its last 1-3 bytes never compared (Wine's ntdll
+/// tests, test_RtlCompareMemoryUlong: length 5 answers 4)
+fn RtlCompareMemoryUlong(c: &mut Ctx) -> u32 {
+    let (src, whole, pattern) = (c.a(0), c.a(1) & !3, c.a(2));
+    let same = (0..whole).step_by(4).take_while(|&o| mem::r32(src.wrapping_add(o)) == pattern).count();
+    u32::try_from(same).ok().and_then(|w| w.checked_mul(4)).unwrap_or(whole)
+}
 fn InitializeSListHead(c: &mut Ctx) -> u32 {
     mem::fill(c.a(0), if mem::x64() { 16 } else { 8 }, 0);
     0
@@ -10227,7 +10247,7 @@ pub fn init() {
     implement("ntdll", "RtlInitializeSListHead", InitializeSListHead);
     implement("ntdll", "RtlInterlockedPushListSList", InterlockedPushListSList);
     implement("ntdll", "RtlInterlockedPushListSListEx", InterlockedPushListSListEx);
-    reg!("ntdll"; RtlZeroMemory, RtlMoveMemory, RtlFillMemory, RtlAllocateHeap, RtlFreeHeap, RtlEnterCriticalSection,
+    reg!("ntdll"; RtlCompareMemory, RtlCompareMemoryUlong, RtlZeroMemory, RtlMoveMemory, RtlFillMemory, RtlAllocateHeap, RtlFreeHeap, RtlEnterCriticalSection,
         RtlLeaveCriticalSection, InitializeSRWLock, AcquireSRWLockExclusive, AcquireSRWLockShared,
         ReleaseSRWLockExclusive, ReleaseSRWLockShared, TryAcquireSRWLockExclusive, TryAcquireSRWLockShared,
         InitializeConditionVariable, SleepConditionVariableSRW, SleepConditionVariableCS, WakeConditionVariable,

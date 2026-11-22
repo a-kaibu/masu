@@ -51,8 +51,9 @@ const GOOD_RUN_PLAN: Files = &[
     ("tests/winref/run.sh", "{ echo \"# run.sh\"; } > \"$OUT/.plan/$runner\"\n"),
     ("tests/winref/run-browser.mjs", "writeFileSync(join(outDir, \".plan\", runner), text);\n"),
     ("tests/winref/compare.py", "plan_errors = plan.problems(plans, required, got)\nsys.exit(1 if failed or plan_errors else 0)\n"),
-    ("tests/winetest/run.py", "all_jobs, unplanned = plan(listed, sel, expected, explicit)\nif unplanned:\n    return 1\n"),
+    ("tests/winetest/run.py", "all_jobs, unplanned = plan(listed, sel, expected, explicit)\nif not os.path.isfile(win_path):\n            raise FileNotFoundError(win_path)\nall_jobs, not_adopted, missing = adopt(all_jobs, read_tsv(win_path))\nunplanned += missing\nif unplanned:\n    return 1\n"),
     (".github/workflows/winref.yml", "run: compare.py --require-plan node --require-plan browser-0of4\n"),
+    (".github/workflows/conformance.yml", "run: python tests/winetest/run.py --suite rostests --native --arch i386\n"),
 ];
 
 fn fixture(r: Rule) -> Fixture {
@@ -108,6 +109,11 @@ fn fixture(r: Rule) -> Fixture {
             ],
             mutate: (".github/workflows/bench.yml", |t| Some(t.replace("          ASKED: ${{ inputs.groups }}", "          GROUPS: ${{ inputs.groups }}"))),
         },
+        Rule::CrtStartup => Fixture {
+            bad: &[("crates/sake/src/crt.rs", "fn init() {\n    reg!(malloc, free);\n}\n")],
+            good: &[("crates/sake/src/crt.rs", "fn init() {\n    reg!(__C_specific_handler, __dllonexit, __getmainargs, __initenv, __iob_func, __lconv_init, __p__commode, __p__fmode, __set_app_type, __setusermatherr, _acmdln, _amsg_exit, _cexit, _commode, _fmode, _fpreset, _initterm, _iob, _lock, _onexit, _strdup, _unlock, abort, atoi, calloc, exit, fflush, fprintf, free, fwrite, malloc, memcpy, memmove, memset, setvbuf, signal, sprintf, strcmp, strcpy, strlen, strncmp, strrchr, vfprintf, wcscat, wcscmp, wcscpy);\n    implement(\"msvcrt\", \"_swprintf\", swprintf);\n}\n")],
+            mutate: ("crates/sake/src/crt.rs", |t| Some(t.replace("_statusfp, _fpreset,", "_statusfp,"))),
+        },
         Rule::NtdllOwnCrt => Fixture {
             bad: &[("crates/sake/src/ntcrt.rs", "pub fn init() {\n    let d = \"ntdll\";\n    implement(d, \"towlower\", towlower_h);\n}\n")],
             good: &[(
@@ -159,6 +165,22 @@ fn fixture(r: Rule) -> Fixture {
             bad: &[("crates/kura/src/d3d11/mod.rs", "fn options() {\n    for k in 1..10 {}\n    // dxwgsl::translate_logic( named in a comment\n}\n")],
             good: &[("crates/kura/src/d3d11/mod.rs", "fn options() {\n    for k in 0..10 {}\n    let s = dxwgsl::translate_logic(c, a, l);\n    let (o, k) = logic::targets(b, f, m, r);\n    let r = dxwgsl::sample_rate(c) && page_multisamples(p);\n    logic::split(&w, &copies, stash.as_ref(), topo, &cuts, flip);\n}\n")],
             mutate: ("crates/kura/src/d3d11/mod.rs", |t| Some(t.replace("for k in 0..10 {", "for k in 1..10 {"))),
+        },
+        Rule::SnormTargets => Fixture {
+            bad: &[("crates/kura/src/d3d11/logic.rs", "fn snorm_twin(v: u32) -> Option<(u32, [u32; 4])> {\n    // 31 => Some((f::P_RGBA8SI, [8, 8, 8, 8])), named in a comment\n    None\n}\n")],
+            good: &[("crates/kura/src/d3d11/logic.rs", "fn snorm_twin(v: u32) -> Option<(u32, [u32; 4])> {\n    match v {\n        31 => Some((f::P_RGBA8SI, [8, 8, 8, 8])),\n        51 => Some((f::P_RG8SI, [8, 8, 0, 0])),\n        63 => Some((f::P_R8SI, [8, 0, 0, 0])),\n        _ => None,\n    }\n}\nfn t() { let l = Logic { store: Store::Snorm(b) }; }\n")],
+            mutate: ("crates/kura/src/d3d11/mod.rs", |t| Some(t.replace("logic::twin_of(", "logic::copy_of("))),
+        },
+        Rule::Review6852be1 => Fixture {
+            bad: &[
+                ("crates/kura/src/jit.rs", "static SHARED_BYTES: AtomicUsize = AtomicUsize::new(0);\n// struct SharedCache named in a comment, jit::TABLE_SLOTS too\n"),
+                ("crates/kura/src/vfs.rs", "fn with<R>(f: impl FnOnce(&mut Fs) -> R) -> R { f(fs) }\n"),
+            ],
+            good: &[
+                ("crates/kura/src/jit.rs", "struct SharedCache { map: M, bytes: usize }\nfn init() { vnvm_jit_init(p, n, jit::TABLE_SLOTS); }\n"),
+                ("crates/kura/src/vfs.rs", "fn change<R: Refused>(f: F) -> R { r }\nfn h_read() { x.allows(Use::Read, false)?; }\nfn mount() { fs.base = fs.entries(); }\n"),
+            ],
+            mutate: ("crates/kura/src/vfs/shared.rs", |t| Some(t.replace("fs.undo();", "fs.undo = None;"))),
         },
         Rule::D3d9Status => Fixture {
             bad: &[
@@ -522,6 +544,30 @@ fn fixture(r: Rule) -> Fixture {
             ],
             mutate: ("crates/kura/src/lib.rs", |t| Some(t.replace("#![cfg_attr(kani, feature(vec_from_fn, bool_toggle, trim_prefix_suffix))]", ""))),
         },
+        Rule::KaniCover => Fixture {
+            bad: &[
+                ("formal/kani.sh", "#!/bin/bash\nfor c in kura; do\n  (cd \"crates/$c\" && cargo kani)\ndone\n"),
+                ("crates/kura/src/a.rs", "#[cfg(kani)]\nmod proofs {\n    #[kani::proof]\n    fn f() {\n        let x: u32 = kani::any();\n        kani::assume(x < 4 && x > 8);\n        assert!(x == 0);\n    }\n    #[kani::proof]\n    fn g() {\n        let Some(n) = std::num::NonZeroU32::new(kani::any()) else { return };\n        assert!(n.get() > 0);\n    }\n}\n"),
+                ("crates/kome/src/num.rs", "#[cfg(kani)]\nmod proofs {\n    #[kani::proof]\n    fn h() {\n        let x: u8 = kani::any();\n        assert!(u32::from(x) < 256);\n    }\n}\n"),
+            ],
+            good: &[
+                ("formal/kani.sh", "#!/bin/bash\nfor c in kura kome; do\n  (cd \"crates/$c\" && cargo kani)\ndone\n"),
+                ("crates/kura/src/a.rs", "#[cfg(kani)]\nmod proofs {\n    #[kani::proof]\n    fn f() {\n        let x: u32 = kani::any();\n        kani::assume(x < 4);\n        assert!(x < 5);\n        kani::cover!(x == 3, \"the top\");\n    }\n    #[kani::proof]\n    fn g() {\n        let n: u8 = kani::any();\n        let returned = n.checked_add(1);\n        assert!(returned.is_none() == (n == 255));\n    }\n}\nfn not_a_proof(x: u32) -> u32 { if x == 0 { return 1 } x }\n"),
+                ("crates/kome/src/num.rs", "#[cfg(kani)]\nmod proofs {\n    #[kani::proof]\n    fn h() {\n        let x: u8 = kani::any();\n        assert!(u32::from(x) < 256);\n    }\n}\n"),
+            ],
+            mutate: ("crates/sake/src/mem_proofs.rs", |t| Some(t.replace("    kani::cover!(n > u32::MAX - PAGE, \"a length near 4 GB (review A-13)\");\n    kani::cover!(touched && i == pages - 1 && off < PAGE && pages > 1, \"a range to the allocation's end\");\n    kani::cover!(!touched && i > first, \"a page after the range\");\n", ""))),
+        },
+        Rule::VerusMirror => Fixture {
+            bad: &[
+                ("formal/verus/cdc.rs", "verus! { pub fn next() {} }\nfn main() {}\n"),
+                ("crates/masu/src/cdc.rs", "pub fn next() {}\n"),
+            ],
+            good: &[
+                ("formal/verus/cdc.rs", "verus! { pub fn next() {} }\nfn main() {}\n"),
+                ("crates/masu/src/cdc.rs", "pub fn next() {}\n#[cfg(test)]\nmod tests {\n    #[test]\n    fn same() { assert!(include_str!(\"../../../formal/verus/cdc.rs\").contains(\"fn next\")); }\n}\n"),
+            ],
+            mutate: ("crates/masu/src/cdc.rs", |t| Some(t.replace("include_str!(\"../../../formal/verus/cdc.rs\")", "\"\""))),
+        },
         Rule::UncheckedOutput => Fixture {
             bad: &[
                 ("crates/masu-lint/src/tree.rs", "fn files(root: &Path) -> Vec<String> {\n    let o = Command::new(\"git\").arg(\"ls-files\").current_dir(root).output();\n    o.map(|o| String::from_utf8_lossy(&o.stdout).lines().map(str::to_owned).collect()).unwrap_or_default()\n}\n"),
@@ -579,6 +625,8 @@ fn fixture(r: Rule) -> Fixture {
             bad: &[
                 ("tests/winref/compare.py", "        if not os.path.isdir(os.path.join(got, probe)):\n            continue  # (not run: a filtered run.sh)\n    sys.exit(1 if failed else 0)\n"),
                 ("tests/winetest/run.py", "        if not os.path.exists(exe):\n            print(f\"missing {exe}\", file=sys.stderr)\n            continue\n"),
+                ("tests/winetest/run.py", "windows = read_tsv(win_path) if os.path.exists(win_path) else {}\n"),
+                ("tests/winetest/run.py", "def report(path):\n    with open(path, \"w\") as f:\n        f.write(msg)\n"),
             ],
             good: GOOD_RUN_PLAN,
             mutate: ("tests/winref/compare.py", |t| Some(t.replace("sys.exit(1 if failed or plan_errors else 0)", "sys.exit(1 if failed else 0)"))),
@@ -800,6 +848,22 @@ fn bash_drops_an_assignment_to_groups() {
         assert_ne!(String::from_utf8_lossy(&o.stdout).trim(), "gdi");
     }
     assert_eq!(regress::special_sets("A=1\nGROUPS=2\n  export SECONDS=3 # x\n# RANDOM=4\nX_UID=5\n", false), vec![(2, "GROUPS".to_owned()), (3, "SECONDS".to_owned())]);
+}
+
+#[test]
+fn each_fix_of_the_review_of_6852be1_is_found_taken_back() {
+    let real = real_tree();
+    assert!(regress::review_6852be1(&real).is_empty(), "{:?}", regress::review_6852be1(&real));
+    for (file, needle, _) in regress::REVIEW_6852BE1_HAS {
+        let f = Rel::new(file);
+        let t = Tree::with(&real, &f, Some(real.text(&f).replace(needle, "")));
+        assert!(!regress::review_6852be1(&t).is_empty(), "{file}: {needle:?} taken away is not found");
+    }
+    for (file, needle, _) in regress::REVIEW_6852BE1_NOT {
+        let f = Rel::new(file);
+        let t = Tree::with(&real, &f, Some(format!("{}\nfn back() {{ {needle} }}\n", real.text(&f))));
+        assert!(!regress::review_6852be1(&t).is_empty(), "{file}: {needle:?} put back is not found");
+    }
 }
 
 #[test]

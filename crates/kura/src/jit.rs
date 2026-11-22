@@ -4276,7 +4276,7 @@ mod invalidate_tests {
             for t in 0..4u32 {
                 s.spawn(move || {
                     for i in 0..2000u32 {
-                        share_push(vec![0xc0de_0000 + t * 7 + i % 7], mk((i % 3) as u8, i % 5, 100 + (i as usize % 900) * 1000));
+                        share_push(vec![0xc0de_0000 + t * 7 + i % 7], mk(u8::try_from(i % 3).unwrap_or(0), i % 5, 100 + usize::try_from(i % 900).unwrap_or(0) * 1000));
                         if i % 97 == t {
                             *SHARED.locked() = None;
                         }

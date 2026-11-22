@@ -8,7 +8,8 @@ use std::io::{Read, Seek, SeekFrom, Write};
 use std::sync::Mutex;
 
 pub struct File {
-    pub f: Mutex<kura::fs::File>,
+    /// the host file: through host(), which keeps a shared file pointer (`shared`)
+    f: Mutex<kura::fs::File>,
     pub path: String,
     pub dir: bool,
     /// opened for writing (WriteFile fails with ERROR_ACCESS_DENIED otherwise)
@@ -19,6 +20,35 @@ pub struct File {
     share: u64,
     /// FILE_FLAG_DELETE_ON_CLOSE: the file goes with the last handle (or the process)
     delete: std::sync::atomic::AtomicBool,
+    /// its crate::kern KFile once another process holds it too (0: this process's alone): the
+    /// file pointer is the kernel's then
+    shared: std::sync::atomic::AtomicU32,
+}
+
+/// The host file of a File, at the file pointer: a shared file's is the kernel's, loaded when
+/// taken and stored back when dropped (so a child's write moves the parent's tell)
+pub struct Host<'a> {
+    g: std::sync::MutexGuard<'a, kura::fs::File>,
+    shared: u32,
+}
+impl std::ops::Deref for Host<'_> {
+    type Target = kura::fs::File;
+    fn deref(&self) -> &kura::fs::File {
+        &self.g
+    }
+}
+impl std::ops::DerefMut for Host<'_> {
+    fn deref_mut(&mut self) -> &mut kura::fs::File {
+        &mut self.g
+    }
+}
+impl Drop for Host<'_> {
+    fn drop(&mut self) {
+        if self.shared != 0 && let Ok(p) = self.g.stream_position() {
+            let id = self.shared;
+            crate::kern::with(|k| k.set_file_pos(id, p));
+        }
+    }
 }
 
 impl Drop for File {
@@ -32,6 +62,11 @@ impl Drop for File {
         drop(locks);
         if self.share != 0 {
             OPEN.locked().retain(|o| o.0 != self.share);
+        }
+        let shared = self.shared.load(std::sync::atomic::Ordering::Acquire);
+        if shared != 0 {
+            let me = crate::pid();
+            crate::kern::with(|k| k.release_file(shared, me));
         }
         if self.delete.load(std::sync::atomic::Ordering::Relaxed) {
             DELETE_ON_CLOSE.locked().retain(|p| *p != self.path);
@@ -578,7 +613,7 @@ pub fn open_shared(w: &str, access: u32, disposition: u32, share: Option<u32>) -
     if let Some(h) = &existing {
         if kura::fs::metadata(h).is_ok_and(|m| m.is_dir()) {
             let f = kura::fs::File::open(h).map_err(|_| ERROR_ACCESS_DENIED)?;
-            return Ok((File { f: Mutex::new(f), path: h.clone(), dir: true, write: false, scan: Mutex::new(None), share: 0, delete: Default::default() }, true));
+            return Ok((File { f: Mutex::new(f), path: h.clone(), dir: true, write: false, scan: Mutex::new(None), share: 0, delete: Default::default(), shared: Default::default() }, true));
         }
         if share.is_some_and(|s| share_conflict(h, access_bits(access), s)) {
             return Err(32);
@@ -630,7 +665,7 @@ pub fn open_shared(w: &str, access: u32, disposition: u32, share: Option<u32>) -
                 }
                 None => 0,
             };
-            Ok((File { f: Mutex::new(f), path: host, dir: false, write, scan: Mutex::new(None), share: id, delete: Default::default() }, existing.is_some()))
+            Ok((File { f: Mutex::new(f), path: host, dir: false, write, scan: Mutex::new(None), share: id, delete: Default::default(), shared: Default::default() }, existing.is_some()))
         }
         Err(e) => Err(match io_err(&e) {
             IoErr::NotFound => {
@@ -654,8 +689,46 @@ fn left(f: &mut kura::fs::File) -> usize {
 }
 
 impl File {
+    /// The host file at the file pointer (see Host)
+    pub fn host(&self) -> Host<'_> {
+        let mut g = self.f.locked();
+        let shared = self.shared.load(std::sync::atomic::Ordering::Acquire);
+        if shared != 0 && let Some(p) = crate::kern::with(|k| k.file(shared).map(|f| f.pos)).0 {
+            // (a seek that fails leaves the pointer: the next read or write says so)
+            if g.seek(SeekFrom::Start(p)).is_err() {}
+        }
+        Host { g, shared }
+    }
+    /// This handle's file for another process (CreateProcess inheriting it): its kernel record,
+    /// made on the first, with one more holder for the other process (crate::kern::new_process
+    /// adds that one)
+    pub fn share(&self) -> Option<u32> {
+        use std::sync::atomic::Ordering;
+        if self.dir {
+            return None;
+        }
+        let now = self.shared.load(Ordering::Acquire);
+        if now != 0 {
+            return Some(now);
+        }
+        if !crate::kern::share() {
+            return None;
+        }
+        let pos = self.f.locked().stream_position().ok()?;
+        let me = crate::pid();
+        let id = crate::kern::with(|k| k.share_file(&self.path, self.write, pos, me)).0;
+        self.shared.store(id, Ordering::Release);
+        Some(id)
+    }
+    /// A process's own File of shared record `id` (its inherited handle): the same host file,
+    /// access and file pointer
+    pub fn adopt(id: u32) -> Option<File> {
+        let r = crate::kern::with(|k| k.file(id).cloned()).0?;
+        let f = kura::fs::OpenOptions::new().read(true).write(r.write).open(&r.path).ok()?;
+        Some(File { f: Mutex::new(f), path: r.path, dir: false, write: r.write, scan: Mutex::new(None), share: 0, delete: Default::default(), shared: std::sync::atomic::AtomicU32::new(id) })
+    }
     pub fn read_into(&self, dst: u32, n: u32) -> u32 {
-        let mut f = self.f.locked();
+        let mut f = self.host();
         // SAFETY: the closure only reads the host file into the buffer, touching no guest memory;
         // the program handed the buffer to this read (another thread of its writing it meanwhile
         // would race on Windows too).
@@ -676,25 +749,25 @@ impl File {
     /// The buffer grows with what is read, so a large `n` (fread's "the rest of the file"
     /// 0x7fffffff) costs what the file holds, not `n` bytes of zeros.
     pub fn read_vec(&self, n: usize) -> Vec<u8> {
-        let mut f = self.f.locked();
+        let mut f = self.host();
         let mut buf = Vec::with_capacity(n.min(left(&mut f)));
         let _ = (&mut *f).take(n as u64).read_to_end(&mut buf);
         buf
     }
     /// The bytes from the file pointer to the end (0 past it).
     pub fn remaining(&self) -> usize {
-        left(&mut self.f.locked())
+        left(&mut self.host())
     }
     pub fn write_bytes(&self, b: &[u8]) -> u32 {
-        let mut f = self.f.locked();
+        let mut f = self.host();
         f.write_all(b).map_or(0, |_| b.len() as u32)
     }
     pub fn write_from(&self, src: u32, n: u32) -> u32 {
-        let mut f = self.f.locked();
+        let mut f = self.host();
         f.write_all(&crate::mem::bytes(src, n)).map_or(0, |()| n)
     }
     pub fn seek(&self, pos: SeekFrom) -> Option<u64> {
-        self.f.locked().seek(pos).ok()
+        self.host().seek(pos).ok()
     }
     /// ReadFile's read with an OVERLAPPED: from `start` (io_start; None: the file pointer),
     /// under one lock so another thread's seek on the handle can't come between. A handle
@@ -703,7 +776,7 @@ impl File {
     /// that starts at or after the end (STATUS_END_OF_FILE: ReadFile fails with
     /// ERROR_HANDLE_EOF when it was given an OVERLAPPED).
     pub fn read_at(&self, start: Option<SeekFrom>, keep: bool, buf: &mut [u8]) -> Result<usize, ()> {
-        let mut f = self.f.locked();
+        let mut f = self.host();
         let was = f.stream_position().unwrap_or(0);
         if let Some(s) = start && f.seek(s).is_err() {
             return Err(());
@@ -724,7 +797,7 @@ impl File {
     /// FILE_WRITE_TO_END_OF_FILE; None: the file pointer), under one lock; past the end the
     /// gap reads as zeros. `keep`: as read_at. The bytes written (0: it failed).
     pub fn write_at(&self, start: Option<SeekFrom>, keep: bool, b: &[u8]) -> u32 {
-        let mut f = self.f.locked();
+        let mut f = self.host();
         let was = f.stream_position().unwrap_or(0);
         if let Some(s) = start && f.seek(s).is_err() {
             return 0;
@@ -736,7 +809,7 @@ impl File {
         w
     }
     pub fn size(&self) -> u64 {
-        self.f.locked().metadata().map_or(0, |m| m.len())
+        self.host().metadata().map_or(0, |m| m.len())
     }
 }
 
