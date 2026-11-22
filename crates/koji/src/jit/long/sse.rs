@@ -4,28 +4,35 @@
 //! table, interp::vex): with VEX.vvvv as the first source, `dst = src1 op src2` reads src1
 //! where the legacy form reads its destination; then the destination's upper YMM half
 //! (`Cpu::ymmh`) is cleared, as VEX.128 does. VEX.256 forms that compute each 128-bit lane
-//! alike are their VEX.128 form twice: the lower lanes, then the upper ones with each register's
-//! halves swapped (and memory 16 bytes on); the rest go to the interpreter.
+//! alike are their VEX.128 form twice: the lower lanes, then the upper ones reading and writing
+//! each register's upper half in place (Gen::lane, memory 16 bytes on); the rest go to the
+//! interpreter.
 
 use kome::num::*;
 use super::{Flags, Gen, I64Ops, I32_WRAP, I64_EXT_U, L_A, L_CPU, L_V0, L_V1, STATUS};
 use crate::jit::packed::{binop, farith, shift, unpack};
-use alloc::vec::Vec;
 use crate::Cpu;
 use core::mem::offset_of;
 use iced_x86::{EncodingKind, Instruction, Mnemonic, OpKind, Register};
 
-/// The Cpu offset of XMM register `r`.
-fn xoff(r: Register) -> u32 {
+/// The Cpu offset of XMM register `r` in the 128-bit lane `lane` (a VEX.256 form's upper
+/// lanes: `Cpu::ymmh`, avx::halves); an MMX register's (lower lane only).
+fn xoff(lane: Lane, r: Register) -> u32 {
     if r.is_mm() {
         return lo32((offset_of!(Cpu, mm) + 8 * (r.number())));
     }
-    let i = r.number();
-    if i < 8 {
-        lo32((offset_of!(Cpu, xmm) + 16 * i))
-    } else {
-        lo32((offset_of!(Cpu, xmm8) + 16 * (i - 8)))
+    let (lo, hi) = super::avx::halves(r);
+    match lane {
+        Lane::Lo => lo,
+        Lane::Hi => hi,
     }
+}
+
+/// The 128-bit lanes a VEX.256 form computes one after the other (Gen::lane)
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(super) enum Lane {
+    Lo,
+    Hi,
 }
 
 fn is_x(ins: &Instruction, i: u32) -> bool {
@@ -318,7 +325,8 @@ impl Gen<'_> {
     }
 
     /// A VEX.256 instruction as its VEX.128 form `x` on each lane: both lanes' MXCSR guards
-    /// before either is written, then the lower lanes, then the upper ones (`swap_hi`).
+    /// before either is written, then the lower lanes, then the upper ones (`Lane::Hi`: the
+    /// registers' upper halves in Cpu::ymmh where they are, nothing swapped).
     fn sse256(&mut self, x: &Instruction) -> bool {
         let Some((li, src1)) = plan(x) else { return false };
         if !per_lane(&li) {
@@ -335,9 +343,6 @@ impl Gen<'_> {
             Mnemonic::Blendpd => hi.set_immediate8(li.immediate8() >> 2),
             _ => {}
         }
-        let mut regs: Vec<Register> = src1.into_iter().chain((0..li.op_count()).filter(|&i| is_x(&li, i)).map(|i| li.op_register(i))).collect();
-        regs.sort_unstable_by_key(|r| *r as u32);
-        regs.dedup();
         let saved = self.ins;
         // (the address kept apart: CVTPS2DQ's code takes L_A for the rounding mode)
         let at = size.map(|_| {
@@ -345,8 +350,9 @@ impl Gen<'_> {
             self.c.get(L_A).x(I64_EXT_U).set(t);
             t
         });
+        // (the registers' upper halves read and written where they are: Gen::lane)
         let upper = |g: &mut Self, on: bool| {
-            g.swap_hi(&regs);
+            g.lane = if on { Lane::Hi } else { Lane::Lo };
             if let Some(t) = at {
                 g.c.get(t).x(I32_WRAP);
                 if on {
@@ -360,10 +366,7 @@ impl Gen<'_> {
             self.mx_guard(&li, src1, size, false);
             upper(self, true);
             self.ins = hi;
-            // (leaving from here: the halves back first)
-            self.hi_swapped = regs.clone();
             self.mx_guard(&hi, src1, size, true);
-            self.hi_swapped.clear();
             upper(self, false);
         }
         self.ins = li;
@@ -376,22 +379,12 @@ impl Gen<'_> {
         true
     }
 
-    /// Swaps the lower and upper halves of YMM registers `regs`.
-    pub(super) fn swap_hi(&mut self, regs: &[Register]) {
-        for &r in regs {
-            let (x, h) = (xoff(r), lo32((offset_of!(Cpu, ymmh) + 16 * (r.number()))));
-            self.c.get(L_CPU).v128load(x).set(super::L_V2);
-            self.c.get(L_CPU).get(L_CPU).v128load(h).v128store(x);
-            self.c.get(L_CPU).get(super::L_V2).v128store(h);
-        }
-    }
-
     /// Pushes XMM register `r`.
     fn xget(&mut self, r: Register) {
         if r.is_mm() {
-            self.c.get(L_CPU).v128load64(xoff(r));
+            self.c.get(L_CPU).v128load64(xoff(self.lane, r));
         } else {
-            self.c.get(L_CPU).v128load(xoff(r));
+            self.c.get(L_CPU).v128load(xoff(self.lane, r));
         }
     }
 
@@ -421,9 +414,9 @@ impl Gen<'_> {
     fn vput(&mut self) {
         let d = self.ins.op_register(0);
         if d.is_mm() {
-            self.c.get(L_CPU).get(L_V0).lane(0x1d, 0).store64(xoff(d));
+            self.c.get(L_CPU).get(L_V0).lane(0x1d, 0).store64(xoff(self.lane, d));
         } else {
-            self.c.get(L_CPU).get(L_V0).v128store(xoff(d));
+            self.c.get(L_CPU).get(L_V0).v128store(xoff(self.lane, d));
         }
     }
 
@@ -469,7 +462,7 @@ impl Gen<'_> {
                 self.c.get(L_CPU).i32c(0xff).store8(empty);
             }
             Movntq => {
-                self.c.get(L_A).get(L_CPU).load64(xoff(ins.op_register(1))).store64(0);
+                self.c.get(L_A).get(L_CPU).load64(xoff(self.lane, ins.op_register(1))).store64(0);
             }
             Movd | Movq => {
                 let bits = if m == Movd { 32 } else { 64 };
@@ -487,13 +480,13 @@ impl Gen<'_> {
                     }
                     let t = self.temp();
                     self.c.set(t);
-                    self.c.get(L_CPU).get(t).store64(xoff(d));
+                    self.c.get(L_CPU).get(t).store64(xoff(self.lane, d));
                     if !d.is_mm() {
-                        self.c.get(L_CPU).i64c(0).store64(xoff(d) + 8);
+                        self.c.get(L_CPU).i64c(0).store64(xoff(self.lane, d) + 8);
                     }
                 } else {
                     // out of the register's low bits
-                    self.c.get(L_CPU).load64(xoff(ins.op_register(1)));
+                    self.c.get(L_CPU).load64(xoff(self.lane, ins.op_register(1)));
                     self.gdst(0, bits);
                 }
             }
@@ -503,9 +496,9 @@ impl Gen<'_> {
                     let r = ins.op_register(1);
                     self.c.get(L_A).get(L_CPU);
                     if bytes == 4 {
-                        self.c.load32(xoff(r)).store32(0);
+                        self.c.load32(xoff(self.lane, r)).store32(0);
                     } else {
-                        self.c.load64(xoff(r)).store64(0);
+                        self.c.load64(xoff(self.lane, r)).store64(0);
                     }
                 } else if mem(&ins, 1) {
                     self.vsrc(1, bytes);
@@ -600,7 +593,7 @@ impl Gen<'_> {
                 let high = matches!(m, Movhps | Movhpd);
                 if mem(&ins, 0) {
                     let r = ins.op_register(1);
-                    self.c.get(L_A).get(L_CPU).load64(xoff(r) + if high { 8 } else { 0 }).store64(0);
+                    self.c.get(L_A).get(L_CPU).load64(xoff(self.lane, r) + if high { 8 } else { 0 }).store64(0);
                 } else {
                     self.vfirst(src1);
                     self.c.get(L_A).load64(0);
@@ -800,7 +793,7 @@ impl Gen<'_> {
                     // the second operand where XMM0's element has its top bit set
                     let (shr, n) = match m { Blendvps => (0xac, 31), Blendvpd => (0xcc, 63), _ => (0x6c, 7) };
                     self.c.get(b).get(a);
-                    self.c.get(L_CPU).v128load(xoff(Register::XMM0)).i32c(n).simd(shr);
+                    self.c.get(L_CPU).v128load(xoff(self.lane, Register::XMM0)).i32c(n).simd(shr);
                     self.c.simd(0x52);
                 }
                 Pminsb => {

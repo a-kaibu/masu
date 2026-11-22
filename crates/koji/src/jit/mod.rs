@@ -28,6 +28,7 @@ mod rounding;
 mod mxguard;
 pub mod long;
 pub mod context;
+mod ssa;
 pub use context::{mx_exact, mx_modes, mx_read, mx_switched, page_check, sse_ok, Pages, TranslationContext, MX_AT, MX_EXACT, PAGES, PAGE_CHECK};
 
 use crate::lazy::{Kind, Op, Size};
@@ -2472,6 +2473,11 @@ impl<'a> Gen<'a> {
                     self.c.op(if matches!(t, Test::B | Test::L) { 0x53 } else { 0x57 }); // i64.lt_s / le_s
                     true
                 }
+                // (INC and DEC keep CF: the one before them, in `c`; any size)
+                (Kind::Inc | Kind::Dec, Test::B) => {
+                    self.c.get(L_FC).i32c(1).and();
+                    true
+                }
                 (Kind::Adc, Test::B) => {
                     if bits != 32 {
                         return false;
@@ -2498,10 +2504,6 @@ impl<'a> Gen<'a> {
                         return false;
                     }
                     self.c.get(L_FA).i32c(32).get(L_FB).sub().shr_u().i32c(1).and();
-                    true
-                }
-                (Kind::Inc | Kind::Dec, Test::B) => {
-                    self.c.get(L_FC).i32c(1).and();
                     true
                 }
                 (Kind::Mul, Test::B) => {
@@ -5544,11 +5546,50 @@ fn emit_block<'a>(g: &mut Gen<'a>, blocks: &'a [(u32, Insns)], k: usize, count: 
     }
     let m = list.len();
     let mut skip = false;
+    // (instructions an SSA run took: ssa)
+    let mut taken = 0usize;
     for (i, ins) in list.iter().enumerate() {
         if i > 0 {
             small_after(&mut g.info, &mut g.small, &list[i - 1]);
         }
         if core::mem::take(&mut skip) {
+            continue;
+        }
+        if taken > 0 {
+            taken -= 1;
+            continue;
+        }
+        if g.tc.budget.ssa && let Some(f) = ssa::Found::at(g, list, i, &live) {
+            let n = f.n;
+            // the pending CMP/TEST: done before the run where one of it needs it (its
+            // registers as they were: the run's start), gone where one writes the flags
+            let mut overwrites = false;
+            if let Some(r) = g.pending {
+                let keeps: Vec<RematKeep> = list[i..i + n].iter().map(|ins| remat_keeps(&mut g.info, r.at, ins, false)).collect();
+                if keeps.contains(&RematKeep::Now) {
+                    g.remat_now();
+                } else {
+                    overwrites = keeps.contains(&RematKeep::Overwrites);
+                }
+            }
+            g.ins = ins;
+            g.live_after = live[i + n - 1];
+            g.live_before = live_before[i];
+            *count += n;
+            let b0 = g.c.b.len();
+            ssa::emit(g, f);
+            if overwrites {
+                g.pending = None;
+                if !g.flags_live(STATUS_BITS) {
+                    g.c.i32c(-1).set(L_OP);
+                }
+            }
+            if g.tc.measure.layout {
+                let e = g.sizes.entry(alloc::format!("ssa{n}")).or_insert((0, 0));
+                e.0 += 1;
+                e.1 += lo32(g.c.b.len() - b0);
+            }
+            taken = n - 1;
             continue;
         }
         g.fuse_zx = i + 2 < m && set_movzx(ins, &list[i + 1]);
@@ -6144,6 +6185,10 @@ fn safe_in(g: &Gen, blocks: &[(u32, Insns)], l: &structure::Layout) -> (Vec<u8>,
         }
     }
 }
+
+/// Register-only runs of integer instructions through the small SSA (on; MASU_JIT_SSA=0 off;
+/// see jit::ssa).
+pub static SSA: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(true);
 
 /// Hoisting range checks out of loops (MASU_JIT_HOIST=0: off; see [`safe_in`]).
 pub static HOIST: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(true);

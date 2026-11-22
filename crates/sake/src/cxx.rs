@@ -419,11 +419,21 @@ fn catch_guard(c: &mut Ctx) -> u32 {
 // ---------------------------------------------------------------------------------------------
 // _set_se_translator
 
-/// _set_se_translator's function, per thread (the TEB's free page; x64 the same).
-pub const SE_TRANSLATOR_TEB: u32 = crate::crt::ERRNO_TEB + 0x20;
+/// The C++ runtime's per-thread data, laid out as ucrtbase's (ucrtbase:misc
+/// test_thread_storage, which Windows passes): _set_se_translator's function two pointers
+/// below __current_exception's slot, then __current_exception_context's, then
+/// __processing_throw's count (the TEB's free page; x64 the same, pointers of 8 bytes).
+pub const PTD_TEB: u32 = crate::crt::ERRNO_TEB + 0x40;
+/// _set_se_translator's function, per thread
+pub const SE_TRANSLATOR_TEB: u32 = PTD_TEB;
+/// __current_exception's slot (an EXCEPTION_RECORD*), then the CONTEXT*'s and
+/// __processing_throw's a pointer apart
+pub fn cur_exc_teb() -> u32 {
+    PTD_TEB + 2 * crate::mem::ps()
+}
 /// The exception (record, frame) whose translator returned: its handler, called again, goes
 /// on without it.
-const SE_TRANSLATED_TEB: u32 = SE_TRANSLATOR_TEB + 8;
+const SE_TRANSLATED_TEB: u32 = crate::crt::ERRNO_TEB + 0x20;
 /// The translator's call below the handler's return address: TRANSLATE_TRAP, its arguments
 /// (code, EXCEPTION_POINTERS*), at 0x10 a registration of the guard (next, handler, then the
 /// FuncInfo and the frame at 0x20), at 0x18 the EXCEPTION_POINTERS, at 0x28 the handler's EBX,
@@ -542,6 +552,12 @@ fn guard(c: &mut Ctx) -> u32 {
 pub fn init() {
     if crate::mem::x64() {
         return crate::cxx64::register();
+    }
+    for d in ["msvcrt", "ucrtbase", "vcruntime140"] {
+        // (the slots' places, x86's pointers: PTD_TEB)
+        implement(d, "__current_exception", crate::cxx64::__current_exception);
+        implement(d, "__current_exception_context", crate::cxx64::__current_exception_context);
+        implement(d, "__processing_throw", crate::cxx64::__processing_throw);
     }
     for d in ["msvcrt", "ucrtbase"] {
         implement(d, "_CxxThrowException", throw);

@@ -14,7 +14,7 @@ use core::mem::offset_of;
 use iced_x86::{Instruction, Mnemonic, OpKind, Register};
 
 /// The Cpu offsets of vector register `r`'s halves (xmm or ymm, by number).
-fn halves(r: Register) -> (u32, u32) {
+pub(super) fn halves(r: Register) -> (u32, u32) {
     let i = r.number();
     let lo = if i < 8 { offset_of!(Cpu, xmm) + 16 * i } else { offset_of!(Cpu, xmm8) + 16 * (i - 8) };
     (lo32(lo), lo32((offset_of!(Cpu, ymmh) + 16 * i)))
@@ -159,17 +159,18 @@ impl Gen<'_> {
                 self.put(ins.op_register(0));
             }
             Vbroadcastss | Vbroadcastsd | Vbroadcastf128 | Vbroadcasti128 | Vpbroadcastb | Vpbroadcastw | Vpbroadcastd | Vpbroadcastq => {
+                use crate::jit::wasm::SimdMem;
                 let (load, ext, splat) = match m {
-                    Vpbroadcastb => (0x07, 0x16, 0x0f), // v128.load8_splat, i8x16.extract_lane_u, i8x16.splat
-                    Vpbroadcastw => (0x08, 0x19, 0x10),
-                    Vbroadcastss | Vpbroadcastd => (0x09, 0x1b, 0x11),
-                    Vbroadcastsd | Vpbroadcastq => (0x0a, 0x1d, 0x12),
-                    _ => (0, 0, 0), // (the 128 bits from memory)
+                    Vpbroadcastb => (Some(SimdMem::Load8Splat), 0x16, 0x0f), // i8x16.extract_lane_u, i8x16.splat
+                    Vpbroadcastw => (Some(SimdMem::Load16Splat), 0x19, 0x10),
+                    Vbroadcastss | Vpbroadcastd => (Some(SimdMem::Load32Splat), 0x1b, 0x11),
+                    Vbroadcastsd | Vpbroadcastq => (Some(SimdMem::Load64Splat), 0x1d, 0x12),
+                    _ => (None, 0, 0), // (the 128 bits from memory)
                 };
-                if load == 0 {
-                    self.half(1, 0);
-                } else if mem(&ins, 1) {
+                if let Some(load) = load.filter(|_| mem(&ins, 1)) {
                     self.c.get(L_A).simd_mem(load, 0);
+                } else if load.is_none() {
+                    self.half(1, 0);
                 } else {
                     self.half(1, 0);
                     self.c.lane(ext, 0).simd(splat);

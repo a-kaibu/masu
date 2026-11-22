@@ -280,7 +280,7 @@ pub(super) fn logic_ops(tree: &Tree) -> Hits {
 
 /// 8-bit SNORM render targets (2026-11-22: kura dropped every clear of and draw to them,
 /// WebGPU rendering to no SNORM format)
-const SNORM_SITES: [(&str, &str, &str); 36] = [
+const SNORM_SITES: [(&str, &str, &str); 40] = [
     ("crates/kura/src/d3d11/mod.rs", "logic::snorm_ms_page(fmt, dim, layers, mips, samples, bind)", "a multisampled SNORM texture is not its SINT twin on the page (WebGPU multisamples no SNORM format: 4x SNORM would be one sample)"),
     ("crates/kura/src/d3d11/logic.rs", "Some(blend) if ms && !sample_rate && blend.reads_dst() => Store::SnormStash { blend, mark },", "a multisampled SNORM blend that reads its target under a pixel-rate shader is not done per sample in the resolve pass"),
     ("crates/kura/src/d3d11/logic.rs", "gpu::SNORM_RESOLVE, tex, copy, stash, mark_tex, mask", "an SNORM stash's draw has no resolve pass after it"),
@@ -309,7 +309,11 @@ const SNORM_SITES: [(&str, &str, &str); 36] = [
     ("crates/kura/src/d3d11/logic.rs", "13 => Some((f::P_RGBA16SI, [16, 16, 16, 16])),", "R16G16B16A16_SNORM views have no SINT twin (a draw to one is not clamped, rounded and blended as WARP does)"),
     ("crates/kura/src/d3d11/logic.rs", "37 => Some((f::P_RG16SI, [16, 16, 0, 0])),", "R16G16_SNORM views have no SINT twin"),
     ("crates/kura/src/d3d11/logic.rs", "58 => Some((f::P_R16SI, [16, 0, 0, 0])),", "R16_SNORM views have no SINT twin"),
-    ("crates/dxwgsl/src/snorm.rs", "fn sn16_load1(q: i32) -> f32", "the shader's 16-bit SNORM load divides in floats (WGSL's division is not exact); it divides the integers (load16_by_division)"),
+    ("crates/dxwgsl/src/snorm.rs", "Width::Bits16 => (kome::num::to_f32(q) * resolve_rcp(w)).max(-1.0),", "a 16-bit SNORM value is read as the quotient, not WARP's product with the f32 nearest 1/32767 (winref d3d11snorm2's load rows: 24 of 1024 differ)"),
+    ("crates/dxwgsl/src/snorm.rs", "return max(sn_r(vec4<f32>(b) * bitcast<f32>(0x{:08x}u), vec4<u32>(b + vec4<i32>(32768)) >> vec4<u32>(16u)), vec4<f32>(-1.0f));", "the shader's 16-bit SNORM load is not WARP's product with 1/32767, kept from fusing"),
+    ("crates/kura/src/d3d11/format.rs", "dxwgsl::snorm::load_in(dxwgsl::snorm::Width::Bits16, i32::from(v.cast_signed()))", "16-bit SNORM texels uploaded to the page are other floats than WARP reads (the quotient, not load_in's product)"),
+    ("crates/sake/src/k32.rs", "const CONSOLE_PIECE: usize = 65536;", "a console line of more than 4096 bytes is cut in two (winref d3d11snorm2's R16G16B16A16 sweep then differs from Windows')"),
+    ("crates/dxwgsl/src/snorm_tests.rs", "fn warp_answers16()", "the 16-bit SNORM, ClearView and typeless MSAA answers of winref d3d11snorm2 are no longer checked"),
     ("crates/kura/src/d3d9/gpu.rs", "Convert::Sint16ToSnorm16 => format!(\"sn16_load({v})\"),", "a 16-bit SNORM twin's values go back to the page as other floats than their quotients"),
     ("crates/kura/src/d3d11/logic.rs", "let load = twin_copy(tex, sub, twin, 0, w, h, own, page, ms)?;", "an SNORM twin is not loaded by twin_copy (a 16-bit page's floats or a multisampled typeless page's bytes copied as bits)"),
     ("crates/kura/src/d3d11/logic.rs", "let tex = match twins.iter().find(|t| t.target == l.target) {", "an SNORM stash's resolve writes the target's page texture, not the twin the draw loads and stores"),
@@ -1235,7 +1239,7 @@ fn rflags_emitted(line: &str) -> bool {
 /// each line of the JIT emitting RflagsBits.
 /// The statics koji's translations are made under (jit::context): only TranslationContext::now
 /// reads them, in context.rs
-pub const JIT_MODES: [&str; 18] = ["MX_EXACT", "MX_SWITCH", "PAGE_CHECK", "NOCHECK", "LAYOUT", "PROFILE", "COUNT", "HOIST", "SLOTS_MAX", "FN_ENTRIES", "FN", "FN64", "STRUCTURED", "DEBUG_CHECK", "DEBUG_ALL_REGS", "DEBUG_NO_SIDE", "MEMCOUNT", "PROBES"];
+pub const JIT_MODES: [&str; 19] = ["SSA", "MX_EXACT", "MX_SWITCH", "PAGE_CHECK", "NOCHECK", "LAYOUT", "PROFILE", "COUNT", "HOIST", "SLOTS_MAX", "FN_ENTRIES", "FN", "FN64", "STRUCTURED", "DEBUG_CHECK", "DEBUG_ALL_REGS", "DEBUG_NO_SIDE", "MEMCOUNT", "PROBES"];
 
 /// The functions that read them (a free call: a method of the context is the context's)
 pub const JIT_MODE_READS: [&str; 3] = ["mx_exact()", "page_check()", "Pages::now()"];
@@ -1271,6 +1275,68 @@ pub(super) fn jit_context(tree: &Tree) -> Hits {
         for (k, l) in product_code(tree, &f).lines().enumerate() {
             if let Some(n) = mode_read(l) {
                 out.push((f.clone(), k.saturating_add(1), format!("`{n}` read while translating: the translation's TranslationContext has it (read once, when it began)")));
+            }
+        }
+    }
+    out
+}
+
+/// The budget statics jit32test varies: koji::jit::<static>.store(mode.<field> (see
+/// Rule::JitBudgetHarness)
+pub const JIT_BUDGET_HARNESS: [(&str, &str); 3] = [("SSA", "mode.ssa"), ("HOIST", "mode.hoist"), ("SLOTS_MAX", "mode.slots")];
+
+/// Budget statics jit32test leaves as they are, and why
+pub const JIT_BUDGET_UNVARIED: [(&str, &str); 1] = [("FN_ENTRIES", "function mode's entry blocks: kura's, the only setting jit32test's function mode runs")];
+
+/// The statics TranslationContext::now reads into its Budget
+fn budget_statics(context: &str) -> Vec<String> {
+    let Some(at) = context.find("budget: Budget {") else { return Vec::new() };
+    let body = &context[at..];
+    let body = &body[..body.find('}').unwrap_or(body.len())];
+    body.match_indices("super::").filter_map(|(k, _)| {
+        let rest = &body[k + "super::".len()..];
+        let end = rest.find(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))?;
+        rest[end..].starts_with(".load(").then(|| rest[..end].to_string())
+    }).collect()
+}
+
+/// Each budget static set by jit32test from its Mode, or named unvaried (Rule::JitBudgetHarness)
+pub(super) fn jit_budget_harness(tree: &Tree) -> Hits {
+    let mut out = Hits::new();
+    let ctx = Rel::new("crates/koji/src/jit/context.rs");
+    let harness = Rel::new("tools/jit32test/src/main.rs");
+    let statics = budget_statics(&product_code(tree, &ctx));
+    if statics.is_empty() {
+        out.push((ctx.clone(), 1, "no `budget: Budget {` reading its statics (super::X.load) in TranslationContext::now".into()));
+    }
+    let t = product_code(tree, &harness);
+    for n in &statics {
+        if JIT_BUDGET_UNVARIED.iter().any(|(u, _)| u == n) {
+            continue;
+        }
+        match JIT_BUDGET_HARNESS.iter().find(|(h, _)| h == n) {
+            None => out.push((ctx.clone(), 1, format!("budget static `{n}` neither varied by jit32test (JIT_BUDGET_HARNESS) nor named unvaried (JIT_BUDGET_UNVARIED)"))),
+            Some((_, field)) => {
+                let want = format!("koji::jit::{n}.store({field}");
+                if !t.contains(&want) {
+                    out.push((harness.clone(), 1, format!("no `{want}`: jit32test translates with `{n}` as it found it, never the other way")));
+                }
+            }
+        }
+    }
+    out
+}
+
+/// What koji's generators must not spell (Rule::JitSimdAccess): SIMD memory opcodes emitted
+/// raw (0 load, 7-10 splats, 11 store, 0x5c/0x5d zero-extending loads), and the YMM half swap
+pub const JIT_SIMD_RAW: [&str; 11] = [".simd(0)", ".simd(7)", ".simd(8)", ".simd(9)", ".simd(10)", ".simd(11)", ".simd(0x5c)", ".simd(0x5d)", ".simd(92)", ".simd(93)", "swap_hi("];
+
+pub(super) fn jit_simd_access(tree: &Tree) -> Hits {
+    let mut out = Hits::new();
+    for f in tree.rs(&["crates/koji/src/jit/"]) {
+        for (k, l) in product_code(tree, &f).lines().enumerate() {
+            if let Some(b) = JIT_SIMD_RAW.iter().find(|b| l.contains(*b)) {
+                out.push((f.clone(), k.saturating_add(1), format!("`{b}`: a SIMD access not through Code::simd_access (MEMCOUNT misses it), or the YMM halves swapped in the Cpu")));
             }
         }
     }

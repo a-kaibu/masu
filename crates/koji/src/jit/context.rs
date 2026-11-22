@@ -183,6 +183,8 @@ pub struct Budget {
     pub hoist: bool,
     /// functions entered in the middle too (super::FN_ENTRIES)
     pub fn_entries: bool,
+    /// register-only runs through the small SSA (super::SSA, jit::ssa)
+    pub ssa: bool,
 }
 
 /// Debugging switches of the long-mode generator (long::STRUCTURED, DEBUG_*)
@@ -240,6 +242,7 @@ impl TranslationContext {
                 slots: kome::num::us(super::SLOTS_MAX.load(Relaxed)),
                 hoist: super::HOIST.load(Relaxed),
                 fn_entries: super::FN_ENTRIES.load(Relaxed),
+                ssa: super::SSA.load(Relaxed),
             },
             debug64: Debug64 {
                 structured: super::long::STRUCTURED.load(Relaxed),

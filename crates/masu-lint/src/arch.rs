@@ -81,6 +81,8 @@ pub enum Rule {
     JitExitContract,
     JitHarnessImports,
     JitContext,
+    JitBudgetHarness,
+    JitSimdAccess,
     RunPlan,
     DllSearch,
     FullPathOneRule,
@@ -98,7 +100,7 @@ pub enum Rule {
 }
 
 impl Rule {
-    pub const ALL: [Rule; 78] = [
+    pub const ALL: [Rule; 80] = [
         Rule::BuildOutput,
         Rule::HresultCopy,
         Rule::KomeCopy,
@@ -163,6 +165,8 @@ impl Rule {
         Rule::JitExitContract,
         Rule::JitHarnessImports,
         Rule::JitContext,
+        Rule::JitBudgetHarness,
+        Rule::JitSimdAccess,
         Rule::RunPlan,
         Rule::DllSearch,
         Rule::FullPathOneRule,
@@ -246,6 +250,8 @@ impl Rule {
             Rule::JitExitContract => "jit-exit-contract",
             Rule::JitHarnessImports => "jit-harness-imports",
             Rule::JitContext => "jit-context",
+            Rule::JitBudgetHarness => "jit-budget-harness",
+            Rule::JitSimdAccess => "jit-simd-access",
             Rule::DllSearch => "dll-search",
             Rule::FullPathOneRule => "full-path-one-rule",
             Rule::ShortNameTable => "short-name-table",
@@ -329,6 +335,8 @@ impl Rule {
             Rule::JitExitContract => "koji's exit contract (jit::ExitAt): before or after an instruction that may leave, every status flag exact (an exception handler reads EFLAGS: xor eax,eax / mov ecx,[0] left 0x202 where the interpreter has 0x246); at a jump to code, those it reads. Gen::exit_with, jump_dyn and fallback check it, liveness sees the bails of an unchecked ESP, a callee that reads none is recorded so, a loop's hoisted checks need only its head's live-in, and no iced RflagsBits are emitted as EFLAGS bits (regress::JIT_EXIT_CONTRACT / JIT_EXIT_CONTRACT_NOT)",
             Rule::JitHarnessImports => "a test harness that runs koji's modules (a wasmtime linker defining env.table: jit16test, jit32test, jit64test, fuzz) defines env.pages too, the page marks every module imports since the saved code runs with the page checks on, and jit32test fails when no translation loaded: its translations' load errors were taken as refusals, so after that import came every one failed to load and 600 random programs compared the interpreter with itself (regress::JIT_HARNESS_LOADED)",
             Rule::JitContext => "koji's generators read the modes (MXCSR flag checks, page checks, 16-bit code's segment, functions, measuring, budgets) from the translation's jit::TranslationContext, made once when it begins, never from the statics: a mode the host turned on while another thread translated made a translation part one, part the other, kept as the first; and the 16-bit segment base was a static every translation read, behind a gate (regress::JIT_MODES / JIT_MODE_READS)",
+            Rule::JitBudgetHarness => "each codegen choice of koji's TranslationContext budget (the statics TranslationContext::now reads into Budget: SSA, HOIST, SLOTS_MAX, ...) is set by jit32test from its Mode, so the random differential runs translate with it on and off; a budget static it does not vary is named in regress::JIT_BUDGET_UNVARIED with why. The SSA runs (jit::ssa) came with a choice jitbench's build put in a stray file and nothing ran (regress::JIT_BUDGET_HARNESS)",
+            Rule::JitSimdAccess => "koji emits a SIMD load or store only through wasm::Code::simd_access (v128load, v128store, simd_mem with a wasm::SimdMem), never a raw `.simd(<memory opcode>)`, so MASU_JIT_MEMCOUNT counts it (SIMD accesses went uncounted); and a VEX.256 form reads its registers' upper halves in place (long/sse.rs Lane), never swapping them in the Cpu (`swap_hi`: every leave had to swap them back) (regress::JIT_SIMD_RAW)",
             Rule::DllSearch => "sake's loader looks for a DLL named without a path in LdrGetDllPath's folders for that load (its module and LoadLibraryEx's flags, SetDefaultDllDirectories' with none) and for a DLL's imports as the load that found it (review b5dacf4 2.1: find_dll_file had an order of its own with the folder of every DLL loaded by path in it, and LoadLibraryEx's LOAD_LIBRARY_SEARCH_* flags never reached it; winref dllsearch): pe::LoadSearch::folders is dllpath::dll_folders, LoadLibraryExW passes its flags, and pe.rs names no folders of its own (regress::DLL_SEARCH / DLL_SEARCH_NOT)",
             Rule::FullPathOneRule => "every file operation opens the full path GetFullPathName names (review b5dacf4 2.2: CreateFile opened `D:save.dat` as D:\\save.dat while GetFullPathName answered from the `=D:` variable): files::full_path makes a Win32 name full with fullpath's RtlGetFullPathName_Ustr (regress::FULL_PATH)",
             Rule::ShortNameTable => "an 8.3 name is given when its long name is made and kept in its folder's table until the name is removed or renamed, as NTFS keeps it (review b5dacf4 2.3: the short names were made again from every listing, so deleting one file changed another's, and a reload gave new ones): kura::fs tells the one watcher each name made and removed, sake watches from its first guest path, shortname reads the kept table, and sake lists and removes folders only through shortname::read_dir / remove_dir (the table is no guest entry) (regress::SHORT_NAMES)",
@@ -413,6 +421,8 @@ impl Rule {
             Rule::JitExitContract => regress::jit_exit_contract(tree),
             Rule::JitHarnessImports => regress::jit_harness_imports(tree),
             Rule::JitContext => regress::jit_context(tree),
+            Rule::JitBudgetHarness => regress::jit_budget_harness(tree),
+            Rule::JitSimdAccess => regress::jit_simd_access(tree),
             Rule::DllSearch => regress::dll_search(tree),
             Rule::FullPathOneRule => regress::full_path_one_rule(tree),
             Rule::ShortNameTable => regress::short_name_table(tree),
@@ -743,7 +753,10 @@ fn release_build_only(tree: &Tree) -> Hits {
 }
 
 /// what must stay in place: (file, text, why)
-pub const REQUIRED: [(&str, &str, &str); 59] = [
+pub const REQUIRED: [(&str, &str, &str); 62] = [
+    ("crates/sake/src/crt.rs", "    if e == 22 || e == 34 {\n        io::invalid_parameter(c);", "a secure CRT function's EINVAL / ERANGE goes through the invalid parameter handler (ucrtbase:misc test_invalid_parameter_handler; 2026-11-22)"),
+    ("crates/sake/src/crt.rs", "    implement(\"ucrtbase\", \"wcstok\", ucrt_wcstok);", "ucrtbase's wcstok with a NULL context uses the thread's own (ucrtbase:string crashed; 2026-11-22)"),
+    ("crates/sake/src/cxx.rs", "        implement(d, \"__current_exception\", crate::cxx64::__current_exception);", "x86 has __current_exception / __processing_throw in ucrtbase's layout (ucrtbase:misc test_thread_storage crashed; 2026-11-22)"),
     ("crates/sake/src/gdi.rs", "        let o = self.m.remove(&h)?;\n        if !is_stock(h) {\n            self.slots.give_back(handle_index(h));", "a deleted GDI object's slot goes back with its generation counted up, so the old handle names nothing (gdi32:gdiobj test_shared_handle_table; 2026-11-22)"),
     ("crates/sake/src/lib.rs", "    PEB.store(peb, Ordering::Relaxed);\n    gdi::share_table(peb);", "PEB->GdiSharedHandleTable points at the GDI handle table (gdi32:gdiobj read a NULL table and crashed; 2026-11-22)"),
     ("crates/sake/src/gdiplus.rs", "            if row.len() < (w * bpp) as usize {\n                continue;", "GdipCreateBitmapFromScan0 with bits that are not memory does not read them (gdiplus:graphics test_GetDC panicked sake; 2026-11-22)"),

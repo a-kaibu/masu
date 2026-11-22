@@ -1168,6 +1168,9 @@ fn init_flags() {
         if std::env::var("MASU_JIT_HOIST").is_ok_and(|v| v == "0") {
             jit::HOIST.store(false, Ordering::Relaxed);
         }
+        if let Ok(v) = std::env::var("MASU_JIT_SSA") {
+            jit::SSA.store(v != "0", Ordering::Relaxed);
+        }
         if let Some(secs) = std::env::var("MASU_JIT_COUNT").ok().and_then(|v| v.parse::<u64>().ok()) {
             use std::sync::atomic::Ordering::Relaxed;
             if !jit::COUNT.swap(true, Relaxed) {
