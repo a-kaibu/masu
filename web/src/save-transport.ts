@@ -1,4 +1,10 @@
 import { same } from "./file-records";
+/** The request headers naming a record of this browser (crates/masu/src/saves.rs): a PUT's
+ * the record its bytes hold or supersede, a GET's the record asked about; the GET's answer
+ * repeats it when an upload named it. */
+export const COVERS = "x-masu-covers";
+export const ASK = "x-masu-ask";
+export const COVERED = "x-masu-covered";
 /** Bytes per second an upload is given at least before it is given up (a phone's poor link). */
 const SLOW_LINK = 64 * 1024;
 
@@ -27,18 +33,27 @@ export class SaveTransport {
   private limit(bytes = 0): AbortSignal {
     return AbortSignal.timeout(this.waitMs + Math.ceil((bytes / SLOW_LINK) * 1000));
   }
-  async load(url: string): Promise<Uint8Array | null> {
-    const r = await this.request(url, { cache: "no-store", signal: this.limit() });
+  /** The server's copy (null: none), and whether an upload named `asked` (a record of this
+   * browser) as one it holds or supersedes (`covered`; saves.ts, review b5dacf4 1.1). */
+  async load(
+    url: string,
+    asked: string | null,
+  ): Promise<{ data: Uint8Array<ArrayBuffer> | null; covered: boolean }> {
+    const r = await this.request(url, {
+      cache: "no-store",
+      signal: this.limit(),
+      ...(asked ? { headers: { [ASK]: asked } } : {}),
+    });
     if (r.status === 404) {
       this.revisions.set(url, '"0"');
-      return null;
+      return { data: null, covered: false };
     }
     if (!r.ok) throw new Error(`セーブの取得に失敗しました: HTTP ${r.status}`);
     const revision = r.headers.get("etag");
     if (!revision) throw new Error("セーブのバージョンがありません");
     const data = new Uint8Array(await r.arrayBuffer());
     this.revisions.set(url, revision);
-    return data;
+    return { data, covered: !!asked && r.headers.get(COVERED) === asked };
   }
   /**
    * The server was out of reach at the start, so the game started from `data` (this browser's
@@ -72,7 +87,9 @@ export class SaveTransport {
   }
   /** Writes `data` as the server's copy: the revision it is there as (the one this write made,
    * not whatever a later store left in `revision(url)` by the time the caller looks). */
-  store(url: string, data: Uint8Array<ArrayBuffer>): Promise<string> {
+  /** (`covers`: the record of this browser these bytes hold or supersede, kept by the server
+   * beside the revision: a start asks for it when that record is still marked unsent) */
+  store(url: string, data: Uint8Array<ArrayBuffer>, covers: string | null): Promise<string> {
     // (the caller's array as it is: callers hand a fresh export and do not change it)
     const snapshot = data;
     const previous = this.queues.get(url) ?? Promise.resolve();
@@ -82,7 +99,7 @@ export class SaveTransport {
         if (!this.revisions.has(url)) await this.learnRevision(url);
         const r = await this.request(url, {
           method: "PUT",
-          headers: { "if-match": this.revisions.get(url)! },
+          headers: { "if-match": this.revisions.get(url)!, ...(covers ? { [COVERS]: covers } : {}) },
           body: snapshot,
           keepalive: snapshot.length < 60000,
           signal: this.limit(snapshot.length),
