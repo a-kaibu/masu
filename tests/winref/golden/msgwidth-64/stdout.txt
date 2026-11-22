@@ -1,0 +1,50 @@
+PostMessage 1
+posted: GetMessage 1 message 1
+  wParam 1122334455667788
+  lParam 8877665544332211
+  DispatchMessage fffffffffffffffe
+  dispatched: proc got 1
+  wParam 1122334455667788
+  lParam 8877665544332211
+PostThreadMessage 1
+thread: GetMessage 1 message 3
+  wParam 1122334455667788
+  lParam fffffffffffffffb
+SendMessage 0123456789abcdef
+sent: proc got 2
+  wParam 1122334455667788
+  lParam 8877665544332211
+SendMessageTimeout 1
+  result 0123456789abcdef
+timeout: proc got 2
+  wParam 1122334455667788
+  lParam 8877665544332211
+CallWindowProc 0123456789abcdef
+called: proc got 2
+  wParam 1122334455667788
+  lParam 8877665544332211
+other thread's SendMessage 0123456789abcdef
+from another thread: proc got 2
+  wParam 1122334455667788
+  lParam 8877665544332211
+SetTimer 0000000123456789
+TIMERPROC idEvent 0000000123456789
+KillTimer 1
+SetWindowLongPtr USERDATA old 0000000000000000
+GetWindowLongPtr USERDATA 0fedcba987654321
+GetWindowLong USERDATA ffffffff87654321
+after SetWindowLong USERDATA 0000000080000001
+GetWindowLongPtr 0 1122334455667788
+GetWindowLong 0 0000000055667788
+GetWindowLong 4 0000000011223344
+SetWindowLongPtr 12 of 16: error 1413
+  old 0000000000000000
+GetWindowLong 12 0000000000000000
+SetClassLongPtr 0: error 0
+GetClassLongPtr 0 0102030405060708
+GetClassLong 4 0000000001020304
+GetClassLongPtr 16 of 16: error 1413
+GWLP_ID 0000123400005678
+GetDlgCtrlID 5678
+dialog WM_INITDIALOG lParam 8000000000000005
+DialogBoxIndirectParam 7edcba9876543210

@@ -293,17 +293,74 @@ impl Blend {
     }
 }
 
-/// The channel's byte of a shader's output `v`, as the output merger converts it: clamped to
-/// -1..1 (NaN -1), times 127, rounded to the nearest integer (halves away from zero).
-pub fn store(v: f32) -> i8 {
-    // (the product in f32, its halves away from zero: winref d3d11snorm's sweeps; within
-    // -127..=127 after the clamp)
-    kome::num::trunc_i8((clamp_src(v) * 127.0).round())
+/// The width of an SNORM format's channels: 8 bits (R8G8B8A8_SNORM, R8G8_SNORM, R8_SNORM) or
+/// 16 (R16G16B16A16_SNORM, R16G16_SNORM, R16_SNORM).
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Hash, PartialOrd, Ord)]
+pub enum Width {
+    Bits8,
+    Bits16,
 }
 
-/// The value of an SNORM byte: b / 127, -128 as -1 (as -127).
+impl Width {
+    /// Of a channel's bits (None: no SNORM width).
+    pub fn of_bits(bits: u32) -> Option<Width> {
+        match bits {
+            8 => Some(Width::Bits8),
+            16 => Some(Width::Bits16),
+            _ => None,
+        }
+    }
+    /// The channel's bits.
+    pub const fn bits(self) -> u32 {
+        match self {
+            Width::Bits8 => 8,
+            Width::Bits16 => 16,
+        }
+    }
+    /// The largest value: 1.0 is it.
+    pub const fn top(self) -> i32 {
+        match self {
+            Width::Bits8 => 127,
+            Width::Bits16 => 32767,
+        }
+    }
+    /// [`Width::top`] as an f32 (exact).
+    pub fn scale(self) -> f32 {
+        match self {
+            Width::Bits8 => 127.0,
+            Width::Bits16 => 32767.0,
+        }
+    }
+}
+
+/// The channel's value of a shader's output `v` in a target of width `w`, as the output merger
+/// converts it: clamped to -1..1 (NaN -1), times the width's maximum, rounded to the nearest
+/// integer (halves away from zero).
+pub fn store_in(w: Width, v: f32) -> i32 {
+    // (the product in f32, its halves away from zero: winref d3d11snorm's sweeps; within the
+    // width's range after the clamp)
+    kome::num::trunc_i32((clamp_src(v) * w.scale()).round())
+}
+
+/// The value of a channel of width `w`: q / its maximum (the nearest f32), its minimum (-128,
+/// -32768) as -1.
+pub fn load_in(w: Width, q: i32) -> f32 {
+    (kome::num::to_f32(q) / w.scale()).max(-1.0)
+}
+
+/// The channel's byte of a shader's output `v` ([`store_in`] of 8 bits).
+pub fn store(v: f32) -> i8 {
+    byte(store_in(Width::Bits8, v))
+}
+
+/// An 8-bit value as its byte (saturated: the 8-bit functions give -127..=127).
+fn byte(q: i32) -> i8 {
+    i8::try_from(q.clamp(-128, 127)).unwrap_or(0)
+}
+
+/// The value of an SNORM byte ([`load_in`] of 8 bits): b / 127, -128 as -1.
 pub fn load(b: i8) -> f32 {
-    (f32::from(b) / 127.0).max(-1.0)
+    load_in(Width::Bits8, i32::from(b))
 }
 
 /// A value as the output merger takes it: clamped to the format's range, NaN as -1 (WARP
@@ -312,17 +369,22 @@ pub fn clamp_src(v: f32) -> f32 {
     if v.is_nan() { -1.0 } else { v.clamp(-1.0, 1.0) }
 }
 
-/// What a channel holds after blend `b` of sources `s`, `s1` (the shader's SV_Target0 and 1)
-/// and constant `k` over destination bytes `d`.
-pub fn blend(b: &Blend, s: [f32; 4], s1: [f32; 4], d: [i8; 4], k: [f32; 4]) -> [i8; 4] {
+/// What a channel of width `w` holds after blend `b` of sources `s`, `s1` (the shader's
+/// SV_Target0 and 1) and constant `k` over destination values `d`.
+pub fn blend_in(w: Width, b: &Blend, s: [f32; 4], s1: [f32; 4], d: [i32; 4], k: [f32; 4]) -> [i32; 4] {
     let (s, s1, k) = (s.map(clamp_src), s1.map(clamp_src), k.map(clamp_src));
-    let d = d.map(load);
+    let d = d.map(|q| load_in(w, q));
     std::array::from_fn(|c| {
         let e = if c == 3 { b.alpha } else { b.color };
         let (sv, dv) = (s.get(c).copied().unwrap_or(0.0), d.get(c).copied().unwrap_or(0.0));
         let v = e.op.apply(sv * e.src.value(c, s, s1, d, k), dv * e.dst.value(c, s, s1, d, k), sv, dv);
-        store(v)
+        store_in(w, v)
     })
+}
+
+/// [`blend_in`] of 8 bits, over destination bytes `d`.
+pub fn blend(b: &Blend, s: [f32; 4], s1: [f32; 4], d: [i8; 4], k: [f32; 4]) -> [i8; 4] {
+    blend_in(Width::Bits8, b, s, s1, d.map(i32::from), k).map(byte)
 }
 
 /// The binding of the blend state's constant (a uniform vec4<f32>) in the pixel shader's group:
@@ -339,25 +401,152 @@ const _: () = {
     assert!(SNORM_CONSTANT < 1000);
 };
 
-/// The WGSL of the conversions and blend (module scope). A load is a table of [`load`]'s
-/// values (a WGSL division is within 2.5 ULP, not exact: the blend would differ from WARP's in
-/// the last bit, and the byte with it). Each product goes through `sn_r`: its bits or'd with
-/// a zero the compiler cannot see (bit 30 of a value within -1..1: its exponent's top bit), so
-/// it is rounded as WARP rounds it and no driver fuses it with the add after it (an FMA blends
-/// 1.9 * -5/127 to -10, WARP to -9).
+impl Width {
+    /// The WGSL function of [`store_in`] of this width (vec4<f32> to vec4<i32>, [`helpers`]).
+    pub fn store_fn(self) -> &'static str {
+        match self {
+            Width::Bits8 => "sn_store",
+            Width::Bits16 => "sn16_store",
+        }
+    }
+    /// The WGSL function of [`load_in`] of this width (vec4<i32> to vec4<f32>, [`helpers`]).
+    pub fn load_fn(self) -> &'static str {
+        match self {
+            Width::Bits8 => "sn_load",
+            Width::Bits16 => "sn16_load",
+        }
+    }
+}
+
+/// What the page holds a multisampled SNORM SRV's texels as (its texture's page format).
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Hash, PartialOrd, Ord)]
+pub enum Source {
+    /// the SINT twin's values (kura's logic::snorm_ms_page)
+    Sint,
+    /// an 8-bit UNORM page's (a typeless texture's): each byte as UNORM's float, its bits the
+    /// SNORM byte's
+    Unorm8,
+}
+
+/// An SRV of a multisampled texture with an SNORM format that the page holds as other texels
+/// ([`Source`]): its t register, the format's channels (1, 2 or 4) and width. The shader's
+/// loads of it give the format's floats ([`load_in`]); a channel the format has not 0, alpha 1.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Hash, PartialOrd, Ord)]
+pub struct View {
+    pub slot: u32,
+    pub channels: u32,
+    pub width: Width,
+    pub source: Source,
+}
+
+impl View {
+    /// The WGSL texture type of the view's page texture.
+    pub fn texture_type(&self) -> &'static str {
+        match self.source {
+            Source::Sint => "texture_multisampled_2d<i32>",
+            Source::Unorm8 => "texture_multisampled_2d<f32>",
+        }
+    }
+    /// The WGSL of the format's floats (vec4<f32>) from `texel`, a textureLoad of the page
+    /// texture.
+    pub fn load_wgsl(&self, texel: &str) -> String {
+        let have: Vec<&str> = (0..4u32).map(|c| if c < self.channels { "true" } else { "false" }).collect();
+        let q = match self.source {
+            Source::Sint => texel.to_owned(),
+            // (the byte b / 255 back to b, then as a signed byte)
+            Source::Unorm8 => format!("((vec4<i32>(round({texel} * 255.0f)) + vec4<i32>(128)) & vec4<i32>(255)) - vec4<i32>(128)"),
+        };
+        format!("select(vec4<f32>(0.0f, 0.0f, 0.0f, 1.0f), {}({q}), vec4<bool>({}))", self.width.load_fn(), have.join(", "))
+    }
+}
+
+/// [`load_in`] of 16 bits by integers alone, as the shader's `sn16_load1` computes it (a WGSL
+/// division is within 2.5 ULP, not exact): |q| / 32767 by long division, 24 bits and a round
+/// bit, rounded to the nearest (ties to even) with the remainder as the sticky bit.
+pub fn load16_by_division(q: i32) -> f32 {
+    let c = q.max(-32767);
+    let a = c.unsigned_abs();
+    if a == 0 {
+        return 0.0;
+    }
+    let sign = if c < 0 { 0x8000_0000u32 } else { 0 };
+    if a == 32767 {
+        return f32::from_bits(sign | 0x3f80_0000);
+    }
+    // (r / 32767 in [1, 2) times 2^-e)
+    let (mut r, mut e) = (a, 0u32);
+    for _ in 0..16 {
+        if r < 32767 {
+            r <<= 1;
+            e = e.wrapping_add(1);
+        }
+    }
+    r = r.wrapping_sub(32767);
+    let mut m = 1u32;
+    for _ in 0..24 {
+        r <<= 1;
+        let bit = r >= 32767;
+        m = (m << 1) | u32::from(bit);
+        if bit {
+            r = r.wrapping_sub(32767);
+        }
+    }
+    let mut f = m >> 1;
+    if m & 1 != 0 && (r != 0 || f & 1 != 0) {
+        f = f.wrapping_add(1);
+    }
+    f32::from_bits(sign | (127u32.wrapping_sub(e) << 23) | (f & 0x7f_ffff))
+}
+
+/// The WGSL of the conversions and blend (module scope). An 8-bit load is a table of [`load`]'s
+/// values, a 16-bit one [`load16_by_division`] (a WGSL division is within 2.5 ULP, not exact:
+/// the blend would differ from WARP's in the last bit, and the value with it). Each product goes
+/// through `sn_r`: its bits or'd with a zero the compiler cannot see (bit 30 of a value within
+/// -1..1: its exponent's top bit), so it is rounded as WARP rounds it and no driver fuses it
+/// with the add after it (an FMA blends 1.9 * -5/127 to -10, WARP to -9).
 pub fn helpers() -> String {
     let table: Vec<String> = (i8::MIN..=i8::MAX).map(|b| format!("0x{:08x}u", load(b).to_bits())).collect();
-    format!(
-        "const SN_LOAD = array<u32, 256>({});\n\
-fn sn_store(v: vec4<f32>) -> vec4<i32> {{\n\
+    let store = |name: &str, w: Width| {
+        format!(
+            "fn {name}(v: vec4<f32>) -> vec4<i32> {{\n\
 \x20 let c = sn_clamp(v);\n\
-\x20 let x = sn_r(c * 127.0f, bitcast<vec4<u32>>(c) & vec4<u32>(0x40000000u));\n\
+\x20 let x = sn_r(c * {:?}f, bitcast<vec4<u32>>(c) & vec4<u32>(0x40000000u));\n\
 \x20 let t = trunc(x);\n\
 \x20 return vec4<i32>(t + select(vec4<f32>(0.0f), sign(x), abs(x - t) >= vec4<f32>(0.5f)));\n\
-}}\n\
+}}\n",
+            w.scale()
+        )
+    };
+    format!(
+        "const SN_LOAD = array<u32, 256>({});\n\
+{}{}\
 fn sn_load(b: vec4<i32>) -> vec4<f32> {{\n\
 \x20 let i = (vec4<u32>(b + vec4<i32>(128))) & vec4<u32>(255u);\n\
 \x20 return bitcast<vec4<f32>>(vec4<u32>(SN_LOAD[i.x], SN_LOAD[i.y], SN_LOAD[i.z], SN_LOAD[i.w]));\n\
+}}\n\
+fn sn16_load1(q: i32) -> f32 {{\n\
+\x20 let c = max(q, -32767);\n\
+\x20 let a = u32(abs(c));\n\
+\x20 let sg = select(0u, 0x80000000u, c < 0);\n\
+\x20 if (a == 0u) {{ return 0.0f; }}\n\
+\x20 if (a >= 32767u) {{ return bitcast<f32>(sg | 0x3f800000u); }}\n\
+\x20 var r = a;\n\
+\x20 var e = 0u;\n\
+\x20 for (var k = 0u; k < 16u; k++) {{ if (r < 32767u) {{ r = r << 1u; e = e + 1u; }} }}\n\
+\x20 r = r - 32767u;\n\
+\x20 var m = 1u;\n\
+\x20 for (var k = 0u; k < 24u; k++) {{\n\
+\x20   r = r << 1u;\n\
+\x20   let b = r >= 32767u;\n\
+\x20   m = (m << 1u) | select(0u, 1u, b);\n\
+\x20   if (b) {{ r = r - 32767u; }}\n\
+\x20 }}\n\
+\x20 var f = m >> 1u;\n\
+\x20 if ((m & 1u) != 0u && (r != 0u || (f & 1u) != 0u)) {{ f = f + 1u; }}\n\
+\x20 return bitcast<f32>(sg | ((127u - e) << 23u) | (f & 0x7fffffu));\n\
+}}\n\
+fn sn16_load(b: vec4<i32>) -> vec4<f32> {{\n\
+\x20 return vec4<f32>(sn16_load1(b.x), sn16_load1(b.y), sn16_load1(b.z), sn16_load1(b.w));\n\
 }}\n\
 fn sn_r(p: vec4<f32>, z: vec4<u32>) -> vec4<f32> {{\n\
 \x20 return bitcast<vec4<f32>>(bitcast<vec4<u32>>(p) | z);\n\
@@ -369,7 +558,9 @@ fn sn_clamp(v: vec4<f32>) -> vec4<f32> {{\n\
 \x20 let nan = (bitcast<vec4<u32>>(v) & vec4<u32>(0x7fffffffu)) > vec4<u32>(0x7f800000u);\n\
 \x20 return select(clamp(v, vec4<f32>(-1.0f), vec4<f32>(1.0f)), vec4<f32>(-1.0f), nan);\n\
 }}\n",
-        table.join(", ")
+        table.join(", "),
+        store(Width::Bits8.store_fn(), Width::Bits8),
+        store(Width::Bits16.store_fn(), Width::Bits16)
     )
 }
 
@@ -386,30 +577,30 @@ fn equation_wgsl(e: &Equation, c: &str) -> String {
     }
 }
 
-/// The WGSL statements of a blended target's bytes as `out` (vec4<i32>), from `src` and `src1`
-/// (vec4<f32> expressions: SV_Target0 and 1) over the twin's bytes `dst` (vec4<i32>; the
-/// target's copy) with the constant `sn_k`; `r` names the statements' own variables.
-pub fn blend_wgsl(b: &Blend, src: &str, src1: &str, dst: &str, out: &str) -> Vec<String> {
+/// The WGSL statements of a blended target's values (width `w`) as `out` (vec4<i32>), from
+/// `src` and `src1` (vec4<f32> expressions: SV_Target0 and 1) over the twin's values `dst`
+/// (vec4<i32>; the target's copy) with the constant `sn_k`.
+pub fn blend_wgsl(w: Width, b: &Blend, src: &str, src1: &str, dst: &str, out: &str) -> Vec<String> {
     let [x, y, z] = ["x", "y", "z"].map(|c| equation_wgsl(&b.color, c));
     vec![
         format!("let sn_s = sn_clamp({src});"),
         // (a zero the compiler cannot see: sn_r)
         "let sn_z = bitcast<u32>(sn_s.x) & 0x40000000u;".to_owned(),
         format!("let sn_s1 = sn_clamp({src1});"),
-        format!("let sn_d = sn_load({dst});"),
-        format!("{out} = sn_store(vec4<f32>({x}, {y}, {z}, {}));", equation_wgsl(&b.alpha, "w")),
+        format!("let sn_d = {}({dst});", w.load_fn()),
+        format!("{out} = {}(vec4<f32>({x}, {y}, {z}, {}));", w.store_fn(), equation_wgsl(&b.alpha, "w")),
     ]
 }
 
 /// The WGSL of the resolve pass of an SNORM stash (crate::logic::Store::SnormStash) of blend
-/// `b`: `vs_resolve` the full-target triangle, `fs_resolve` run for each sample: a sample the
-/// shader's pass marked (bit `bit` of channel `channel` of the mark's texel) gets the blend of
-/// the pixel's sources (the target's buffer at LOGIC_STASH, crate::logic::SNORM_SRC's layout)
-/// over the sample of the target's copy (LOGIC_DST) with the constant (SNORM_CONSTANT, a
-/// uniform vec4<f32>), the rest nothing.
-pub fn resolve_wgsl(b: &Blend, channel: u32, bit: u32) -> String {
+/// `b` on a target of width `w`: `vs_resolve` the full-target triangle, `fs_resolve` run for
+/// each sample: a sample the shader's pass marked (bit `bit` of channel `channel` of the mark's
+/// texel) gets the blend of the pixel's sources (the target's buffer at LOGIC_STASH,
+/// crate::logic::SNORM_SRC's layout) over the sample of the target's copy (LOGIC_DST) with the
+/// constant (SNORM_CONSTANT, a uniform vec4<f32>), the rest nothing.
+pub fn resolve_wgsl(w: Width, b: &Blend, channel: u32, bit: u32) -> String {
     use crate::logic::{LOGIC_DST, LOGIC_MARK, LOGIC_STASH};
-    let body = blend_wgsl(b, "s", "s1", "d", "o");
+    let body = blend_wgsl(w, b, "s", "s1", "d", "o");
     format!(
         "{}@group(0) @binding({LOGIC_DST}) var dst: texture_multisampled_2d<i32>;\n\
          @group(0) @binding({LOGIC_STASH}) var<storage, read> src: array<u32>;\n\
@@ -436,31 +627,48 @@ pub fn resolve_wgsl(b: &Blend, channel: u32, bit: u32) -> String {
     )
 }
 
-/// A sample's value as WARP's resolve reads it: the byte (-128 as -127) times the f32 nearest
-/// 1/127, not [`load`]'s correctly rounded quotient (winref d3d11snorm's seed rows: 960 of 960
-/// with the product, 940 with the quotient).
+/// A sample's value (width `w`) as WARP's resolve reads it: the value (its minimum as minus its
+/// maximum) times the f32 nearest 1 / the maximum, not [`load_in`]'s correctly rounded quotient
+/// (winref d3d11snorm's seed rows: 960 of 960 with the product, 940 with the quotient).
+pub fn resolve_load_in(w: Width, q: i32) -> f32 {
+    kome::num::to_f32(q.max(w.top().wrapping_neg())) * resolve_rcp(w)
+}
+
+/// The f32 nearest 1 / width `w`'s maximum ([`resolve_load_in`]).
+pub fn resolve_rcp(w: Width) -> f32 {
+    match w {
+        Width::Bits8 => 1.0 / 127.0,
+        Width::Bits16 => 1.0 / 32767.0,
+    }
+}
+
+/// [`resolve_load_in`] of 8 bits.
 pub fn resolve_load(b: i8) -> f32 {
-    f32::from(b.max(-127)) * RESOLVE_RCP
+    resolve_load_in(Width::Bits8, i32::from(b))
 }
 
-/// The f32 nearest 1/127 ([`resolve_load`]).
-pub const RESOLVE_RCP: f32 = 1.0 / 127.0;
-
-/// ResolveSubresource of a multisampled SNORM texture: a channel's byte from its samples'
-/// bytes, as WARP resolves (winref d3d11snorm): the samples' values ([`resolve_load`]) summed
-/// in f32 in sample order, times 1 / their count, times 127, rounded to the nearest (ties to
-/// even).
-pub fn resolve(samples: &[i8]) -> i8 {
-    let sum = samples.iter().fold(0.0f32, |a, &b| a + resolve_load(b));
+/// ResolveSubresource of a multisampled SNORM texture of width `w`: a channel's value from its
+/// samples' values, as WARP resolves (winref d3d11snorm): the samples' values
+/// ([`resolve_load_in`]) summed in f32 in sample order, times 1 / their count, times the
+/// width's maximum, rounded to the nearest (ties to even).
+pub fn resolve_in(w: Width, samples: &[i32]) -> i32 {
+    let sum = samples.iter().fold(0.0f32, |a, &q| a + resolve_load_in(w, q));
     let n = kome::num::to_f32(u32::try_from(samples.len()).unwrap_or(1).max(1));
-    kome::num::trunc_i8((clamp_src(sum * (1.0 / n)) * 127.0).round_ties_even())
+    kome::num::trunc_i32((clamp_src(sum * (1.0 / n)) * w.scale()).round_ties_even())
 }
 
-/// The WGSL of [`resolve`] as a pass (`vs` the full-target triangle, `fs` a pixel): the
-/// samples of `src` (a multisampled SNORM texture's SINT twin) into its SINT twin. Each
-/// sample's product goes through `sn_r` with the bits of its byte + 128 past bit 8 (zero for a
-/// byte), so no driver fuses it with the sum's add.
-pub fn ms_resolve_wgsl() -> String {
+/// [`resolve_in`] of 8 bits.
+pub fn resolve(samples: &[i8]) -> i8 {
+    let q: Vec<i32> = samples.iter().copied().map(i32::from).collect();
+    byte(resolve_in(Width::Bits8, &q))
+}
+
+/// The WGSL of [`resolve_in`] (width `w`) as a pass (`vs` the full-target triangle, `fs` a
+/// pixel): the samples of `src` (a multisampled SNORM texture's SINT twin) into its SINT twin.
+/// Each sample's product goes through `sn_r` with the bits of its value + 2^(bits - 1) past
+/// bit `bits` (zero for a value of the width), so no driver fuses it with the sum's add.
+pub fn ms_resolve_wgsl(w: Width) -> String {
+    let max = w.top();
     format!(
         "{}@group(0) @binding(0) var src: texture_multisampled_2d<i32>;\n\
          @vertex fn vs(@builtin(vertex_index) i: u32) -> @builtin(position) vec4<f32> {{\n\
@@ -471,14 +679,17 @@ pub fn ms_resolve_wgsl() -> String {
          \x20 let n = textureNumSamples(src);\n\
          \x20 var s = vec4<f32>(0.0f);\n\
          \x20 for (var k = 0u; k < n; k++) {{\n\
-         \x20   let b = max(select(vec4<i32>(), textureLoad(src, q, i32(k)), all(vec2<u32>(q) < textureDimensions(src))), vec4<i32>(-127));\n\
-         \x20   s = s + sn_r(vec4<f32>(b) * bitcast<f32>(0x{rcp:08x}u), vec4<u32>(b + vec4<i32>(128)) >> vec4<u32>(8u));\n\
+         \x20   let b = max(select(vec4<i32>(), textureLoad(src, q, i32(k)), all(vec2<u32>(q) < textureDimensions(src))), vec4<i32>(-{max}));\n\
+         \x20   s = s + sn_r(vec4<f32>(b) * bitcast<f32>(0x{rcp:08x}u), vec4<u32>(b + vec4<i32>({half})) >> vec4<u32>({bits}u));\n\
          \x20 }}\n\
          \x20 let c = sn_clamp(s * (1.0f / f32(max(n, 1u))));\n\
-         \x20 return vec4<i32>(round(sn_r(c * 127.0f, bitcast<vec4<u32>>(c) & vec4<u32>(0x40000000u))));\n\
+         \x20 return vec4<i32>(round(sn_r(c * {scale:?}f, bitcast<vec4<u32>>(c) & vec4<u32>(0x40000000u))));\n\
          }}\n",
         helpers(),
-        rcp = RESOLVE_RCP.to_bits()
+        rcp = resolve_rcp(w).to_bits(),
+        half = max.wrapping_add(1),
+        bits = w.bits(),
+        scale = w.scale()
     )
 }
 

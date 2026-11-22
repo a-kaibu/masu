@@ -42,6 +42,7 @@ pub mod video;
 pub mod vnv;
 pub mod d3d9;
 pub mod d3d11;
+pub mod content;
 pub mod gl;
 pub mod cpu;
 pub mod crashlog;

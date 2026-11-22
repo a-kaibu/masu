@@ -206,7 +206,7 @@ fn fixture(r: Rule) -> Fixture {
         },
         Rule::SnormTargets => Fixture {
             bad: &[("crates/kura/src/d3d11/logic.rs", "fn snorm_twin(v: u32) -> Option<(u32, [u32; 4])> {\n    // 31 => Some((f::P_RGBA8SI, [8, 8, 8, 8])), named in a comment\n    None\n}\n")],
-            good: &[("crates/kura/src/d3d11/logic.rs", "fn snorm_twin(v: u32) -> Option<(u32, [u32; 4])> {\n    match v {\n        31 => Some((f::P_RGBA8SI, [8, 8, 8, 8])),\n        51 => Some((f::P_RG8SI, [8, 8, 0, 0])),\n        63 => Some((f::P_R8SI, [8, 0, 0, 0])),\n        _ => None,\n    }\n}\nfn t() { let store = match b { Some(_) | None => Store::Snorm(b), }; }\nfn u() { let s = match b { Some(blend) if ms && !sample_rate && blend.reads_dst() => Store::SnormStash { blend, mark }, }; let r = vec![gpu::SNORM_RESOLVE, tex, copy, stash, mark_tex, mask]; }\n")],
+            good: &[("crates/kura/src/d3d11/logic.rs", "fn snorm_twin(v: u32) -> Option<(u32, [u32; 4])> {\n    match v {\n        31 => Some((f::P_RGBA8SI, [8, 8, 8, 8])),\n        51 => Some((f::P_RG8SI, [8, 8, 0, 0])),\n        63 => Some((f::P_R8SI, [8, 0, 0, 0])),\n        13 => Some((f::P_RGBA16SI, [16, 16, 16, 16])),\n        37 => Some((f::P_RG16SI, [16, 16, 0, 0])),\n        58 => Some((f::P_R16SI, [16, 0, 0, 0])),\n        _ => None,\n    }\n}\nfn w() { let load = twin_copy(tex, sub, twin, 0, w, h, own, page, ms)?; let tex = match twins.iter().find(|t| t.target == l.target) { Some(t) => t.twin, None => 0 }; }\nfn t() { let store = match b { Some(_) | None => Store::Snorm(b), }; }\nfn u() { let s = match b { Some(blend) if ms && !sample_rate && blend.reads_dst() => Store::SnormStash { blend, mark }, }; let r = vec![gpu::SNORM_RESOLVE, tex, copy, stash, mark_tex, mask]; }\n")],
             mutate: ("crates/kura/src/d3d11/mod.rs", |t| Some(t.replace("logic::twin_of(", "logic::copy_of("))),
         },
         Rule::Review6852be1 => Fixture {
@@ -767,7 +767,7 @@ fn fixture(r: Rule) -> Fixture {
             bad: &[
                 ("crates/kura/src/d3d11/expand.rs", "// setup_wanted(d, st) setup_draw(d, st, \nfn draw() {}\n"),
                 ("crates/dxwgsl/src/wgsl.rs", "fn inputs() { let a = \"@location(0) @interpolate(linear) v0: vec4<f32>\"; }\n"),
-                ("crates/dxwgsl/src/wgsl/setup.rs", "fn sx_plane() {}\nconst W: &str = \"let g = fma(d10, dy20, d20 * dy01);\";\n"),
+                ("crates/dxwgsl/src/wgsl/setup.rs", "fn sx_plane() {}\nconst W: &str = \"let g = fma(d10, dy20, d20 * dy01);\";\nfn rhw() -> String { format!(\"ps_div(1.0f, sx_at(sx_o + 3u, 0u, {pt}))\") }\n"),
             ],
             good: &[
                 ("crates/kura/src/d3d11/expand.rs", "fn draw(d: &mut D11, st: &State) { let w = setup_wanted(d, st); setup_draw(d, st, &stv); }\n"),
@@ -775,6 +775,19 @@ fn fixture(r: Rule) -> Fixture {
                 ("crates/dxwgsl/src/wgsl/setup.rs", "const W: &str = \"fn sx_plane(a0: f32) -> vec3<f32> { let g = d10 * dy20 + d20 * dy01; }\";\n"),
             ],
             mutate: ("crates/kura/src/d3d11/expand.rs", |t| Some(t.replace("let wants_setup = setup_wanted(d, st);", "let wants_setup = false;"))),
+        },
+        Rule::WarpWire => Fixture {
+            bad: &[
+                ("crates/dxwgsl/src/wgsl/setup.rs", "fn wire() { let l = line(); }\nconst F: &str = \"sx_wz = -3.40282347e38f;\";\n#[cfg(test)]\nmod t { fn f() { l.z.c += b.of(zmax, s); let w = \"sx_bias(sx_wz, 1.0)\"; } }\n"),
+                ("crates/kura/src/d3d11/expand.rs", "fn raster_words() { put(w, x::xd::RASTER, 0, bits); let c = crate::render::gpu::has_feature(\"depth-clip-control\"); }\n"),
+                ("crates/kura/src/d3d11/mod.rs", "unsafe fn wire_edges(d: &D11) {}\nfn triangle_edges(idx: &[u32]) {}\n"),
+            ],
+            good: &[
+                ("crates/dxwgsl/src/wgsl/setup.rs", "fn wire() { l.z.c += b.of(zmax, s); }\nconst W: &str = \"pz.z = pz.z + sx_bias(sx_wz, m);\";\n"),
+                ("crates/kura/src/d3d11/expand.rs", "fn raster_words() { put(w, x::xd::BIAS, 0, at(3)); }\nfn setup_wanted() { let wired = f.is_some_and(|f| Fill::of(f) == Fill::Wireframe); }\n"),
+                ("crates/kura/src/d3d11/mod.rs", "fn of() { let wired = match fill { Fill::Wireframe => topo.triangles() && !sprite && !squares, Fill::Solid => false }; }\nfn draw_with() { let q = s.is_some_and(expand::SetupStore::squares); }\n"),
+            ],
+            mutate: ("crates/kura/src/d3d11/expand.rs", |t| Some(t.replace("    put(w, x::xd::BIAS, 0, at(3));\n", ""))),
         },
         Rule::JitExitContract => Fixture {
             bad: &[
@@ -834,11 +847,11 @@ fn fixture(r: Rule) -> Fixture {
         },
         Rule::DrawPlan => Fixture {
             bad: &[
-                ("crates/kura/src/d3d11/mod.rs", "fn draw_with() {\n    let topo = match st.topology { 1 => 0, _ => 3 };\n    let topo = if wire.is_some() { 1 } else { topo };\n}\n// DrawPlan::of(assembled, adjacent, fill, sprite.is_some(), store.is_some(), count) logic::primitives(plan.topo, drawn, &cuts)\n"),
+                ("crates/kura/src/d3d11/mod.rs", "fn draw_with() {\n    let topo = match st.topology { 1 => 0, _ => 3 };\n    let topo = if wire.is_some() { 1 } else { topo };\n}\n// DrawPlan::of(assembled, adjacent, fill, sprite.is_some(), squares) logic::primitives(plan.topo, drawn, &cuts)\n"),
                 ("crates/kura/src/d3d11/logic.rs", "pub fn primitives(topo: u32, n: u32, cuts: &[u32]) -> Vec<Prim> { Vec::new() }\n"),
             ],
             good: &[
-                ("crates/kura/src/d3d11/mod.rs", "fn draw_with() {\n    let plan = match DrawPlan::of(assembled, adjacent, fill, sprite.is_some(), store.is_some(), count) { _ => return };\n    let prims = logic::primitives(plan.topo, drawn, &cuts);\n}\n#[cfg(test)]\nmod t { fn f() { let topo = match st.topology { _ => 3 }; } }\n"),
+                ("crates/kura/src/d3d11/mod.rs", "fn draw_with() {\n    let plan = match DrawPlan::of(assembled, adjacent, fill, sprite.is_some(), squares) { _ => return };\n    let prims = logic::primitives(plan.topo, drawn, &cuts);\n}\n#[cfg(test)]\nmod t { fn f() { let topo = match st.topology { _ => 3 }; } }\n"),
                 ("crates/kura/src/d3d11/logic.rs", "pub fn primitives(topo: super::PageTopo, n: u32, cuts: &[u32]) -> Vec<Prim> { match topo { PageTopo::Points => Vec::new() } }\n"),
             ],
             mutate: ("crates/kura/src/d3d11/mod.rs", |t| Some(t.replace("logic::primitives(plan.topo, drawn, &cuts)", "logic::primitives(PageTopo::Lines, count, &cuts)"))),

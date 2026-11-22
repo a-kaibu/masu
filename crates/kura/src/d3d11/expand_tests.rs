@@ -242,11 +242,11 @@ fn geometry_shader_stream_output_on_the_page() {
         let g = D11S.lock().unwrap_or_else(|e| e.into_inner());
         let d = g.as_ref().expect("device");
         match d.objs.get(&d.id_of(so)).map(|o| &o.data) {
-            Some(Data::Buffer(b)) => b.newest,
+            Some(Data::Buffer(b)) => b.content.guest_current(),
             _ => panic!("no buffer"),
         }
     };
-    assert_eq!(newest(), Newest::Page);
+    assert!(!newest(), "stream output wrote it: the page's bytes are the newest");
     let pull_now = || {
         let mut g = D11S.lock().unwrap_or_else(|e| e.into_inner());
         let d = g.as_mut().expect("device");
@@ -256,9 +256,9 @@ fn geometry_shader_stream_output_on_the_page() {
     crate::d3d9::gpu::GIVE_UP.with(|c| c.set(true));
     pull_now();
     crate::d3d9::gpu::GIVE_UP.with(|c| c.set(false));
-    assert_eq!(newest(), Newest::Page, "a failed readback lost where the newest bytes are");
+    assert!(!newest(), "a failed readback lost where the newest bytes are");
     pull_now();
-    assert_eq!(newest(), Newest::Guest);
+    assert!(newest(), "a readback that came makes the guest's the newest");
     // read back: a staging copy mapped
     put(desc, &[12 * 16, 3, 0, 0x20000, 0, 0]);
     assert_eq!(dc(dev, 3, &[desc, 0, o]), 0);
@@ -328,11 +328,14 @@ fn indexed_statistics_as_windows() {
 }
 
 /// FillMode WIREFRAME with and without a geometry shader, of triangle lists and strips: each
-/// triangle the solid draw rasterizes is three edges of the wireframe one, a line list (the
-/// geometry shader's output skipped the wireframe before: review e18bf44), the pipeline made
-/// for it kept apart from the solid one's (PipelineKey's fill), the model's checks passed.
+/// triangle is drawn through the setup (dxwgsl setup.rs Prim::Wire, its WARP rules held to the
+/// d3d11wire golden there), three slots of lines a triangle, never the draw's own triangles or
+/// lines (review e18bf44: a geometry shader's output skipped the wireframe; b5dacf4 3.2: the
+/// edges lost CullMode and DepthBias); the squares' pipeline uncull'd, unbiased, depth
+/// unclipped whatever the state says (the setup culls and biases), kept apart from the solid
+/// draw's (PipelineKey's fill); the model's checks passed.
 #[test]
-fn wireframe_of_the_drawn_triangles_and_of_a_geometry_shaders_output() {
+fn wireframe_through_the_setup_of_the_drawn_triangles_and_of_a_geometry_shaders_output() {
     let _g = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
     let (dev, ctx) = device();
     let o = mem(2);
@@ -344,14 +347,14 @@ fn wireframe_of_the_drawn_triangles_and_of_a_geometry_shaders_output() {
     let (p, n) = code(&gs);
     assert_eq!(dc(dev, 13, &[p, n, 0, o]), 0);
     let g = made(rd1(o));
-    // rasterizer states: FillMode, CullMode NONE, the rest D3D11's defaults
-    let state = |fill: u32| {
+    // rasterizer states: FillMode, CullMode, DepthBias, DepthBiasClamp, SlopeScaledDepthBias
+    let state = |fill: u32, cull: u32, bias: u32| {
         let desc = mem(10);
-        put(desc, &[fill, 1, 0, 0, 0, 0, 1, 0, 0, 0]);
+        put(desc, &[fill, cull, 0, bias, 0, 2.0f32.to_bits(), 1, 0, 0, 0]);
         assert_eq!(dc(dev, 22, &[desc, o]), 0);
         made(rd1(o))
     };
-    let (solid, wire) = (state(3), state(2));
+    let solid = state(3, 1, 0);
     let drawn = |fill: u32, gs: u32, topology: u32| {
         cc(ctx, 23, &[gs, 0, 0]);
         cc(ctx, 43, &[fill]);
@@ -364,43 +367,34 @@ fn wireframe_of_the_drawn_triangles_and_of_a_geometry_shaders_output() {
         no_model_errors();
         prims.into_iter().flatten().map(|p| p.len()).collect::<Vec<usize>>()
     };
-    for gs in [0, g] {
-        for topology in [4, 5] {
-            let s = drawn(solid, gs, topology);
-            let w = drawn(wire, gs, topology);
-            let what = format!("geometry shader {}, topology {topology}", gs != 0);
-            assert!(!s.is_empty() && s.iter().all(|&k| k == 3), "{what}: solid {s:?}");
-            assert!(w.iter().all(|&k| k == 2), "{what}: wireframe {w:?}");
-            assert_eq!(w.len(), 3 * s.len(), "{what}: three edges a triangle");
+    for wire in [state(2, 1, 0), state(2, 3, 1000), state(2, 2, 0xffff_fc18)] {
+        for gs in [0, g] {
+            for topology in [4, 5] {
+                let s = drawn(solid, gs, topology);
+                let w = drawn(wire, gs, topology);
+                let what = format!("geometry shader {}, topology {topology}", gs != 0);
+                assert!(!s.is_empty() && s.iter().all(|&k| k == 3), "{what}: solid {s:?}");
+                assert!(w.iter().all(|&k| k == 3), "{what}: the setup's squares {w:?}");
+                assert_eq!(w.len(), 3 * s.len(), "{what}: three line slots a triangle");
+            }
         }
     }
-    let keys: Vec<(Fill, u32)> = {
+    let keys: Vec<(Fill, Vec<u32>)> = {
         let gd = kome::locks::Lock::locked(&D11S);
         let d = gd.as_ref().unwrap_or_else(|| panic!("no device"));
-        d.pipelines.keys().map(|k| (k.fill, k.desc[2])).collect()
+        d.pipelines.keys().map(|k| (k.fill, k.desc.clone())).collect()
     };
-    assert!(keys.iter().any(|&(f, t)| f == Fill::Wireframe && t == 1), "{keys:?}");
-    assert!(keys.iter().all(|&(f, t)| f == Fill::Solid || t == 1), "a wireframe pipeline of triangles: {keys:?}");
+    let wired: Vec<&Vec<u32>> = keys.iter().filter(|(f, _)| *f == Fill::Wireframe).map(|(_, k)| k).collect();
+    assert!(!wired.is_empty(), "{keys:?}");
+    // (key: vs, ps, topology, strip, cull, ccw | depth clip off << 1, bias, slope, clamp)
+    for k in wired {
+        assert_eq!((k[2], k[4], k[5] & 2, k[6], k[7], k[8]), (3, 1, 2, 0, 0, 0), "a setup's squares: {k:?}");
+    }
     // (the context is the tests' shared one: its default rasterizer state and no geometry
     // shader again for the next test)
     cc(ctx, 43, &[0]);
     cc(ctx, 23, &[0, 0, 0]);
     release_all();
-}
-
-proptest! {
-    /// A store's (a geometry shader's output's) edges, as wire_edges gives a draw's: three a
-    /// triangle, each its own corners, in winding order.
-    #[test]
-    fn a_stores_edges_are_its_triangles(n in 0u32..60) {
-        let idx: Vec<u32> = (0..n).collect();
-        let e = triangle_edges(&idx, false, None);
-        prop_assert_eq!(e.len(), us(n / 3) * 6);
-        for (t, c) in e.chunks_exact(6).enumerate() {
-            let b = lo32(t) * 3;
-            prop_assert_eq!(c, &[b, b + 1, b + 1, b + 2, b + 2, b][..]);
-        }
-    }
 }
 
 /// A pixel shader reading a linearly interpolated input: the draw goes through the vertex pass,

@@ -811,7 +811,7 @@ fn a_lost_device_gets_the_kept_bits_and_buffers() {
     {
         let g = D11S.locked();
         let d = g.as_ref().unwrap();
-        assert!(matches!(&d.objs[&d.id_of(buf)].data, Data::Buffer(b) if b.dirty), "the buffer goes up again");
+        assert!(matches!(&d.objs[&d.id_of(buf)].data, Data::Buffer(b) if b.content.upload_needed()), "the buffer goes up again");
     }
     crate::render::set_lost_gen(generation);
     D11S.locked().as_mut().unwrap().lost_seen = generation;

@@ -229,6 +229,15 @@ impl Logic {
         }
     }
 
+    /// The width of an SNORM target's channels (its bits: 8 or 16; kura's logic::snorm_twin
+    /// gives only those).
+    pub fn snorm_width(&self) -> crate::snorm::Width {
+        match crate::snorm::Width::of_bits(self.bits[0]) {
+            Some(w) => w,
+            None => crate::snorm::Width::Bits8,
+        }
+    }
+
     /// Whether the target is a stash ([`Store::Stash`] or [`Store::SnormStash`]): the resolve
     /// pass writes it.
     pub fn stashed(&self) -> bool {

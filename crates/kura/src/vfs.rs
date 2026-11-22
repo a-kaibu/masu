@@ -176,14 +176,18 @@ fn before_export_run() {
 pub unsafe extern "C" fn vnhost_vfs_export(roots: *const c_char, len: *mut size_t) -> *mut u8 {
     before_export_run();
     let roots = CStr::from_ptr(roots).to_string_lossy().into_owned();
-    let mut g = FS.lock().unwrap_or_else(|e| e.into_inner());
-    let Some(fs) = g.as_mut() else {
-        *len = 0;
-        return libc::malloc(1) as *mut u8;
-    };
-    let _shared = shared::Guard::enter(fs);
     let roots: Vec<String> = roots.split(':').filter(|r| !r.is_empty()).map(clean).collect();
-    let saved = fs.saved(&roots);
+    // (under the lock only what is saved is taken: the files' pages, shared, not copied; their
+    // bytes are written out after the lock is let go, the guest's threads going on meanwhile)
+    let saved = {
+        let mut g = FS.lock().unwrap_or_else(|e| e.into_inner());
+        let Some(fs) = g.as_mut() else {
+            *len = 0;
+            return libc::malloc(1) as *mut u8;
+        };
+        let _shared = shared::Guard::enter(fs);
+        fs.saved(&roots)
+    };
     let size = Fs::saved_size(&saved);
     let p = libc::malloc(size.max(1)) as *mut u8;
     *len = 0;
@@ -4037,6 +4041,33 @@ mod proptests {
         got += &hex;
         got += "\n";
         kome::golden::check(concat!(env!("CARGO_MANIFEST_DIR"), "/../../testdata/saves/records.hex"), &got);
+    }
+
+    /// What a save takes under the lock is the files as they were then: written, cut or put
+    /// again after (the guest going on while the save is written out, vnhost_vfs_export), the
+    /// records still hold the bytes taken; and the save holds no copy of them (the pages are the
+    /// file's, shared).
+    #[test]
+    fn a_save_is_the_files_as_they_were_when_taken() {
+        let mut fs = store_tree(&saves_tree());
+        let big: Vec<u8> = (0..3 * crate::pages::PAGE + 77).map(|i| (i * 7 + i / 991) as u8).collect();
+        fs.put_file("/b/c/save.dat", big.clone(), 9);
+        let mut want = Vec::new();
+        fs.export("/", &mut want);
+        let saved = fs.saved(&["/".to_owned()]);
+        let save = fs.walk(fs.mount_at("/").unwrap(), "b/c/save.dat").unwrap();
+        let shared = |fs: &Fs| match fs.node(save).map(|n| &n.data) {
+            Some(Data::File(Content::Upper(p))) => p.held(),
+            _ => 0,
+        };
+        let before = shared(&fs);
+        fs.write_upper(save, b"changed after the save was taken", 5).unwrap();
+        fs.write_upper(save, b"and past a page", crate::pages::PAGE as u64 + 3).unwrap();
+        fs.put_file("/b/c/other.dat", b"new".to_vec(), 10);
+        let mut got = Vec::new();
+        Fs::write_saved(&saved, &mut got);
+        assert!(got == want, "the save changed with what was written after it was taken");
+        assert_eq!(shared(&fs), before, "the file's pages are as many after copies of two of them");
     }
 
     /// A newer tree at a name the saves took away: the newer file stays (a gone name takes away
