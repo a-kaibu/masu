@@ -329,10 +329,14 @@ pub(super) fn snorm_targets(tree: &Tree) -> Hits {
 
 /// What the review of kura at 6852be1 found wrong, fixed (2026-11-22), each by its spelling in
 /// the code (comments left out): (file, text it must hold, what is wrong without it).
-pub(super) const REVIEW_6852BE1_HAS: [(&str, &str, &str); 19] = [
+pub(super) const REVIEW_6852BE1_HAS: [(&str, &str, &str); 23] = [
     ("crates/kura/src/d3d11/hazards.rs", "out.extend(st.so.iter()", "stream output targets are not outputs: a vertex buffer of one stays bound (D3D11 unbinds it)"),
     ("crates/kura/src/d3d11/hazards.rs", "for vb in st.vbs.iter_mut()", "the vertex buffers checked are not all 32 slots"),
-    ("crates/kura/src/d3d11/mod.rs", "hazards::after_outputs(d, st);\n        }\n        35 => {", "OMSetRenderTargetsAndUnorderedAccessViews with KEEP render targets does not resolve its new UAVs"),
+    ("crates/kura/src/d3d11/op.rs", "if let Uavs::Set { start, views, counts } = uavs {", "OMSetRenderTargetsAndUnorderedAccessViews with KEEP render targets does not resolve its new UAVs"),
+    ("crates/kura/src/d3d11/mod.rs", "ContextOp::read(d, m, a)", "the immediate context reads a state call its own way, not as the ContextOp a deferred context records"),
+    ("crates/kura/src/d3d11/deferred.rs", "ContextOp::read(d, m, a)", "a deferred context records a call its own way, not as the ContextOp the immediate context applies"),
+    ("crates/kura/src/d3d11/deferred.rs", "recs: std::sync::Arc<Vec<ContextOp<'static>>>", "a command list keeps raw calls (replayed through guest memory) instead of ContextOps"),
+    ("crates/kura/src/d3d11/mod.rs", "Some(Data::Deferred(_)) => true,", "a deferred context let go of is never destroyed (its state and list hold their objects for good)"),
     ("crates/kura/src/jit.rs", "struct SharedCache", "the shared JIT cache's byte count is kept apart from its map (it drifted)"),
     ("crates/kura/src/jit.rs", "jit::TABLE_SLOTS", "the JIT table's size is not koji's (the loader's 20-bit index)"),
     ("host/vnjit.js", "VNJIT.slots", "vnjitRoom does not refuse a table index past the slots the loader encodes"),
@@ -352,7 +356,7 @@ pub(super) const REVIEW_6852BE1_HAS: [(&str, &str, &str); 19] = [
 ];
 
 /// (file, text it must not hold, what is wrong with it)
-pub(super) const REVIEW_6852BE1_NOT: [(&str, &str, &str); 9] = [
+pub(super) const REVIEW_6852BE1_NOT: [(&str, &str, &str); 12] = [
     ("crates/kura/src/d3d11/hazards.rs", "0..16", "a fixed slot count: the slots past it are not checked"),
     ("crates/kura/src/d3d11/hazards.rs", "0..128", "a fixed slot count: the slots past it are not checked"),
     ("crates/kura/src/jit.rs", "SHARED_BYTES", "a byte count of the shared cache apart from what the map holds"),
@@ -362,6 +366,9 @@ pub(super) const REVIEW_6852BE1_NOT: [(&str, &str, &str); 9] = [
     ("crates/kura/src/adec.rs", "LIST_FROM", "the stream list's start kept between calls (a page of it taken for the whole)"),
     ("crates/koji/src/jit/mod.rs", "PAGE_MAP", "the page marks' address as a static of the translator: translations hold it as an immediate"),
     ("crates/kura/src/jit.rs", "profiling() || jit::page_check()", "saved translations refused whenever the page checks are on, the checked ones too"),
+    ("crates/kura/src/d3d11/deferred.rs", "fn pointed(", "a table of what each method's pointers point to, beside the one that reads them"),
+    ("crates/kura/src/d3d11/deferred.rs", "fn objects(m: u32)", "a table of which arguments are objects, beside the one that reads them"),
+    ("crates/kura/src/d3d11/deferred.rs", "guest_alloc(lo32(b.len()))", "a recorded call put back into guest memory to be read again"),
 ];
 
 /// a fix of the review of 6852be1 taken back
@@ -377,6 +384,35 @@ pub(super) fn review_6852be1(tree: &Tree) -> Hits {
         if code.contains(needle) != has {
             let line = if has { 1 } else { code.split(needle).next().map_or(1, |b| b.lines().count().max(1)) };
             out.push((f, line, (*why).to_owned()));
+        }
+    }
+    out.extend(host_files_held(tree));
+    out
+}
+
+/// A kura test that opens files under the host's temporary directory through kura's own file
+/// functions (fs.rs, routed through the VFS when a path is in its tree) without
+/// `vfs::tests::host_files()`: run with the VFS tests, which mount "/", its files were looked
+/// for in their tree (fs::head_copy_tests failed so). Each fn that names `temp_dir()` holds
+/// the guard, or takes it held (`&HostFiles`); vfs.rs's own tests hold TEST_FS through their
+/// trees.
+fn host_files_held(tree: &Tree) -> Hits {
+    let mut out = Hits::new();
+    for f in tree.rs(&["crates/kura/src/"]) {
+        if f.as_str().starts_with("crates/kura/src/vfs") {
+            continue;
+        }
+        let code = tree.code(&f, true);
+        let mut from = 0;
+        while let Some(k) = code.get(from..).and_then(|c| c.find("temp_dir()")) {
+            let at = from.saturating_add(k);
+            let start = code.get(..at).and_then(|c| c.rfind("fn ")).unwrap_or(0);
+            let end = code.get(at..).and_then(|c| c.find("\n    fn ").or_else(|| c.find("\nfn "))).map_or(code.len(), |e| at.saturating_add(e));
+            if !code.get(start..end).is_some_and(|body| body.contains("tests::host_files();") || body.contains("&crate::vfs::tests::HostFiles")) {
+                let line = code.get(..at).map_or(1, |b| b.lines().count().max(1));
+                out.push((f.clone(), line, "a test's host file opened without vfs::tests::host_files() held (a VFS test's tree takes the path)".to_owned()));
+            }
+            from = at.saturating_add("temp_dir()".len());
         }
     }
     out
