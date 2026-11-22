@@ -227,6 +227,12 @@ impl Code {
     pub fn load8u(&mut self, off: u32) -> &mut Self {
         self.mem(0x2d, 0, off)
     }
+    /// global.get of global `g`
+    pub fn global_get(&mut self, g: u32) -> &mut Self {
+        self.b.push(0x23);
+        uleb(&mut self.b, u64::from(g));
+        self
+    }
     pub fn load8s(&mut self, off: u32) -> &mut Self {
         self.mem(0x2c, 0, off)
     }
@@ -513,6 +519,10 @@ pub enum Import {
     /// env.<name>: a funcref table
     Table(&'static str),
     Func(&'static str, u32),
+    /// env.<name>: an i32 the host gives each instance (immutable): a host address the code
+    /// reads at run time instead of having it written in, so that the module is the same in
+    /// every run and can be kept across them ([`super::PAGES`])
+    Global(&'static str),
 }
 
 pub struct Func {
@@ -579,6 +589,11 @@ impl Module {
                     name(&mut s, n);
                     s.push(0x00);
                     uleb(&mut s, u64::from(*ty));
+                }
+                Import::Global(n) => {
+                    name(&mut s, n);
+                    // global, i32, immutable
+                    s.extend_from_slice(&[0x03, 0x7f, 0x00]);
                 }
             }
         }
@@ -718,6 +733,7 @@ fn parts(m: &[u8]) -> Option<Parts<'_>> {
                 read_uleb(imports, &mut p)?;
             }
             0x01 => p += 4,
+            0x03 => p = p.checked_add(3)?,
             0x02 => {
                 // memory: limits flags, minimum, maximum (when flagged)
                 let flags = *imports.get(p + 1)?;
@@ -749,7 +765,7 @@ fn parts(m: &[u8]) -> Option<Parts<'_>> {
 
 /// What a translated module may import from `env` (the translators' helpers, the guest memory
 /// and the function table): [`check`] refuses any other.
-pub const IMPORTS: &[&str] = &["memory", "table", "step", "eflags", "status", "x87", "callmiss", "round"];
+pub const IMPORTS: &[&str] = &["memory", "table", "step", "eflags", "status", "x87", "callmiss", "round", "pages"];
 
 /// Whether `m` is shaped like a module the translators make ([`Module::finish`], [`merge`],
 /// [`select`]) with `funcs` functions: only the sections those write (custom, types, imports,
@@ -807,6 +823,7 @@ fn check_(m: &[u8], funcs: usize) -> Option<()> {
         let want = match names[1] {
             b"memory" => 0x02,
             b"table" => 0x01,
+            b"pages" => 0x03,
             _ => 0x00,
         };
         if kind != want {
@@ -818,6 +835,13 @@ fn check_(m: &[u8], funcs: usize) -> Option<()> {
                 read_uleb(imports, &mut p)?;
             }
             0x01 => p += 4,
+            0x03 => {
+                // i32, immutable
+                if imports.get(p.checked_add(1)?..p.checked_add(3)?)? != [0x7f, 0x00] {
+                    return None;
+                }
+                p = p.checked_add(3)?;
+            }
             _ => {
                 let flags = *imports.get(p + 1)?;
                 p += 2;
