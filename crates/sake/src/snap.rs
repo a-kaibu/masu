@@ -7,7 +7,8 @@
 //!   it goes on there ([`CONTINUE`]);
 //! * waiting inside an API called from that top level, if the API may simply be called again
 //!   (the waits of [`RESTARTABLE`]: nothing done yet that a second call would do twice): a
-//!   restored copy calls it again ([`RESTART`]);
+//!   restored copy calls it again ([`RESTART`]), its timed wait ending when the saved one would
+//!   have ([`Deadline`], in the program's clock, which goes on from the state's);
 //! * in a condition variable's wait (a wake without a signal is allowed): a restored copy takes
 //!   the lock again and returns as woken ([`RETURN`]);
 //! * created suspended and not started yet ([`START`]).
@@ -33,10 +34,56 @@ thread_local! {
     static DEPTH: Cell<u32> = const { Cell::new(0) };
     /// the API called from the top level now: trap address, ESP at the call (0: none)
     static API: Cell<(u32, u32)> = const { Cell::new((0, 0)) };
+    /// that API's timed wait: when it ends (a state saves it with the call, point)
+    static WAIT_END: Cell<Option<Deadline>> = const { Cell::new(None) };
+    /// a restored copy's call of it again: the end its timed wait keeps instead of a new one
+    static RESUMED_END: Cell<Option<Deadline>> = const { Cell::new(None) };
+}
+
+/// When a timed wait ends, in the program's clock (k32::clock_ns, nanoseconds: a restored copy's
+/// goes on from the state's, the time it stood still taken off). A state keeps it with a wait
+/// that a restored copy calls again, which then waits what was left and not the whole time again
+/// (review 6852be1f section 7: a wait's time started over, so a Sleep cut by a state slept longer).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct Deadline(u64);
+
+impl Deadline {
+    /// (the record's word: 0 is no deadline, an end has the top bit, ns < 2^63: 292 years)
+    const SET: u64 = 1 << 63;
+    pub fn word(d: Option<Deadline>) -> u64 {
+        d.map_or(0, |d| d.0 & !Self::SET | Self::SET)
+    }
+    pub fn of_word(w: u64) -> Option<Deadline> {
+        (w & Self::SET != 0).then_some(Deadline(w & !Self::SET))
+    }
+    /// `ms` from `now` (clock_ns)
+    fn after(now: u64, ms: u32) -> Deadline {
+        Deadline(now.saturating_add(u64::from(ms) * 1_000_000).min(!Self::SET))
+    }
+    /// What is left of it at `now`
+    fn left(self, now: u64) -> std::time::Duration {
+        std::time::Duration::from_nanos(self.0.saturating_sub(now))
+    }
+}
+
+/// The end of a wait of `ms` (INFINITE: None) as an Instant of this host: `ms` from now, or for
+/// the first timed wait of a top-level API a restored copy called again, the end the state saved.
+/// A top-level API's end is kept for a state (point).
+pub fn wait_end(ms: u32) -> Option<std::time::Instant> {
+    let resumed = RESUMED_END.take();
+    if ms == u32::MAX {
+        return None;
+    }
+    let now = crate::k32::clock_ns();
+    let end = resumed.unwrap_or_else(|| Deadline::after(now, ms));
+    if DEPTH.with(|d| d.get()) == 1 && API.with(|a| a.get()).0 != 0 {
+        WAIT_END.set(Some(end));
+    }
+    Some(kome::time::from_now(end.left(now)))
 }
 
 /// APIs that may be called again from the start when a restored copy finds a thread waiting
-/// in them (their waits come before anything they do; a wait's time starts over).
+/// in them (their waits come before anything they do; a timed one keeps its end, wait_end).
 pub const RESTARTABLE: &[&str] = &[
     "kernel32!Sleep",
     "kernel32!SleepEx",
@@ -127,6 +174,7 @@ pub fn api_enter(trap: u32, esp: u32) -> bool {
     let top = DEPTH.with(|d| d.get()) == 1;
     if top {
         API.with(|a| a.set((trap, esp)));
+        WAIT_END.set(None);
         if let Some(p) = kura::snap::me() {
             p.doing.store(trap, Ordering::Relaxed);
         }
@@ -136,6 +184,8 @@ pub fn api_enter(trap: u32, esp: u32) -> bool {
 #[inline]
 pub fn api_leave() {
     API.with(|a| a.set((0, 0)));
+    WAIT_END.set(None);
+    RESUMED_END.set(None);
     if let Some(p) = kura::snap::me() {
         p.doing.store(0, Ordering::Relaxed);
     }
@@ -170,7 +220,7 @@ fn park_as(kind: u64, a: u64, b: u64, c: u64) {
 /// copy calls the API again). Returns whether it did (the caller looks again at what it waits for).
 pub fn point() -> bool {
     let Some((trap, esp)) = restart_point() else { return false };
-    park_as(RESTART, trap as u64, esp as u64, 0);
+    park_as(RESTART, trap as u64, esp as u64, Deadline::word(WAIT_END.get()));
     true
 }
 
@@ -331,6 +381,8 @@ fn go_on(t: usize, r: [u64; 4]) -> ! {
             cpu.eip = r[1] as u32;
             cpu.rip_hi = 0;
             set_sp(cpu, r[2] as u32);
+            // (its timed wait ends when the saved one would have)
+            RESUMED_END.set(Deadline::of_word(r[3]));
         }
         RETURN => {
             let (trap, esp) = (r[1] as u32, (r[1] >> 32) as u32);
@@ -342,9 +394,10 @@ fn go_on(t: usize, r: [u64; 4]) -> ! {
             return_from(cpu, trap, esp, r[2] as u32);
         }
         START => {
-            // (the thread's own handle finds its object's entry)
+            // (the thread's own handle finds its object's entry; it stands still for another
+            // state while it waits, as before this one)
             if let Some(k) = crate::obj::key_of(t.obj) {
-                crate::k32::wait_gate(k);
+                crate::k32::wait_gate_start(k, r[1] as u32, r[2] as u32);
             }
             crate::thread_start(&t, r[1] as u32, r[2] as u32);
         }
@@ -397,7 +450,23 @@ mod tests {
         assert!(r.status.success(), "{}{}", String::from_utf8_lossy(&r.stdout), String::from_utf8_lossy(&r.stderr));
     }
 
-    use super::Reacquire;
+    use super::{Deadline, Reacquire};
+    use proptest::prelude::*;
+
+    proptest! {
+        /// A deadline's record word gives it back, and no deadline is a word no end has (an old
+        /// state's 0 restarts its wait whole, as it did).
+        #[test]
+        fn deadline_words_round_trip(now in 0u64..(1 << 62), ms in any::<u32>()) {
+            let d = Deadline::after(now, ms);
+            prop_assert_eq!(Deadline::of_word(Deadline::word(Some(d))), Some(d));
+            prop_assert_eq!(Deadline::of_word(Deadline::word(None)), None);
+            prop_assert_eq!(Deadline::of_word(0), None);
+            // (what is left: the whole wait at its start, nothing once it is past)
+            prop_assert_eq!(d.left(now).as_nanos(), u128::from(ms) * 1_000_000);
+            prop_assert_eq!(d.left(d.0.saturating_add(1)).as_nanos(), 0);
+        }
+    }
 
     /// A state names its reacquire routine by number: each number names one routine, and a
     /// number no routine has (a state of another build, or garbage) names none.

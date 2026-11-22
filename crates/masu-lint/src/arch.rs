@@ -93,6 +93,7 @@ pub enum Rule {
     Lifetimes,
     GdiLockOrder,
     NotDone,
+    WaitDeadline,
 }
 
 impl Rule {
@@ -173,6 +174,7 @@ impl Rule {
         Rule::Lifetimes,
         Rule::GdiLockOrder,
         Rule::NotDone,
+        Rule::WaitDeadline,
     ];
 
     /// the name a site list and a message use
@@ -254,6 +256,7 @@ impl Rule {
             Rule::Lifetimes => "lifetimes",
             Rule::GdiLockOrder => "gdi-lock-order",
             Rule::NotDone => "not-done",
+            Rule::WaitDeadline => "wait-deadline",
         }
     }
 
@@ -289,7 +292,7 @@ impl Rule {
             Rule::ClearRounding => "Windows clears 16-bit and 11/10-bit float channels toward zero (2026-11-21: kura rounded them to the nearest, winref d3d11clear): kura's clear.rs makes them with f16_rtz / rtz_bits, never format::f16_bits",
             Rule::PsQuads => "PSInvocations is whole 2x2 quads of the rasterized triangles and, for a line, 2 for each quad WARP's line rasterizer visits (2026-11-21: kura answered the occlusion samples; lines were counted by the quads they light): dxwgsl's clip pass adds ps_pairs to counter PS_PAIRS, kura's PIPELINE_STATISTICS reads c::PS_PAIRS, a line is counted by line_visits / ps_line_visits and a triangle by its edge DDA's spans (spans / ps_edge_x, BigEdgeIterator's big_edge_x / ps_big_edge_x past ±2^20); ps_tests.rs checks the spans against exact geometry and shaderconf's ps_cases runs the WGSL against the Rust rule on WebGPU",
             Rule::LogicOps => "Direct3D 11.1 logic ops are applied, not refused (2026-11-22: kura answered OutputMergerLogicOp 0 and drew logic-op blend states as plain writes; WARP answers 1): D3D11_OPTIONS answers every BOOL from 0, the pixel shader of a draw with logic ops is translated with them (dxwgsl::translate_views; logic_output reads the target's copy at LOGIC_DST), a draw reading its target is split by logic::split after a copy of it, and the ops are checked against D3D11_LOGIC_OP's table (dxwgsl logic_tests.rs) and on Windows (winref d3d11logic)",
-            Rule::SnormTargets => "8-bit SNORM render targets are drawn, not dropped (2026-11-22: kura gave up on R8G8B8A8_SNORM, R8G8_SNORM and R8_SNORM targets because WebGPU renders to no SNORM format: ClearRenderTargetView and every draw to them did nothing, winref d3d11logic rgba8_snorm): the draw goes to the target's SINT twin (logic::twin_of, logic::snorm_twin), the pixel shader stores and blends the bytes itself (wgsl.rs logic_output's Store::Snorm, dxwgsl::snorm checked against WARP's answers in snorm_tests.rs, winref d3d11snorm), and an SNORM view's clear writes its texels",
+            Rule::SnormTargets => "SNORM render targets are drawn, not dropped (2026-11-22: kura gave up on R8G8B8A8_SNORM, R8G8_SNORM and R8_SNORM targets because WebGPU renders to no SNORM format: ClearRenderTargetView and every draw to them did nothing, winref d3d11logic rgba8_snorm; 16-bit ones were drawn as unclamped floats): the draw goes to the target's SINT twin (logic::twin_of, logic::snorm_twin, logic::twin_copy for 16-bit and multisampled typeless pages), the pixel shader stores and blends the values itself (wgsl.rs logic_output's Store::Snorm, dxwgsl::snorm checked against WARP's answers in snorm_tests.rs, winref d3d11snorm and d3d11snorm2), and an SNORM view's clear writes its texels (ClearView's rectangles of a multisampled view a CLEAR_RECTS pass)",
             Rule::Review6852be1 => "what the review of kura at 6852be1 found stays fixed (2026-11-22): stream output targets and all 32 vertex buffer slots in the D3D11 hazards, UAVs resolved under KEEP, the shared JIT cache counting what its map holds, the JIT table limit the loader's, a shared VFS change taken back and answered ENOSPC when it cannot be published, handle access checked, readback ids global, a stop request the page can cancel, the audio list read page by page",
             Rule::D3d9Status => "a Direct3D 9 status code is d3d9.h's (2026-11-21: D3DOK_NOAUTOGEN was 0x0876_087f, not MAKE_D3DSTATUS(2159) = 0x0876_086f, and its tests copied it; winref d3d9tex): a D3DERR_/D3DOK_/S_ const in kura's d3d9 or sake's d3dx9 has the value regress::D3D9_CODES gives its name, and a new name is added there from the header",
             Rule::D3d9DevFormats => "every format the winref d3d9dev probe asks about is one kura's d3d9_answers_as_the_golden names (2026-11-22: the probe grew A8..X8B8G8R8, the nightly golden came back with them, and the test panicked on the first unnamed one instead of checking kura's answers): each \"NAME\" of the probe's fm[] table is a \"NAME\" => arm in dev_tests.rs",
@@ -329,6 +332,7 @@ impl Rule {
             Rule::DrawPlan => "a D3D11 draw's topology, fill and indices on the page come from one typed plan (d3d11::DrawPlan::of: PageTopo, Indices::Draw or Made), and the logic-op split takes that plan's PageTopo with the indices it draws (review b5dacf4 3.1: an adjacency list made for the draw was split as the line list of a wireframe's edges, and topology numbers were matched by hand in three places): draw_with builds the plan, logic::primitives takes a PageTopo (regress::DRAW_PLAN)",
             Rule::RunPlan => "a test run that ran nothing, or less than it meant to, fails (review 6852be1f: compare.py passed with Windows' answers and an empty sake directory, winetest/run.py passed when the selected test program was missing): run.sh and run-browser.mjs write <out>/.plan/<runner> before running, compare.py fails on no plan, an empty plan, a planned probe without a result and a missing --require-plan, run.py plans every test before sharding and fails on a missing program or an expected test no longer listed, and --suite rostests runs on sake only what Windows passes (tests/rostests/windows-<arch>.tsv, required, every planned test measured; Windows runs them in conformance.yml) (rebuild::RUN_PLAN / RUN_PLAN_NOT)",
             Rule::GdiLockOrder => "GDI takes its locks in one order, the GDI table, user32, a window surface, never back: a draw op's closure (gdi::draw / draw_src) finds no window, locks no surface and reads no source DC itself, draw_src hands it the source copied before the destination's surface is locked (review 6852be1f: a blit from a window DC found its target with the destination surface held while SetWindowPos resized a surface under user32's lock, and two blits between two windows locked their surfaces in opposite orders) (rebuild::gdi_lock_order)",
+            Rule::WaitDeadline => "A timed wait a save state cuts ends in the restored copy when it would have in the whole run: Sleep and the object waits take their end from snap::wait_end, the state keeps it (snap::Deadline, the program's clock) with the call the copy makes again (review 6852be1f section 7: a wait called again waited its whole time again) (rebuild::WAIT_DEADLINE / _NOT; tests/snap.sh snapwait)",
             Rule::NotDone => "An export sake knows but does not implement answers its declared result's failure, from the Win32 metadata (crates/sake/src/returns.txt, written by tools/win32md: HRESULT E_NOTIMPL, NTSTATUS STATUS_NOT_IMPLEMENTED, WIN32_ERROR and SetLastError functions ERROR_CALL_NOT_IMPLEMENTED), typed as api::NotDone (review 6852be1f: 0 for all of them, S_OK / ERROR_SUCCESS / STATUS_SUCCESS with the outputs never written) (rebuild::NOT_DONE / _NOT)",
             Rule::Lifetimes => "A DLL lives only once its DllMain answered TRUE, a process as long as one of the program's threads runs (review 6852be1f: LoadLibrary answered a DLL whose DllMain said FALSE, and the process ended with its first thread whatever else ran): pe::init_dlls answers Err(InitFailed), load_library a LoadFailure::Init (ERROR_DLL_INIT_FAILED) after unloading what it loaded, exit_thread asks crate::lives whether it was the last (rebuild::LIFETIMES / _NOT)",
             Rule::IoResult => "A file read or write answers what happened, typed: the bytes moved, or files::IoFail (NoAccess for a buffer that is not guest memory, Read/Write for the host) and ReadAt::Eof apart from a failure; CreateFile's sharing check and its entry are one ShareEntry::take under one lock (review 6852be1f: WriteFile from a bad buffer wrote nothing and answered TRUE with the count, a read error was the end of the file, two exclusive opens racing both got in) (rebuild::IO_RESULT / _NOT)",
@@ -417,6 +421,7 @@ impl Rule {
             Rule::Lifetimes => rebuild::lifetimes(tree),
             Rule::GdiLockOrder => rebuild::gdi_lock_order(tree),
             Rule::NotDone => rebuild::not_done(tree),
+            Rule::WaitDeadline => rebuild::wait_deadline(tree),
         };
         hits.into_iter().map(|(file, line, what)| Finding { rule: self, file, line, what }).collect()
     }
@@ -733,7 +738,8 @@ fn release_build_only(tree: &Tree) -> Hits {
 }
 
 /// what must stay in place: (file, text, why)
-pub const REQUIRED: [(&str, &str, &str); 55] = [
+pub const REQUIRED: [(&str, &str, &str); 56] = [
+    ("crates/sake/src/sysdll.rs", "    kura::fs::write(&h, image_of(crate::mem::x64(), &n)).ok()?;", "a system32 DLL file carries its RT_VERSION block, so GetFileVersionInfo finds one (version:info crashed on a NULL block; 2026-11-22)"),
     ("crates/sake/src/files.rs", "        if self.shared != 0 && let Ok(p) = self.g.stream_position() {\n            let id = self.shared;\n            crate::kern::with(|k| k.set_file_pos(id, p));", "a file handle processes share keeps its file pointer in the kernel (the child's write did not move the parent's tell: msvcrt:file test_file_inherit; 2026-11-22)"),
     ("crates/sake/src/process.rs", "        Obj::File(f) => f.share().map(|id| KRef::File { id }),", "an inheritable file handle reaches the child (2026-11-22)"),
     ("crates/sake/src/k32.rs", "    // (lpSecurityAttributes's bInheritHandle: a child CreateProcess starts gets it)\n    sa_inherit(c.a(3), h)", "CreateFile honours bInheritHandle (msvcrt:file test_stdout_handle's file never reached the child; 2026-11-22)"),

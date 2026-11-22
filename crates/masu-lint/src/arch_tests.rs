@@ -206,7 +206,7 @@ fn fixture(r: Rule) -> Fixture {
         },
         Rule::SnormTargets => Fixture {
             bad: &[("crates/kura/src/d3d11/logic.rs", "fn snorm_twin(v: u32) -> Option<(u32, [u32; 4])> {\n    // 31 => Some((f::P_RGBA8SI, [8, 8, 8, 8])), named in a comment\n    None\n}\n")],
-            good: &[("crates/kura/src/d3d11/logic.rs", "fn snorm_twin(v: u32) -> Option<(u32, [u32; 4])> {\n    match v {\n        31 => Some((f::P_RGBA8SI, [8, 8, 8, 8])),\n        51 => Some((f::P_RG8SI, [8, 8, 0, 0])),\n        63 => Some((f::P_R8SI, [8, 0, 0, 0])),\n        _ => None,\n    }\n}\nfn t() { let store = match b { Some(_) | None => Store::Snorm(b), }; }\nfn u() { let s = match b { Some(blend) if ms && !sample_rate && blend.reads_dst() => Store::SnormStash { blend, mark }, }; let r = vec![gpu::SNORM_RESOLVE, tex, copy, stash, mark_tex, mask]; }\n")],
+            good: &[("crates/kura/src/d3d11/logic.rs", "fn snorm_twin(v: u32) -> Option<(u32, [u32; 4])> {\n    match v {\n        31 => Some((f::P_RGBA8SI, [8, 8, 8, 8])),\n        51 => Some((f::P_RG8SI, [8, 8, 0, 0])),\n        63 => Some((f::P_R8SI, [8, 0, 0, 0])),\n        13 => Some((f::P_RGBA16SI, [16, 16, 16, 16])),\n        37 => Some((f::P_RG16SI, [16, 16, 0, 0])),\n        58 => Some((f::P_R16SI, [16, 0, 0, 0])),\n        _ => None,\n    }\n}\nfn w() { let load = twin_copy(tex, sub, twin, 0, w, h, own, page, ms)?; let tex = match twins.iter().find(|t| t.target == l.target) { Some(t) => t.twin, None => 0 }; }\nfn t() { let store = match b { Some(_) | None => Store::Snorm(b), }; }\nfn u() { let s = match b { Some(blend) if ms && !sample_rate && blend.reads_dst() => Store::SnormStash { blend, mark }, }; let r = vec![gpu::SNORM_RESOLVE, tex, copy, stash, mark_tex, mask]; }\n")],
             mutate: ("crates/kura/src/d3d11/mod.rs", |t| Some(t.replace("logic::twin_of(", "logic::copy_of("))),
         },
         Rule::Review6852be1 => Fixture {
@@ -690,6 +690,19 @@ fn fixture(r: Rule) -> Fixture {
             ],
             good: GOOD_MESSAGE_WIDTH,
             mutate: ("crates/sake/src/user.rs", |t| Some(t.replace("let (h, m, w, l) = (c.a(0), c.a(1), c.wparam(2), c.lparam(3));", "let (h, m, w, l) = (c.a(0), c.a(1), c.a(2), c.a(3));"))),
+        },
+        Rule::WaitDeadline => Fixture {
+            bad: &[
+                ("crates/sake/src/snap.rs", "pub fn point() -> bool {\n    park_as(RESTART, trap as u64, esp as u64, 0);\n}\n"),
+                ("crates/sake/src/k32.rs", "pub(crate) fn sleep_ms(ms: u32) {\n    let end = (ms != u32::MAX).then(|| kome::time::from_now(std::time::Duration::from_millis(u64::from(ms))));\n}\n"),
+                ("crates/sake/src/obj.rs", "fn wait_held_then() {\n    let deadline = (ms != 0xffff_ffff).then(|| kome::time::from_now(Duration::from_millis(u64::from(ms))));\n}\n"),
+            ],
+            good: &[
+                ("crates/sake/src/snap.rs", "pub fn wait_end(ms: u32) -> Option<Instant> {\n    let end = resumed.unwrap_or_else(|| Deadline::after(now, ms));\n}\npub fn point() -> bool {\n    park_as(RESTART, trap as u64, esp as u64, Deadline::word(WAIT_END.get()));\n}\nfn go_on() {\n    RESUMED_END.set(Deadline::of_word(r[3]));\n    crate::k32::wait_gate_start(k, r[1] as u32, r[2] as u32);\n}\n"),
+                ("crates/sake/src/k32.rs", "pub(crate) fn sleep_ms(ms: u32) {\n    let end = crate::snap::wait_end(ms);\n}\n"),
+                ("crates/sake/src/obj.rs", "fn wait_held_then() {\n    let deadline = crate::snap::wait_end(ms);\n}\n"),
+            ],
+            mutate: ("crates/sake/src/snap.rs", |t| Some(t.replace("RESUMED_END.set(Deadline::of_word(r[3]));", "RESUMED_END.set(None);"))),
         },
         Rule::NotDone => Fixture {
             bad: &[

@@ -180,6 +180,11 @@ impl Tf {
     const fn is_float32(self) -> bool {
         self.info().bits == 32 && matches!(self.kind(), Kind::Float | Kind::Depth)
     }
+    /// The SNORM width of an SINT format of 8- or 16-bit channels (an SNORM texture's twin on
+    /// the page: d3d11/logic.rs snorm_twin).
+    fn snorm_width(self) -> Option<dxwgsl::snorm::Width> {
+        if self.is_sint() { dxwgsl::snorm::Width::of_bits(self.info().bits) } else { None }
+    }
     /// The format without its sRGB-ness.
     const fn base(self) -> Tf {
         match self.kind() {
@@ -1023,6 +1028,11 @@ pub struct D3d {
     snorm_pipes: HashMap<([u32; 9], Tf), (Id, Id)>,
     /// RESOLVE_SNORM's pipelines (resolve_snorm) by the target's format: pipeline, layout
     snorm_resolve_pipes: HashMap<Tf, (Id, Id)>,
+    /// CONVERT's pipelines (convert): by the conversion, the target's format and the sample
+    /// count; pipeline, layout
+    convert_pipes: HashMap<(Convert, Tf, u32), (Id, Id)>,
+    /// CLEAR_RECTS's pipelines (clear_rects): by the target's format and sample count
+    clear_rects_pipes: HashMap<(Tf, u32), (Id, Id)>,
     /// Direct3D 11 depth textures a shader reads as floats (R16_UNORM, R32_FLOAT and the like
     /// views of typeless ones): depth texture -> (its r32float copy, the depth texture's stamp
     /// when copied); see depth_twin
@@ -1133,6 +1143,8 @@ impl D3d {
             logic_pipes: HashMap::new(),
             snorm_pipes: HashMap::new(),
             snorm_resolve_pipes: HashMap::new(),
+            convert_pipes: HashMap::new(),
+            clear_rects_pipes: HashMap::new(),
             twins: HashMap::new(),
             next_twin: TWIN_IDS,
             twin_pipe: [(0, 0); 2],
@@ -1627,6 +1639,18 @@ impl D3d {
                     self.resolve_snorm(a(1), a(2));
                     i = i.saturating_add(3);
                 }
+                CONVERT => {
+                    if let Some(k) = Convert::of_word(a(7)) {
+                        self.convert([a(1), a(2), a(3), a(4), a(5), a(6)], k);
+                    }
+                    i = i.saturating_add(8);
+                }
+                CLEAR_RECTS => {
+                    let n = us(a(9).min(64));
+                    let rects: Vec<[u32; 4]> = (0..n).map(|k| std::array::from_fn(|j| a(10usize.saturating_add(k.saturating_mul(4)).saturating_add(j)))).collect();
+                    self.clear_rects([a(1), a(2), a(3)], a(4), [a(5), a(6), a(7), a(8)], &rects);
+                    i = i.saturating_add(10usize.saturating_add(n.saturating_mul(4)));
+                }
                 SNORM_RESOLVE => {
                     // (the write mask, the blend's six words, the mark's channel and bit)
                     let w: [u32; 9] = std::array::from_fn(|k| a(k.saturating_add(5)));
@@ -1749,7 +1773,12 @@ impl D3d {
             WRITE_TEXTURE | WRITE_TEXTURE_MEM if c[2] == 0 => self.touch_box(c[1], Some([c[3], c[4], c[3].saturating_add(c[5]), c[4].saturating_add(c[6])])),
             CREATE_TEXTURE | CREATE_TEXTURE2 | DESTROY_TEXTURE | WRITE_TEXTURE | WRITE_TEXTURE_MEM | WRITE_TEXTURE2 | FILL | GEN_MIPS | GEN_MIPS_POINT => self.touch(c[1]),
             COPY => self.touch(c[7]),
-            RESOLVE | LOGIC_RESOLVE | SNORM_RESOLVE | RESOLVE_SNORM => self.touch(c[1]),
+            RESOLVE | LOGIC_RESOLVE | SNORM_RESOLVE | RESOLVE_SNORM | CLEAR_RECTS => self.touch(c[1]),
+            CONVERT => {
+                if let Some(&t) = c.get(3) {
+                    self.touch(t);
+                }
+            }
             _ => {}
         }
     }
@@ -2558,6 +2587,15 @@ impl D3d {
             Some(t) => ((t.w >> self.target[1]).max(1), (t.h >> self.target[1]).max(1)),
             None => (0, 0),
         }
+    }
+
+    /// [`Self::uniform_slot`] of words (their bits as they are).
+    fn uniform_slot_words(&mut self, v: &[u32]) -> u32 {
+        self.clear_slot = self.clear_slot.wrapping_add(1) % 64;
+        let slot = self.clear_slot;
+        let b: Vec<u8> = v.iter().flat_map(|w| w.to_le_bytes()).collect();
+        gpu::write_buffer(self.clear_uniform, slot.saturating_mul(256), &b);
+        slot
     }
 
     fn uniform_slot(&mut self, v: &[f32]) -> u32 {
@@ -3525,7 +3563,8 @@ impl D3d {
         let pipe = match self.snorm_resolve_pipes.get(&fmt) {
             Some(&p) => p,
             None => {
-                let m = gpu::shader(&dxwgsl::snorm::ms_resolve_wgsl());
+                let Some(w) = fmt.snorm_width() else { return };
+                let m = gpu::shader(&dxwgsl::snorm::ms_resolve_wgsl(w));
                 let layout = gpu::bind_group_layout(r#"{"entries":[{"binding":0,"visibility":2,"texture":{"sampleType":"sint","viewDimension":"2d","multisampled":true}}]}"#);
                 let pl = gpu::pipeline_layout(&format!(r#"{{"bindGroupLayouts":[{layout}]}}"#));
                 let p = gpu::render_pipeline(&format!(
@@ -3553,6 +3592,134 @@ impl D3d {
         STATS[2].fetch_add(1, Relaxed);
     }
 
+    /// CONVERT: subresource `dst_sub` of `dst` (level | layer << 16) from the `w` x `h` one of
+    /// `src` of the same sample count, converted as `kind` says (each sample from its own).
+    fn convert(&mut self, [src, src_sub, dst, dst_sub, w, h]: [u32; 6], kind: Convert) {
+        let (Some(s), Some(t)) = (self.textures.get(&src), self.textures.get(&dst)) else { return };
+        let (sl, sy, dl, dy) = (src_sub & 0xffff, src_sub >> 16, dst_sub & 0xffff, dst_sub >> 16);
+        let size = |t: &Tex, l: u32| (t.w.checked_shr(l).unwrap_or(0).max(1), t.h.checked_shr(l).unwrap_or(0).max(1));
+        let ints = kind.reads_ints();
+        if src == dst || s.samples != t.samples || t.dim != Dim::D2 || s.dim != Dim::D2 || sl >= s.levels || dl >= t.levels || size(s, sl) != (w, h) || size(t, dl) != (w, h) || s.format.is_sint() != ints || !renderable(t.format) {
+            return;
+        }
+        let (samples, fmt) = (t.samples, t.format);
+        self.settle(src);
+        self.settle(dst);
+        self.end_pass();
+        self.touch(dst);
+        let pipe = match self.convert_pipes.get(&(kind, fmt, samples)) {
+            Some(&p) => p,
+            None => {
+                let ms = samples > 1;
+                let (st, ty) = if ints { ("sint", "i32") } else { ("unfilterable-float", "f32") };
+                let out = if fmt.is_sint() { "i32" } else { "f32" };
+                let tex = if ms { format!("texture_multisampled_2d<{ty}>") } else { format!("texture_2d<{ty}>") };
+                let (param, at) = if ms { (", @builtin(sample_index) si: u32", "i32(si)") } else { ("", "0") };
+                let helpers = if kind == Convert::Sint16ToSnorm16 { dxwgsl::snorm::helpers() } else { String::new() };
+                let code = format!(
+                    "{helpers}@group(0) @binding(0) var src: {tex};\n\
+                     @vertex fn vs(@builtin(vertex_index) i: u32) -> @builtin(position) vec4<f32> {{\n\
+                     \x20 return vec4<f32>(f32(i >> 1u) * 4.0 - 1.0, f32(i & 1u) * 4.0 - 1.0, 0.0, 1.0);\n\
+                     }}\n\
+                     @fragment fn fs(@builtin(position) p: vec4<f32>{param}) -> @location(0) vec4<{out}> {{\n\
+                     \x20 let q = vec2<i32>(p.xy);\n\
+                     \x20 let v = select(vec4<{ty}>(), textureLoad(src, q, {at}), all(vec2<u32>(q) < textureDimensions(src)));\n\
+                     \x20 return {};\n\
+                     }}\n",
+                    kind.wgsl("v")
+                );
+                let m = gpu::shader(&code);
+                let layout = gpu::bind_group_layout(&format!(r#"{{"entries":[{{"binding":0,"visibility":2,"texture":{{"sampleType":"{st}","viewDimension":"2d","multisampled":{ms}}}}}]}}"#));
+                let pl = gpu::pipeline_layout(&format!(r#"{{"bindGroupLayouts":[{layout}]}}"#));
+                let p = gpu::render_pipeline(&format!(
+                    r#"{{"layout":{pl},"vertex":{{"module":{m},"entryPoint":"vs"}},"fragment":{{"module":{m},"entryPoint":"fs","targets":[{{"format":{}}}]}},"primitive":{{"topology":"triangle-list"}},"multisample":{{"count":{samples}}}}}"#,
+                    qf(fmt)
+                ));
+                gpu::drop(pl);
+                gpu::drop(m);
+                self.convert_pipes.insert((kind, fmt, samples), (p, layout));
+                (p, layout)
+            }
+        };
+        let sv = self.view2(src, 1, sl, 1, sy, 1, false);
+        let dv = self.view2(dst, 1, dl, 1, dy, 1, false);
+        self.use_tex(src);
+        self.use_tex(dst);
+        self.traffic(src, sl, true, false);
+        self.open = true;
+        let group = gpu::bind_group(pipe.1, &[(0, Res::Obj(sv))]);
+        gpu::begin_pass(&format!(r#"{{"colorAttachments":[{{"view":{dv},"loadOp":"load","storeOp":"store"}}]}}"#));
+        gpu::set_pipeline(pipe.0);
+        gpu::set_bind_group(0, group, &[]);
+        gpu::set_viewport(0.0, 0.0, to_f32(w), to_f32(h), 0.0, 1.0);
+        gpu::draw(3, 1, 0, 0);
+        gpu::end_pass();
+        gpu::drop(group);
+        STATS[2].fetch_add(1, Relaxed);
+    }
+
+    /// CLEAR_RECTS: rectangles `rects` (x0 y0 x1 y1, cut to the level) of level and layer `at`
+    /// of `tex[0]` written with value words `c` (`kind` 0 f32, 1 i32, 2 u32), every sample.
+    fn clear_rects(&mut self, [tex, level, layer]: [u32; 3], kind: u32, c: [u32; 4], rects: &[[u32; 4]]) {
+        let Some(t) = self.textures.get(&tex).filter(|t| t.dim == Dim::D2 && renderable(t.format) && !is_depth(t.format) && level < t.levels) else { return };
+        let (fmt, samples, lw, lh) = (t.format, t.samples, t.w.checked_shr(level).unwrap_or(0).max(1), t.h.checked_shr(level).unwrap_or(0).max(1));
+        let ty = match kind {
+            1 if fmt.is_sint() => "i32",
+            2 if fmt.is_uint() => "u32",
+            0 if !fmt.is_sint() && !fmt.is_uint() => "f32",
+            _ => return,
+        };
+        let cut: Vec<[u32; 4]> = rects.iter().map(|&[x0, y0, x1, y1]| [x0.min(lw), y0.min(lh), x1.min(lw), y1.min(lh)]).filter(|&[x0, y0, x1, y1]| x1 > x0 && y1 > y0).collect();
+        if cut.is_empty() {
+            return;
+        }
+        self.settle(tex);
+        self.end_pass();
+        self.touch(tex);
+        let pipe = match self.clear_rects_pipes.get(&(fmt, samples)) {
+            Some(&p) => p,
+            None => {
+                let code = format!(
+                    "@group(0) @binding(0) var<uniform> c: vec4<u32>;\n\
+                     @vertex fn vs(@builtin(vertex_index) i: u32) -> @builtin(position) vec4<f32> {{\n\
+                     \x20 return vec4<f32>(f32(i >> 1u) * 4.0 - 1.0, f32(i & 1u) * 4.0 - 1.0, 0.0, 1.0);\n\
+                     }}\n\
+                     @fragment fn fs() -> @location(0) vec4<{ty}> {{ return bitcast<vec4<{ty}>>(c); }}\n"
+                );
+                let m = gpu::shader(&code);
+                let layout = gpu::bind_group_layout(r#"{"entries":[{"binding":0,"visibility":2,"buffer":{"type":"uniform"}}]}"#);
+                let pl = gpu::pipeline_layout(&format!(r#"{{"bindGroupLayouts":[{layout}]}}"#));
+                let p = gpu::render_pipeline(&format!(
+                    r#"{{"layout":{pl},"vertex":{{"module":{m},"entryPoint":"vs"}},"fragment":{{"module":{m},"entryPoint":"fs","targets":[{{"format":{}}}]}},"primitive":{{"topology":"triangle-list"}},"multisample":{{"count":{samples}}}}}"#,
+                    qf(fmt)
+                ));
+                gpu::drop(pl);
+                gpu::drop(m);
+                self.clear_rects_pipes.insert((fmt, samples), (p, layout));
+                (p, layout)
+            }
+        };
+        let slot = self.uniform_slot_words(&c);
+        let group = gpu::bind_group(pipe.1, &[(0, Res::Buffer(self.clear_uniform, slot.saturating_mul(256), 16))]);
+        let dv = self.view2(tex, 1, level, 1, layer, 1, false);
+        self.use_tex(tex);
+        self.open = true;
+        gpu::begin_pass(&format!(r#"{{"colorAttachments":[{{"view":{dv},"loadOp":"load","storeOp":"store"}}]}}"#));
+        gpu::set_pipeline(pipe.0);
+        gpu::set_bind_group(0, group, &[]);
+        gpu::set_viewport(0.0, 0.0, to_f32(lw), to_f32(lh), 0.0, 1.0);
+        for &[x0, y0, x1, y1] in &cut {
+            gpu::set_scissor(x0, y0, x1.saturating_sub(x0), y1.saturating_sub(y0));
+            gpu::draw(3, 1, 0, 0);
+        }
+        gpu::end_pass();
+        gpu::drop(group);
+        if slot == 63 {
+            self.submit();
+        }
+        STATS[2].fetch_add(1, Relaxed);
+    }
+
     /// SNORM_RESOLVE's pipeline for words `w` (see snorm_resolve) into a target of `format`:
     /// pipeline, its bind group layout. None: words of no blend.
     fn snorm_pipe(&mut self, w: [u32; 9], format: Tf) -> Option<(Id, Id)> {
@@ -3561,7 +3728,7 @@ impl D3d {
         }
         let [mask, s, d, o, sa, da, oa, channel, bit] = w;
         let b = dxwgsl::snorm::Blend::of([s, d, o, sa, da, oa])?;
-        let m = gpu::shader(&dxwgsl::snorm::resolve_wgsl(&b, channel.min(3), bit.min(31)));
+        let m = gpu::shader(&dxwgsl::snorm::resolve_wgsl(format.snorm_width()?, &b, channel.min(3), bit.min(31)));
         let e = |b: u32, k: &str| format!(r#"{{"binding":{b},"visibility":2,"texture":{{"sampleType":"{k}","viewDimension":"2d","multisampled":true}}}}"#);
         let layout = gpu::bind_group_layout(&format!(
             r#"{{"entries":[{},{{"binding":{},"visibility":2,"buffer":{{"type":"read-only-storage"}}}},{},{{"binding":{},"visibility":2,"buffer":{{"type":"uniform"}}}}]}}"#,

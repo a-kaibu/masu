@@ -242,11 +242,11 @@ fn geometry_shader_stream_output_on_the_page() {
         let g = D11S.lock().unwrap_or_else(|e| e.into_inner());
         let d = g.as_ref().expect("device");
         match d.objs.get(&d.id_of(so)).map(|o| &o.data) {
-            Some(Data::Buffer(b)) => b.newest,
+            Some(Data::Buffer(b)) => b.content.guest_current(),
             _ => panic!("no buffer"),
         }
     };
-    assert_eq!(newest(), Newest::Page);
+    assert!(!newest(), "stream output wrote it: the page's bytes are the newest");
     let pull_now = || {
         let mut g = D11S.lock().unwrap_or_else(|e| e.into_inner());
         let d = g.as_mut().expect("device");
@@ -256,9 +256,9 @@ fn geometry_shader_stream_output_on_the_page() {
     crate::d3d9::gpu::GIVE_UP.with(|c| c.set(true));
     pull_now();
     crate::d3d9::gpu::GIVE_UP.with(|c| c.set(false));
-    assert_eq!(newest(), Newest::Page, "a failed readback lost where the newest bytes are");
+    assert!(!newest(), "a failed readback lost where the newest bytes are");
     pull_now();
-    assert_eq!(newest(), Newest::Guest);
+    assert!(newest(), "a readback that came makes the guest's the newest");
     // read back: a staging copy mapped
     put(desc, &[12 * 16, 3, 0, 0x20000, 0, 0]);
     assert_eq!(dc(dev, 3, &[desc, 0, o]), 0);
