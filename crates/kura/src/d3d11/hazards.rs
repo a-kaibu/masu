@@ -25,8 +25,8 @@ fn overlap(a: (u32, u32, u32, u32, u32), b: (u32, u32, u32, u32, u32)) -> bool {
     a.0 == b.0 && meet(a.1, a.2, b.1, b.2) && meet(a.3, a.4, b.3, b.4)
 }
 
-/// The views bound for output: render targets, the depth view unless read-only for depth,
-/// the output merger's and the compute shader's UAVs.
+/// What is bound for output: render targets, the depth view unless read-only for depth, the
+/// output merger's and the compute shader's UAVs, the stream output targets (whole buffers).
 fn outputs(d: &D11, st: &State) -> Vec<(u32, u32, u32, u32, u32)> {
     let mut v: Vec<u32> = st.rtvs.iter().chain(st.uavs[0].iter()).chain(st.uavs[1].iter()).copied().collect();
     let dsv_ro = match d.objs.get(&st.dsv).map(|o| &o.data) {
@@ -36,7 +36,9 @@ fn outputs(d: &D11, st: &State) -> Vec<(u32, u32, u32, u32, u32)> {
     if !dsv_ro {
         v.push(st.dsv);
     }
-    v.into_iter().filter(|&x| x != 0).filter_map(|x| span(d, x)).collect()
+    let mut out: Vec<_> = v.into_iter().filter(|&x| x != 0).filter_map(|x| span(d, x)).collect();
+    out.extend(st.so.iter().filter(|&&b| b != 0).map(|&b| (b, 0, u32::MAX, 0, u32::MAX)));
+    out
 }
 
 /// An input view that must not be bound now (it reads what is bound for output).
@@ -47,23 +49,27 @@ fn refused(d: &D11, st: &State, srv: u32) -> bool {
 /// After SRVs were set in `stage` from `start` (`n` slots): the ones that read an output are
 /// NULL.
 pub fn after_srvs(d: &mut D11, st: &mut State, stage: usize, start: u32, n: u32) {
-    for s in start..start.saturating_add(n).min(128) {
-        let v = st.srvs[stage][us(s)];
+    let Some(slots) = st.srvs.get(stage).map(|x| x.len()) else { return };
+    for s in us(start)..us(start.saturating_add(n)).min(slots) {
+        let v = st.srvs[stage][s];
         if v != 0 && refused(d, st, v) {
-            st.srvs[stage][us(s)] = 0;
+            st.srvs[stage][s] = 0;
             d.unbind(v);
         }
     }
 }
 
-/// After outputs were set: the SRVs of every stage that read them go.
+/// After outputs were set (render targets, depth, either stage's UAVs, stream output targets,
+/// each alone or together, KEEP or not): the SRVs of every stage and the vertex buffers that
+/// read them go. Every setter of an output calls this, whichever of them it changed.
 pub fn after_outputs(d: &mut D11, st: &mut State) {
+    after_buffers(d, st);
     let outs = outputs(d, st);
     if outs.is_empty() {
         return;
     }
-    for stage in 0..6 {
-        for s in 0..128 {
+    for stage in 0..st.srvs.len() {
+        for s in 0..st.srvs[stage].len() {
             let v = st.srvs[stage][s];
             if v != 0 && span(d, v).is_some_and(|x| outs.iter().any(|o| overlap(*o, x))) {
                 st.srvs[stage][s] = 0;
@@ -73,12 +79,14 @@ pub fn after_outputs(d: &mut D11, st: &mut State) {
     }
 }
 
-/// Stream output targets and vertex buffers of the same buffer: the vertex buffer goes (set
-/// first, it is unbound; set after, it is refused).
+/// A vertex buffer (any of the 32 slots) of a buffer bound for output (a stream output target,
+/// a buffer UAV or render target view): the vertex buffer goes (set first, it is unbound; set
+/// after, it is refused).
 pub fn after_buffers(d: &mut D11, st: &mut State) {
-    for s in 0..16 {
+    let outs = outputs(d, st);
+    for s in 0..st.vbs.len() {
         let vb = st.vbs[s].0;
-        if vb != 0 && st.so.contains(&vb) {
+        if vb != 0 && outs.iter().any(|o| o.0 == vb) {
             st.vbs[s].0 = 0;
             d.unbind(vb);
         }
