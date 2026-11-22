@@ -88,7 +88,7 @@ fn glsl_draws_read_what_gl_reads() {
     glLinkProgram(p);
     glUseProgram(p);
     // which input is which (location -> name)
-    let attribs: Vec<(String, u32)> = GL.locked().programs[&p].linked.as_ref().expect("linked").attribs.clone();
+    let attribs: Vec<(String, u32)> = crate::gl::current_objs().objs.programs[&p].linked.as_ref().expect("linked").attribs.clone();
     for n in ["vn_Vertex", "vn_Color", "vn_Normal", "vn_MultiTexCoord0", "vn_MultiTexCoord3", "vn_MultiTexCoord7", "extra"] {
         assert!(attribs.iter().any(|a| a.0 == n), "no input {n}: {attribs:?}");
     }

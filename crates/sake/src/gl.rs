@@ -227,6 +227,10 @@ fn wglCreateContextAttribsARB(c: &mut Ctx) -> u32 {
     guest_alloc();
     kura::gl::vngl_context_create(c.a(1))
 }
+/// (with, ctx): `ctx` sees `with`'s objects (kura::gl::vngl_share_lists)
+fn wglShareLists(c: &mut Ctx) -> u32 {
+    u32::from(kura::gl::vngl_share_lists(c.a(0), c.a(1)) != 0)
+}
 fn wglDeleteContext(c: &mut Ctx) -> u32 {
     // (the current one: not current any more, as on Windows; CUR kept naming the destroyed
     // context for SwapBuffers, later calls and save states)
@@ -377,7 +381,7 @@ pub fn init() {
         ("wglGetCurrentContext", wglGetCurrentContext),
         ("wglGetCurrentDC", wglGetCurrentDC),
         ("wglGetProcAddress", wglGetProcAddress),
-        ("wglShareLists", one),
+        ("wglShareLists", wglShareLists),
         ("wglSwapBuffers", SwapBuffers),
         ("wglSwapLayerBuffers", wglSwapLayerBuffers),
         ("wglChoosePixelFormat", ChoosePixelFormat),

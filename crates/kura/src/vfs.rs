@@ -2632,11 +2632,15 @@ pub(crate) mod tests {
     /// For tests of other modules that open the host's files (video's temporary .vnv): none of
     /// these tests' mounts meanwhile (most mount "/", and leave it mounted), held while the guard
     /// lives. (They failed when run with these: their file was looked for in a test's tree.)
-    pub(crate) fn host_files() -> std::sync::MutexGuard<'static, ()> {
+    pub(crate) fn host_files() -> HostFiles {
         let g = TEST_FS.lock().unwrap_or_else(|e| e.into_inner());
         *FS.lock().unwrap_or_else(|e| e.into_inner()) = None;
-        g
+        HostFiles(g)
     }
+
+    /// [`host_files`] held: what a test's helper that makes host files takes, so that it is
+    /// called only while no VFS test's tree can take their paths.
+    pub(crate) struct HostFiles(#[allow(dead_code)] std::sync::MutexGuard<'static, ()>);
 
     /// The store, for these tests: chunks by name, and the names fetched.
     static STORE: Mutex<Option<(HashMap<String, Vec<u8>>, Vec<String>)>> = Mutex::new(None);

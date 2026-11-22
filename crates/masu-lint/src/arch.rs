@@ -77,6 +77,8 @@ pub enum Rule {
     NanMinMax,
     PcsgPack,
     WarpSetup,
+    JitExitContract,
+    JitHarnessImports,
     RunPlan,
     DllSearch,
     FullPathOneRule,
@@ -94,7 +96,7 @@ pub enum Rule {
 }
 
 impl Rule {
-    pub const ALL: [Rule; 74] = [
+    pub const ALL: [Rule; 76] = [
         Rule::BuildOutput,
         Rule::HresultCopy,
         Rule::KomeCopy,
@@ -155,6 +157,8 @@ impl Rule {
         Rule::NanMinMax,
         Rule::PcsgPack,
         Rule::WarpSetup,
+        Rule::JitExitContract,
+        Rule::JitHarnessImports,
         Rule::RunPlan,
         Rule::DllSearch,
         Rule::FullPathOneRule,
@@ -234,6 +238,8 @@ impl Rule {
             Rule::NanMinMax => "nan-min-max",
             Rule::PcsgPack => "pcsg-pack",
             Rule::WarpSetup => "warp-setup",
+            Rule::JitExitContract => "jit-exit-contract",
+            Rule::JitHarnessImports => "jit-harness-imports",
             Rule::DllSearch => "dll-search",
             Rule::FullPathOneRule => "full-path-one-rule",
             Rule::ShortNameTable => "short-name-table",
@@ -313,6 +319,8 @@ impl Rule {
             Rule::NanMinMax => "a NaN through Direct3D's min/max gives the other operand (winref d3d11tess: [maxtessfactor(5.5)] turned a NaN tess factor into 5.5 on Windows, and the domain shader read 5.5 back; masu kept the NaN and culled the patch): dxwgsl's float min/max go through d3d_min/d3d_max (WGSL leaves a NaN to the implementation), hlslc clamps a patch constant function's tess factors to [maxtessfactor] with min, kura's clamp gives the maximum for a NaN (regress::NAN_MIN_MAX / NAN_MIN_MAX_NOT)",
             Rule::PcsgPack => "hlslc packs a patch constant that is not a tess factor into a taken register's free components as d3dcompiler does (winref d3d11tess: `uint pid : PID` after SV_TessFactor[3] sits at r0.y on Windows; hlslc gave it a register of its own): regress::PCSG_PACK in lower.rs's sig()",
             Rule::WarpSetup => "a Direct3D 11 draw whose pixel shader reads interpolated inputs (or whose last stage writes clip/cull distances) goes through the setup pass, WARP's clipper and planes evaluated in the fragment shader (winref d3d11logic: WebGPU's rasterizer gave 3e9c28f4 where WARP gives 3e9c28f6): expand.rs asks setup_wanted and runs setup_draw, dxwgsl's pixel inputs come from expand::setup::inputs, and setup.rs's WGSL has no fma (a fused multiply-add rounds once where WARP rounds twice) (regress::WARP_SETUP / WARP_SETUP_NOT)",
+            Rule::JitExitContract => "koji's exit contract (jit::ExitAt): before or after an instruction that may leave, every status flag exact (an exception handler reads EFLAGS: xor eax,eax / mov ecx,[0] left 0x202 where the interpreter has 0x246); at a jump to code, those it reads. Gen::exit_with, jump_dyn and fallback check it, liveness sees the bails of an unchecked ESP, a callee that reads none is recorded so, a loop's hoisted checks need only its head's live-in, and no iced RflagsBits are emitted as EFLAGS bits (regress::JIT_EXIT_CONTRACT / JIT_EXIT_CONTRACT_NOT)",
+            Rule::JitHarnessImports => "a test harness that runs koji's modules (a wasmtime linker defining env.table: jit16test, jit32test, jit64test, fuzz) defines env.pages too, the page marks every module imports since the saved code runs with the page checks on, and jit32test fails when no translation loaded: its translations' load errors were taken as refusals, so after that import came every one failed to load and 600 random programs compared the interpreter with itself (regress::JIT_HARNESS_LOADED)",
             Rule::DllSearch => "sake's loader looks for a DLL named without a path in LdrGetDllPath's folders for that load (its module and LoadLibraryEx's flags, SetDefaultDllDirectories' with none) and for a DLL's imports as the load that found it (review b5dacf4 2.1: find_dll_file had an order of its own with the folder of every DLL loaded by path in it, and LoadLibraryEx's LOAD_LIBRARY_SEARCH_* flags never reached it; winref dllsearch): pe::LoadSearch::folders is dllpath::dll_folders, LoadLibraryExW passes its flags, and pe.rs names no folders of its own (regress::DLL_SEARCH / DLL_SEARCH_NOT)",
             Rule::FullPathOneRule => "every file operation opens the full path GetFullPathName names (review b5dacf4 2.2: CreateFile opened `D:save.dat` as D:\\save.dat while GetFullPathName answered from the `=D:` variable): files::full_path makes a Win32 name full with fullpath's RtlGetFullPathName_Ustr (regress::FULL_PATH)",
             Rule::ShortNameTable => "an 8.3 name is given when its long name is made and kept in its folder's table until the name is removed or renamed, as NTFS keeps it (review b5dacf4 2.3: the short names were made again from every listing, so deleting one file changed another's, and a reload gave new ones): kura::fs tells the one watcher each name made and removed, sake watches from its first guest path, shortname reads the kept table, and sake lists and removes folders only through shortname::read_dir / remove_dir (the table is no guest entry) (regress::SHORT_NAMES)",
@@ -393,6 +401,8 @@ impl Rule {
             Rule::NanMinMax => regress::nan_min_max(tree),
             Rule::PcsgPack => regress::pcsg_pack(tree),
             Rule::WarpSetup => regress::warp_setup(tree),
+            Rule::JitExitContract => regress::jit_exit_contract(tree),
+            Rule::JitHarnessImports => regress::jit_harness_imports(tree),
             Rule::DllSearch => regress::dll_search(tree),
             Rule::FullPathOneRule => regress::full_path_one_rule(tree),
             Rule::ShortNameTable => regress::short_name_table(tree),
@@ -756,7 +766,7 @@ pub const REQUIRED: [(&str, &str, &str); 55] = [
     ("crates/kura/src/d3d9/device.rs", "                send_gamma(Some(&r));", "a full-screen Direct3D 9 device's SetGammaRamp reaches the display (it was answered S_OK and dropped; 2026-11-21)"),
     ("crates/kura/src/d3d9/device.rs", "                    let (hr, bytes) = q.get_data(if a(1) == 0 { 0 } else { a(2) }, a(3));", "IDirect3DQuery9::GetData answers what the page measured (it wrote 1000 samples and TRUE at once; 2026-11-21)"),
     ("crates/kura/src/render/d3d.rs", "                    self.query_end(a(1), QueryEnd::of_word(a(2)));", "queries are measured on the page's GPU (occlusion and timestamp query sets, render/d3d/query.rs)"),
-    ("crates/kura/src/d3d11/mod.rs", "    if matches!(m, 12 | 13 | 20 | 21 | 38..=42 | 46..=48 | 50..=54 | 57 | 132) && predicated_off(d, st) {", "SetPredication turns rendering off by the predicate's measured answer (draws were never predicated; 2026-11-21)"),
+    ("crates/kura/src/d3d11/op.rs", "        if self.predicated() && predicated_off(d, st) {", "SetPredication turns rendering off by the predicate's measured answer (draws were never predicated; 2026-11-21)"),
     ("crates/kura/src/render/mod.rs", "@group(0) @binding(3) var ramp: texture_2d<f32>;", "the screen is drawn through the display's gamma ramp (GAMMA)"),
     ("crates/kura/src/d3d9/device.rs", "    pub dirty: [Option<[u32; 6]>; 6],", "a Direct3D 9 texture keeps its dirty regions: UpdateTexture copies only them, as Windows (a lock with D3DLOCK_NO_DIRTY_UPDATE is not copied; 2026-11-21)"),
     ("crates/kura/src/d3d9/device.rs", "    make_bound_mips(d);", "a D3DUSAGE_AUTOGENMIPMAP texture's levels are made from its top before a draw reads them (they were never made; 2026-11-21)"),

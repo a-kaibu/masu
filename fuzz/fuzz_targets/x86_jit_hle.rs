@@ -64,6 +64,10 @@ fn run_jit(cpu: &Cpu, window: &[u8]) -> (Cpu, Vec<u8>) {
     let mut linker = Linker::new(engine);
     linker.define(&store, "env", "memory", mem.clone()).unwrap();
     linker.define(&store, "env", "table", table).unwrap();
+    // (the page marks every module imports, jit::PAGES: the checks are off here, jit::PAGE_CHECK,
+    // so no module reads them)
+    let pages = Global::new(&mut store, GlobalType::new(ValType::I32, Mutability::Const), Val::I32(0)).unwrap();
+    linker.define(&store, "env", "pages", pages).unwrap();
     // (the HLE block never steps: any helper call is a failure)
     linker.func_wrap("env", "step", |_: u32| -> i32 { panic!("the HLE block stepped") }).unwrap();
     linker.func_wrap("env", "eflags", |_: u32| -> u32 { 0x202 }).unwrap();

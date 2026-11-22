@@ -539,6 +539,7 @@ mod link_tests {
     /// fail with their kinds
     #[test]
     fn hard_links_on_host_files() {
+        let _fs = crate::vfs::tests::host_files();
         let d = std::env::temp_dir().join(format!("kura-link-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&d);
         std::fs::create_dir_all(&d).unwrap();
@@ -575,6 +576,7 @@ mod stamp_tests {
     /// same size at another time, a rename over it and a removal
     #[test]
     fn host_file_stamps() {
+        let _fs = crate::vfs::tests::host_files();
         let d = std::env::temp_dir().join(format!("kura-stamp-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&d);
         std::fs::create_dir_all(&d).unwrap();
@@ -609,7 +611,9 @@ mod stamp_tests {
 mod head_copy_tests {
     use proptest::prelude::*;
 
-    fn dir() -> std::path::PathBuf {
+    /// The tests' directory (kura's copy and read_head take a path in a VFS test's tree for
+    /// one of it: held while no such tree is there).
+    fn dir(_held: &crate::vfs::tests::HostFiles) -> std::path::PathBuf {
         let d = std::env::temp_dir().join(format!("kura-fs-copy-{}", std::process::id()));
         std::fs::create_dir_all(&d).unwrap();
         d
@@ -622,7 +626,8 @@ mod head_copy_tests {
         /// a longer file too; read_head is the file's first N bytes.
         #[test]
         fn copy_and_head_match_the_file(len in prop_oneof![0usize..5000, (1usize << 20) - 3..(1 << 20) + 3, 0usize..3 << 20], old in 0usize..5000, n in 0usize..6000, seed in any::<u8>()) {
-            let d = dir();
+            let _fs = crate::vfs::tests::host_files();
+            let d = dir(&_fs);
             let (a, b) = (d.join(format!("a{seed}-{len}")), d.join(format!("b{seed}-{len}")));
             let data: Vec<u8> = (0..len).map(|i| (i as u8).wrapping_mul(31).wrapping_add(seed)).collect();
             std::fs::write(&a, &data).unwrap();
@@ -640,7 +645,8 @@ mod head_copy_tests {
 
     #[test]
     fn copy_of_a_missing_file_fails_and_makes_nothing() {
-        let d = dir();
+        let _fs = crate::vfs::tests::host_files();
+        let d = dir(&_fs);
         assert!(super::copy(d.join("none"), d.join("made")).is_err());
         assert!(!d.join("made").exists());
         assert!(super::read_head(d.join("none"), 4).is_err());

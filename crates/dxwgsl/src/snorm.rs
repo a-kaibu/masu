@@ -436,17 +436,30 @@ pub fn resolve_wgsl(b: &Blend, channel: u32, bit: u32) -> String {
     )
 }
 
+/// A sample's value as WARP's resolve reads it: the byte (-128 as -127) times the f32 nearest
+/// 1/127, not [`load`]'s correctly rounded quotient (winref d3d11snorm's seed rows: 960 of 960
+/// with the product, 940 with the quotient).
+pub fn resolve_load(b: i8) -> f32 {
+    f32::from(b.max(-127)) * RESOLVE_RCP
+}
+
+/// The f32 nearest 1/127 ([`resolve_load`]).
+pub const RESOLVE_RCP: f32 = 1.0 / 127.0;
+
 /// ResolveSubresource of a multisampled SNORM texture: a channel's byte from its samples'
-/// bytes, as WARP resolves (winref d3d11snorm): the samples' values ([`load`]) summed in f32 in
-/// sample order, times 1 / their count, times 127, rounded to the nearest (ties to even).
+/// bytes, as WARP resolves (winref d3d11snorm): the samples' values ([`resolve_load`]) summed
+/// in f32 in sample order, times 1 / their count, times 127, rounded to the nearest (ties to
+/// even).
 pub fn resolve(samples: &[i8]) -> i8 {
-    let sum = samples.iter().fold(0.0f32, |a, &b| a + load(b));
+    let sum = samples.iter().fold(0.0f32, |a, &b| a + resolve_load(b));
     let n = kome::num::to_f32(u32::try_from(samples.len()).unwrap_or(1).max(1));
     kome::num::trunc_i8((clamp_src(sum * (1.0 / n)) * 127.0).round_ties_even())
 }
 
 /// The WGSL of [`resolve`] as a pass (`vs` the full-target triangle, `fs` a pixel): the
-/// samples of `src` (a multisampled SNORM texture's SINT twin) into its SINT twin.
+/// samples of `src` (a multisampled SNORM texture's SINT twin) into its SINT twin. Each
+/// sample's product goes through `sn_r` with the bits of its byte + 128 past bit 8 (zero for a
+/// byte), so no driver fuses it with the sum's add.
 pub fn ms_resolve_wgsl() -> String {
     format!(
         "{}@group(0) @binding(0) var src: texture_multisampled_2d<i32>;\n\
@@ -457,11 +470,15 @@ pub fn ms_resolve_wgsl() -> String {
          \x20 let q = vec2<i32>(p.xy);\n\
          \x20 let n = textureNumSamples(src);\n\
          \x20 var s = vec4<f32>(0.0f);\n\
-         \x20 for (var k = 0u; k < n; k++) {{ s = s + sn_load(select(vec4<i32>(), textureLoad(src, q, i32(k)), all(vec2<u32>(q) < textureDimensions(src)))); }}\n\
+         \x20 for (var k = 0u; k < n; k++) {{\n\
+         \x20   let b = max(select(vec4<i32>(), textureLoad(src, q, i32(k)), all(vec2<u32>(q) < textureDimensions(src))), vec4<i32>(-127));\n\
+         \x20   s = s + sn_r(vec4<f32>(b) * bitcast<f32>(0x{rcp:08x}u), vec4<u32>(b + vec4<i32>(128)) >> vec4<u32>(8u));\n\
+         \x20 }}\n\
          \x20 let c = sn_clamp(s * (1.0f / f32(max(n, 1u))));\n\
          \x20 return vec4<i32>(round(sn_r(c * 127.0f, bitcast<vec4<u32>>(c) & vec4<u32>(0x40000000u))));\n\
          }}\n",
-        helpers()
+        helpers(),
+        rcp = RESOLVE_RCP.to_bits()
     )
 }
 

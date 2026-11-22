@@ -280,7 +280,7 @@ pub(super) fn logic_ops(tree: &Tree) -> Hits {
 
 /// 8-bit SNORM render targets (2026-11-22: kura dropped every clear of and draw to them,
 /// WebGPU rendering to no SNORM format)
-const SNORM_SITES: [(&str, &str, &str); 23] = [
+const SNORM_SITES: [(&str, &str, &str); 26] = [
     ("crates/kura/src/d3d11/mod.rs", "logic::snorm_ms_page(fmt, dim, layers, mips, samples, bind)", "a multisampled SNORM texture is not its SINT twin on the page (WebGPU multisamples no SNORM format: 4x SNORM would be one sample)"),
     ("crates/kura/src/d3d11/logic.rs", "Some(blend) if ms && !sample_rate && blend.reads_dst() => Store::SnormStash { blend, mark },", "a multisampled SNORM blend that reads its target under a pixel-rate shader is not done per sample in the resolve pass"),
     ("crates/kura/src/d3d11/logic.rs", "gpu::SNORM_RESOLVE, tex, copy, stash, mark_tex, mask", "an SNORM stash's draw has no resolve pass after it"),
@@ -303,6 +303,9 @@ const SNORM_SITES: [(&str, &str, &str); 23] = [
     ("crates/dxwgsl/src/snorm.rs", "const SN_LOAD = array<u32, 256>(", "the shader's SNORM load divides (WGSL's division is not exact: the blend's last bit differs from WARP's); it reads load()'s table"),
     ("crates/dxwgsl/src/wgsl.rs", "\"let sn_k = sn_clamp(sn_kv);\"", "an SNORM blend's constant is not clamped to -1..1 in the shader (WARP blends 1.5 as 1; winref d3d11snorm)"),
     ("crates/kura/src/d3d11/mod.rs", "and_then(dxwgsl::snorm::Blend::of).is_some_and(|b| b.takes()))?;", "CreateBlendState takes MIN / MAX with a dual-source factor (WARP: E_INVALIDARG; winref d3d11snorm)"),
+    ("crates/dxwgsl/src/snorm.rs", "f32::from(b.max(-127)) * RESOLVE_RCP", "ResolveSubresource of SNORM reads its samples as the quotient, not WARP's product with the f32 nearest 1/127 (winref d3d11snorm's seed rows: 20 of 960 differ)"),
+    ("crates/dxwgsl/src/snorm.rs", "s = s + sn_r(vec4<f32>(b) * bitcast<f32>(0x{rcp:08x}u),", "the resolve pass's SNORM samples are not WARP's product with 1/127, kept from fusing with the sum"),
+    ("crates/kura/src/d3d11/clear.rs", "trunc_u32(f64::from((v.clamp(0.0, 1.0) * max).round_ties_even()))", "a UNORM clear is not rounded from the f32 product (WARP clears 0.5 / 255's nearest f32 to 0; winref d3d11snorm)"),
     ("crates/dxwgsl/src/snorm.rs", "#[path = \"snorm_tests.rs\"]", "the SNORM conversions and blend are no longer checked against WARP's answers (snorm_tests.rs)"),
 ];
 
@@ -326,10 +329,14 @@ pub(super) fn snorm_targets(tree: &Tree) -> Hits {
 
 /// What the review of kura at 6852be1 found wrong, fixed (2026-11-22), each by its spelling in
 /// the code (comments left out): (file, text it must hold, what is wrong without it).
-pub(super) const REVIEW_6852BE1_HAS: [(&str, &str, &str); 19] = [
+pub(super) const REVIEW_6852BE1_HAS: [(&str, &str, &str); 29] = [
     ("crates/kura/src/d3d11/hazards.rs", "out.extend(st.so.iter()", "stream output targets are not outputs: a vertex buffer of one stays bound (D3D11 unbinds it)"),
     ("crates/kura/src/d3d11/hazards.rs", "for vb in st.vbs.iter_mut()", "the vertex buffers checked are not all 32 slots"),
-    ("crates/kura/src/d3d11/mod.rs", "hazards::after_outputs(d, st);\n        }\n        35 => {", "OMSetRenderTargetsAndUnorderedAccessViews with KEEP render targets does not resolve its new UAVs"),
+    ("crates/kura/src/d3d11/op.rs", "if let Uavs::Set { start, views, counts } = uavs {", "OMSetRenderTargetsAndUnorderedAccessViews with KEEP render targets does not resolve its new UAVs"),
+    ("crates/kura/src/d3d11/mod.rs", "ContextOp::read(d, m, a)", "the immediate context reads a state call its own way, not as the ContextOp a deferred context records"),
+    ("crates/kura/src/d3d11/deferred.rs", "ContextOp::read(d, m, a)", "a deferred context records a call its own way, not as the ContextOp the immediate context applies"),
+    ("crates/kura/src/d3d11/deferred.rs", "recs: std::sync::Arc<Vec<ContextOp<'static>>>", "a command list keeps raw calls (replayed through guest memory) instead of ContextOps"),
+    ("crates/kura/src/d3d11/mod.rs", "Some((Data::Deferred(_) | Data::Device(_), _)) => true,", "a deferred context let go of is never destroyed (its state and list hold their objects for good)"),
     ("crates/kura/src/jit.rs", "struct SharedCache", "the shared JIT cache's byte count is kept apart from its map (it drifted)"),
     ("crates/kura/src/jit.rs", "jit::TABLE_SLOTS", "the JIT table's size is not koji's (the loader's 20-bit index)"),
     ("host/vnjit.js", "VNJIT.slots", "vnjitRoom does not refuse a table index past the slots the loader encodes"),
@@ -346,10 +353,16 @@ pub(super) const REVIEW_6852BE1_HAS: [(&str, &str, &str); 19] = [
     ("crates/koji/src/jit/saved.rs", "pages: super::Pages", "the saved index does not say whether a translation was made with the page checks"),
     ("crates/kura/src/jit.rs", ".is_some_and(|e| e.pages.runs_now())", "saved translations are not taken by what they were made with (with the page checks on, none is used)"),
     ("host/vnjit.js", "pages: pages >>> 0,", "the modules' \"pages\" global is not given the page marks of this run"),
+    ("crates/kura/src/d3d11/mod.rs", "let dev = d.new_obj(IF_DEVICE, Data::Device(Dev { level, ..Dev::NONE }));", "D3D11CreateDevice gives back a device made before, not one of its own"),
+    ("crates/kura/src/d3d11/mod.rs", "d.enter(this);", "a call runs on the device last made, not on the device of the object it is called on"),
+    ("crates/kura/src/d3d11/mod.rs", "    Context(Box<Imm>),", "the immediate context's state is not the context's own (one state for every device)"),
+    ("crates/kura/src/gl/mod.rs", "g.objs = g.groups.remove(&c.group).unwrap_or_default();", "a GL call sees every context's objects, not its share group's"),
+    ("crates/kura/src/gl/mod.rs", "pub extern \"C\" fn vngl_share_lists(", "wglShareLists does nothing (every context sharing everything)"),
+    ("crates/sake/src/gl.rs", "(\"wglShareLists\", wglShareLists),", "wglShareLists answers TRUE without sharing"),
 ];
 
 /// (file, text it must not hold, what is wrong with it)
-pub(super) const REVIEW_6852BE1_NOT: [(&str, &str, &str); 9] = [
+pub(super) const REVIEW_6852BE1_NOT: [(&str, &str, &str); 15] = [
     ("crates/kura/src/d3d11/hazards.rs", "0..16", "a fixed slot count: the slots past it are not checked"),
     ("crates/kura/src/d3d11/hazards.rs", "0..128", "a fixed slot count: the slots past it are not checked"),
     ("crates/kura/src/jit.rs", "SHARED_BYTES", "a byte count of the shared cache apart from what the map holds"),
@@ -359,6 +372,12 @@ pub(super) const REVIEW_6852BE1_NOT: [(&str, &str, &str); 9] = [
     ("crates/kura/src/adec.rs", "LIST_FROM", "the stream list's start kept between calls (a page of it taken for the whole)"),
     ("crates/koji/src/jit/mod.rs", "PAGE_MAP", "the page marks' address as a static of the translator: translations hold it as an immediate"),
     ("crates/kura/src/jit.rs", "profiling() || jit::page_check()", "saved translations refused whenever the page checks are on, the checked ones too"),
+    ("crates/kura/src/d3d11/deferred.rs", "fn pointed(", "a table of what each method's pointers point to, beside the one that reads them"),
+    ("crates/kura/src/d3d11/deferred.rs", "fn objects(m: u32)", "a table of which arguments are objects, beside the one that reads them"),
+    ("crates/kura/src/d3d11/deferred.rs", "guest_alloc(lo32(b.len()))", "a recorded call put back into guest memory to be read again"),
+    ("crates/kura/src/d3d11/mod.rs", "made_by: HashMap<u32, u32>", "which device made a child kept apart from the child (one device per process, the others its side-faces)"),
+    ("crates/kura/src/d3d11/mod.rs", "if d.device == 0 {", "a device made only when there is none yet"),
+    ("crates/kura/src/gl/mod.rs", "fn vngl_context_create(_share: u32)", "the share context of a new context not looked at"),
 ];
 
 /// a fix of the review of 6852be1 taken back
@@ -374,6 +393,35 @@ pub(super) fn review_6852be1(tree: &Tree) -> Hits {
         if code.contains(needle) != has {
             let line = if has { 1 } else { code.split(needle).next().map_or(1, |b| b.lines().count().max(1)) };
             out.push((f, line, (*why).to_owned()));
+        }
+    }
+    out.extend(host_files_held(tree));
+    out
+}
+
+/// A kura test that opens files under the host's temporary directory through kura's own file
+/// functions (fs.rs, routed through the VFS when a path is in its tree) without
+/// `vfs::tests::host_files()`: run with the VFS tests, which mount "/", its files were looked
+/// for in their tree (fs::head_copy_tests failed so). Each fn that names `temp_dir()` holds
+/// the guard, or takes it held (`&HostFiles`); vfs.rs's own tests hold TEST_FS through their
+/// trees.
+fn host_files_held(tree: &Tree) -> Hits {
+    let mut out = Hits::new();
+    for f in tree.rs(&["crates/kura/src/"]) {
+        if f.as_str().starts_with("crates/kura/src/vfs") {
+            continue;
+        }
+        let code = tree.code(&f, true);
+        let mut from = 0;
+        while let Some(k) = code.get(from..).and_then(|c| c.find("temp_dir()")) {
+            let at = from.saturating_add(k);
+            let start = code.get(..at).and_then(|c| c.rfind("fn ")).unwrap_or(0);
+            let end = code.get(at..).and_then(|c| c.find("\n    fn ").or_else(|| c.find("\nfn "))).map_or(code.len(), |e| at.saturating_add(e));
+            if !code.get(start..end).is_some_and(|body| body.contains("tests::host_files();") || body.contains("&crate::vfs::tests::HostFiles")) {
+                let line = code.get(..at).map_or(1, |b| b.lines().count().max(1));
+                out.push((f.clone(), line, "a test's host file opened without vfs::tests::host_files() held (a VFS test's tree takes the path)".to_owned()));
+            }
+            from = at.saturating_add("temp_dir()".len());
         }
     }
     out
@@ -1081,6 +1129,83 @@ pub(super) fn short_name_table(tree: &Tree) -> Hits {
         for bad in ["kura::fs::read_dir(", "kura::fs::remove_dir("] {
             for (at, _) in code.match_indices(bad) {
                 out.push((f.clone(), crate::code::line_of(&code, at), format!("`{bad}`: a guest folder listed or removed past its short-name table (shortname::read_dir / remove_dir)")));
+            }
+        }
+    }
+    out
+}
+
+// --- jit-exit-contract -----------------------------------------------------------------------
+
+/// koji's exit contract (jit::ExitAt): at an exit before or after an instruction every status
+/// flag is exact (a guest exception handler reads EFLAGS: `xor eax,eax / mov ecx,[0]` left
+/// 0x202 where the interpreter has 0x246), at a jump only those code there reads. (file, what its
+/// code outside the tests says): each exit checks the contract, the liveness sees the bails of
+/// an ESP not checked (1063 translations redone in 600 jit32test programs), a callee reading no
+/// flags is recorded so (calls +22% with all of them kept for it).
+pub const JIT_EXIT_CONTRACT: [(&str, &str); 5] = [
+    ("crates/koji/src/jit/mod.rs", "self.exit_contract(at);"),
+    ("crates/koji/src/jit/mod.rs", "self.exit_contract(ExitAt::Jump(need));"),
+    ("crates/koji/src/jit/mod.rs", "self.exit_contract(ExitAt::Before);"),
+    ("crates/koji/src/jit/mod.rs", "let esp = esp_unknown(list);"),
+    ("crates/koji/src/jit/mod.rs", "call_reads.insert(k, r);"),
+];
+
+/// What JIT_EXIT_CONTRACT's files must not say: all flags taken live at a loop's head for its
+/// hoisted checks (they leave for that same head: ExitAt::Jump with its live-in; sort +30%).
+pub const JIT_EXIT_CONTRACT_NOT: [(&str, &str); 1] = [("crates/koji/src/jit/mod.rs", "g.hoist.contains_key(&k) ||")];
+
+/// A line of koji's JIT emitting a constant made of iced's RflagsBits (STATUS_BITS among them):
+/// those are the liveness' bits (CF 0x10, OF 0x01), not EFLAGS' (crate::flags: CF 0x01, OF
+/// 0x800); rotate_flags wrote EFLAGS from them once.
+fn rflags_emitted(line: &str) -> bool {
+    (line.contains("RflagsBits") || line.contains("STATUS_BITS")) && ["u32c(", "i32c(", "i64c(", "u64c("].iter().any(|c| line.contains(c))
+}
+
+/// Each of JIT_EXIT_CONTRACT missing from its file's code, each of JIT_EXIT_CONTRACT_NOT in it,
+/// each line of the JIT emitting RflagsBits.
+/// What jit32test must say: a module that does not load fails the test (Made, not a refusal),
+/// and a run in which no translation loaded fails
+pub const JIT_HARNESS_LOADED: [(&str, &str); 2] = [("tools/jit32test/src/main.rs", "fn translate(&mut self, base: usize, eip: u32) -> Result<Made, String>"), ("tools/jit32test/src/main.rs", "if loaded == 0 && count > 0")];
+
+/// koji's test harnesses: each that defines env.table defines env.pages (see Rule::JitHarnessImports)
+pub(super) fn jit_harness_imports(tree: &Tree) -> Hits {
+    let mut out = Hits::new();
+    for f in tree.rs(&["tools/", "fuzz/"]) {
+        let t = product_code(tree, &f);
+        if let Some(k) = t.lines().position(|l| l.contains("\"env\", \"table\"")) {
+            if !t.contains("\"env\", \"pages\"") {
+                out.push((f.clone(), k.saturating_add(1), "env.table defined, env.pages not: every module of koji imports the page marks and none loads".into()));
+            }
+        }
+    }
+    for (file, want) in JIT_HARNESS_LOADED {
+        let f = Rel::new(file);
+        if !product_code(tree, &f).contains(want) {
+            out.push((f, 1, format!("no `{want}`: jit32test could pass without running a translation")));
+        }
+    }
+    out
+}
+
+pub(super) fn jit_exit_contract(tree: &Tree) -> Hits {
+    let mut out = Hits::new();
+    for (file, want) in JIT_EXIT_CONTRACT {
+        let f = Rel::new(file);
+        if !product_code(tree, &f).contains(want) {
+            out.push((f, 1, format!("no `{want}` in the code: an exit whose status flags are not checked to be exact (jit::ExitAt)")));
+        }
+    }
+    for (file, bad) in JIT_EXIT_CONTRACT_NOT {
+        let f = Rel::new(file);
+        if product_code(tree, &f).contains(bad) {
+            out.push((f, 1, format!("`{bad}`: a loop's hoisted checks leave for its own head, which reads what its live-in says (ExitAt::Jump)")));
+        }
+    }
+    for f in tree.rs(&["crates/koji/src/jit/"]) {
+        for (k, l) in product_code(tree, &f).lines().enumerate() {
+            if rflags_emitted(l) {
+                out.push((f.clone(), k.saturating_add(1), "iced's RflagsBits emitted into the code: EFLAGS' bits are crate::flags'".into()));
             }
         }
     }
