@@ -1082,12 +1082,12 @@ fn setup_draw(d: &mut D11, st: &State, stv: &Store, osgn: &[dxwgsl::dxbc::SigEle
     let Some(sh) = shader(d, Key::Setup { src, stream, ps: ps_obj, prim }, move |_| x::setup::setup_pass(&stc, &oc, pc.as_deref(), prim)) else { return SetupDone::Not };
     let Some(vsh) = shader(d, Key::SetupVertex { stride }, move |_| Ok(x::setup::setup_vertex(stride))) else { return SetupDone::Not };
     let slot_bytes = per.saturating_mul(stride).saturating_mul(16).max(1);
-    let chunk = (SETUP_BYTES / slot_bytes).max(1);
+    let chunk = SETUP_BYTES.checked_div(slot_bytes).unwrap_or(1).max(1);
     let mut sx = *xw;
     raster_words(d, st, &mut sx);
     let mut first = 0u32;
     while first < slots {
-        let n = (slots - first).min(chunk);
+        let n = slots.saturating_sub(first).min(chunk);
         let sbuf = scratch(d, SETUP, n.saturating_mul(slot_bytes));
         put(&mut sx, x::xd::ITEMS, 0, n);
         put(&mut sx, x::xd::FIRST, 0, first);
