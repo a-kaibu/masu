@@ -77,6 +77,7 @@ pub enum Rule {
     NanMinMax,
     PcsgPack,
     WarpSetup,
+    WarpWire,
     RunPlan,
     DllSearch,
     FullPathOneRule,
@@ -93,7 +94,7 @@ pub enum Rule {
 }
 
 impl Rule {
-    pub const ALL: [Rule; 73] = [
+    pub const ALL: [Rule; 74] = [
         Rule::BuildOutput,
         Rule::HresultCopy,
         Rule::KomeCopy,
@@ -154,6 +155,7 @@ impl Rule {
         Rule::NanMinMax,
         Rule::PcsgPack,
         Rule::WarpSetup,
+        Rule::WarpWire,
         Rule::RunPlan,
         Rule::DllSearch,
         Rule::FullPathOneRule,
@@ -232,6 +234,7 @@ impl Rule {
             Rule::NanMinMax => "nan-min-max",
             Rule::PcsgPack => "pcsg-pack",
             Rule::WarpSetup => "warp-setup",
+            Rule::WarpWire => "warp-wire",
             Rule::DllSearch => "dll-search",
             Rule::FullPathOneRule => "full-path-one-rule",
             Rule::ShortNameTable => "short-name-table",
@@ -310,6 +313,7 @@ impl Rule {
             Rule::NanMinMax => "a NaN through Direct3D's min/max gives the other operand (winref d3d11tess: [maxtessfactor(5.5)] turned a NaN tess factor into 5.5 on Windows, and the domain shader read 5.5 back; masu kept the NaN and culled the patch): dxwgsl's float min/max go through d3d_min/d3d_max (WGSL leaves a NaN to the implementation), hlslc clamps a patch constant function's tess factors to [maxtessfactor] with min, kura's clamp gives the maximum for a NaN (regress::NAN_MIN_MAX / NAN_MIN_MAX_NOT)",
             Rule::PcsgPack => "hlslc packs a patch constant that is not a tess factor into a taken register's free components as d3dcompiler does (winref d3d11tess: `uint pid : PID` after SV_TessFactor[3] sits at r0.y on Windows; hlslc gave it a register of its own): regress::PCSG_PACK in lower.rs's sig()",
             Rule::WarpSetup => "a Direct3D 11 draw whose pixel shader reads interpolated inputs (or whose last stage writes clip/cull distances) goes through the setup pass, WARP's clipper and planes evaluated in the fragment shader (winref d3d11logic: WebGPU's rasterizer gave 3e9c28f4 where WARP gives 3e9c28f6): expand.rs asks setup_wanted and runs setup_draw, dxwgsl's pixel inputs come from expand::setup::inputs, and setup.rs's WGSL has no fma (a fused multiply-add rounds once where WARP rounds twice) (regress::WARP_SETUP / WARP_SETUP_NOT)",
+            Rule::WarpWire => "FillMode WIREFRAME draws a triangle's edges as the setup's aliased lines, culled per fan triangle as a solid one and each line biased by DepthBias and SlopeScaledDepthBias as WARP does (winref d3d11wire; review b5dacf4 3.2: the draw's own edges as a line list lost CullMode and DepthBias): setup.rs biases each edge (Bias::of, sx_bias), kura sends the bias words and sends wireframe draws to the setup, the squares drawn uncull'd and unbiased, no edge list of the draw's own is made, and the draw's side asks no device feature (the device is the page's) (regress::WARP_WIRE / WARP_WIRE_NOT)",
             Rule::DllSearch => "sake's loader looks for a DLL named without a path in LdrGetDllPath's folders for that load (its module and LoadLibraryEx's flags, SetDefaultDllDirectories' with none) and for a DLL's imports as the load that found it (review b5dacf4 2.1: find_dll_file had an order of its own with the folder of every DLL loaded by path in it, and LoadLibraryEx's LOAD_LIBRARY_SEARCH_* flags never reached it; winref dllsearch): pe::LoadSearch::folders is dllpath::dll_folders, LoadLibraryExW passes its flags, and pe.rs names no folders of its own (regress::DLL_SEARCH / DLL_SEARCH_NOT)",
             Rule::FullPathOneRule => "every file operation opens the full path GetFullPathName names (review b5dacf4 2.2: CreateFile opened `D:save.dat` as D:\\save.dat while GetFullPathName answered from the `=D:` variable): files::full_path makes a Win32 name full with fullpath's RtlGetFullPathName_Ustr (regress::FULL_PATH)",
             Rule::ShortNameTable => "an 8.3 name is given when its long name is made and kept in its folder's table until the name is removed or renamed, as NTFS keeps it (review b5dacf4 2.3: the short names were made again from every listing, so deleting one file changed another's, and a reload gave new ones): kura::fs tells the one watcher each name made and removed, sake watches from its first guest path, shortname reads the kept table, and sake lists and removes folders only through shortname::read_dir / remove_dir (the table is no guest entry) (regress::SHORT_NAMES)",
@@ -390,6 +394,7 @@ impl Rule {
             Rule::NanMinMax => regress::nan_min_max(tree),
             Rule::PcsgPack => regress::pcsg_pack(tree),
             Rule::WarpSetup => regress::warp_setup(tree),
+            Rule::WarpWire => regress::warp_wire(tree),
             Rule::DllSearch => regress::dll_search(tree),
             Rule::FullPathOneRule => regress::full_path_one_rule(tree),
             Rule::ShortNameTable => regress::short_name_table(tree),

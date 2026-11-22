@@ -763,6 +763,19 @@ fn fixture(r: Rule) -> Fixture {
             ],
             mutate: ("crates/kura/src/d3d11/expand.rs", |t| Some(t.replace("let wants_setup = setup_wanted(d, st);", "let wants_setup = false;"))),
         },
+        Rule::WarpWire => Fixture {
+            bad: &[
+                ("crates/dxwgsl/src/wgsl/setup.rs", "fn wire() { let l = line(); }\n#[cfg(test)]\nmod t { fn f() { l.z.c += b.of(zmax, s); let w = \"sx_bias(sx_wz, 1.0)\"; } }\n"),
+                ("crates/kura/src/d3d11/expand.rs", "fn raster_words() { put(w, x::xd::RASTER, 0, bits); let c = crate::render::gpu::has_feature(\"depth-clip-control\"); }\n"),
+                ("crates/kura/src/d3d11/mod.rs", "unsafe fn wire_edges(d: &D11) {}\nfn triangle_edges(idx: &[u32]) {}\n"),
+            ],
+            good: &[
+                ("crates/dxwgsl/src/wgsl/setup.rs", "fn wire() { l.z.c += b.of(zmax, s); }\nconst W: &str = \"pz.z = pz.z + sx_bias(sx_wz, m);\";\n"),
+                ("crates/kura/src/d3d11/expand.rs", "fn raster_words() { put(w, x::xd::BIAS, 0, at(3)); }\nfn setup_wanted() { let wired = f.is_some_and(|f| Fill::of(f) == Fill::Wireframe); }\n"),
+                ("crates/kura/src/d3d11/mod.rs", "fn of() { let wired = match fill { Fill::Wireframe => topo.triangles() && !sprite && !squares, Fill::Solid => false }; }\nfn draw_with() { let q = s.is_some_and(expand::SetupStore::squares); }\n"),
+            ],
+            mutate: ("crates/kura/src/d3d11/expand.rs", |t| Some(t.replace("    put(w, x::xd::BIAS, 0, at(3));\n", ""))),
+        },
         Rule::DllSearch => Fixture {
             bad: &[
                 ("crates/sake/src/pe.rs", "pub static DLL_DIRS: Mutex<Vec<String>> = Mutex::new(Vec::new());\nfn find_dll_file(dll: &str) {\n    let mut dirs = vec![exe_dir];\n    dirs.extend(crate::dllpath::user_dirs().into_iter().rev());\n    dirs.push(crate::files::cwd().trim_end_matches('\\\\').to_string());\n    dirs.push(\"C:\\\\windows\\\\system32\".into());\n}\n// for d in search.folders() image_resolver(search.of_dependency(&win))\n"),

@@ -96,11 +96,17 @@ pub mod xd {
     pub const RECT: usize = 53;
     /// the viewport's MinDepth and MaxDepth (2 f32: the setup pass's depth plane, setup.rs)
     pub const DEPTH: usize = 44;
+    /// the depth buffer's unit for a depth bias (setup.rs Bias): 0 float, else its UNORM bits
+    pub const DEPTH_UNIT: usize = 46;
+    /// the rasterizer state's DepthBias (i32), SlopeScaledDepthBias and DepthBiasClamp (f32)
+    pub const BIAS: usize = 57;
+    pub const BIAS_SLOPE: usize = 58;
+    pub const BIAS_CLAMP: usize = 59;
     /// the words
     pub const WORDS: usize = 60;
     /// The words' names in the passes' WGSL (`const XD_<name>`), so the shaders say which word
     /// they read
-    pub const NAMED: [(&str, usize); 19] = [
+    pub const NAMED: [(&str, usize); 23] = [
         ("COUNT", COUNT),
         ("START", START),
         ("BASE", BASE),
@@ -120,6 +126,10 @@ pub mod xd {
         ("RASTER", RASTER),
         ("RECT", RECT),
         ("DEPTH", DEPTH),
+        ("DEPTH_UNIT", DEPTH_UNIT),
+        ("BIAS", BIAS),
+        ("BIAS_SLOPE", BIAS_SLOPE),
+        ("BIAS_CLAMP", BIAS_CLAMP),
     ];
 }
 

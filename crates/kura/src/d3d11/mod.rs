@@ -4742,8 +4742,8 @@ fn merge_vertex_buffers(vbs: &[(u32, u32, u32); 32], slots: &mut Vec<(u32, u32, 
 pub(crate) enum Fill {
     /// D3D11_FILL_SOLID (3)
     Solid,
-    /// D3D11_FILL_WIREFRAME (2): their edges, a line list (the draw's own, a geometry shader's
-    /// output's too: review e18bf44)
+    /// D3D11_FILL_WIREFRAME (2): their edges, each an aliased line of the setup's (the draw's
+    /// own triangles, a geometry shader's output's too: review e18bf44, b5dacf4 3.2)
     Wireframe,
 }
 
@@ -4815,27 +4815,17 @@ pub(crate) enum Indices {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct DrawPlan {
     pub(crate) topo: PageTopo,
-    pub(crate) fill: Fill,
     pub(crate) indices: Indices,
-}
-
-/// DrawPlan::of's answer
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) enum Planned {
-    Ready(DrawPlan),
-    /// wireframe triangles of the draw's own indices: their edges, as lines (`strip`: of a
-    /// triangle strip), read from the index buffer
-    EdgesOfTheDraw { strip: bool },
 }
 
 impl DrawPlan {
     /// The plan of a draw assembling `assembled` (None: no list or strip topology), with an
     /// adjacency topology's corners (`adjacent`: their list, and whether they are lines), at
-    /// `fill`: a wireframe of triangles is their edges as lines (FillMode WIREFRAME, #64; a
-    /// geometry shader's store's too, its vertices a list from 0: review e18bf44), point
-    /// sprites always solid. None: nothing to draw (no topology, or an adjacency topology with
-    /// no primitive).
-    pub(crate) fn of(assembled: Option<PageTopo>, adjacent: Option<(Vec<u32>, bool)>, fill: Fill, sprite: bool, store: bool, count: u32) -> Option<Planned> {
+    /// `fill`; `squares`: the draw is of a setup's slots (expand::SetupStore, solid triangles
+    /// whatever the fill). None: nothing to draw (no topology, an adjacency topology with no
+    /// primitive, or wireframe triangles: those are the setup's lines alone, culled and biased
+    /// as WARP draws them, review b5dacf4 3.2, expand::setup_wanted; point sprites are solid).
+    pub(crate) fn of(assembled: Option<PageTopo>, adjacent: Option<(Vec<u32>, bool)>, fill: Fill, sprite: bool, squares: bool) -> Option<DrawPlan> {
         let (topo, made) = match adjacent {
             // (no primitive whole: nothing reaches the rasterizer)
             Some((list, _)) if list.is_empty() => return None,
@@ -4843,15 +4833,14 @@ impl DrawPlan {
             Some((list, false)) => (PageTopo::Triangles, Some(list)),
             None => (assembled?, None),
         };
-        let wired = fill == Fill::Wireframe && topo.triangles() && !sprite;
-        let lines = |idx: &[u32], strip: bool| DrawPlan { topo: PageTopo::Lines, fill: Fill::Wireframe, indices: Indices::Made(triangle_edges(idx, strip, None)) };
-        Some(match (made, wired) {
-            (Some(list), true) => Planned::Ready(lines(&list, false)),
-            (Some(list), false) => Planned::Ready(DrawPlan { topo, fill: Fill::Solid, indices: Indices::Made(list) }),
-            (None, true) if store => Planned::Ready(lines(&(0..count).collect::<Vec<u32>>(), topo == PageTopo::TriangleStrip)),
-            (None, true) => Planned::EdgesOfTheDraw { strip: topo == PageTopo::TriangleStrip },
-            (None, false) => Planned::Ready(DrawPlan { topo, fill: Fill::Solid, indices: Indices::Draw }),
-        })
+        let wired = match fill {
+            Fill::Wireframe => topo.triangles() && !sprite && !squares,
+            Fill::Solid => false,
+        };
+        if wired {
+            return None;
+        }
+        Some(DrawPlan { topo, indices: made.map_or(Indices::Draw, Indices::Made) })
     }
 }
 
@@ -4861,40 +4850,6 @@ impl DrawPlan {
 pub(crate) struct PipelineKey {
     pub(crate) fill: Fill,
     pub(crate) desc: Vec<u32>,
-}
-
-unsafe fn wire_edges(d: &D11, st: &State, indexed: bool, count: u32, start: u32, strip: bool) -> Option<Vec<u32>> {
-    let idx: Vec<u32> = if indexed {
-        let isz = if st.ib.1 == 42 { 4u64 } else { 2 };
-        let Some(Data::Buffer(b)) = d.objs.get(&st.ib.0).map(|o| &o.data) else { return None };
-        if u64::from(st.ib.2) + (u64::from(start) + u64::from(count)) * isz > u64::from(b.size) {
-            return None;
-        }
-        let p = b.mem + st.ib.2 + start * lo32(isz);
-        (0..us(count)).map(|k| if isz == 4 { rd(p, k) } else { u32::from(*gc::<u16>(p).add(k)) }).collect()
-    } else {
-        (start..start.saturating_add(count)).collect()
-    };
-    let restart = if !indexed { None } else if st.ib.1 == 42 { Some(u32::MAX) } else { Some(0xffff) };
-    Some(triangle_edges(&idx, strip, restart))
-}
-
-/// See `wire_edges`: the edges of the triangles of `idx`.
-fn triangle_edges(idx: &[u32], strip: bool, restart: Option<u32>) -> Vec<u32> {
-    let mut e = Vec::new();
-    let mut tri = |a: u32, b: u32, c: u32| e.extend_from_slice(&[a, b, b, c, c, a]);
-    if strip {
-        for run in idx.split(|&v| Some(v) == restart) {
-            for t in run.windows(3) {
-                tri(t[0], t[1], t[2]);
-            }
-        }
-    } else {
-        for t in idx.chunks_exact(3) {
-            tri(t[0], t[1], t[2]);
-        }
-    }
-    e
 }
 
 unsafe fn draw(d: &mut D11, st: &State, indexed: bool, count: u32, instances: u32, start: u32, base: i32, first_instance: u32) {
@@ -5073,7 +5028,15 @@ unsafe fn draw_with(d: &mut D11, st: &State, indexed: bool, count: u32, instance
     }
     let ds = state_desc(d, st.depth).cloned();
     let rs = state_desc(d, st.raster).cloned();
-    let r = rs.unwrap_or_else(|| vec![3, 3, 0, 0, 0, 0, 1, 0, 0, 0]);
+    let mut r = rs.unwrap_or_else(|| vec![3, 3, 0, 0, 0, 0, 1, 0, 0, 0]);
+    // (a setup's squares: CullMode NONE, no bias, DepthClipEnable off; expand::SetupStore)
+    if store.and_then(|sd| sd.setup).is_some_and(expand::SetupStore::squares) {
+        for (k, v) in [(1, 1), (3, 0), (4, 0), (5, 0), (6, 0)] {
+            if let Some(w) = r.get_mut(k) {
+                *w = v;
+            }
+        }
+    }
     // an adjacency topology without a geometry shader: the primitives' own corners, a list of
     // its own indices (winref d3d11gs "triangle list adjacency of 6": the triangle of vertices
     // 0 2 4, culled)
@@ -5084,23 +5047,14 @@ unsafe fn draw_with(d: &mut D11, st: &State, indexed: bool, count: u32, instance
         (None, None) => PageTopo::of_d3d(st.topology),
     };
     let fill = Fill::of(r.first().copied().unwrap_or(3));
-    let plan = match DrawPlan::of(assembled, adjacent, fill, sprite.is_some(), store.is_some(), count) {
-        Some(Planned::Ready(p)) => p,
-        Some(Planned::EdgesOfTheDraw { strip }) => {
-            if indexed {
-                expand::pull(d, st.ib.0);
-            }
-            // SAFETY: draw_with's own contract (the index buffer's guest memory is mapped)
-            match unsafe { wire_edges(d, st, indexed, count, start, strip) } {
-                Some(e) => DrawPlan { topo: PageTopo::Lines, fill: Fill::Wireframe, indices: Indices::Made(e) },
-                // (wireframe triangles whose edges could not be read (an index buffer too
-                // short): drawn as nothing, never as filled triangles)
-                None => return,
-            }
+    let squares = store.and_then(|sd| sd.setup).is_some_and(expand::SetupStore::squares);
+    let Some(plan) = DrawPlan::of(assembled, adjacent, fill, sprite.is_some(), squares) else {
+        if fill == Fill::Wireframe && !squares {
+            // (wireframe triangles the setup did not take: its pass could not be made)
+            eprintln!("d3d11: wireframe triangles without the setup pass: not drawn");
         }
-        None => return,
+        return;
     };
-    let fill = plan.fill;
     let topo = plan.topo.code();
     let wire = match &plan.indices {
         Indices::Made(v) => Some(v),
@@ -5260,7 +5214,7 @@ unsafe fn draw_with(d: &mut D11, st: &State, indexed: bool, count: u32, instance
         ps_over.push([dxwgsl::snorm::SNORM_CONSTANT, 0, d.blend_constant.0, 0, 16, 16, 0, 0]);
     }
     if let Some(e) = store.and_then(|sd| sd.setup) {
-        ps_over.push(e);
+        ps_over.push(e.entry);
     }
     let constant_buf = d.blend_constant.0;
     let stash = logic::stash_of(d, &st.rtvs, &colors, [dt, dl, dly], &stashed, &masks, &copies, constant_buf);
@@ -5891,33 +5845,6 @@ mod changed_range_tests {
                     patched[lo..hi].copy_from_slice(&new[lo..hi]);
                     prop_assert_eq!(patched, new);
                 }
-            }
-        }
-    }
-}
-
-#[cfg(test)]
-mod wire_tests {
-    use super::triangle_edges;
-
-    #[test]
-    fn edges_of_lists_and_strips() {
-        assert_eq!(triangle_edges(&[0, 1, 2, 3, 4, 5, 6], false, None), [0, 1, 1, 2, 2, 0, 3, 4, 4, 5, 5, 3]);
-        assert_eq!(triangle_edges(&[0, 1, 2, 3], true, None), [0, 1, 1, 2, 2, 0, 1, 2, 2, 3, 3, 1]);
-        // a strip cut by the restart index
-        assert_eq!(triangle_edges(&[0, 1, 2, 0xffff, 5, 6, 7], true, Some(0xffff)), [0, 1, 1, 2, 2, 0, 5, 6, 6, 7, 7, 5]);
-        assert!(triangle_edges(&[0, 1], true, None).is_empty());
-    }
-
-    proptest::proptest! {
-        /// Every triangle gives three edges that chain back to its first vertex
-        #[test]
-        fn three_closed_edges_a_triangle(idx in proptest::collection::vec(0u32..50, 0..40), strip: bool) {
-            let e = triangle_edges(&idx, strip, None);
-            let tris = if strip { idx.len().saturating_sub(2) } else { idx.len() / 3 };
-            proptest::prop_assert_eq!(e.len(), tris * 6);
-            for t in e.chunks(6) {
-                proptest::prop_assert_eq!((t[1], t[3], t[5]), (t[2], t[4], t[0]));
             }
         }
     }

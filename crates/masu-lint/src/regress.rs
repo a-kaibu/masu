@@ -955,6 +955,34 @@ pub(super) fn warp_setup(tree: &Tree) -> Hits {
     says(tree, &WARP_SETUP, &WARP_SETUP_NOT, "interpolated inputs left to WebGPU's rasterizer, not WARP's setup", "one rounding where WARP rounds the product and the sum each")
 }
 
+// --- warp-wire -------------------------------------------------------------------------------
+
+/// FillMode WIREFRAME as WARP draws it (winref d3d11wire): the edges the setup's aliased lines,
+/// culled and biased there, (file, what its code outside the tests says).
+pub const WARP_WIRE: [(&str, &str); 6] = [
+    ("crates/dxwgsl/src/wgsl/setup.rs", "b.of(zmax, "),
+    ("crates/dxwgsl/src/wgsl/setup.rs", "sx_bias(sx_wz, "),
+    ("crates/kura/src/d3d11/expand.rs", "put(w, x::xd::BIAS, 0, "),
+    ("crates/kura/src/d3d11/expand.rs", "Fill::of(f) == Fill::Wireframe"),
+    ("crates/kura/src/d3d11/mod.rs", "expand::SetupStore::squares"),
+    ("crates/kura/src/d3d11/mod.rs", "Fill::Wireframe => topo.triangles() && !sprite && !squares"),
+];
+
+/// What WARP_WIRE's files must not say: the edges of the draw's own triangles as a line list
+/// (no culling, no bias: review b5dacf4 3.2); a device feature asked from the draw's side (the
+/// device is the page's: the sake worker has none, and asking threw there).
+pub const WARP_WIRE_NOT: [(&str, &str); 4] = [
+    ("crates/kura/src/d3d11/mod.rs", "fn wire_edges("),
+    ("crates/kura/src/d3d11/mod.rs", "fn triangle_edges("),
+    ("crates/kura/src/d3d11/mod.rs", "has_feature("),
+    ("crates/kura/src/d3d11/expand.rs", "has_feature("),
+];
+
+/// Each of WARP_WIRE missing from its file's code, each of WARP_WIRE_NOT in it.
+pub(super) fn warp_wire(tree: &Tree) -> Hits {
+    says(tree, &WARP_WIRE, &WARP_WIRE_NOT, "wireframe edges not the setup's culled and biased lines", "a wireframe drawn as the draw's own edges, unculled and unbiased")
+}
+
 /// Each `want` missing from its file's code and each `bad` in it, with the reason given.
 fn says(tree: &Tree, want: &[(&str, &str)], bad: &[(&str, &str)], missing: &str, present: &str) -> Hits {
     let mut out = Hits::new();
