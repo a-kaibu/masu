@@ -97,7 +97,7 @@ pub enum Rule {
 }
 
 impl Rule {
-    pub const ALL: [Rule; 76] = [
+    pub const ALL: [Rule; 77] = [
         Rule::BuildOutput,
         Rule::HresultCopy,
         Rule::KomeCopy,
@@ -940,7 +940,7 @@ fn safe_raw_pointer_abi(tree: &Tree) -> Hits {
 }
 
 /// koji's switch and where it may be set
-pub const NOCHECK_HOME: &str = "crates/koji/src/jit/mod.rs";
+pub const NOCHECK_HOME: &str = "crates/koji/src/jit/context.rs";
 pub const NOCHECK_SETTER: &str = "crates/kura/src/jit.rs";
 static NOCHECK_STATIC: LazyLock<Option<Regex>> = LazyLock::new(|| rx(r"\bstatic\s+NOCHECK\s*:[^=]*=\s*([^;]*);"));
 static NOCHECK_ON: LazyLock<Option<Regex>> = LazyLock::new(|| rx(r"MASU_JIT_NOCHECK\s*[=:]\s*['\x22]?[^0'\x22\s]"));

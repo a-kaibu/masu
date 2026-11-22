@@ -416,7 +416,7 @@ fn fixture(r: Rule) -> Fixture {
                 ("docs/translator.md", "MASU_JIT_NOCHECK=1: no range checks\n"),
                 ("tests/x.sh", "MASU_JIT_NOCHECK=0 cargo test\n"),
             ],
-            mutate: (NOCHECK_HOME, |t| Some(t.replace("AtomicBool::new(false);\n/// Pushes", "AtomicBool::new(true);\n/// Pushes"))),
+            mutate: (NOCHECK_HOME, |t| Some(t.replace("pub static NOCHECK: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);", "pub static NOCHECK: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(true);"))),
         },
         Rule::EscapeComment => Fixture {
             bad: &[

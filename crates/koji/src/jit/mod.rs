@@ -765,8 +765,6 @@ impl Default for FCache {
 
 /// See [`Gen::safe`].
 const SAFE_MARGIN: i32 = 0x8000;
-/// Measuring only (MASU_JIT_NOCHECK=1): no range checks on memory accesses (unsafe).
-pub static NOCHECK: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
 /// Pushes what a jump to another region hands over (registers, lazy flags, budget).
 fn push_state(c: &mut Code) {
     for l in L_REG..N_PARAMS {

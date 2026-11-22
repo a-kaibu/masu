@@ -103,6 +103,9 @@ impl Pages {
     }
 }
 
+/// Measuring only (MASU_JIT_NOCHECK=1): no range checks on memory accesses (unsafe).
+pub static NOCHECK: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+
 /// The global every module imports first: the page marks' host address ([`PAGE_CHECK`]).
 pub const PAGES: u32 = 0;
 
@@ -225,7 +228,7 @@ impl TranslationContext {
             calls,
             float: if mx_exact() { Float::Exact } else { Float::Fast },
             pages: Pages::now(),
-            ranges: if super::NOCHECK.load(Relaxed) { Ranges::Unchecked } else { Ranges::Checked },
+            ranges: if NOCHECK.load(Relaxed) { Ranges::Unchecked } else { Ranges::Checked },
             measure: Measure {
                 count: super::COUNT.load(Relaxed),
                 profile: super::PROFILE.load(Relaxed),
