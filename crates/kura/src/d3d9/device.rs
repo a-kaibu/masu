@@ -3258,9 +3258,7 @@ fn readback_as(d: &mut D3d, gpu: u32, level: u32, x: u32, y: u32, w: u32, h: u32
 fn readback(d: &mut D3d, gpu: u32, level: u32, x: u32, y: u32, w: u32, h: u32, mem: u32, pitch: u32) -> Option<gpu::Readback> {
     // (None: no device, no readback made)
     d.dev.as_ref()?;
-    let req = gpu::Readback::new();
-    gpu::record(|b| b.cmd(&[gpu::READBACK, req.word(), gpu, level, x, y, w, h, mem, pitch]));
-    Some(req)
+    Some(gpu::record(|b| b.readback(gpu::Read::Pixels, &[gpu, level, x, y, w, h, mem, pitch])))
 }
 
 unsafe fn unlock_surface(d: &mut D3d, s: u32) -> u32 {
@@ -4445,10 +4443,9 @@ unsafe fn front_buffer_data(d: &mut D3d, after: &mut After, chain: Option<(u32, 
     if x1 <= x0 || y1 <= y0 {
         return S_OK;
     }
-    let req = gpu::Readback::new();
     let at = mem + y0.cast_unsigned() * pitch + x0.cast_unsigned() * 4;
     let (sx, sy) = ((x0 - client[0]).cast_unsigned(), (y0 - client[1]).cast_unsigned());
-    gpu::record(|b| b.cmd(&[gpu::READBACK, req.word(), kept, 0, sx, sy, (x1 - x0).cast_unsigned(), (y1 - y0).cast_unsigned(), at, pitch]));
+    let req = gpu::record(|b| b.readback(gpu::Read::Pixels, &[kept, 0, sx, sy, (x1 - x0).cast_unsigned(), (y1 - y0).cast_unsigned(), at, pitch]));
     *after = After::Readback(req);
     S_OK
 }

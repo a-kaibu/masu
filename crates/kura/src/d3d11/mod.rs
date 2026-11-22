@@ -222,27 +222,14 @@ pub struct Buffer {
     pub mem: u32,
     /// page buffer with the current contents (0: none yet)
     pub gpu: u32,
-    /// the guest wrote since `gpu` was made
-    pub dirty: bool,
+    /// which of `mem` and `gpu` holds the newest bytes (an upload before the page reads them,
+    /// a readback before the guest does: expand::pull)
+    pub content: crate::content::Content,
     /// every write since the last upload was through a Map NO_OVERWRITE (bytes no draw before
     /// reads: only the changed ones go up, in place)
     pub stream: bool,
     /// a dynamic buffer's bytes as last uploaded (what `stream` uploads are diffed against)
     pub shadow: Vec<u8>,
-    /// which copy holds the bytes: `mem`, or `gpu` once stream output wrote it (expand::pull
-    /// reads it back; only a readback that came makes `mem` the newest again)
-    pub newest: Newest,
-}
-
-/// Where a buffer's newest bytes are (Buffer::newest). A readback that failed leaves `Page`:
-/// the next pull asks again (a bool cleared whatever the readback's answer lost them for good,
-/// review of 6852be1).
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum Newest {
-    /// the guest's memory (`mem`)
-    Guest,
-    /// the page's buffer (`gpu`): stream output wrote it since
-    Page,
 }
 
 pub struct Texture {
@@ -1638,9 +1625,8 @@ fn after_lost(d: &mut D11) {
     for id in ids {
         match d.objs.get_mut(&id).map(|o| &mut o.data) {
             Some(Data::Buffer(b)) if b.gpu != 0 => {
-                b.dirty = true;
+                b.content.page_lost();
                 b.stream = false;
-                b.newest = Newest::Guest;
             }
             Some(Data::Texture(t)) if t.gpu != 0 && !t.bits.is_empty() => {
                 let mut subs: Vec<(u32, Vec<u8>)> = t.bits.iter().map(|(&k, v)| (k, v.clone())).collect();
@@ -2325,7 +2311,7 @@ unsafe fn device_call(d: &mut D11, m: u32, this: u32, a: &dyn Fn(usize) -> u32) 
             if a(2) != 0 {
                 std::ptr::copy_nonoverlapping(gc::<u8>(rdp(a(2), 0)), gp::<u8>(mem), us(size));
             }
-            let o = d.new_obj(IF_BUFFER, Data::Buffer(Buffer { size, usage, bind, cpu, misc, stride, mem, gpu: 0, dirty: true, stream: false, shadow: Vec::new(), newest: Newest::Guest }));
+            let o = d.new_obj(IF_BUFFER, Data::Buffer(Buffer { size, usage, bind, cpu, misc, stride, mem, gpu: 0, content: crate::content::Content::new(), stream: false, shadow: Vec::new() }));
             if d.trace && size <= 256 {
                 let f: Vec<f32> = (0..size / 4).map(|i| *(gc::<f32>(mem + 4 * i))).collect();
                 eprintln!("d3d11: new buffer {o} bind {bind:#x} usage {usage} = {f:?}");
@@ -3017,10 +3003,8 @@ unsafe fn nv12_pull(d: &mut D11, id: u32) {
         std::ptr::write_bytes(gp::<u8>(tmp), 0, us(size));
         let mut reqs = Vec::new();
         for (g, gw, gh, at) in [(luma_gpu, w, h, tmp), (chroma_gpu, w / 2, h / 2, tmp + pitch * h)] {
-            let req = gpu::Readback::new();
-            let c = [gpu::READBACK, req.word(), g, l << 16, 0, 0, gw, gh, at, pitch];
-            gpu::record(|q| q.cmd(&c));
-            reqs.push(req);
+            let c = [g, l << 16, 0, 0, gw, gh, at, pitch];
+            reqs.push(gpu::record(|q| q.readback(gpu::Read::Pixels, &c)));
         }
         for req in reqs {
             gpu::wait_readback(req);
@@ -3591,7 +3575,7 @@ unsafe fn clear_buffer_view(d: &mut D11, buf: u32, fmt: u32, offset: u32, bytes:
         // SAFETY: inside the buffer's guest memory (`end` is at most its size); the caller's contract
         unsafe { *gp::<u8>(p.wrapping_add(lo32(k))) = *byte };
     }
-    b.dirty = true;
+    b.content.guest_wrote();
 }
 
 /// A clear of a render target or unordered access view of a texture by its texels: each of
@@ -3666,7 +3650,7 @@ unsafe fn map(d: &mut D11, res: u32, sub: u32, ty: u32, out: u32, dxgi: bool, af
     // (what stream output wrote, back first: but for WRITE_DISCARD, whose bytes are new)
     if ty == 4 {
         if let Some(Data::Buffer(b)) = d.objs.get_mut(&id).map(|o| &mut o.data) {
-            b.newest = Newest::Guest;
+            b.content.guest_wrote();
         }
     } else {
         expand::pull(d, id);
@@ -3674,8 +3658,8 @@ unsafe fn map(d: &mut D11, res: u32, sub: u32, ty: u32, out: u32, dxgi: bool, af
     let r = match d.objs.get_mut(&id).map(|o| &mut o.data) {
         Some(Data::Buffer(b)) => {
             // (D3D11_MAP_WRITE_NO_OVERWRITE: 5)
-            b.stream = ty == 5 && (b.stream || !b.dirty);
-            b.dirty = true;
+            b.stream = ty == 5 && (b.stream || !b.content.upload_needed());
+            b.content.guest_wrote();
             put_mapped(out, b.mem, b.size, b.size, dxgi);
             S_OK
         }
@@ -3725,10 +3709,8 @@ unsafe fn map(d: &mut D11, res: u32, sub: u32, ty: u32, out: u32, dxgi: bool, af
                 let (_, layer, ..) = sub_size(t, sub);
                 if ty != 4 && holds_bits(t) && !keeps_bits(t) && !t.clean.contains(&sub) && !(fresh && t.pristine) {
                     for z in 0..depth {
-                        let req = gpu::Readback::new();
                         let (g, l) = (t.gpu, level | (layer + z) << 16);
-                        gpu::record(|q| q.cmd(&[gpu::READBACK, req.word(), g, l, 0, 0, lw, lh, mem + z * pitch * rows, pitch]));
-                        reqs.push(req);
+                        reqs.push(gpu::record(|q| q.readback(gpu::Read::Pixels, &[g, l, 0, 0, lw, lh, mem + z * pitch * rows, pitch])));
                     }
                 } else if ty != 4 && !t.clean.contains(&sub) {
                     match t.bits.get(&sub) {
@@ -3799,7 +3781,7 @@ unsafe fn update_subresource(d: &mut D11, id: u32, sub: u32, b: Option<[u32; 6]>
             if x1 > x0 && let Some(src) = data.get(..us(x1 - x0)) {
                 // SAFETY: the buffer's guest memory from x0, x1 - x0 bytes inside it (x1 <= size)
                 unsafe { std::ptr::copy(src.as_ptr(), gp::<u8>(buf.mem + x0), src.len()) };
-                buf.dirty = true;
+                buf.content.guest_wrote();
                 buf.stream = false;
                 if d.trace && buf.size <= 256 {
                     let f: Vec<f32> = (0..buf.size / 4).map(|i| *(gc::<f32>(buf.mem + 4 * i))).collect();
@@ -3910,7 +3892,7 @@ unsafe fn copy_structure_count(d: &mut D11, dst: u32, at: u32, v: u32) {
             if let Some(Data::Buffer(b)) = d.objs.get_mut(&dst).map(|o| &mut o.data) {
                 // SAFETY: inside the buffer's guest memory (`fits`)
                 unsafe { wr(b.mem.wrapping_add(at), 0, c) };
-                b.dirty = true;
+                b.content.guest_wrote();
             }
         }
         // (shaders counted on the page: the copy is the page's, the buffer's bytes read back
@@ -3919,7 +3901,7 @@ unsafe fn copy_structure_count(d: &mut D11, dst: u32, at: u32, v: u32) {
             let g = buffer_gpu(d, dst);
             gpu::record(|q| q.cmd(&[gpu::COPY_BUFFER, page, 0, g, at, 4]));
             if let Some(Data::Buffer(b)) = d.objs.get_mut(&dst).map(|o| &mut o.data) {
-                b.newest = Newest::Page;
+                b.content.page_wrote();
             }
         }
     }
@@ -3934,7 +3916,7 @@ unsafe fn copy_resource(d: &mut D11, di: u32, si: u32) {
         (Some(Data::Buffer(a)), Some(Data::Buffer(b))) => {
             std::ptr::copy(gc::<u8>(b.mem), gp::<u8>(a.mem), us(a.size.min(b.size)));
             if let Some(Data::Buffer(a)) = d.objs.get_mut(&di).map(|o| &mut o.data) {
-                a.dirty = true;
+                a.content.guest_wrote();
                 a.stream = false;
             }
         }
@@ -3999,7 +3981,7 @@ unsafe fn copy_region(d: &mut D11, di: u32, dsub: u32, at: [u32; 3], si: u32, ss
             let n = s1.min(b.size).saturating_sub(s0).min(a.size.saturating_sub(x));
             std::ptr::copy(gc::<u8>(b.mem + s0), gp::<u8>(a.mem + x), us(n));
             if let Some(Data::Buffer(a)) = d.objs.get_mut(&di).map(|o| &mut o.data) {
-                a.dirty = true;
+                a.content.guest_wrote();
                 a.stream = false;
             }
         }
@@ -4156,9 +4138,8 @@ unsafe fn source_bytes(d: &mut D11, id: u32, sub: u32, b: [u32; 6]) -> Option<u3
         }
         for z in 0..depth {
             std::ptr::write_bytes(gp::<u8>(tmp), 0, us(n));
-            let req = gpu::Readback::new();
-            let c = [gpu::READBACK, req.word(), g, level | (layer + z0 + z) << 16, x0, y0, w, h, tmp, pp];
-            gpu::record(|q| q.cmd(&c));
+            let c = [g, level | (layer + z0 + z) << 16, x0, y0, w, h, tmp, pp];
+            let req = gpu::record(|q| q.readback(gpu::Read::Pixels, &c));
             gpu::wait_readback(req);
             let page = std::slice::from_raw_parts(gc::<u8>(tmp), us(n));
             if let Some(b) = format::from_page(t.fmt, page, w, h) {
@@ -4173,10 +4154,8 @@ unsafe fn source_bytes(d: &mut D11, id: u32, sub: u32, b: [u32; 6]) -> Option<u3
     }
     let mut reqs = Vec::new();
     for z in 0..depth {
-        let req = gpu::Readback::new();
-        let c = [gpu::READBACK, req.word(), g, level | (layer + z0 + z) << 16, x0, y0, w, h, mem + z * pitch * rows, pitch];
-        gpu::record(|q| q.cmd(&c));
-        reqs.push(req);
+        let c = [g, level | (layer + z0 + z) << 16, x0, y0, w, h, mem + z * pitch * rows, pitch];
+        reqs.push(gpu::record(|q| q.readback(gpu::Read::Pixels, &c)));
     }
     for req in reqs {
         gpu::wait_readback(req);
@@ -4299,13 +4278,13 @@ fn blend_factor(b: u32, alpha: bool) -> Factor {
 /// The page buffer with `id`'s current contents (made when the guest wrote it).
 fn buffer_gpu(d: &mut D11, id: u32) -> u32 {
     let Some(Data::Buffer(b)) = d.objs.get_mut(&id).map(|o| &mut o.data) else { return 0 };
-    if b.dirty || b.gpu == 0 {
+    if b.content.upload_needed() || b.gpu == 0 {
         // (written in place: the page moves it to a new GPU buffer when draws before use it)
         let made = b.gpu;
         let g = if made != 0 { made } else { page_id() };
         let (mem, size) = (b.mem, b.size);
         b.gpu = g;
-        b.dirty = false;
+        b.content.uploaded();
         let bytes = unsafe { std::slice::from_raw_parts(gc::<u8>(mem), us(size)) };
         if made != 0 && b.stream && b.shadow.len() == bytes.len() {
             // (ANGLE streams each draw's vertices into a big dynamic buffer: uploading all of it
@@ -5004,7 +4983,7 @@ unsafe fn draw_with(d: &mut D11, st: &State, indexed: bool, count: u32, instance
     // and with other bytes written around it (0: unknown)
     // (a buffer stream output wrote: the page's bytes are not the guest's, unknown)
     let mem = |id: u32| match d.objs.get(&id).map(|o| &o.data) {
-        Some(Data::Buffer(b)) if b.newest == Newest::Guest => Some((b.mem, b.size)),
+        Some(Data::Buffer(b)) if b.content.guest_current() => Some((b.mem, b.size)),
         _ => None,
     };
     let mut known = count <= 4096 && store.is_none();
@@ -5196,7 +5175,7 @@ fn buffer_view_binding(d: &mut D11, st: &State, stage: usize, bi: u32) -> ([u32;
     let g = buffer_gpu(d, buf);
     if rw && let Some(Data::Buffer(b)) = d.objs.get_mut(&buf).map(|o| &mut o.data) {
         // (the shader may write it: the page's bytes are the buffer's from now on)
-        b.newest = Newest::Page;
+        b.content.page_wrote();
     }
     let at = off & !255;
     // (`at` is `off` with its low 8 bits cleared: never above it)
