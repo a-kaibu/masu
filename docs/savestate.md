@@ -61,6 +61,13 @@ the ones that sleep), waits until all have, has the drawing thread read the GPU 
 reservations) and says READY. The page copies the blocks and says RESUME; the time the program
 stood still is taken off its clocks.
 
+Each request carries the page's own number (`Ctl.req`, written before `cmd`); the coordinator
+says whose answer its state is (`Ctl.serving`, written after PAUSING), so a READY or FAILED of a
+request the page gave up on is never taken for the next one's. A page that stops waiting (30 s)
+writes the number to `Ctl.cancel`: the coordinator ends that request wherever it is (every
+thread going again: FAILED while it was still stopping them, RUNNING from READY, as after
+RESUME). Node's states (host/snap.js) use number 0, never cancelled.
+
 ### Restoring
 
 The page makes a memory, fills it from the state and sets `Ctl.restoring`, then instantiates the
