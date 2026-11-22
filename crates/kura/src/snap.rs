@@ -69,9 +69,34 @@ pub struct Ctl {
     /// every wake of a standing thread so far (live: a page that holds the pause after its copy
     /// compares it with what it was at READY, before it keeps the copy)
     pub stirs: AtomicU32,
+    /// page -> coordinator: the request `cmd` carries (nonzero, the page's own numbering),
+    /// written before `cmd`
+    pub req: AtomicU32,
+    /// coordinator -> page: the request `state` answers (written after PAUSING): a READY or
+    /// FAILED of a request the page gave up on is not the answer to its next one
+    pub serving: AtomicU32,
+    /// page -> coordinator: a request the page stopped waiting for. The coordinator ends it
+    /// wherever it is (standing threads up again, FAILED; at READY: RUNNING as after RESUME):
+    /// a stop the page gave up on left every thread paused at READY for good, RESUME never
+    /// sent (review of 6852be1).
+    pub cancel: AtomicU32,
 }
-// (web/src/savestate.ts reads Ctl at fixed offsets: twelve words, then the 8-byte pairs at 48)
-const _: () = assert!(size_of::<Ctl>() == 96 && std::mem::offset_of!(Ctl, clock) == 48 && std::mem::offset_of!(Ctl, saves) == 80);
+// (web/src/savestate.ts and host/snap.js read Ctl at fixed offsets: twelve words, the 8-byte
+// pairs at 48, the counts at 80, the request words at 96; 112 bytes with the 8-byte alignment)
+const _: () = assert!(size_of::<Ctl>() == 112 && std::mem::offset_of!(Ctl, clock) == 48 && std::mem::offset_of!(Ctl, saves) == 80 && std::mem::offset_of!(Ctl, req) == 96 && std::mem::offset_of!(Ctl, serving) == 100 && std::mem::offset_of!(Ctl, cancel) == 104);
+
+/// A save or pause request as the page numbers it (Ctl::req): what each of the coordinator's
+/// waits checks for its cancellation.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+struct Request(u32);
+
+impl Request {
+    /// The page stopped waiting for it (Ctl::cancel; 0 there: none, so a request numbered 0
+    /// is never cancelled).
+    fn cancelled(self) -> bool {
+        self.0 != 0 && VNHOST_SNAP.cancel.load(SeqCst) == self.0
+    }
+}
 
 pub const CMD_NONE: u32 = 0;
 pub const CMD_SAVE: u32 = 1;
@@ -129,6 +154,9 @@ pub static VNHOST_SNAP: Ctl = Ctl {
     restores: AtomicU32::new(0),
     stirred: AtomicU32::new(0),
     stirs: AtomicU32::new(0),
+    req: AtomicU32::new(0),
+    serving: AtomicU32::new(0),
+    cancel: AtomicU32::new(0),
 };
 
 /// The page: where [`Ctl`] is.
@@ -484,7 +512,7 @@ pub fn start() {
         crate::wrap::load_exclude();
         loop {
             let c = wait_cmds(&[CMD_SAVE, CMD_PAUSE]);
-            take(c == CMD_PAUSE);
+            take(Request(VNHOST_SNAP.req.load(SeqCst)), c == CMD_PAUSE);
         }
     });
 }
@@ -495,8 +523,25 @@ unsafe extern "C" {
     fn emscripten_futex_wake(addr: *const std::ffi::c_void, count: i32) -> i32;
 }
 
-fn wait_cmd(want: u32) {
-    wait_cmds(&[want]);
+/// Waits for RESUME, or for the page to cancel `req` (it notifies `cmd`'s futex then too).
+fn wait_resume(req: Request) {
+    let c = &VNHOST_SNAP.cmd;
+    loop {
+        let v = c.load(SeqCst);
+        if v == CMD_RESUME {
+            c.store(CMD_NONE, SeqCst);
+            return;
+        }
+        if req.cancelled() {
+            return;
+        }
+        #[cfg(target_arch = "wasm32")]
+        unsafe {
+            emscripten_futex_wait(c.as_ptr() as *const std::ffi::c_void, v, 1000.0);
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        std::thread::sleep(Duration::from_millis(5));
+    }
 }
 
 /// Waits for one of `want`: which came.
@@ -602,16 +647,25 @@ fn notify_page() {
     }
 }
 
+/// What the page is told when a request it gave up on ends.
+const CANCELLED: &str = "the page stopped waiting";
+
 /// One save: pause, GPU, the list, READY, wait for RESUME. `only_pause`: the pause alone (no
 /// GPU, no list; also in a run that can't be saved: other processes keep running meanwhile).
-fn take(only_pause: bool) {
+/// Every wait in it also ends when the page cancels `req` (Ctl::cancel).
+fn take(req: Request, only_pause: bool) {
     let t0 = raw_clocks()[0];
     VNHOST_SNAP.msg_len.store(0, SeqCst);
+    // (PAUSING first, then whose: the page that sees its own request in `serving` sees at least
+    // this request's PAUSING in `state`, never the end of the one before)
+    VNHOST_SNAP.state.store(ST_PAUSING, SeqCst);
+    VNHOST_SNAP.serving.store(req.0, SeqCst);
+    if req.cancelled() {
+        return fail(CANCELLED.into());
+    }
     if let Some(why) = REFUSE.lock().unwrap_or_else(|e| e.into_inner()).filter(|_| !only_pause).and_then(|f| f()) {
-        VNHOST_SNAP.state.store(ST_PAUSING, SeqCst);
         return fail(why);
     }
-    VNHOST_SNAP.state.store(ST_PAUSING, SeqCst);
     VNHOST_SNAP.pause.store(1, SeqCst);
     let start = std::time::Instant::now();
     // every thread at a safe point
@@ -633,6 +687,9 @@ fn take(only_pause: bool) {
         if start.elapsed() > STOP_TIMEOUT {
             return fail(format!("still running: {}", b.join(", ")));
         }
+        if req.cancelled() {
+            return fail(CANCELLED.into());
+        }
         g = GATE.lock().unwrap_or_else(|e| e.into_inner());
         g = COORD_CV.wait_timeout(g, Duration::from_millis(10)).unwrap_or_else(|e| e.into_inner()).0;
     }
@@ -646,6 +703,7 @@ fn take(only_pause: bool) {
                 w if w == gpu_word(n, GPU_DONE) => break,
                 w if w == gpu_word(n, GPU_FAILED) => return fail("the GPU could not be read back".into()),
                 _ if t.elapsed() > GPU_TIMEOUT => return fail("the GPU took too long to read back".into()),
+                _ if req.cancelled() => return fail(CANCELLED.into()),
                 _ => std::thread::sleep(Duration::from_millis(2)),
             }
         }
@@ -655,6 +713,9 @@ fn take(only_pause: bool) {
             if t.elapsed() > STOP_TIMEOUT {
                 return fail(format!("still running: {}", blockers(true).join(", ")));
             }
+            if req.cancelled() {
+                return fail(CANCELLED.into());
+            }
             std::thread::sleep(Duration::from_millis(1));
         }
     }
@@ -663,6 +724,9 @@ fn take(only_pause: bool) {
     while !blockers(false).is_empty() {
         if t.elapsed() > STOP_TIMEOUT {
             return fail(format!("still running: {}", blockers(false).join(", ")));
+        }
+        if req.cancelled() {
+            return fail(CANCELLED.into());
         }
         wake_all();
         std::thread::sleep(Duration::from_millis(1));
@@ -686,8 +750,9 @@ fn take(only_pause: bool) {
     let stirs = STIRS.load(SeqCst);
     VNHOST_SNAP.state.store(ST_READY, SeqCst);
     notify_page();
-    // (nothing of ours may change memory until the page has its copy)
-    wait_cmd(CMD_RESUME);
+    // (nothing of ours may change memory until the page has its copy, or until it gives up on
+    // it: then on as after RESUME)
+    wait_resume(req);
     let stirred = STIRS.load(SeqCst).wrapping_sub(stirs);
     if stirred != 0 {
         eprintln!("snap: stirred: {stirred} wakes while the page copied (the state is not to be kept)");
@@ -957,6 +1022,82 @@ mod tests {
         assert_ne!(VNHOST_SNAP.stirred.load(SeqCst), 0);
         STOP.store(1, SeqCst);
         t.join().unwrap();
+    }
+
+    /// The page gives up on a request (savestate.ts: its wait timed out) wherever the
+    /// coordinator is: while a thread will not stand still, or at READY with no RESUME to come.
+    /// The coordinator ends that request (every thread going again: FAILED, or RUNNING from
+    /// READY), its end names it (`serving`), and the page's next request is answered as its
+    /// own, not by the end of the one it gave up on (review of 6852be1: the threads stayed
+    /// paused at READY for good).
+    #[test]
+    fn a_request_the_page_gives_up_on_ends_and_the_next_is_its_own() {
+        let _one = ONE.lock().unwrap_or_else(|e| e.into_inner());
+        static STOP: AtomicU32 = AtomicU32::new(0);
+        static STUBBORN: AtomicU32 = AtomicU32::new(0);
+        static WORK: AtomicU32 = AtomicU32::new(0);
+        STOP.store(0, SeqCst);
+        let t = std::thread::spawn(|| {
+            register("guest", true, 0);
+            while STOP.load(SeqCst) == 0 {
+                // (STUBBORN: a thread that does not stand still, as one in a long host call)
+                if pausing() && STUBBORN.load(SeqCst) == 0 {
+                    park();
+                }
+                WORK.fetch_add(1, SeqCst);
+                std::thread::yield_now();
+            }
+            unregister();
+        });
+        start();
+        let ask = |id: u32, cmd: u32| {
+            VNHOST_SNAP.req.store(id, SeqCst);
+            VNHOST_SNAP.cmd.store(cmd, SeqCst);
+        };
+        let answered = |id: u32| VNHOST_SNAP.serving.load(SeqCst) == id && matches!(VNHOST_SNAP.state.load(SeqCst), ST_READY | ST_FAILED);
+        let going = || {
+            let w = WORK.load(SeqCst);
+            until("work", || WORK.load(SeqCst) > w + 10);
+        };
+        for (round, at_ready) in [false, true, false, true].into_iter().enumerate() {
+            let id = 100 + 2 * u32::try_from(round).unwrap_or(0);
+            STUBBORN.store(u32::from(!at_ready), SeqCst);
+            ask(id, if round % 2 == 0 { CMD_SAVE } else { CMD_PAUSE });
+            if at_ready {
+                until("READY", || answered(id));
+                assert_eq!(VNHOST_SNAP.state.load(SeqCst), ST_READY, "round {round}");
+            } else {
+                // (still pausing: the thread does not stand still)
+                std::thread::sleep(Duration::from_millis(100));
+                assert_eq!(VNHOST_SNAP.state.load(SeqCst), ST_PAUSING, "round {round}");
+            }
+            let t0 = std::time::Instant::now();
+            VNHOST_SNAP.cancel.store(id, SeqCst);
+            until("the request's end", || VNHOST_SNAP.state.load(SeqCst) == if at_ready { ST_RUNNING } else { ST_FAILED });
+            // (long before the coordinator's own STOP_TIMEOUT)
+            assert!(t0.elapsed() < STOP_TIMEOUT / 2, "round {round}: {:?}", t0.elapsed());
+            assert_eq!(VNHOST_SNAP.pause.load(SeqCst), 0, "round {round}: still paused");
+            STUBBORN.store(0, SeqCst);
+            going();
+            // (the next request: answered as itself, READY, RESUME as always)
+            let next = id + 1;
+            failed_back_to_running();
+            ask(next, CMD_PAUSE);
+            until("the next one's READY", || answered(next));
+            assert_eq!(VNHOST_SNAP.state.load(SeqCst), ST_READY, "round {round}: the next");
+            VNHOST_SNAP.cmd.store(CMD_RESUME, SeqCst);
+            until("RUNNING", || VNHOST_SNAP.state.load(SeqCst) == ST_RUNNING);
+            going();
+        }
+        STOP.store(1, SeqCst);
+        t.join().unwrap();
+        VNHOST_SNAP.cancel.store(0, SeqCst);
+    }
+
+    /// What the page does before a request (savestate.ts): an earlier one's FAILED is the
+    /// coordinator's word again.
+    fn failed_back_to_running() {
+        let _ = VNHOST_SNAP.state.compare_exchange(ST_FAILED, ST_RUNNING, SeqCst, SeqCst);
     }
 
     fn until(what: &str, f: impl Fn() -> bool) {

@@ -13,7 +13,8 @@ var vnvmSnap = {
   MAGIC: 'MASUSNAP',
   BLOCK: 1 << 20,
   // Ctl's offsets (crates/kura/src/snap.rs)
-  CMD: 8, STATE: 12, RESTORING: 24, RANGES: 28, NRANGES: 32, MSG: 36, MSG_LEN: 40, STIRRED: 88,
+  // (REQ: 0, a request never given up on: this waits for its answer however long it takes)
+  CMD: 8, STATE: 12, RESTORING: 24, RANGES: 28, NRANGES: 32, MSG: 36, MSG_LEN: 40, STIRRED: 88, REQ: 96,
   build() {
     const fs = require('fs');
     // (this script's own: sake.wasm or sake-grow.wasm)
@@ -43,6 +44,7 @@ var vnvmSnap = {
     const zlib = require('zlib');
     const ctl = wasmExports.vnhost_snap_ctl() >>> 0;
     const i32 = new Int32Array(wasmMemory.buffer);
+    Atomics.store(i32, (ctl + vnvmSnap.REQ) >>> 2, 0);
     Atomics.store(i32, (ctl + vnvmSnap.CMD) >>> 2, 1);
     Atomics.notify(i32, (ctl + vnvmSnap.CMD) >>> 2);
     const t0 = Date.now();
