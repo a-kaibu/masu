@@ -4,7 +4,6 @@ advapi32:DuplicateTokenEx	fail	7	15
 advapi32:HKEY_CLASSES_ROOT	fail	85	158
 advapi32:Hash	fail	26	42
 advapi32:RegCreateKeyEx	ok	0	21
-advapi32:RegEnumKey	ok	0	25
 advapi32:RegEnumValueW	fail	10	47
 advapi32:RegOpenKeyExW	fail	1	1
 advapi32:RegQueryInfoKey	fail	20	66
@@ -215,7 +214,6 @@ ntdll:NtAdjustPrivilegesToken	ok	0	1
 ntdll:NtAllocateVirtualMemory	fail	49	200
 ntdll:NtApphelpCacheControl	ok	0	0
 ntdll:NtCompareTokens	fail	4	8
-ntdll:NtContinue	fail	1	1
 ntdll:NtCreateProfile	crash	0	0
 ntdll:NtDeleteKey	fail	2	19
 ntdll:NtDuplicateObject	fail	2	3

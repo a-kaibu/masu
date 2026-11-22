@@ -499,7 +499,7 @@ user32:DeferWindowPos	fail	9	341
 user32:DestroyCursorIcon	ok	0	13
 user32:DrawIconEx	ok	0	11
 user32:DrawText	ok	0	1081
-user32:EmptyClipboard	ok	0	24
+user32:EmptyClipboard	fail	7	24
 user32:EnumDisplaySettings	ok	0	40
 user32:GW_ENABLEDPOPUP	ok	0	10
 user32:GetClassInfo	fail	11	53

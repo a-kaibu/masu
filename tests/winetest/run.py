@@ -198,6 +198,14 @@ def adopt(jobs, windows):
     return keep, dropped, problems
 
 
+def combine(runs):
+    """The runs of one test -> (worst, best). The worst is what the test is recorded as (a test
+    Windows passes only sometimes is not adopted); the best is what a regression is judged by
+    (a single bad run of a flaky test on Windows is no regression)."""
+    order = sorted(runs, key=lambda r: (RANK[r["status"]], r["failures"]))
+    return order[-1], order[0]
+
+
 def dll_list(path, arch):
     """the dlls of a dlls.txt: the first word of each line; only:<arch> keeps a line to that arch"""
     out = []
@@ -260,12 +268,16 @@ def main():
     ap.add_argument("--shard", default="0/1", help="i/n: every n-th test from the i-th (CI matrix)")
     ap.add_argument("--browser", action="store_true", help="run in headless Chromium (run-browser.mjs): the GPU dlls of browser.txt")
     ap.add_argument("--no-exec", action="store_true", help="start no child processes (SAKE_NO_EXEC)")
+    ap.add_argument("--repeat", type=int, default=1,
+                    help="--native: run every test N times; recorded is its worst run, judged its best")
     ap.add_argument("only", nargs="*")
     a = ap.parse_args()
     suite = SUITES[a.suite]
     sdir = suite["dir"]
     if a.native and not suite["windows"]:
         ap.error("--native: only for a suite measured on Windows (rostests)")
+    if a.repeat < 1 or (a.repeat > 1 and not a.native):
+        ap.error("--repeat: a count of 1 or more, and only with --native")
     if a.native and os.name == "nt":
         # (inherited by the tests: a crash ends the test with its exception code, not with
         # Windows' error report dialog waiting out the time limit)
@@ -330,13 +342,21 @@ def main():
     if suite["windows"]:
         own_bin = os.path.join(w, "run", a.arch)
         os.makedirs(own_bin, exist_ok=True)
+    runs = collections.defaultdict(list)
     with concurrent.futures.ThreadPoolExecutor(a.j) as pool:
-        futs = {pool.submit(run_one, sake, exe, t, a.timeout, a.fonts, a.no_exec, own_bin): (d, t) for d, exe, t in ([] if a.browser else jobs)}
+        futs = {pool.submit(run_one, sake, exe, t, a.timeout, a.fonts, a.no_exec, own_bin): (d, t)
+                for _ in range(a.repeat) for d, exe, t in ([] if a.browser else jobs)}
         for f in concurrent.futures.as_completed(futs):
             d, t = futs[f]
             r = f.result()
-            results[f"{d}:{t}"] = r
+            runs[f"{d}:{t}"].append(r)
             print(f"{r['status']:7} {d}:{t} {r['executed']} tests, {r['failures']} failures ({r['secs']:.0f}s)", flush=True)
+    judged = {}
+    unstable = []
+    for k, rs in runs.items():
+        results[k], judged[k] = combine(rs)
+        if results[k]["status"] != judged[k]["status"]:
+            unstable.append(f"{k}: " + " ".join(sorted(r["status"] for r in rs)))
 
     # tests whose failure count depends on thread timing: only their status is compared
     flaky_txt = os.path.join(sdir, "flaky.txt")
@@ -345,15 +365,16 @@ def main():
     # (every planned test answered: a job that left no result is a test that did not run)
     worse.extend(f"{d}:{t}: planned, no result" for d, _, t in jobs if f"{d}:{t}" not in results)
     for k in sorted(results):
-        r = results[k]
         if k not in expected:
             continue
         es, ef, _ = expected[k]
+        # (worse by the best run, better by the worst: with --repeat a flaky test is neither)
+        r, rw = judged.get(k, results[k]), results[k]
         # (failure counts of some tests move a little from run to run: timing, threads)
         if RANK[r["status"]] > RANK[es] or (r["status"] == es == "fail" and k not in flaky and r["failures"] > ef + max(5, ef // 10)):
             worse.append(f"{k}: {es} ({ef}) -> {r['status']} ({r['failures']})")
-        elif RANK[r["status"]] < RANK[es] or r["failures"] < ef:
-            better.append(f"{k}: {es} ({ef}) -> {r['status']} ({r['failures']})")
+        elif RANK[rw["status"]] < RANK[es] or rw["failures"] < ef:
+            better.append(f"{k}: {es} ({ef}) -> {rw['status']} ({rw['failures']})")
     new = sorted(k for k in results if k not in expected)
 
     def tsv(path):
@@ -381,6 +402,8 @@ def main():
         print(f"better  {l}")
     for k in new:
         print(f"new     {k}: {results[k]['status']} ({results[k]['failures']})")
+    for l in unstable:
+        print(f"unstable {l}")
     for l in worse:
         print(f"WORSE   {l}")
     if unplanned:

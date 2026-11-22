@@ -51,9 +51,9 @@ const GOOD_RUN_PLAN: Files = &[
     ("tests/winref/run.sh", "{ echo \"# run.sh\"; } > \"$OUT/.plan/$runner\"\n"),
     ("tests/winref/run-browser.mjs", "writeFileSync(join(outDir, \".plan\", runner), text);\n"),
     ("tests/winref/compare.py", "plan_errors = plan.problems(plans, required, got)\nsys.exit(1 if failed or plan_errors else 0)\n"),
-    ("tests/winetest/run.py", "all_jobs, unplanned = plan(listed, sel, expected, explicit)\nif not os.path.isfile(win_path):\n            raise FileNotFoundError(win_path)\nall_jobs, not_adopted, missing = adopt(all_jobs, read_tsv(win_path))\nunplanned += missing\nif unplanned:\n    return 1\n"),
+    ("tests/winetest/run.py", "all_jobs, unplanned = plan(listed, sel, expected, explicit)\nif not os.path.isfile(win_path):\n            raise FileNotFoundError(win_path)\nall_jobs, not_adopted, missing = adopt(all_jobs, read_tsv(win_path))\nunplanned += missing\nresults[k], judged[k] = combine(rs)\nif unplanned:\n    return 1\n"),
     (".github/workflows/winref.yml", "run: compare.py --require-plan node --require-plan browser-0of4\n"),
-    (".github/workflows/conformance.yml", "run: python tests/winetest/run.py --suite rostests --native --arch i386\n"),
+    (".github/workflows/conformance.yml", "run: python tests/winetest/run.py --suite rostests --native --repeat 3 --arch i386\n"),
 ];
 
 fn fixture(r: Rule) -> Fixture {
@@ -627,6 +627,8 @@ fn fixture(r: Rule) -> Fixture {
                 ("tests/winetest/run.py", "        if not os.path.exists(exe):\n            print(f\"missing {exe}\", file=sys.stderr)\n            continue\n"),
                 ("tests/winetest/run.py", "windows = read_tsv(win_path) if os.path.exists(win_path) else {}\n"),
                 ("tests/winetest/run.py", "def report(path):\n    with open(path, \"w\") as f:\n        f.write(msg)\n"),
+                ("tests/winetest/run.py", "for k, rs in runs.items():\n    results[k] = rs[-1]\n"),
+                (".github/workflows/conformance.yml", "run: python tests/winetest/run.py --suite rostests --native --arch i386\n"),
             ],
             good: GOOD_RUN_PLAN,
             mutate: ("tests/winref/compare.py", |t| Some(t.replace("sys.exit(1 if failed or plan_errors else 0)", "sys.exit(1 if failed else 0)"))),
