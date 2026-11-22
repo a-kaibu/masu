@@ -48,3 +48,30 @@ proptest! {
         prop_assert!(!same(&u, len, &u));
     }
 }
+
+/// A process with its parameters: every new current directory is published while names are
+/// made full (which reads the current reference) — the reference is not held across the open
+/// (review b5dacf4 2.2: files::full_path through RtlGetFullPathName_Ustr read it while publish
+/// held it, and every process hung at its first SetCurrentDirectory)
+#[test]
+fn a_new_reference_is_published_while_names_are_made_full() {
+    let _g = crate::test_guest::enter();
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        crate::test_guest::guest_thread();
+        let was = crate::files::cwd();
+        let pp = mem::heap_alloc(0x400, true);
+        install(pp);
+        let dir = crate::files::to_host("C:\\curdir-publish");
+        kura::fs::create_dir_all(&dir).unwrap();
+        crate::files::set_cwd("C:\\curdir-publish");
+        let full = crate::files::full_path("x.dat");
+        let path = String::from_utf16_lossy(&dos_path());
+        crate::files::set_cwd(&was);
+        CUR.locked().pp = 0;
+        let _ = tx.send((full, path));
+    });
+    let (full, path) = rx.recv_timeout(std::time::Duration::from_secs(20)).expect("publish took the reference and never gave it back");
+    assert_eq!(full, "C:\\curdir-publish\\x.dat");
+    assert_eq!(path, "C:\\curdir-publish\\");
+}

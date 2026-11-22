@@ -641,19 +641,51 @@ pub(super) fn stage_run(tree: &Tree) -> Hits {
     out
 }
 
-/// A file's code without its comments, cut at its first inline #[cfg(test)] module.
+/// A file's code without its comments and without its inline #[cfg(test)] modules (each
+/// blanked from its attribute to its closing brace, wherever it stands in the file).
 pub(super) fn product_code(tree: &Tree, f: &Rel) -> String {
-    let code = tree.code(f, true);
-    let mut end = code.len();
-    for (at, _) in code.match_indices("#[cfg(test)]") {
-        let rest = code.get(at.saturating_add(12)..).unwrap_or_default().trim_start();
-        let inline = rest.starts_with("mod ") && rest.find('{').is_some_and(|b| rest.find(';').is_none_or(|s| b < s));
-        if inline {
-            end = at;
-            break;
+    let kept: Vec<char> = tree.code(f, true).chars().collect();
+    let bare: Vec<char> = tree.code(f, false).chars().collect();
+    let text: String = bare.iter().collect();
+    let mut out = kept.clone();
+    let mut from = 0usize;
+    while let Some(rel) = text.get(from..).and_then(|t| t.find("#[cfg(test)]")) {
+        let at = from.saturating_add(rel);
+        let after = at.saturating_add(12);
+        let rest = text.get(after..).unwrap_or_default();
+        let lead = rest.len() - rest.trim_start().len();
+        let rest = rest.trim_start();
+        let open = rest.find('{');
+        let inline = rest.starts_with("mod ") && open.is_some_and(|b| rest.find(';').is_none_or(|s| b < s));
+        from = after;
+        let Some(open) = open.filter(|_| inline) else { continue };
+        // (the module's braces, in the code with its strings blanked)
+        let start = text.get(..after.saturating_add(lead).saturating_add(open)).map_or(0, |t| t.chars().count());
+        let mut depth = 0i64;
+        let mut end = bare.len();
+        for (k, c) in bare.iter().enumerate().skip(start) {
+            match c {
+                '{' => depth = depth.saturating_add(1),
+                '}' => {
+                    depth = depth.saturating_sub(1);
+                    if depth == 0 {
+                        end = k;
+                        break;
+                    }
+                }
+                _ => {}
+            }
         }
+        let first = text.get(..at).map_or(0, |t| t.chars().count());
+        for c in out.iter_mut().take(end.saturating_add(1)).skip(first) {
+            if *c != '\n' {
+                *c = ' ';
+            }
+        }
+        let byte_end = bare.iter().take(end.saturating_add(1)).map(|c| c.len_utf8()).sum::<usize>();
+        from = from.max(byte_end);
     }
-    code.get(..end).unwrap_or_default().to_string()
+    out.into_iter().collect()
 }
 
 // --- nan-min-max -----------------------------------------------------------------------------
@@ -677,20 +709,7 @@ pub const NAN_MIN_MAX_NOT: [(&str, &str); 2] = [
 
 /// Each of NAN_MIN_MAX missing from its file's code, each of NAN_MIN_MAX_NOT in it.
 pub(super) fn nan_min_max(tree: &Tree) -> Hits {
-    let mut out = Hits::new();
-    for (file, want) in NAN_MIN_MAX {
-        let f = Rel::new(file);
-        if !product_code(tree, &f).contains(want) {
-            out.push((f, 1, format!("no `{want}` in the code: a NaN through min/max not as Direct3D gives it (the other operand)")));
-        }
-    }
-    for (file, bad) in NAN_MIN_MAX_NOT {
-        let f = Rel::new(file);
-        if product_code(tree, &f).contains(bad) {
-            out.push((f, 1, format!("`{bad}`: WGSL's min/max leave a NaN to the implementation; Direct3D gives the other operand (d3d_min/d3d_max)")));
-        }
-    }
-    out
+    says(tree, &NAN_MIN_MAX, &NAN_MIN_MAX_NOT, "a NaN through min/max not as Direct3D gives it (the other operand)", "WGSL's min/max leave a NaN to the implementation; Direct3D gives the other operand (d3d_min/d3d_max)")
 }
 
 // --- pcsg-pack -------------------------------------------------------------------------------
@@ -730,17 +749,114 @@ pub const WARP_SETUP_NOT: [(&str, &str); 2] = [("crates/dxwgsl/src/wgsl/setup.rs
 
 /// Each of WARP_SETUP missing from its file's code, each of WARP_SETUP_NOT in it.
 pub(super) fn warp_setup(tree: &Tree) -> Hits {
+    says(tree, &WARP_SETUP, &WARP_SETUP_NOT, "interpolated inputs left to WebGPU's rasterizer, not WARP's setup", "one rounding where WARP rounds the product and the sum each")
+}
+
+/// Each `want` missing from its file's code and each `bad` in it, with the reason given.
+fn says(tree: &Tree, want: &[(&str, &str)], bad: &[(&str, &str)], missing: &str, present: &str) -> Hits {
     let mut out = Hits::new();
-    for (file, want) in WARP_SETUP {
+    for (file, w) in want {
         let f = Rel::new(file);
-        if !product_code(tree, &f).contains(want) {
-            out.push((f, 1, format!("no `{want}` in the code: interpolated inputs left to WebGPU's rasterizer, not WARP's setup")));
+        if !product_code(tree, &f).contains(w) {
+            out.push((f, 1, format!("no `{w}` in the code: {missing}")));
         }
     }
-    for (file, bad) in WARP_SETUP_NOT {
+    for (file, b) in bad {
         let f = Rel::new(file);
-        if product_code(tree, &f).contains(bad) {
-            out.push((f, 1, format!("`{bad}` in the setup: one rounding where WARP rounds the product and the sum each")));
+        if product_code(tree, &f).contains(b) {
+            out.push((f, 1, format!("`{b}`: {present}")));
+        }
+    }
+    out
+}
+
+// --- dll-search ------------------------------------------------------------------------------
+
+/// The loader looks for a DLL named without a path in LdrGetDllPath's folders for that load's
+/// module and flags, and a DLL's imports as the load that found it (review b5dacf4 2.1: an order
+/// of its own, every by-path DLL's folder in it, LoadLibraryEx's flags dropped): (file, what its
+/// code outside the tests says).
+pub const DLL_SEARCH: [(&str, &str); 4] = [
+    ("crates/sake/src/pe.rs", "crate::dllpath::dll_folders(self.module.as_deref(), self.flags)"),
+    ("crates/sake/src/pe.rs", "for d in search.folders()"),
+    ("crates/sake/src/pe.rs", "image_resolver(search.of_dependency(&win))"),
+    ("crates/sake/src/k32.rs", "crate::pe::LoadSearch { module: Some(n.clone()), flags, missing: crate::pe::OnMissing::Fails }"),
+];
+
+/// What the loader must not say: folders of its own.
+pub const DLL_SEARCH_NOT: [(&str, &str); 4] = [
+    ("crates/sake/src/pe.rs", "DLL_DIRS"),
+    ("crates/sake/src/pe.rs", "dllpath::user_dirs()"),
+    ("crates/sake/src/pe.rs", "files::cwd()"),
+    ("crates/sake/src/pe.rs", "\"C:\\\\windows\\\\system32\".into()"),
+];
+
+pub(super) fn dll_search(tree: &Tree) -> Hits {
+    says(tree, &DLL_SEARCH, &DLL_SEARCH_NOT, "a DLL looked for outside LdrGetDllPath's folders", "the loader's own folders, not LdrGetDllPath's")
+}
+
+// --- missing-import-fails --------------------------------------------------------------------
+
+/// A LoadLibrary whose DLLs import from a DLL file that is not there, or a function a DLL file
+/// lacks, fails with that error and leaves nothing mapped (review b5dacf4 2.1: bound to a trap,
+/// the DLL loaded): (file, what its code outside the tests says).
+pub const MISSING_IMPORT: [(&str, &str); 5] = [
+    ("crates/sake/src/pe.rs", "note_missing(match e {"),
+    ("crates/sake/src/pe.rs", "note_missing(LoadFailure::NoProc)"),
+    ("crates/sake/src/pe.rs", "Err(DllError::Failed(why)) => Err(abandon(cpu, why))"),
+    ("crates/sake/src/pe.rs", "ABANDONED.locked().push(base)"),
+    ("crates/sake/src/k32.rs", "last_error(why.error())"),
+];
+
+/// What LoadLibrary must not say: one error for every failure.
+pub const MISSING_IMPORT_NOT: [(&str, &str); 1] = [("crates/sake/src/k32.rs", "let r = crate::pe::load_library(c.cpu, n);")];
+
+pub(super) fn missing_import(tree: &Tree) -> Hits {
+    says(tree, &MISSING_IMPORT, &MISSING_IMPORT_NOT, "a missing import of a DLL LoadLibrary loads does not fail the load", "LoadLibrary answers ERROR_MOD_NOT_FOUND whatever failed")
+}
+
+// --- full-path-one-rule ----------------------------------------------------------------------
+
+/// Every file operation opens the full path GetFullPathName gives (review b5dacf4 2.2: `D:x`
+/// opened D:\x while GetFullPathName answered from the `=D:` variable): files::full_path makes
+/// it with fullpath's RtlGetFullPathName_Ustr.
+pub const FULL_PATH: [(&str, &str); 2] = [
+    ("crates/sake/src/files.rs", "crate::fullpath::process_env_full(&w, 0xfffe)"),
+    ("crates/sake/src/files.rs", "FullMode::Win32 => win32_full(p)"),
+];
+
+pub(super) fn full_path_one_rule(tree: &Tree) -> Hits {
+    says(tree, &FULL_PATH, &[], "files::full_path makes a path of its own, not GetFullPathName's", "")
+}
+
+// --- short-name-table ------------------------------------------------------------------------
+
+/// A name's 8.3 name is given when the name is made and kept in its folder's table (review
+/// b5dacf4 2.3: made again from each listing, so deleting a file renamed another): kura::fs
+/// tells the watcher each name made and removed, sake watches from its first guest path on.
+pub const SHORT_NAMES: [(&str, &str); 7] = [
+    ("crates/kura/src/fs.rs", "named(Named::Made(&at));"),
+    ("crates/kura/src/fs.rs", "named(Named::Gone(&at));"),
+    ("crates/kura/src/fs.rs", "named(Named::Gone(&a));"),
+    ("crates/kura/src/fs.rs", "named(Named::Made(&b));"),
+    ("crates/sake/src/shortname.rs", "kura::fs::watch_names(on_named);"),
+    ("crates/sake/src/shortname.rs", "let mut t = read_table(host_dir);"),
+    ("crates/sake/src/files.rs", "crate::shortname::watch();"),
+];
+
+/// sake lists and removes a guest folder through shortname (its table is no guest entry, and a
+/// folder that holds only it is empty): kura::fs::read_dir and remove_dir anywhere else, outside
+/// tests.
+pub(super) fn short_name_table(tree: &Tree) -> Hits {
+    let mut out = says(tree, &SHORT_NAMES, &[], "a short name made again from a listing, not kept from when its name was made", "");
+    let files = tree.rs(&["crates/sake/src/"]);
+    let tests = test_mod_files(tree, &files);
+    for f in files.iter().filter(|f| !tests.contains(*f) && f.as_str() != "crates/sake/src/shortname.rs") {
+        let code = product_code(tree, f);
+        for bad in ["kura::fs::read_dir(", "kura::fs::remove_dir("] {
+            for (at, _) in code.match_indices(bad) {
+                out.push((f.clone(), crate::code::line_of(&code, at), format!("`{bad}`: a guest folder listed or removed past its short-name table (shortname::read_dir / remove_dir)")));
+            }
         }
     }
     out

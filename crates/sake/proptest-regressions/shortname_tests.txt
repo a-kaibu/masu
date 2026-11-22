@@ -5,3 +5,5 @@
 # It is recommended to check this file in to source control so that
 # everyone who runs the test benefits from these saved cases.
 cc f3be7dce7a631eef95d790dff9b3dd110a803646d1c921e453de05faff3bc63d # shrinks to name = "a. ", n = 1
+cc 0ba1bd6f35b8d2c59ca2c49fe60d96fb7cc38c181e8013582b33cdc0760f36b2 # shrinks to ops = [Make(0), Make(6)]
+cc 5e067ecb6b7a3f38d5af6ca335d8c426eddc5514337ee42e041dd114a76914d2 # shrinks to ops = [Make(0), Make(1), Reload]

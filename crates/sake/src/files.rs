@@ -244,7 +244,10 @@ pub fn set_cwd(d: &str) {
 
 fn c_root() -> String {
     static C: std::sync::OnceLock<String> = std::sync::OnceLock::new();
-    C.get_or_init(|| drive_root(std::env::var("SAKE_C").unwrap_or_else(|_| "/tmp/sake-c".into()))).clone()
+    let c = C.get_or_init(|| drive_root(std::env::var("SAKE_C").unwrap_or_else(|_| "/tmp/sake-c".into()))).clone();
+    // (the guest's names keep their short ones from here on: shortname's tables)
+    crate::shortname::watch();
+    c
 }
 
 /// The host directory of a drive, made when missing: C:\ is always there on Windows (stat,
@@ -268,9 +271,44 @@ pub fn is_dir<P: AsRef<std::path::Path>>(h: P) -> bool {
     kura::fs::metadata(h).is_ok_and(|m| m.is_dir())
 }
 
-/// Absolute Windows path of `p` (GetFullPathName): drive, no "." or "..", backslashes.
+/// Absolute Windows path of `p`, the one every file operation opens. A DOS path is made full
+/// by RtlGetFullPathName's rule, GetFullPathName's own (fullpath.rs: the current directory, the
+/// drives' "=X:" variables, "." and "..", trailing dots and spaces), its drive letter made
+/// upper case; a \\?\ or \??\ name is literal (its own mode: Literal below). The rule was
+/// once this file's own, and "D:x" with "=D:" set opened D:\x while GetFullPathName said
+/// D:\games\x (review b5dacf4 2.2).
 pub fn full_path(p: &str) -> String {
-    full_path_trim(p, true)
+    match FullMode::of(p) {
+        FullMode::Win32 => win32_full(p),
+        FullMode::Literal => full_path_trim(p, true),
+    }
+}
+
+/// How a path is made full (full_path)
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum FullMode {
+    /// RtlGetFullPathName_U's rule
+    Win32,
+    /// a \\?\ or \??\ name: no normalization but the prefix's
+    Literal,
+}
+
+impl FullMode {
+    fn of(p: &str) -> Self {
+        let p = p.replace('/', "\\");
+        if p.starts_with("\\\\?\\") || p.starts_with("\\??\\") { FullMode::Literal } else { FullMode::Win32 }
+    }
+}
+
+/// GetFullPathNameW's answer for `p` with the process's current directory and drives (the
+/// drive letter upper case, as the file system's names have it)
+fn win32_full(p: &str) -> String {
+    let w: Vec<u16> = p.encode_utf16().collect();
+    let mut t: Vec<u16> = crate::fullpath::process_env_full(&w, 0xfffe).text();
+    if t.get(1) == Some(&u16::from(b':')) && let Some(d) = t.first_mut() && let Ok(b) = u8::try_from(*d) {
+        *d = u16::from(b.to_ascii_uppercase());
+    }
+    String::from_utf16_lossy(&t)
 }
 /// full_path; `trim` false for a \\?\ path, whose last component keeps trailing dots and
 /// spaces (CreateFile of \\?\C:\d\a. makes "a."): such a path stays \\?\-prefixed so that
@@ -794,7 +832,7 @@ pub fn find(w: &str) -> Option<Find> {
         }
     }
     let mut all = Vec::new();
-    for e in kura::fs::read_dir(&hd).ok()?.flatten() {
+    for e in crate::shortname::read_dir(&hd).ok()?.flatten() {
         let name = e.file_name().to_string_lossy().into_owned();
         let m = e.metadata().ok();
         all.push((name.encode_utf16().collect::<Vec<u16>>(), m.as_ref().map_or(0, kura::fs::Metadata::ino)));
@@ -839,6 +877,54 @@ mod tests {
 
     use super::*;
     use proptest::prelude::*;
+
+    /// The reviewer's case: with "=Q:" naming Q:\games, "Q:save.dat" opens Q:\games\save.dat,
+    /// the file GetFullPathName names, not Q:\save.dat (review b5dacf4 2.2: files.rs had a
+    /// normalization of its own that went to the drive's root).
+    #[test]
+    fn a_drive_relative_name_opens_what_get_full_path_name_names() {
+        crate::k32::env_set("=Q:", Some("Q:\\games"));
+        let (games, root) = (to_host("Q:\\games\\save.dat"), to_host("Q:\\save.dat"));
+        kura::fs::create_dir_all(to_host("Q:\\games")).unwrap();
+        kura::fs::write(&games, b"games").unwrap();
+        kura::fs::write(&root, b"root").unwrap();
+        let w: Vec<u16> = "Q:save.dat".encode_utf16().collect();
+        let asked = String::from_utf16_lossy(&crate::fullpath::process_env_full(&w, 520).text());
+        assert_eq!(asked, "Q:\\games\\save.dat");
+        assert_eq!(full_path("Q:save.dat"), asked);
+        let opened = resolve(&full_path("Q:save.dat")).unwrap();
+        assert_eq!(kura::fs::read(&opened).unwrap(), b"games");
+        assert_eq!(kura::fs::read(resolve(&full_path(&asked)).unwrap()).unwrap(), b"games");
+        crate::k32::env_set("=Q:", None);
+    }
+
+    proptest! {
+        /// Any DOS path (relative, rooted, drive-relative with and without its drive's
+        /// variable, UNC, "." "..", trailing periods and spaces): the full path every operation
+        /// opens is GetFullPathName's answer (drive letter upper case), and the path that answer
+        /// names opens the same (making it full again changes nothing).
+        #[test]
+        fn operations_open_what_get_full_path_name_names(
+            head in proptest::sample::select(vec!["", "\\", "C:", "c:\\", "R:", "R:\\", "\\\\srv\\share\\", ".\\", "..\\"]),
+            parts in proptest::collection::vec(proptest::sample::select(vec!["a", "b.", "c..", ".", "..", "d ", "e. .", "f/g"]), 0..5),
+            set in proptest::bool::ANY,
+        ) {
+            crate::k32::env_set("=R:", set.then_some("R:\\"));
+            let p = format!("{head}{}", parts.join("\\"));
+            let w: Vec<u16> = p.encode_utf16().collect();
+            let mut asked: Vec<u16> = crate::fullpath::process_env_full(&w, 0xfffe).text();
+            if asked.get(1) == Some(&u16::from(b':')) && let Some(d) = asked.first_mut() && let Ok(b) = u8::try_from(*d) {
+                *d = u16::from(b.to_ascii_uppercase());
+            }
+            let asked = String::from_utf16_lossy(&asked);
+            let full = full_path(&p);
+            prop_assert_eq!(&full, &asked, "{}", p);
+            if !full.is_empty() {
+                prop_assert_eq!(full_path(&full), full.clone(), "{}", p);
+            }
+            crate::k32::env_set("=R:", None);
+        }
+    }
 
     /// Folder names that end in one period lose it (RGSS2's Game.exe loads
     /// "<RTP folder>.\RGSS202J.dll", #232); two or more periods stay; the last component
