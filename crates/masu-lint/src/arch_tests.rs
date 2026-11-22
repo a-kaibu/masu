@@ -698,7 +698,7 @@ fn fixture(r: Rule) -> Fixture {
                 ("crates/sake/src/obj.rs", "fn wait_held_then() {\n    let deadline = (ms != 0xffff_ffff).then(|| kome::time::from_now(Duration::from_millis(u64::from(ms))));\n}\n"),
             ],
             good: &[
-                ("crates/sake/src/snap.rs", "pub fn wait_end(ms: u32) -> Option<Instant> {\n    let end = resumed.unwrap_or_else(|| Deadline::after(now, ms));\n}\npub fn point() -> bool {\n    park_as(RESTART, trap as u64, esp as u64, Deadline::word(WAIT_END.get()));\n}\nfn go_on() {\n    RESUMED_END.set(Deadline::of_word(r[3]));\n}\n"),
+                ("crates/sake/src/snap.rs", "pub fn wait_end(ms: u32) -> Option<Instant> {\n    let end = resumed.unwrap_or_else(|| Deadline::after(now, ms));\n}\npub fn point() -> bool {\n    park_as(RESTART, trap as u64, esp as u64, Deadline::word(WAIT_END.get()));\n}\nfn go_on() {\n    RESUMED_END.set(Deadline::of_word(r[3]));\n    crate::k32::wait_gate_start(k, r[1] as u32, r[2] as u32);\n}\n"),
                 ("crates/sake/src/k32.rs", "pub(crate) fn sleep_ms(ms: u32) {\n    let end = crate::snap::wait_end(ms);\n}\n"),
                 ("crates/sake/src/obj.rs", "fn wait_held_then() {\n    let deadline = crate::snap::wait_end(ms);\n}\n"),
             ],

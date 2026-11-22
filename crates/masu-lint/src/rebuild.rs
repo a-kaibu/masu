@@ -424,7 +424,8 @@ const SNAP: &str = "crates/sake/src/snap.rs";
 
 /// The waits a restored copy calls again take their end from snap::wait_end, and the state
 /// keeps it with the call.
-pub const WAIT_DEADLINE: [Needle; 5] = [
+pub const WAIT_DEADLINE: [Needle; 6] = [
+    (SNAP, "crate::k32::wait_gate_start(k, r[1] as u32, r[2] as u32);", "a restored thread not started yet waits for ResumeThread where it cannot stand still for the next state"),
     (SNAP, "park_as(RESTART, trap as u64, esp as u64, Deadline::word(WAIT_END.get()));", "a state keeps a wait's call but not its end: the restored copy waits the whole time again"),
     (SNAP, "RESUMED_END.set(Deadline::of_word(r[3]));", "a restored copy's wait called again does not take the end the state kept"),
     (SNAP, "let end = resumed.unwrap_or_else(|| Deadline::after(now, ms));", "wait_end does not keep a restored wait's end"),
@@ -433,7 +434,8 @@ pub const WAIT_DEADLINE: [Needle; 5] = [
 ];
 
 /// The spellings that were the bug.
-pub const WAIT_DEADLINE_NOT: [Needle; 3] = [
+pub const WAIT_DEADLINE_NOT: [Needle; 4] = [
+    (SNAP, "crate::k32::wait_gate(", "a restored thread not started yet waits for ResumeThread where it cannot stand still for the next state"),
     (SNAP, "park_as(RESTART, trap as u64, esp as u64, 0);", "a state keeps a wait's call but not its end"),
     (K32, "let end = (ms != u32::MAX).then(|| kome::time::from_now(std::time::Duration::from_millis(u64::from(ms))));", "Sleep's end made from its timeout, again in a restored copy"),
     (OBJ, "let deadline = (ms != 0xffff_ffff).then(|| kome::time::from_now(Duration::from_millis(u64::from(ms))));", "an object wait's end made from its timeout, again in a restored copy"),

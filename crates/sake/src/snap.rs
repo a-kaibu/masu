@@ -394,9 +394,10 @@ fn go_on(t: usize, r: [u64; 4]) -> ! {
             return_from(cpu, trap, esp, r[2] as u32);
         }
         START => {
-            // (the thread's own handle finds its object's entry)
+            // (the thread's own handle finds its object's entry; it stands still for another
+            // state while it waits, as before this one)
             if let Some(k) = crate::obj::key_of(t.obj) {
-                crate::k32::wait_gate(k);
+                crate::k32::wait_gate_start(k, r[1] as u32, r[2] as u32);
             }
             crate::thread_start(&t, r[1] as u32, r[2] as u32);
         }
