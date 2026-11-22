@@ -98,7 +98,7 @@ pub enum Rule {
 }
 
 impl Rule {
-    pub const ALL: [Rule; 77] = [
+    pub const ALL: [Rule; 78] = [
         Rule::BuildOutput,
         Rule::HresultCopy,
         Rule::KomeCopy,
