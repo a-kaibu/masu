@@ -938,9 +938,10 @@ fn tessellate(d: &mut D11, st: &State, s: &tess::Stages, xw: &[u32; x::xd::WORDS
     let regs: Vec<[u32; 4]> = words.chunks_exact(4).map(|c| <[u32; 4]>::try_from(c).unwrap_or([0; 4])).collect();
     let pcr = us(out.pc_regs);
     let pts = tess::points(s, patches, per_inst, |k| regs.iter().skip(us(k).saturating_mul(pcr)).take(pcr).copied().collect());
-    // DSInvocations: a domain shader run per point
+    // DSInvocations: a domain shader run per corner of each primitive (WARP's count, winref
+    // d3d11tess: DS = SO primitives x corners in every case; hardware's vertex cache runs fewer)
     if let Some(c) = d.stats.get_mut(9) {
-        *c = c.saturating_add(u64::from(pts.count()));
+        *c = c.saturating_add(pts.corner_runs());
     }
     let n = pts.count();
     if n == 0 {

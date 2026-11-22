@@ -21,6 +21,8 @@ const [exeDir, outDir, filter = ""] = process.argv.slice(2);
 const masu = process.env.MASU ?? join(root, "target/release/masu");
 const port = Number(process.env.PORT ?? 8790);
 const list = join(exeDir, "browser.txt");
+const allLinesList = join(exeDir, "alllines.txt");
+const allLines = new Set(existsSync(allLinesList) ? readFileSync(allLinesList, "utf8").split("\n").filter(Boolean) : []);
 // (x64 probes need the x64 CRT in the page's prefix, not there yet: BROWSER64=1 runs them)
 // (NO_GAMES=1: not the trial games' replays, testdata/apitrace, a minute of frames each: the
 // interpreter's pass leaves them to the JIT's, or the two passes outrun the job's hour)
@@ -100,8 +102,9 @@ for (const n of names) {
   });
   const env = ["MASU_SCREEN=1366x768", ...(process.env.MASU_JIT === "0" ? ["MASU_JIT=0"] : []), ...(process.env.GUEST_ENV ?? "").split(/\s+/).filter(Boolean)].map((e) => `&env=${encodeURIComponent(e)}`).join("");
   const t0 = Date.now();
-  // (kikizake's suites print thousands of lines at once, their whole result: none left out)
-  const all = n.startsWith("kikizake_") ? "&alllines" : "";
+  // (kikizake's suites and the probes build.sh lists in alllines.txt print thousands of lines
+  // at once, their whole result: none left out)
+  const all = n.startsWith("kikizake_") || allLines.has(n) ? "&alllines" : "";
   await page.goto(`${base}/play.html?autostart&headless${all}${memory}${env}&mount=/masu/game=winref&run=Z:\\masu\\game\\${n}.exe`);
   let timer;
   await Promise.race([done, new Promise((r) => { timer = setTimeout(r, Number(process.env.TIMEOUT ?? 180) * 1000); })]);

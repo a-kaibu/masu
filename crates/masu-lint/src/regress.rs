@@ -513,18 +513,60 @@ pub(super) fn stage_run(tree: &Tree) -> Hits {
     let mut out = Hits::new();
     for (file, want) in STAGE_READS {
         let f = Rel::new(file);
-        let code = tree.code(&f, true);
-        let mut end = code.len();
-        for (at, _) in code.match_indices("#[cfg(test)]") {
-            let rest = code.get(at.saturating_add(12)..).unwrap_or_default().trim_start();
-            let inline = rest.starts_with("mod ") && rest.find('{').is_some_and(|b| rest.find(';').is_none_or(|s| b < s));
-            if inline {
-                end = at;
-                break;
-            }
-        }
-        if !code.get(..end).unwrap_or_default().contains(want) {
+        if !product_code(tree, &f).contains(want) {
             out.push((f, 1, format!("no `{want}` in the code: the stage it binds is never run")));
+        }
+    }
+    out
+}
+
+/// A file's code without its comments, cut at its first inline #[cfg(test)] module.
+fn product_code(tree: &Tree, f: &Rel) -> String {
+    let code = tree.code(f, true);
+    let mut end = code.len();
+    for (at, _) in code.match_indices("#[cfg(test)]") {
+        let rest = code.get(at.saturating_add(12)..).unwrap_or_default().trim_start();
+        let inline = rest.starts_with("mod ") && rest.find('{').is_some_and(|b| rest.find(';').is_none_or(|s| b < s));
+        if inline {
+            end = at;
+            break;
+        }
+    }
+    code.get(..end).unwrap_or_default().to_string()
+}
+
+// --- nan-min-max -----------------------------------------------------------------------------
+
+/// Direct3D's min/max of a NaN (the other operand) where masu makes or runs them: (file, what
+/// its code outside the tests says). dxwgsl's float min/max through its helpers (WGSL leaves a
+/// NaN to the implementation), hlslc's [maxtessfactor] clamp of the tess factors (a min, as
+/// d3dcompiler emits it), kura's clamp giving the maximum for a NaN (winref d3d11tess).
+pub const NAN_MIN_MAX: [(&str, &str); 4] = [
+    ("crates/dxwgsl/src/wgsl.rs", "d3d_min({}, {})"),
+    ("crates/dxwgsl/src/wgsl.rs", "d3d_max({}, {})"),
+    ("crates/hlslc/src/lower.rs", "h.max_tess"),
+    ("crates/kura/src/d3d11/expand_tess.rs", "v.is_nan() => m"),
+];
+
+/// What NAN_MIN_MAX's files must not say: a DXBC float min/max as WGSL's own.
+pub const NAN_MIN_MAX_NOT: [(&str, &str); 2] = [
+    ("crates/dxwgsl/src/wgsl.rs", "Opcode::Min => self.cw("),
+    ("crates/dxwgsl/src/wgsl.rs", "Opcode::Max => self.cw("),
+];
+
+/// Each of NAN_MIN_MAX missing from its file's code, each of NAN_MIN_MAX_NOT in it.
+pub(super) fn nan_min_max(tree: &Tree) -> Hits {
+    let mut out = Hits::new();
+    for (file, want) in NAN_MIN_MAX {
+        let f = Rel::new(file);
+        if !product_code(tree, &f).contains(want) {
+            out.push((f, 1, format!("no `{want}` in the code: a NaN through min/max not as Direct3D gives it (the other operand)")));
+        }
+    }
+    for (file, bad) in NAN_MIN_MAX_NOT {
+        let f = Rel::new(file);
+        if product_code(tree, &f).contains(bad) {
+            out.push((f, 1, format!("`{bad}`: WGSL's min/max leave a NaN to the implementation; Direct3D gives the other operand (d3d_min/d3d_max)")));
         }
     }
     out

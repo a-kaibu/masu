@@ -30,10 +30,12 @@ pub struct Stages {
 pub enum Tess {
     /// no hull or domain shader, a topology that is not a patch list: no tessellation
     Off,
-    /// stages and topology that do not go together: Direct3D draws nothing (a patch list
-    /// without both shaders, a hull or domain shader with another topology, a patch list of
-    /// another control point count than the hull shader's, a domain shader of another
-    /// domain or of another control point count than the hull shader makes)
+    /// stages and topology that do not go together (a patch list without both shaders, a hull
+    /// or domain shader with another topology, a patch list of another control point count
+    /// than the hull shader's, a domain shader of another domain or of another control point
+    /// count than the hull shader makes): an error the Direct3D 11 spec leaves undefined, the
+    /// debug layer's to report (measured on Windows: WARP crashes in such a draw, an NVIDIA
+    /// driver draws something of its own), drawn as nothing here
     Nothing,
     On(Box<Stages>),
 }
@@ -68,12 +70,14 @@ pub fn stages(d: &D11, st: &State) -> Tess {
 }
 
 /// A patch's tess factors from its patch constant registers (the hull shader pass's hpc: the
-/// fork and join phases' outputs), clamped to [maxtessfactor] (a NaN stays NaN: culled).
+/// fork and join phases' outputs), clamped to [maxtessfactor] as min() does it: a NaN becomes the
+/// maximum (measured on Windows, winref d3d11tess "tri maxtessfactor(5.5)": a NaN edge draws
+/// as 5.5 there, while without [maxtessfactor] it culls the patch).
 pub fn factors(s: &Stages, regs: &[[u32; 4]]) -> Factors {
     let get = |f: TessFactor| -> f32 {
         let v = s.decl.factors.iter().find(|e| e.0 == f).and_then(|&(_, r, c)| regs.get(us(r)).and_then(|v| v.get(usize::from(c)))).map_or(0.0, |&b| f32::from_bits(b));
         match s.decl.max_tess {
-            Some(m) if v > m => m,
+            Some(m) if v > m || v.is_nan() => m,
             Some(_) | None => v,
         }
     };
@@ -101,6 +105,12 @@ pub struct Points {
 impl Points {
     pub fn count(&self) -> u32 {
         lo32(self.dpts.len().checked_div(us(dxwgsl::expand::DPT)).unwrap_or(0))
+    }
+
+    /// The domain shader runs Direct3D counts as DSInvocations: one a corner of each primitive
+    /// (WARP's count, winref d3d11tess).
+    pub fn corner_runs(&self) -> u64 {
+        self.prims.iter().fold(0u64, |n, p| n.saturating_add(kome::num::u64_of(p.len())))
     }
 }
 

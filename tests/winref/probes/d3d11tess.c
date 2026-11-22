@@ -7,14 +7,13 @@
  *  - which control points a domain shader is given (OutputPatch, the hull shader's ids),
  *    SV_PrimitiveID of the hull and domain shaders, the patch constants it reads;
  *  - PIPELINE_STATISTICS (HSInvocations, DSInvocations) and SO_STATISTICS of each;
- *  - draws that do not tessellate: a topology that is not a patch list, a patch list of
- *    another control point count than the hull shader's, a hull shader without a domain
- *    shader, a domain shader of another domain;
+ *  - control points past a patch list's last whole patch;
  *  - CreateHullShader / CreateDomainShader of another stage's bytecode.
  * Large outputs print their counts and an FNV-1a hash of the captured bytes.
  * WARP or hardware on the Windows runner.
  * libs: -ld3d11 -ld3dcompiler_47
- * run: browser (sake's Direct3D 11 runs in the page: tests/winref/run-browser.mjs) */
+ * run: browser (sake's Direct3D 11 runs in the page: tests/winref/run-browser.mjs)
+ * lines: all (thousands of lines of points at once) */
 #define COBJMACROS
 #define INITGUID
 #include "../probe.h"
@@ -283,29 +282,19 @@ int main(void) {
         for (int f = 0; f < 3; f++) draw("", special[f], c[i].count, c[i].per, 400);
     }
 
-    puts("draws that do not tessellate");
+    /* (a patch list with stages that do not go together, or with a topology that is not one
+     * with hull and domain shaders bound, is an error Direct3D leaves undefined: WARP crashes
+     * in the first such draw, hardware draws something of its own: not asked here) */
+    puts("control points past the last whole patch");
     {
         float two[8] = { 2, 2, 2, 2, 2, 2 };
         ID3D11DeviceContext_UpdateSubresource(ctx, (ID3D11Resource *)cb, 0, NULL, two, 0, 0);
         ID3D11DeviceContext_HSSetShader(ctx, hs[HS_TRI_INT], NULL, 0);
         ID3D11DeviceContext_DSSetShader(ctx, ds[DS_TRI], NULL, 0);
         ID3D11DeviceContext_GSSetShader(ctx, gs[DS_TRI], NULL, 0);
-        ID3D11DeviceContext_IASetPrimitiveTopology(ctx, D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
-        draw("a triangle list", NULL, 3, 3, 100);
-        ID3D11DeviceContext_IASetPrimitiveTopology(ctx, D3D11_PRIMITIVE_TOPOLOGY_4_CONTROL_POINT_PATCHLIST);
-        draw("a 4 control point patch list, a 3 control point hull shader", NULL, 4, 3, 100);
         ID3D11DeviceContext_IASetPrimitiveTopology(ctx, D3D11_PRIMITIVE_TOPOLOGY_3_CONTROL_POINT_PATCHLIST);
         draw("5 control points of a 3 control point patch list", NULL, 5, 3, 100);
-        ID3D11DeviceContext_DSSetShader(ctx, ds[DS_QUAD], NULL, 0);
-        ID3D11DeviceContext_GSSetShader(ctx, gs[DS_QUAD], NULL, 0);
-        draw("a quad domain shader after a tri hull shader", NULL, 3, 3, 100);
-        ID3D11DeviceContext_DSSetShader(ctx, NULL, NULL, 0);
-        ID3D11DeviceContext_GSSetShader(ctx, NULL, NULL, 0);
-        draw("a hull shader, no domain shader", NULL, 3, 3, 100);
         ID3D11DeviceContext_HSSetShader(ctx, NULL, NULL, 0);
-        ID3D11DeviceContext_DSSetShader(ctx, ds[DS_TRI], NULL, 0);
-        ID3D11DeviceContext_GSSetShader(ctx, gs[DS_TRI], NULL, 0);
-        draw("a domain shader, no hull shader", NULL, 3, 3, 100);
         ID3D11DeviceContext_DSSetShader(ctx, NULL, NULL, 0);
         ID3D11DeviceContext_GSSetShader(ctx, NULL, NULL, 0);
     }

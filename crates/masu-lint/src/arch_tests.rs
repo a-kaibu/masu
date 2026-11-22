@@ -528,6 +528,19 @@ fn fixture(r: Rule) -> Fixture {
             ],
             mutate: ("crates/kura/src/d3d11/expand_tess.rs", |t| Some(t.replace("let (hs, ds) = (st.shaders[1], st.shaders[2]);", "let (hs, ds) = (0, 0);"))),
         },
+        Rule::NanMinMax => Fixture {
+            bad: &[
+                ("crates/dxwgsl/src/wgsl.rs", "fn t(&mut self) { match op {\n    Opcode::Min => self.cw(i, F, F, |a| format!(\"min({}, {})\", a[0], a[1]))?,\n    Opcode::Max => self.cw(i, F, F, |a| format!(\"max({}, {})\", a[0], a[1]))?,\n} }\n"),
+                ("crates/hlslc/src/lower.rs", "// h.max_tess\nfn write_outputs() {}\n"),
+                ("crates/kura/src/d3d11/expand_tess.rs", "fn factors() { match m { Some(m) if v > m => m, Some(_) | None => v } }\n#[cfg(test)]\nmod tests { fn t() { v.is_nan() => m } }\n"),
+            ],
+            good: &[
+                ("crates/dxwgsl/src/wgsl.rs", "fn t(&mut self) { match op {\n    Opcode::Min => self.per_comp(i, &[F, F], F, |a| format!(\"d3d_min({}, {})\", a[0], a[1]))?,\n    Opcode::Max => self.per_comp(i, &[F, F], F, |a| format!(\"d3d_max({}, {})\", a[0], a[1]))?,\n    Opcode::Imin => self.cw(i, I, I, |a| format!(\"min({}, {})\", a[0], a[1]))?,\n} }\n"),
+                ("crates/hlslc/src/lower.rs", "fn write_outputs(&mut self) { if let Some(m) = self.hs.as_ref().and_then(|h| h.max_tess) {} }\n"),
+                ("crates/kura/src/d3d11/expand_tess.rs", "fn factors() { match m { Some(m) if v > m || v.is_nan() => m, Some(_) | None => v } }\n"),
+            ],
+            mutate: ("crates/dxwgsl/src/wgsl.rs", |t| Some(t.replace("format!(\"d3d_min({}, {})\"", "format!(\"min({}, {})\""))),
+        },
         Rule::OutEscape => Fixture {
             bad: &[
                 ("crates/sake/src/k32.rs", "fn f(c: &mut Ctx) { mem::w32(c.out::<0>().lock_word().key(), 0); }\n"),

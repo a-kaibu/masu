@@ -42,13 +42,19 @@ fn factors_of_the_patch_constants() {
     let s = stages_of("hs_quad_int", "ds_quad");
     let v = [(TessFactor::QuadU0, 1.0), (TessFactor::QuadV0, 2.0), (TessFactor::QuadU1, 3.0), (TessFactor::QuadV1, 4.0), (TessFactor::QuadInsideU, 5.0), (TessFactor::QuadInsideV, 6.0)];
     assert_eq!(factors(&s, &regs_with(&s, &v)), Factors::Quad { edges: [1.0, 2.0, 3.0, 4.0], inside: [5.0, 6.0] });
-    // ([maxtessfactor(5.5)]: above it 5.5, a NaN stays NaN and culls)
+    // ([maxtessfactor(5.5)]: above it 5.5, a NaN too, as Windows draws it: winref d3d11tess)
     let s = stages_of("hs_tri_max", "ds_tri");
     assert_eq!(s.decl.max_tess, Some(5.5));
     let f = factors(&s, &regs_with(&s, &[(TessFactor::TriU0, 2.0), (TessFactor::TriV0, 7.0), (TessFactor::TriW0, f32::NAN), (TessFactor::TriInside, 64.0)]));
     let Factors::Tri { edges, inside } = f else { panic!("{f:?}") };
-    assert_eq!((edges[0], edges[1], inside), (2.0, 5.5, 5.5));
-    assert!(edges[2].is_nan());
+    assert_eq!((edges, inside), ([2.0, 5.5, 5.5], 5.5));
+    let f = factors(&s, &regs_with(&s, &[(TessFactor::TriU0, -1.0), (TessFactor::TriV0, 0.0), (TessFactor::TriW0, f32::INFINITY), (TessFactor::TriInside, f32::NAN)]));
+    assert_eq!(f, Factors::Tri { edges: [-1.0, 0.0, 5.5], inside: 5.5 });
+    // (without it a NaN stays NaN: the patch culled)
+    let s = stages_of("hs_tri_int", "ds_tri");
+    let f = factors(&s, &regs_with(&s, &[(TessFactor::TriU0, f32::NAN), (TessFactor::TriV0, 2.0), (TessFactor::TriW0, 2.0), (TessFactor::TriInside, 2.0)]));
+    let Factors::Tri { edges, .. } = f else { panic!("{f:?}") };
+    assert!(edges[0].is_nan());
     // (a factor in no register: 0, the patch culled)
     let s = stages_of("hs_tri_int", "ds_tri");
     assert_eq!(factors(&s, &[]), Factors::Tri { edges: [0.0; 3], inside: 0.0 });
@@ -112,7 +118,7 @@ fn patch_points_of_the_topologies() {
 /// nothing; a patch list with both shaders runs the vertex and hull shader passes, a culled
 /// patch nothing more; with the patch constants factors (MODEL_PATCH_CONSTANTS) the domain
 /// shader pass, stream output of the domain shader, the store's draw; every pass valid,
-/// HSInvocations a patch, DSInvocations a point.
+/// HSInvocations a patch, DSInvocations a corner of each primitive.
 #[test]
 fn tessellated_draws_on_the_page() {
     let _g = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
@@ -175,7 +181,7 @@ fn tessellated_draws_on_the_page() {
     assert_eq!(drawn(35, hs, quad_ds, 0, None).0, 0);
     // (factors 0: both patches culled after the hull shader pass)
     assert_eq!(drawn(35, hs, ds, 0, None), (2, 0, 2, 0));
-    // (factors 2: the domain shader per point, the clipper's pass, the store drawn)
+    // (factors 2: the domain shader pass, the clipper's pass, the store drawn)
     let pcr = us(s.decl.pc_regs());
     let mut words = vec![0u32; 2 * pcr * 4];
     for k in 0..2 {
@@ -183,7 +189,9 @@ fn tessellated_draws_on_the_page() {
             words[(k * pcr + us(r)) * 4 + usize::from(c)] = 2.0f32.to_bits();
         }
     }
-    let per_patch = u64::from(lo32(tess::tessellate(Partitioning::Integer, Output::TriangleCw, Factors::Tri { edges: [2.0; 3], inside: 2.0 }).points.len()));
+    // (DSInvocations a corner of each primitive, as WARP counts them)
+    let per_patch = u64::from(lo32(tess::tessellate(Partitioning::Integer, Output::TriangleCw, Factors::Tri { edges: [2.0; 3], inside: 2.0 }).indices.len()));
+    assert_eq!(per_patch, 18);
     assert_eq!(drawn(35, hs, ds, 0, Some(words.clone())), (4, 1, 2, 2 * per_patch));
     // (stream output of the domain shader, nothing rasterized: its pass instead of the
     // clipper's and the draw)

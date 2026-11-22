@@ -14,11 +14,18 @@ OUT=$(cd "$OUT" && pwd)
 libs() { sed -n 's/.*libs: *\([-a-zA-Z0-9_ ,=]*\).*/\1/p' "$1" | head -1; }
 # probes marked "run: browser" draw through the GPU: sake runs them in Chromium (run-browser.mjs)
 : > "$OUT/browser.txt"
+# (and "lines: all" ones print more at once than the page shows a console: alllines.txt, every
+# line kept)
+: > "$OUT/alllines.txt"
 for src in "$HERE"/probes/*.c; do
   n=$(basename "$src" .c)
   if grep -q 'run: browser' "$src"; then
     echo "$n-32" >> "$OUT/browser.txt"
     grep -q 'arch: 32' "$src" || echo "$n-64" >> "$OUT/browser.txt"
+    if grep -q 'lines: all' "$src"; then
+      echo "$n-32" >> "$OUT/alllines.txt"
+      grep -q 'arch: 32' "$src" || echo "$n-64" >> "$OUT/alllines.txt"
+    fi
   fi
   l=$(libs "$src")
   # (a probe with its own resources: probes/<name>.rc, which carries the manifest too)

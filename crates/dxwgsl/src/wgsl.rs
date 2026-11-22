@@ -1963,8 +1963,15 @@ impl W {
             }
             Opcode::Loop => self.open("loop {", Block::Loop),
             Opcode::Mad => self.cw(i, F, F, |a| format!("({} * {} + {})", a[0], a[1], a[2]))?,
-            Opcode::Min => self.cw(i, F, F, |a| format!("min({}, {})", a[0], a[1]))?,
-            Opcode::Max => self.cw(i, F, F, |a| format!("max({}, {})", a[0], a[1]))?,
+            // (a NaN operand gives the other one: WGSL leaves it to the implementation)
+            Opcode::Min => {
+                self.helpers.insert("d3d_min");
+                self.per_comp(i, &[F, F], F, |a| format!("d3d_min({}, {})", a[0], a[1]))?
+            }
+            Opcode::Max => {
+                self.helpers.insert("d3d_max");
+                self.per_comp(i, &[F, F], F, |a| format!("d3d_max({}, {})", a[0], a[1]))?
+            }
             Opcode::Mov => {
                 let k = if i.sat || i.ops[1].modifier != 0 { F } else { U };
                 self.cw(i, k, k, |a| a[0].clone())?
@@ -2848,6 +2855,19 @@ const HELPERS: &[(&str, &str)] = &[
   if ((b & 0x7f800000u) == 0u) { return bitcast<f32>((b & 0x80000000u) | 0xff800000u); }
   if (b > 0x80000000u) { return bitcast<f32>(b | 0x7fc00000u); }
   return log2(x);
+}
+"),
+    // min, max: a NaN operand gives the other one (both NaN: NaN)
+    ("d3d_min", "fn d3d_min(a: f32, b: f32) -> f32 {
+  if ((bitcast<u32>(a) & 0x7fffffffu) > 0x7f800000u) { return b; }
+  if ((bitcast<u32>(b) & 0x7fffffffu) > 0x7f800000u) { return a; }
+  return min(a, b);
+}
+"),
+    ("d3d_max", "fn d3d_max(a: f32, b: f32) -> f32 {
+  if ((bitcast<u32>(a) & 0x7fffffffu) > 0x7f800000u) { return b; }
+  if ((bitcast<u32>(b) & 0x7fffffffu) > 0x7f800000u) { return a; }
+  return max(a, b);
 }
 "),
     // exp: NaN stays NaN

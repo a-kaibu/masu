@@ -1401,6 +1401,10 @@ fn hull_and_domain_shaders_of_the_d3d11tess_probe() {
         assert_eq!(phases, [Opcode::HsDecls, Opcode::HsControlPointPhase, Opcode::HsForkPhase], "{entry}");
         let max = p.insts.iter().find(|i| i.op == Opcode::DclHsMaxTessFactor).map(|i| f32::from_bits(i.extra[0]));
         assert_eq!(max, if entry == "hs_tri_max" { Some(5.5) } else { None }, "{entry}");
+        // ([maxtessfactor(5.5)]: each tess factor leaves the fork phase as min(f, 5.5), as
+        // d3dcompiler's do: winref d3d11tess reads 5.5 back for NaN and 64)
+        let mins = p.insts.iter().filter(|i| i.op == Opcode::Min).count();
+        assert_eq!(mins, if entry == "hs_tri_max" { 4 } else { 0 }, "{entry}");
         // (the patch constants: the domain's tess factors, then PID)
         let pc = dxwgsl::patch_constants(&code);
         let want: &[u32] = match domain {

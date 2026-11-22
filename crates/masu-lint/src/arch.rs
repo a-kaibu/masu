@@ -64,10 +64,11 @@ pub enum Rule {
     UncheckedOutput,
     HandLock,
     StageRun,
+    NanMinMax,
 }
 
 impl Rule {
-    pub const ALL: [Rule; 47] = [
+    pub const ALL: [Rule; 48] = [
         Rule::BuildOutput,
         Rule::HresultCopy,
         Rule::KomeCopy,
@@ -115,6 +116,7 @@ impl Rule {
         Rule::UncheckedOutput,
         Rule::HandLock,
         Rule::StageRun,
+        Rule::NanMinMax,
     ];
 
     /// the name a site list and a message use
@@ -167,6 +169,7 @@ impl Rule {
             Rule::UncheckedOutput => "unchecked-output",
             Rule::HandLock => "hand-lock",
             Rule::StageRun => "stage-run",
+            Rule::NanMinMax => "nan-min-max",
         }
     }
 
@@ -219,6 +222,7 @@ impl Rule {
             Rule::UncheckedOutput => "a command's stdout is its answer only when its exit status says it worked: check `.status.success()` (an empty `git ls-files` from a copy without .git was \"no files\"; review e18bf44)",
             Rule::HandLock => "a lock between processes is a lock file opened through masu's lockfile::LockFile: Windows' File::open opens no directory, and the store's writers locked the store directory itself (`masu add` failed on Windows; review e18bf44)",
             Rule::StageRun => "every shader stage a Direct3D 11 context binds runs where its draws or dispatches do (review e18bf44: hull and domain shaders were made and bound but never run, a patch list drawn as if they were not there): the draw path reads each of State::shaders (regress::STAGE_READS: GS, HS and DS in expand.rs / expand_tess.rs, CS in dispatch) and patch lists go through expand_tess.rs's patch_points",
+            Rule::NanMinMax => "a NaN through Direct3D's min/max gives the other operand (winref d3d11tess: [maxtessfactor(5.5)] turned a NaN tess factor into 5.5 on Windows, and the domain shader read 5.5 back; masu kept the NaN and culled the patch): dxwgsl's float min/max go through d3d_min/d3d_max (WGSL leaves a NaN to the implementation), hlslc clamps a patch constant function's tess factors to [maxtessfactor] with min, kura's clamp gives the maximum for a NaN (regress::NAN_MIN_MAX / NAN_MIN_MAX_NOT)",
             Rule::HandStd => "what the standard library names since Rust 1.98..1.100 is not written by hand (2026-11-21: 10 toggles, 3 trim_prefix, 136 map_or_default, 13 ok_or, 19 Vec::from_fn replaced): x.toggle(), s.trim_prefix(p), o.map_or_default(f), c.ok_or(e), Vec::from_fn(v.len(), f)",
         }
     }
@@ -272,6 +276,7 @@ impl Rule {
             Rule::UncheckedOutput => regress::unchecked_output(tree),
             Rule::HandLock => regress::hand_lock(tree),
             Rule::StageRun => regress::stage_run(tree),
+            Rule::NanMinMax => regress::nan_min_max(tree),
         };
         hits.into_iter().map(|(file, line, what)| Finding { rule: self, file, line, what }).collect()
     }

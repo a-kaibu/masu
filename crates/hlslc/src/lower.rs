@@ -2298,6 +2298,17 @@ impl<'a> L<'a> {
         for (s, regs) in outs {
             self.assign(&regs, &s);
         }
+        // ([maxtessfactor(m)]: a patch constant function's tess factors leave it as min(f, m),
+        // a NaN as m: Windows' d3dcompiler, measured in winref d3d11tess, where the domain shader
+        // reads 5.5 back for NaN and 64)
+        if self.in_pcf && let Some(m) = self.hs.as_ref().and_then(|h| h.max_tess) {
+            let regs: Vec<u32> = self.patch.iter().filter(|e| matches!(e.sysval, SysVal::Tess(_))).map(|e| e.reg).collect();
+            for r in regs {
+                let o = [C::R(Reg { f: RegF::Output(r), rel: None }, Lane::X)];
+                let v = self.alu_m(sm4::MIN, B::Float, &[(&o, 0), (&[C::I(m.to_bits())], 0)]);
+                self.assign(&o, &v);
+            }
+        }
         Ok(())
     }
 
