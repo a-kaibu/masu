@@ -5,15 +5,35 @@ import { pathToFileURL } from "node:url";
 /** @type {[string, string, string[]][]} */
 const rules = [
   // (this browser's copy is written by a held local lock's write only)
-  ["saves.ts", "localWrite", ["persist", "loadSaves"]],
-  // (the older format's files: taken over once, never written as this format's; review e18bf44)
-  ["saves.ts", "legacyFiles", ["takeOver"]],
+  ["saves.ts", "localWrite", ["persist", "loadSaves", "readCurrent"]],
+  // (the older format's files: read to take them over, marked sent, never written as this
+  // format's; review e18bf44, b5dacf4 1.4)
+  ["saves.ts", "legacyFiles", ["legacyRecord", "legacyBlob", "legacySent"]],
+  // (a record is read only where the decision it feeds is made, in the same hold: a failed
+  // write's record read again in a later hold was another tab's newer one; review b5dacf4 1.2)
+  ["saves.ts", "readSync", ["persist", "acknowledge", "readCurrent"]],
+  // (a record is settled by the upload that sent its bytes only)
+  ["saves.ts", "acknowledge", ["upload", "keepSaving"]],
   ["wasmsource.ts", "sakeWasmBytes", ["runtimeWasm"]],
   // (a save state's index and bodies change under the game's lock only: SnapshotStore's two
   // ways in; review 22bb061 §2, two tabs' saves removing each other's bodies)
   ["snapshot-store.ts", "writeBody", ["publish", "cache", "writeIndex"]],
   ["snapshot-store.ts", "writeIndex", ["publish", "cache"]],
   ["snapshot-store.ts", "pruneBodies", ["writeIndex"]],
+];
+
+/** A launch plan's keys in the page's address, read and written by launch-plan.ts only (review
+ * 22bb061 §4: the arguments joined with commas and split again did not come back). */
+const planKeys = new Set(["run", "arg", "args", "cmdline", "mount", "env"]);
+const paramMethods = new Set(["get", "getAll", "has", "set", "append", "delete"]);
+
+/** The runtime's files by name, in runtime.ts alone (its RuntimeManifest: what a start reads is
+ * what 端末に保存 saves; review 22bb061 §4, build-id.txt left out of the save). */
+/** @type {[string, string][]} */
+const names = [
+  ["build-id.txt", "runtime.ts"],
+  ["jit-version.txt", "runtime.ts"],
+  ["snapz.mjs", "runtime.ts"],
 ];
 
 /** OPFS folders each owned by one module: getDirectoryHandle("<folder>") elsewhere is an error. */
@@ -47,6 +67,21 @@ export function check(program) {
       if (
         ts.isCallExpression(node) &&
         ts.isPropertyAccessExpression(node.expression) &&
+        paramMethods.has(node.expression.name.text) &&
+        node.arguments[0] &&
+        ts.isStringLiteralLike(node.arguments[0]) &&
+        planKeys.has(node.arguments[0].text) &&
+        !source.fileName.endsWith("/src/launch-plan.ts") &&
+        checker.typeToString(checker.getTypeAtLocation(node.expression.expression)) === "URLSearchParams"
+      ) {
+        const line = source.getLineAndCharacterOfPosition(node.getStart()).line + 1;
+        errors.push(
+          `${source.fileName}:${line}: the address's "${node.arguments[0].text}" is a launch plan's: launch-plan.ts`,
+        );
+      }
+      if (
+        ts.isCallExpression(node) &&
+        ts.isPropertyAccessExpression(node.expression) &&
         node.expression.name.text === "getDirectoryHandle" &&
         node.arguments[0] &&
         ts.isStringLiteralLike(node.arguments[0])
@@ -56,6 +91,18 @@ export function check(program) {
           const line = source.getLineAndCharacterOfPosition(node.getStart()).line + 1;
           errors.push(`${source.fileName}:${line}: OPFS ${folder[0]}/ belongs to ${folder[1]}`);
         }
+      }
+      if (
+        ts.isStringLiteralLike(node) ||
+        ts.isTemplateHead(node) ||
+        ts.isTemplateMiddle(node) ||
+        ts.isTemplateTail(node)
+      ) {
+        for (const [name, owner] of names)
+          if (node.text.includes(name) && !source.fileName.endsWith("/src/" + owner)) {
+            const line = source.getLineAndCharacterOfPosition(node.getStart()).line + 1;
+            errors.push(`${source.fileName}:${line}: ${name} is named by ${owner} only (its manifest)`);
+          }
       }
       if (ts.isIdentifier(node)) {
         let symbol = ts.isShorthandPropertyAssignment(node.parent)

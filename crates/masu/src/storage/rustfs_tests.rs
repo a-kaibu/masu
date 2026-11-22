@@ -82,14 +82,7 @@ async fn rustfs_encrypted_storage() -> Result<()> {
             original.object, again.object,
             "existing chunks must not be uploaded again"
         );
-        db.connect()?.execute_batch(
-            "CREATE TABLE saves(name TEXT PRIMARY KEY, revision INTEGER NOT NULL, data BLOB, written_ms INTEGER);",
-        )?;
-        let saves = Saves {
-            db: db.clone(),
-            remote: Some(Storage::open(db.clone(), &config, Credentials::default()?)?),
-            lock: Default::default(),
-        };
+        let saves = Saves::open(db.clone(), Some(Storage::open(db.clone(), &config, Credentials::default()?)?))?;
         assert!(saves.write("game", 0, b"private save").await?);
         assert!(!saves.write("game", 0, b"stale save").await?);
         assert_eq!(

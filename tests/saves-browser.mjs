@@ -62,7 +62,7 @@ async function device(name) {
 const load = (page) =>
   page.evaluate(async () => {
     const notices = [];
-    const b = await window.masuSaves.loadSaves("game", (m) => notices.push(m));
+    const b = (await window.masuSaves.loadSaves("game", (m) => notices.push(m))).data;
     return { text: b ? new TextDecoder().decode(b) : null, notices };
   });
 const store_ = (page, text) =>
