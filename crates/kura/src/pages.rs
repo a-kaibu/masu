@@ -137,10 +137,13 @@ impl Pages {
             self.pages.truncate(count);
             if let Some(last) = self.pages.last_mut() {
                 let keep = (n - (count as u64 - 1) * PAGE as u64) as usize;
-                let last = Arc::make_mut(last);
-                last.truncate(keep);
-                if last.capacity() > 2 * keep.max(4096) {
-                    last.shrink_to_fit();
+                // (a page a clone shares is copied only when the cut takes bytes off it)
+                if last.len() > keep {
+                    let last = Arc::make_mut(last);
+                    last.truncate(keep);
+                    if last.capacity() > 2 * keep.max(4096) {
+                        last.shrink_to_fit();
+                    }
                 }
             }
         } else {
