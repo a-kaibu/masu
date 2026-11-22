@@ -50,12 +50,14 @@ const TRIGGERS: [(&str, &str); 3] = [
 
 async fn run(seed: u64) -> Vec<Step> {
     let mut x = seed.wrapping_mul(0x9e37_79b9_7f4a_7c15) | 1;
-    let mut next = move || {
+    // (a pick below n, from a xorshift)
+    let mut below = move |n: usize| -> usize {
         x ^= x << 13;
         x ^= x >> 7;
         x ^= x << 17;
-        x
+        u64::try_from(n).ok().and_then(|n| usize::try_from(x % n).ok()).unwrap_or(0)
     };
+    let retries = usize::try_from(RETRIES).unwrap_or(usize::MAX);
     let (f, s, dir) = serve(0).await;
     let saves = crate::saves::Saves::open(s.db.clone(), Some(s)).unwrap();
     let s = saves.remote.as_ref().unwrap();
@@ -63,10 +65,10 @@ async fn run(seed: u64) -> Vec<Step> {
     let mut steps = Vec::new();
     let mut v = 0;
     while steps.len() < 80 {
-        let roll = next() % 20;
+        let roll = below(20);
         if roll == 0 {
             // (an injection on or off between calls)
-            let t = (next() % TRIGGERS.len() as u64) as usize;
+            let t = below(TRIGGERS.len());
             let c = s.db.connect().unwrap();
             if on[t] {
                 let (name, _) = TRIGGERS[t];
@@ -81,13 +83,13 @@ async fn run(seed: u64) -> Vec<Step> {
             continue;
         }
         // (a few refusals, which the retries absorb, or more than they try)
-        let refused = match next() % 10 {
-            0 => (next() % 3 + 1) as usize,
-            1 => (RETRIES + 1) as usize + (next() % 3) as usize,
+        let refused = match below(10) {
+            0 => below(3) + 1,
+            1 => retries.saturating_add(1 + below(3)),
             _ => 0,
         };
         f.fail_next.store(refused, SeqCst);
-        let n = (next() % NAMES.len() as u64) as usize;
+        let n = below(NAMES.len());
         let name = NAMES[n];
         let now = row(s, name);
         let mut step = Step { op: "", name: n, e: 0, v: 0, ret: "", rev: 0, got: 0, row: 0, kept: Vec::new() };
@@ -96,7 +98,7 @@ async fn run(seed: u64) -> Vec<Step> {
         match roll {
             1..=10 => {
                 v += 1;
-                let e = match next() % 10 {
+                let e = match below(10) {
                     0 => now + 1,
                     1 | 2 => (now - 1).max(0),
                     _ => now,
@@ -179,7 +181,7 @@ async fn saves_trace() {
         check(&steps, seed);
         seen.extend(steps.iter().map(|t| (t.op, t.ret)));
         // (a forget refused: more than SAVE_REVISIONS revisions named)
-        if steps.iter().any(|t| t.kept.len() as i64 > SAVE_REVISIONS) {
+        if steps.iter().any(|t| i64::try_from(t.kept.len()).is_ok_and(|k| k > SAVE_REVISIONS)) {
             seen.insert(("write", "kept more"));
         }
         let Some(dir) = std::env::var_os("MASU_TRACE_DIR") else { continue };
