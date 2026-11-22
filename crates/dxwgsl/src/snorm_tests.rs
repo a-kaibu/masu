@@ -113,9 +113,9 @@ proptest! {
 
     /// every SNORM stash's resolve pass parses and validates
     #[test]
-    fn resolve_wgsl_validates(sc in 0usize..17, dc in 0usize..17, oc in 0usize..5, sa in 0usize..17, da in 0usize..17, oa in 0usize..5, channel in 0u32..4, bit in 0u32..32) {
+    fn resolve_wgsl_validates(sc in 0usize..17, dc in 0usize..17, oc in 0usize..5, sa in 0usize..17, da in 0usize..17, oa in 0usize..5, channel in 0u32..4, bit in 0u32..32, wide in any::<bool>()) {
         let b = Blend { color: Equation { src: FACTORS[sc], dst: FACTORS[dc], op: OPS[oc] }, alpha: Equation { src: FACTORS[sa], dst: FACTORS[da], op: OPS[oa] } };
-        let src = resolve_wgsl(&b, channel, bit);
+        let src = resolve_wgsl(width(wide), &b, channel, bit);
         let m = naga::front::wgsl::parse_str(&src).unwrap_or_else(|e| panic!("{b:?}: {}\n{src}", e.emit_to_string(&src)));
         naga::valid::Validator::new(naga::valid::ValidationFlags::all(), naga::valid::Capabilities::all()).validate(&m).unwrap_or_else(|e| panic!("{b:?}: {e:?}\n{src}"));
     }
@@ -127,11 +127,44 @@ proptest! {
         prop_assert_eq!(resolve(&vec![b; n]), b);
     }
 
+    /// a resolve of samples all one 16-bit value is that value
+    #[test]
+    fn resolve16_of_equal_samples(q in -32767i32..=32767, n in 1usize..9) {
+        prop_assert_eq!(resolve_in(Width::Bits16, &vec![q; n]), q);
+    }
+
+    /// a 16-bit store: within -32767..=32767, NaN -32767, the nearest value of the clamped
+    /// product (halves away from zero), and a load stored back the same value
+    #[test]
+    fn store16_nearest(v in any::<f32>(), q in -32768i32..=32767) {
+        let x = store_in(Width::Bits16, v);
+        prop_assert!((-32767..=32767).contains(&x));
+        if v.is_nan() {
+            prop_assert_eq!(x, -32767);
+        } else {
+            let p = f64::from(v.clamp(-1.0, 1.0) * 32767.0);
+            let e = (f64::from(x) - p).abs();
+            prop_assert!(e < 0.5 || (e == 0.5 && f64::from(x).abs() > p.abs()), "{} -> {}", v, x);
+        }
+        prop_assert_eq!(store_in(Width::Bits16, load_in(Width::Bits16, q)), q.max(-32767));
+    }
+
+    /// a 16-bit blend that reads no destination gives the same values over any destination
+    #[test]
+    fn blend16_reads_dst_only_when_it_says(sc in 0usize..17, dc in 0usize..17, oc in 0usize..5, s in any::<[f32; 4]>(), s1 in any::<[f32; 4]>(), k in any::<[f32; 4]>(), d0 in any::<[i16; 4]>(), d1 in any::<[i16; 4]>()) {
+        let e = Equation { src: FACTORS[sc], dst: FACTORS[dc], op: OPS[oc] };
+        let b = Blend { color: e, alpha: e };
+        let (d0, d1) = (d0.map(i32::from), d1.map(i32::from));
+        if !b.reads_dst() {
+            prop_assert_eq!(blend_in(Width::Bits16, &b, s, s1, d0, k), blend_in(Width::Bits16, &b, s, s1, d1, k));
+        }
+    }
+
     /// every blend's WGSL parses and validates
     #[test]
-    fn blend_wgsl_validates(sc in 0usize..17, dc in 0usize..17, oc in 0usize..5, sa in 0usize..17, da in 0usize..17, oa in 0usize..5) {
+    fn blend_wgsl_validates(sc in 0usize..17, dc in 0usize..17, oc in 0usize..5, sa in 0usize..17, da in 0usize..17, oa in 0usize..5, wide in any::<bool>()) {
         let b = Blend { color: Equation { src: FACTORS[sc], dst: FACTORS[dc], op: OPS[oc] }, alpha: Equation { src: FACTORS[sa], dst: FACTORS[da], op: OPS[oa] } };
-        let body = blend_wgsl(&b, "s", "s1", "d", "o");
+        let body = blend_wgsl(width(wide), &b, "s", "s1", "d", "o");
         let src = format!("{}fn f(s: vec4<f32>, s1: vec4<f32>, d: vec4<i32>, sn_k: vec4<f32>) -> vec4<i32> {{ var o: vec4<i32>; {} return o; }}\n", helpers(), body.join(" "));
         let m = naga::front::wgsl::parse_str(&src).unwrap_or_else(|e| panic!("{b:?}: {}\n{src}", e.emit_to_string(&src)));
         naga::valid::Validator::new(naga::valid::ValidationFlags::all(), naga::valid::Capabilities::all()).validate(&m).unwrap_or_else(|e| panic!("{b:?}: {e:?}\n{src}"));
@@ -141,9 +174,48 @@ proptest! {
 /// the multisampled resolve's pass parses and validates
 #[test]
 fn ms_resolve_wgsl_validates() {
-    let src = ms_resolve_wgsl();
+    for w in [Width::Bits8, Width::Bits16] {
+    let src = ms_resolve_wgsl(w);
     let m = naga::front::wgsl::parse_str(&src).unwrap_or_else(|e| panic!("{}\n{src}", e.emit_to_string(&src)));
     naga::valid::Validator::new(naga::valid::ValidationFlags::all(), naga::valid::Capabilities::all()).validate(&m).unwrap_or_else(|e| panic!("{e:?}\n{src}"));
+    }
+}
+
+fn width(wide: bool) -> Width {
+    if wide { Width::Bits16 } else { Width::Bits8 }
+}
+
+/// the shader's 16-bit load (sn16_load1, by long division) is the correctly rounded quotient of
+/// every 16-bit value
+#[test]
+fn load16_by_division_is_the_quotient() {
+    for q in -32768i32..=32767 {
+        assert_eq!(load16_by_division(q).to_bits(), load_in(Width::Bits16, q).to_bits(), "{q}");
+    }
+}
+
+/// a UNORM page's float of every byte (b / 255, the nearest f32) times 255 rounds back to the
+/// byte (View::load_wgsl's Source::Unorm8)
+#[test]
+fn unorm8_floats_round_back() {
+    for b in 0u8..=255 {
+        assert_eq!((f32::from(b) / 255.0 * 255.0).round(), f32::from(b), "{b}");
+    }
+}
+
+/// a view's load of the page's texels validates, for each source, width and channel count
+#[test]
+fn view_load_wgsl_validates() {
+    for source in [Source::Sint, Source::Unorm8] {
+        for width in [Width::Bits8, Width::Bits16] {
+            for channels in [1, 2, 4] {
+                let v = View { slot: 0, channels, width, source };
+                let src = format!("{}@group(0) @binding(0) var t: {};\nfn f(q: vec2<i32>) -> vec4<f32> {{ return {}; }}\n", helpers(), v.texture_type(), v.load_wgsl("textureLoad(t, q, 0)"));
+                let m = naga::front::wgsl::parse_str(&src).unwrap_or_else(|e| panic!("{v:?}: {}\n{src}", e.emit_to_string(&src)));
+                naga::valid::Validator::new(naga::valid::ValidationFlags::all(), naga::valid::Capabilities::all()).validate(&m).unwrap_or_else(|e| panic!("{v:?}: {e:?}\n{src}"));
+            }
+        }
+    }
 }
 
 /// One row of winref d3d11snorm's golden output.

@@ -412,6 +412,8 @@ fn show(c: &[u32]) -> String {
             LOGIC_RESOLVE => ("logic resolve", 15),
             SNORM_RESOLVE => ("snorm resolve", 15),
             RESOLVE_SNORM => ("resolve snorm", 3),
+            CONVERT => ("convert", 8),
+            CLEAR_RECTS => ("clear rects", 10 + 4 * c[i + 9] as usize),
             RESOLVE => ("resolve", 6),
             DRAW2 => {
                 let mut q = i + 2 + 6 + 5 + 4 + 1;

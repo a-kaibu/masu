@@ -96,6 +96,63 @@ pub const SNORM_RESOLVE: u32 = 44; // tex copy src mark mask src_blend dst_blend
 /// WARP does (dxwgsl::snorm::resolve, ms_resolve_wgsl).
 pub const RESOLVE_SNORM: u32 = 45; // dst src
 
+/// A pass that writes subresource `dst_sub` (level | layer << 16) of texture `dst` from the
+/// same-sized one of `src` (both of one sample count; multisampled ones each sample from its
+/// own), converted as [`Convert`] word `kind` says (d3d11/logic.rs: SNORM twins).
+pub const CONVERT: u32 = 46; // src src_sub dst dst_sub w h kind
+/// ClearView of rectangles of level `level`, layer `layer` of `tex` (a multisampled one every
+/// sample): the four value words as `kind` says (0 f32, 1 i32, 2 u32: the texture's texels),
+/// each rectangle x0 y0 x1 y1 (cut to the level).
+pub const CLEAR_RECTS: u32 = 47; // tex level layer kind c0 c1 c2 c3 n (x0 y0 x1 y1)*n
+
+/// How a CONVERT pass makes its target's texels of the source's.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Hash)]
+pub enum Convert {
+    /// 8-bit UNORM (a typeless texture's page) to the SINT twin of an SNORM view: each byte's bits
+    Unorm8ToSint8,
+    /// the SINT twin's bytes back to the 8-bit UNORM page: each byte's bits
+    Sint8ToUnorm8,
+    /// a 16-bit SNORM texture's page floats (each value's quotient) to its SINT twin's values
+    Snorm16ToSint16,
+    /// the SINT twin's 16-bit values back to the page's floats (dxwgsl::snorm::load_in)
+    Sint16ToSnorm16,
+}
+
+impl Convert {
+    pub const ALL: [Convert; 4] = [Convert::Unorm8ToSint8, Convert::Sint8ToUnorm8, Convert::Snorm16ToSint16, Convert::Sint16ToSnorm16];
+    pub fn word(self) -> u32 {
+        match self {
+            Convert::Unorm8ToSint8 => 0,
+            Convert::Sint8ToUnorm8 => 1,
+            Convert::Snorm16ToSint16 => 2,
+            Convert::Sint16ToSnorm16 => 3,
+        }
+    }
+    pub fn of_word(w: u32) -> Option<Convert> {
+        Convert::ALL.into_iter().find(|k| k.word() == w)
+    }
+    /// Whether the source's texels are integers (else floats).
+    pub fn reads_ints(self) -> bool {
+        match self {
+            Convert::Sint8ToUnorm8 | Convert::Sint16ToSnorm16 => true,
+            Convert::Unorm8ToSint8 | Convert::Snorm16ToSint16 => false,
+        }
+    }
+    /// The WGSL of the target's texel (vec4<i32> or vec4<f32>, as the target's format takes it)
+    /// of the source's `v` (vec4<i32> or vec4<f32>, [`Convert::reads_ints`]).
+    pub fn wgsl(self, v: &str) -> String {
+        match self {
+            // (b / 255 back to b, then as a signed byte)
+            Convert::Unorm8ToSint8 => format!("((vec4<i32>(round({v} * 255.0f)) + vec4<i32>(128)) & vec4<i32>(255)) - vec4<i32>(128)"),
+            // (the unsigned byte / 255: the page's UNORM write rounds it back to the byte)
+            Convert::Sint8ToUnorm8 => format!("vec4<f32>({v} & vec4<i32>(255)) / 255.0f"),
+            // (a quotient times 32767 is within an ULP of its value)
+            Convert::Snorm16ToSint16 => format!("vec4<i32>(round(clamp({v}, vec4<f32>(-1.0f), vec4<f32>(1.0f)) * 32767.0f))"),
+            Convert::Sint16ToSnorm16 => format!("sn16_load({v})"),
+        }
+    }
+}
+
 /// What a QUERY_END ends.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum QueryEnd {

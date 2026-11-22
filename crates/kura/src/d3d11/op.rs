@@ -699,6 +699,8 @@ impl ContextOp<'_> {
                 if rects.is_empty() && matches!(d.objs.get(view).map(|o| o.iface), Some(IF_RTV)) {
                     // SAFETY: clear_target's own contract: a view of this device
                     unsafe { clear_target(d, *view, *color) };
+                } else if matches!(d.objs.get(view).map(|o| o.iface), Some(IF_RTV)) && clear_ms_rects(d, *view, *color, rects) {
+                    // (a multisampled texture's: a clear pass of the rectangles)
                 } else {
                     // SAFETY: clear_view_texels' own contract: a view of this device
                     unsafe { clear_view_texels(d, *view, clear::Values::Color(color.map(f32::from_bits)), rects) };
