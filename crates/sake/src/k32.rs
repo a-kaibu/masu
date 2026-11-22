@@ -7597,7 +7597,9 @@ pub(crate) fn console_write(t: &str) {
         eprintln!("{piece}");
     }
 }
-const CONSOLE_PIECE: usize = 4096;
+/// (a line of a probe's output is longer than 4096: winref d3d11snorm2's R16G16B16A16 sweep,
+/// 4117 bytes; Windows' console ends it where the program does)
+const CONSOLE_PIECE: usize = 65536;
 /// console_write's part of a line not yet ended
 static CONSOLE_PENDING: Mutex<String> = Mutex::new(String::new());
 /// What is left of the console's last line, at the process's end

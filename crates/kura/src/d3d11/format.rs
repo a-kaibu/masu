@@ -180,7 +180,8 @@ pub unsafe fn to_floats(conv: Conv, n: u32, src: *const u8, pitch: usize, w: u32
                 let row = src.add(y * pitch);
                 for i in 0..w * n {
                     let v = u16::from_le_bytes([*row.add(2 * i), *row.add(2 * i + 1)]);
-                    out[y * w * n + i] = if conv == U16N { f32::from(v) / 65535.0 } else { (f32::from(v as i16) / 32767.0).max(-1.0) };
+                    // (an SNORM word as WARP reads it: dxwgsl::snorm::load_in, the product with 1 / 32767)
+                    out[y * w * n + i] = if conv == U16N { f32::from(v) / 65535.0 } else { dxwgsl::snorm::load_in(dxwgsl::snorm::Width::Bits16, i32::from(v.cast_signed())) };
                 }
             }
         }

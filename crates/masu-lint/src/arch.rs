@@ -748,7 +748,10 @@ fn release_build_only(tree: &Tree) -> Hits {
 }
 
 /// what must stay in place: (file, text, why)
-pub const REQUIRED: [(&str, &str, &str); 59] = [
+pub const REQUIRED: [(&str, &str, &str); 62] = [
+    ("crates/sake/src/crt.rs", "    if e == 22 || e == 34 {\n        io::invalid_parameter(c);", "a secure CRT function's EINVAL / ERANGE goes through the invalid parameter handler (ucrtbase:misc test_invalid_parameter_handler; 2026-11-22)"),
+    ("crates/sake/src/crt.rs", "    implement(\"ucrtbase\", \"wcstok\", ucrt_wcstok);", "ucrtbase's wcstok with a NULL context uses the thread's own (ucrtbase:string crashed; 2026-11-22)"),
+    ("crates/sake/src/cxx.rs", "        implement(d, \"__current_exception\", crate::cxx64::__current_exception);", "x86 has __current_exception / __processing_throw in ucrtbase's layout (ucrtbase:misc test_thread_storage crashed; 2026-11-22)"),
     ("crates/sake/src/gdi.rs", "        let o = self.m.remove(&h)?;\n        if !is_stock(h) {\n            self.slots.give_back(handle_index(h));", "a deleted GDI object's slot goes back with its generation counted up, so the old handle names nothing (gdi32:gdiobj test_shared_handle_table; 2026-11-22)"),
     ("crates/sake/src/lib.rs", "    PEB.store(peb, Ordering::Relaxed);\n    gdi::share_table(peb);", "PEB->GdiSharedHandleTable points at the GDI handle table (gdi32:gdiobj read a NULL table and crashed; 2026-11-22)"),
     ("crates/sake/src/gdiplus.rs", "            if row.len() < (w * bpp) as usize {\n                continue;", "GdipCreateBitmapFromScan0 with bits that are not memory does not read them (gdiplus:graphics test_GetDC panicked sake; 2026-11-22)"),

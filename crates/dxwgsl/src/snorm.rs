@@ -342,10 +342,15 @@ pub fn store_in(w: Width, v: f32) -> i32 {
     kome::num::trunc_i32((clamp_src(v) * w.scale()).round())
 }
 
-/// The value of a channel of width `w`: q / its maximum (the nearest f32), its minimum (-128,
-/// -32768) as -1.
+/// The value of a channel of width `w` as WARP reads it (a shader's Load, a blend's
+/// destination), its minimum (-128, -32768) as -1: 8 bits q / 127 (the nearest f32), 16 bits q
+/// times the f32 nearest 1 / 32767 ([`resolve_rcp`]), not the quotient (winref d3d11snorm2's
+/// load rows: 1024 of 1024 with the product, 1000 with the quotient).
 pub fn load_in(w: Width, q: i32) -> f32 {
-    (kome::num::to_f32(q) / w.scale()).max(-1.0)
+    match w {
+        Width::Bits8 => (kome::num::to_f32(q) / w.scale()).max(-1.0),
+        Width::Bits16 => (kome::num::to_f32(q) * resolve_rcp(w)).max(-1.0),
+    }
 }
 
 /// The channel's byte of a shader's output `v` ([`store_in`] of 8 bits).
@@ -460,47 +465,10 @@ impl View {
     }
 }
 
-/// [`load_in`] of 16 bits by integers alone, as the shader's `sn16_load1` computes it (a WGSL
-/// division is within 2.5 ULP, not exact): |q| / 32767 by long division, 24 bits and a round
-/// bit, rounded to the nearest (ties to even) with the remainder as the sticky bit.
-pub fn load16_by_division(q: i32) -> f32 {
-    let c = q.max(-32767);
-    let a = c.unsigned_abs();
-    if a == 0 {
-        return 0.0;
-    }
-    let sign = if c < 0 { 0x8000_0000u32 } else { 0 };
-    if a == 32767 {
-        return f32::from_bits(sign | 0x3f80_0000);
-    }
-    // (r / 32767 in [1, 2) times 2^-e)
-    let (mut r, mut e) = (a, 0u32);
-    for _ in 0..16 {
-        if r < 32767 {
-            r <<= 1;
-            e = e.wrapping_add(1);
-        }
-    }
-    r = r.wrapping_sub(32767);
-    let mut m = 1u32;
-    for _ in 0..24 {
-        r <<= 1;
-        let bit = r >= 32767;
-        m = (m << 1) | u32::from(bit);
-        if bit {
-            r = r.wrapping_sub(32767);
-        }
-    }
-    let mut f = m >> 1;
-    if m & 1 != 0 && (r != 0 || f & 1 != 0) {
-        f = f.wrapping_add(1);
-    }
-    f32::from_bits(sign | (127u32.wrapping_sub(e) << 23) | (f & 0x7f_ffff))
-}
-
 /// The WGSL of the conversions and blend (module scope). An 8-bit load is a table of [`load`]'s
-/// values, a 16-bit one [`load16_by_division`] (a WGSL division is within 2.5 ULP, not exact:
-/// the blend would differ from WARP's in the last bit, and the value with it). Each product goes
+/// values (a WGSL division is within 2.5 ULP, not exact: the blend would differ from WARP's in
+/// the last bit, and the value with it), a 16-bit one [`load_in`]'s product (a WGSL product is
+/// correctly rounded), through `sn_r` with the value + 32768 past bit 16 (zero in range). Each product goes
 /// through `sn_r`: its bits or'd with a zero the compiler cannot see (bit 30 of a value within
 /// -1..1: its exponent's top bit), so it is rounded as WARP rounds it and no driver fuses it
 /// with the add after it (an FMA blends 1.9 * -5/127 to -10, WARP to -9).
@@ -524,29 +492,8 @@ fn sn_load(b: vec4<i32>) -> vec4<f32> {{\n\
 \x20 let i = (vec4<u32>(b + vec4<i32>(128))) & vec4<u32>(255u);\n\
 \x20 return bitcast<vec4<f32>>(vec4<u32>(SN_LOAD[i.x], SN_LOAD[i.y], SN_LOAD[i.z], SN_LOAD[i.w]));\n\
 }}\n\
-fn sn16_load1(q: i32) -> f32 {{\n\
-\x20 let c = max(q, -32767);\n\
-\x20 let a = u32(abs(c));\n\
-\x20 let sg = select(0u, 0x80000000u, c < 0);\n\
-\x20 if (a == 0u) {{ return 0.0f; }}\n\
-\x20 if (a >= 32767u) {{ return bitcast<f32>(sg | 0x3f800000u); }}\n\
-\x20 var r = a;\n\
-\x20 var e = 0u;\n\
-\x20 for (var k = 0u; k < 16u; k++) {{ if (r < 32767u) {{ r = r << 1u; e = e + 1u; }} }}\n\
-\x20 r = r - 32767u;\n\
-\x20 var m = 1u;\n\
-\x20 for (var k = 0u; k < 24u; k++) {{\n\
-\x20   r = r << 1u;\n\
-\x20   let b = r >= 32767u;\n\
-\x20   m = (m << 1u) | select(0u, 1u, b);\n\
-\x20   if (b) {{ r = r - 32767u; }}\n\
-\x20 }}\n\
-\x20 var f = m >> 1u;\n\
-\x20 if ((m & 1u) != 0u && (r != 0u || (f & 1u) != 0u)) {{ f = f + 1u; }}\n\
-\x20 return bitcast<f32>(sg | ((127u - e) << 23u) | (f & 0x7fffffu));\n\
-}}\n\
 fn sn16_load(b: vec4<i32>) -> vec4<f32> {{\n\
-\x20 return vec4<f32>(sn16_load1(b.x), sn16_load1(b.y), sn16_load1(b.z), sn16_load1(b.w));\n\
+\x20 return max(sn_r(vec4<f32>(b) * bitcast<f32>(0x{:08x}u), vec4<u32>(b + vec4<i32>(32768)) >> vec4<u32>(16u)), vec4<f32>(-1.0f));\n\
 }}\n\
 fn sn_r(p: vec4<f32>, z: vec4<u32>) -> vec4<f32> {{\n\
 \x20 return bitcast<vec4<f32>>(bitcast<vec4<u32>>(p) | z);\n\
@@ -560,7 +507,8 @@ fn sn_clamp(v: vec4<f32>) -> vec4<f32> {{\n\
 }}\n",
         table.join(", "),
         store(Width::Bits8.store_fn(), Width::Bits8),
-        store(Width::Bits16.store_fn(), Width::Bits16)
+        store(Width::Bits16.store_fn(), Width::Bits16),
+        resolve_rcp(Width::Bits16).to_bits()
     )
 }
 

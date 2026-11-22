@@ -280,7 +280,7 @@ pub(super) fn logic_ops(tree: &Tree) -> Hits {
 
 /// 8-bit SNORM render targets (2026-11-22: kura dropped every clear of and draw to them,
 /// WebGPU rendering to no SNORM format)
-const SNORM_SITES: [(&str, &str, &str); 36] = [
+const SNORM_SITES: [(&str, &str, &str); 40] = [
     ("crates/kura/src/d3d11/mod.rs", "logic::snorm_ms_page(fmt, dim, layers, mips, samples, bind)", "a multisampled SNORM texture is not its SINT twin on the page (WebGPU multisamples no SNORM format: 4x SNORM would be one sample)"),
     ("crates/kura/src/d3d11/logic.rs", "Some(blend) if ms && !sample_rate && blend.reads_dst() => Store::SnormStash { blend, mark },", "a multisampled SNORM blend that reads its target under a pixel-rate shader is not done per sample in the resolve pass"),
     ("crates/kura/src/d3d11/logic.rs", "gpu::SNORM_RESOLVE, tex, copy, stash, mark_tex, mask", "an SNORM stash's draw has no resolve pass after it"),
@@ -309,7 +309,11 @@ const SNORM_SITES: [(&str, &str, &str); 36] = [
     ("crates/kura/src/d3d11/logic.rs", "13 => Some((f::P_RGBA16SI, [16, 16, 16, 16])),", "R16G16B16A16_SNORM views have no SINT twin (a draw to one is not clamped, rounded and blended as WARP does)"),
     ("crates/kura/src/d3d11/logic.rs", "37 => Some((f::P_RG16SI, [16, 16, 0, 0])),", "R16G16_SNORM views have no SINT twin"),
     ("crates/kura/src/d3d11/logic.rs", "58 => Some((f::P_R16SI, [16, 0, 0, 0])),", "R16_SNORM views have no SINT twin"),
-    ("crates/dxwgsl/src/snorm.rs", "fn sn16_load1(q: i32) -> f32", "the shader's 16-bit SNORM load divides in floats (WGSL's division is not exact); it divides the integers (load16_by_division)"),
+    ("crates/dxwgsl/src/snorm.rs", "Width::Bits16 => (kome::num::to_f32(q) * resolve_rcp(w)).max(-1.0),", "a 16-bit SNORM value is read as the quotient, not WARP's product with the f32 nearest 1/32767 (winref d3d11snorm2's load rows: 24 of 1024 differ)"),
+    ("crates/dxwgsl/src/snorm.rs", "return max(sn_r(vec4<f32>(b) * bitcast<f32>(0x{:08x}u), vec4<u32>(b + vec4<i32>(32768)) >> vec4<u32>(16u)), vec4<f32>(-1.0f));", "the shader's 16-bit SNORM load is not WARP's product with 1/32767, kept from fusing"),
+    ("crates/kura/src/d3d11/format.rs", "dxwgsl::snorm::load_in(dxwgsl::snorm::Width::Bits16, i32::from(v.cast_signed()))", "16-bit SNORM texels uploaded to the page are other floats than WARP reads (the quotient, not load_in's product)"),
+    ("crates/sake/src/k32.rs", "const CONSOLE_PIECE: usize = 65536;", "a console line of more than 4096 bytes is cut in two (winref d3d11snorm2's R16G16B16A16 sweep then differs from Windows')"),
+    ("crates/dxwgsl/src/snorm_tests.rs", "fn warp_answers16()", "the 16-bit SNORM, ClearView and typeless MSAA answers of winref d3d11snorm2 are no longer checked"),
     ("crates/kura/src/d3d9/gpu.rs", "Convert::Sint16ToSnorm16 => format!(\"sn16_load({v})\"),", "a 16-bit SNORM twin's values go back to the page as other floats than their quotients"),
     ("crates/kura/src/d3d11/logic.rs", "let load = twin_copy(tex, sub, twin, 0, w, h, own, page, ms)?;", "an SNORM twin is not loaded by twin_copy (a 16-bit page's floats or a multisampled typeless page's bytes copied as bits)"),
     ("crates/kura/src/d3d11/logic.rs", "let tex = match twins.iter().find(|t| t.target == l.target) {", "an SNORM stash's resolve writes the target's page texture, not the twin the draw loads and stores"),
