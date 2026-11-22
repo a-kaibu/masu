@@ -1,0 +1,4 @@
+first: waiting for the main thread
+main: ExitThread(5)
+first: main thread ended 1 with 5
+second: the first worker ended with 3, the main thread too
