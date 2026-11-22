@@ -117,3 +117,40 @@ test("property: any order of copies ending and closes gives each slot back once"
     ).toEqual(copies.map((c) => c.buf).sort((a, b) => a - b));
   }
 });
+
+test("a support answer that comes after stop() or after the stream closed makes no decoder (review 22bb061 §5)", async () => {
+  for (const ending of ["stopped", "closed", "reopened", "live"] as const) {
+    let made = 0;
+    let answer!: (v: { supported: boolean }) => void;
+    const real = (globalThis as { VideoDecoder?: unknown }).VideoDecoder;
+    (globalThis as { VideoDecoder?: unknown }).VideoDecoder = Object.assign(
+      function () {
+        made++;
+        return { configure() {}, close() {}, state: "configured" };
+      },
+      { isConfigSupported: () => new Promise((ok) => (answer = ok)) },
+    );
+    try {
+      const k = new FakeKura();
+      const v = new Video(k, () => {}, open, false) as unknown as {
+        streams: Map<number, unknown>;
+        configure(s: unknown, ptr: number): Promise<void>;
+        stop(): void;
+      };
+      const s = {
+        ...stream(5),
+        tracks: [{ codec: "avc1.42E01E", out: new Map(), frames: new Uint32Array(3) }],
+      };
+      v.streams.set(5, s);
+      const configuring = v.configure(s, 0);
+      if (ending === "stopped") v.stop();
+      if (ending === "closed") v.streams.delete(5);
+      if (ending === "reopened") v.streams.set(5, { ...stream(5) });
+      answer({ supported: true });
+      await configuring;
+      expect(made, ending).toBe(ending === "live" ? 1 : 0);
+    } finally {
+      (globalThis as { VideoDecoder?: unknown }).VideoDecoder = real;
+    }
+  }
+});

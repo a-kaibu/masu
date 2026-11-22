@@ -179,3 +179,19 @@ test("the page's key handler asks where each key goes", () => {
   ).toEqual([]);
   expect(run("const other = 1;")).toEqual(["play.ts: missing declaration key"]);
 });
+
+test("the decoders end with a Lifetime, not a flag of their own", () => {
+  const files = {
+    "/src/video.ts": "export class Video { private stopped = false; private life = 1; }",
+    "/src/adec.ts": "export class AudioDecode { private life = 1; }",
+  };
+  const options = { noLib: true, module: ts.ModuleKind.ESNext };
+  const host = ts.createCompilerHost(options);
+  host.fileExists = (f) => f in files;
+  host.directoryExists = (dir) => dir === "/src";
+  host.getSourceFile = (f) =>
+    files[f] === undefined ? undefined : ts.createSourceFile(f, files[f], ts.ScriptTarget.Latest, true);
+  expect(
+    check(ts.createProgram(Object.keys(files), options, host)).filter((f) => f.includes("field")),
+  ).toEqual(['/src/video.ts:1: no "stopped" field: a Lifetime']);
+});

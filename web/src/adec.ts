@@ -10,6 +10,7 @@
 
 import { watchDoorbell } from "./doorbell";
 import { memGate, type Gate } from "./memgate";
+import { Lifetime } from "./session";
 
 export interface AdecWasm {
   wasmMemory: WebAssembly.Memory;
@@ -101,7 +102,8 @@ export class AudioDecode {
     if (watch) void this.watch();
   }
 
-  private stopped = false;
+  /** the process's: over once it ended (stop) */
+  private readonly life = new Lifetime();
 
   private watch(): Promise<void> {
     return watchDoorbell(
@@ -109,14 +111,14 @@ export class AudioDecode {
       this.doorbell,
       () => this.tick(),
       this.note,
-      () => this.stopped,
+      () => this.life.over,
       "adec",
     );
   }
 
   /** The process ended (play.ts): no more looks, and the decoders closed. */
   stop(): void {
-    this.stopped = true;
+    this.life.end();
     for (const s of this.streams.values()) this.drop(s);
     this.streams.clear();
     for (const [, d] of this.held.splice(0)) d.close();
@@ -124,6 +126,7 @@ export class AudioDecode {
 
   /** New and closed streams, and chunks to feed (on each doorbell). */
   tick(): void {
+    if (this.life.over) return;
     // (a save state is being taken: the memory stays as it is; the next doorbell looks again)
     if (this.gate.closed) return;
     // (every open stream: page after page of MAX until a short one; only a stream on none of
