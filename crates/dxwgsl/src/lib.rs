@@ -13,6 +13,7 @@ pub mod addr;
 pub mod d3d9;
 pub mod d3d9ff;
 pub mod dxbc;
+pub mod logic;
 pub mod tpf;
 mod wgsl;
 
@@ -71,6 +72,9 @@ pub enum Binding {
     /// elements (raw views: its bytes), 0; for a LoadTexture binding: the SRV's first level,
     /// its level count, 0, 0
     BufferRanges(Vec<u32>),
+    /// a pixel shader target's copy (crate::logic, LOGIC_DST + its slot): the texel the target
+    /// held before the primitive; multisampled or not
+    LogicDst(bool),
 }
 
 pub struct Wgsl {
@@ -85,7 +89,7 @@ pub fn translate(code: &[u8], pixel: bool, ps: Option<&[u8]>) -> Result<Wgsl, St
     crate::wgsl::translate(code, pixel, ps)
 }
 
-pub use crate::wgsl::{BUFFER_RANGES, LOAD_TEXTURES, translate_addr, translate_compute, translate_point_sprite, thread_group, uav_slots, GsDecl, Phase, TessDecl, TessFactor, PATCH_CONSTANTS};
+pub use crate::wgsl::{BUFFER_RANGES, LOAD_TEXTURES, translate_addr, translate_logic, translate_compute, translate_point_sprite, thread_group, uav_slots, GsDecl, Phase, TessDecl, TessFactor, PATCH_CONSTANTS};
 /// Geometry shaders, stream output and clipper counts as compute passes (wgsl/expand.rs).
 pub use crate::wgsl::expand;
 

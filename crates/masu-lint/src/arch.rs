@@ -46,6 +46,7 @@ pub enum Rule {
     WgslLoadBounds,
     ClearRounding,
     PsQuads,
+    LogicOps,
     D3d9Status,
     LoadEveryLevel,
     ConsoleLines,
@@ -72,7 +73,7 @@ pub enum Rule {
 }
 
 impl Rule {
-    pub const ALL: [Rule; 52] = [
+    pub const ALL: [Rule; 53] = [
         Rule::BuildOutput,
         Rule::HresultCopy,
         Rule::KomeCopy,
@@ -102,6 +103,7 @@ impl Rule {
         Rule::WgslLoadBounds,
         Rule::ClearRounding,
         Rule::PsQuads,
+        Rule::LogicOps,
         Rule::D3d9Status,
         Rule::LoadEveryLevel,
         Rule::ConsoleLines,
@@ -159,6 +161,7 @@ impl Rule {
             Rule::WgslLoadBounds => "wgsl-load-bounds",
             Rule::ClearRounding => "clear-rounding",
             Rule::PsQuads => "ps-quads",
+            Rule::LogicOps => "logic-ops",
             Rule::D3d9Status => "d3d9-status-codes",
             Rule::LoadEveryLevel => "load-every-level",
             Rule::ConsoleLines => "console-lines",
@@ -216,6 +219,7 @@ impl Rule {
             Rule::WgslLoadBounds => "a texel fetch outside its texture is 0 in Direct3D (2026-11-21: ld gave WGSL's texel there): dxwgsl writes textureLoad only as select(zero, textureLoad(..), address in bounds), on one line",
             Rule::ClearRounding => "Windows clears 16-bit and 11/10-bit float channels toward zero (2026-11-21: kura rounded them to the nearest, winref d3d11clear): kura's clear.rs makes them with f16_rtz / rtz_bits, never format::f16_bits",
             Rule::PsQuads => "PSInvocations is whole 2x2 quads of the rasterized triangles and, for a line, 2 for each quad WARP's line rasterizer visits (2026-11-21: kura answered the occlusion samples; lines were counted by the quads they light): dxwgsl's clip pass adds ps_pairs to counter PS_PAIRS, kura's PIPELINE_STATISTICS reads c::PS_PAIRS, a line is counted by line_visits / ps_line_visits and a triangle by its edge DDA's spans (spans / ps_edge_x, BigEdgeIterator's big_edge_x / ps_big_edge_x past ±2^20); ps_tests.rs checks the spans against exact geometry and shaderconf's ps_cases runs the WGSL against the Rust rule on WebGPU",
+            Rule::LogicOps => "Direct3D 11.1 logic ops are applied, not refused (2026-11-22: kura answered OutputMergerLogicOp 0 and drew logic-op blend states as plain writes; WARP answers 1): D3D11_OPTIONS answers every BOOL from 0, the pixel shader of a draw with logic ops is dxwgsl::translate_logic (logic_output reads the target's copy at LOGIC_DST), a draw reading its target is split by logic::split after a copy of it, and the ops are checked against D3D11_LOGIC_OP's table (dxwgsl logic_tests.rs) and on Windows (winref d3d11logic)",
             Rule::D3d9Status => "a Direct3D 9 status code is d3d9.h's (2026-11-21: D3DOK_NOAUTOGEN was 0x0876_087f, not MAKE_D3DSTATUS(2159) = 0x0876_086f, and its tests copied it; winref d3d9tex): a D3DERR_/D3DOK_/S_ const in kura's d3d9 or sake's d3dx9 has the value regress::D3D9_CODES gives its name, and a new name is added there from the header",
             Rule::LoadEveryLevel => "ld by level reads a view of every level of the texture, the SRV's first level added in the shader (2026-11-21: SwiftShader's textureLoad of a level below a view's base level reads level 2 * base, winref d3d11minlod's load row): dxwgsl's load() reads tl<t> at bv.l<t>, kura binds it with load_texture_entry and fills it with load_texture_levels",
             Rule::ConsoleLines => "the program's console output goes through k32::console_write, a line at a time (2026-11-21: crt's printf wrote with eprint!, and a line split in two where the program waited for the GPU, winref d3d9tex): no eprint! in crates/sake/src",
@@ -274,6 +278,7 @@ impl Rule {
             Rule::WgslLoadBounds => regress::wgsl_load_bounds(tree),
             Rule::ClearRounding => regress::clear_rounding(tree),
             Rule::PsQuads => regress::ps_quads(tree),
+            Rule::LogicOps => regress::logic_ops(tree),
             Rule::D3d9Status => regress::d3d9_status(tree),
             Rule::LoadEveryLevel => regress::load_every_level(tree),
             Rule::ConsoleLines => regress::console_lines(tree),

@@ -234,6 +234,37 @@ pub(super) fn ps_quads(tree: &Tree) -> Hits {
     out
 }
 
+// --- logic-ops -------------------------------------------------------------------------------
+
+/// Direct3D 11.1's logic ops (2026-11-22: kura answered OutputMergerLogicOp 0 and drew a
+/// logic-op blend state as a plain write, known.txt holding WARP's 1 as a difference)
+const LOGIC_SITES: [(&str, &str, &str); 8] = [
+    ("crates/kura/src/d3d11/mod.rs", "for k in 0..10 {", "D3D11_OPTIONS does not answer every BOOL from OutputMergerLogicOp (0) on"),
+    ("crates/kura/src/d3d11/mod.rs", "dxwgsl::translate_logic(", "the pixel shader of a draw with logic ops is not dxwgsl::translate_logic"),
+    ("crates/kura/src/d3d11/mod.rs", "logic::targets(", "a draw's logic ops are not taken from its blend state (logic::targets)"),
+    ("crates/kura/src/d3d11/mod.rs", "logic::split(&w, &copies,", "a draw reading its target is not split by primitive after the target's copy (logic::split)"),
+    ("crates/dxwgsl/src/wgsl.rs", "Some(l) => logic_output(", "a logic target's output does not go through logic_output"),
+    ("crates/dxwgsl/src/wgsl.rs", "crate::logic::LOGIC_DST", "logic_output does not read the target's copy at LOGIC_DST"),
+    ("crates/dxwgsl/src/logic.rs", "#[path = \"logic_tests.rs\"]", "the ops are no longer checked against D3D11_LOGIC_OP's table (logic_tests.rs)"),
+    ("crates/kura/src/d3d11/logic.rs", "#[path = \"logic_tests.rs\"]", "the targets and primitives of a logic draw are no longer tested (logic_tests.rs)"),
+];
+
+/// logic ops refused or drawn as plain writes
+pub(super) fn logic_ops(tree: &Tree) -> Hits {
+    let mut out = Hits::new();
+    for (path, needle, why) in LOGIC_SITES {
+        let f = Rel::new(path);
+        if tree.is_made_up() && !tree.has(&f) {
+            continue;
+        }
+        let code = tree.code(&f, true);
+        if !code.contains(needle) {
+            out.push((f, 1, why.to_owned()));
+        }
+    }
+    out
+}
+
 // --- d3d9-status-codes ------------------------------------------------------------------------
 
 /// d3d9.h's codes by name: MAKE_D3DHRESULT(code) = 0x8876_0000 | code (D3DERR_), MAKE_D3DSTATUS

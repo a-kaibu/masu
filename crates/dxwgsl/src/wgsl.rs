@@ -2434,14 +2434,21 @@ fn texture_type(dim: u32, k: K, depth: bool) -> R<(String, u32)> {
 
 /// DXBC (shader model 4/5) to WGSL; `ps`: the pixel shader a vertex shader feeds.
 pub fn translate(code: &[u8], pixel: bool, ps: Option<&[u8]>) -> R<Wgsl> {
-    translate_with(code, pixel, ps, None, &[])
+    translate_with(code, pixel, ps, None, &[], &[])
 }
 
 /// [`translate`] for samplers with BORDER / MIRROR_ONCE addressing (`addr`, by sampler
 /// register): what they sample at and the border (crate::addr). For 2D textures and arrays
 /// sampled without offsets or comparison; the rest samples as the sampler does (clamped).
 pub fn translate_addr(code: &[u8], pixel: bool, ps: Option<&[u8]>, addr: &[crate::addr::Addr]) -> R<Wgsl> {
-    translate_with(code, pixel, ps, None, addr)
+    translate_with(code, pixel, ps, None, addr, &[])
+}
+
+/// [`translate_addr`] of a pixel shader whose targets `logic` have logic operations
+/// (crate::logic): each such output read against its target's copy and written as the op's
+/// result.
+pub fn translate_logic(code: &[u8], addr: &[crate::addr::Addr], logic: &[crate::logic::Logic]) -> R<Wgsl> {
+    translate_with(code, true, None, None, addr, logic)
 }
 
 /// Point sprites (what ANGLE's point sprite geometry shader does, for a page without geometry
@@ -2450,7 +2457,7 @@ pub fn translate_addr(code: &[u8], pixel: bool, ps: Option<&[u8]>, addr: &[crate
 /// output (PSIZE, clamped to 1..`max_size`) in pixels. The viewport's half size comes in a
 /// uniform at binding 15 of group 0 (xy).
 pub fn translate_point_sprite(code: &[u8], ps: Option<&[u8]>, max_size: f32) -> R<Wgsl> {
-    translate_with(code, false, ps, Some(max_size), &[])
+    translate_with(code, false, ps, Some(max_size), &[], &[])
 }
 
 /// The typed UAVs a compute shader declares: (slot, dimension as dcl_uav_typed has it (2 1D,
@@ -2701,7 +2708,7 @@ fn module_decls(w: &mut W, m: &mut String, bindings: &mut Vec<(u32, Binding)>, g
     Ok(())
 }
 
-fn translate_with(code: &[u8], pixel: bool, ps: Option<&[u8]>, sprite: Option<f32>, addr: &[crate::addr::Addr]) -> R<Wgsl> {
+fn translate_with(code: &[u8], pixel: bool, ps: Option<&[u8]>, sprite: Option<f32>, addr: &[crate::addr::Addr], logic: &[crate::logic::Logic]) -> R<Wgsl> {
     let (c, p) = parse(code)?;
     if p.kind != if pixel { tpf::PIXEL } else { tpf::VERTEX } {
         return Err(format!("program type {} for a {} shader", p.kind, if pixel { "pixel" } else { "vertex" }));
@@ -2762,7 +2769,11 @@ fn translate_with(code: &[u8], pixel: bool, ps: Option<&[u8]>, sprite: Option<f3
         for &r in w.outputs.keys() {
             let k = sig_k(&w.osgn, r);
             fields.push(format!("@location({r}) c{r}: {}", vty(k, 4)));
-            post.push(if k == K::U { format!("out.c{r} = o{r};") } else { format!("out.c{r} = bitcast<vec4<{}>>(o{r});", k.s()) });
+            match logic.iter().find(|l| l.target == r) {
+                // (a logic op: the output's bits, an unsigned integer target's)
+                Some(l) => logic_output(l, r, k, &mut params, &mut post, &mut m, &mut bindings),
+                None => post.push(if k == K::U { format!("out.c{r} = o{r};") } else { format!("out.c{r} = bitcast<vec4<{}>>(o{r});", k.s()) }),
+            }
         }
         if w.depth_out {
             fields.push("@builtin(frag_depth) depth: f32".into());
@@ -2874,6 +2885,32 @@ fn translate_with(code: &[u8], pixel: bool, ps: Option<&[u8]>, sprite: Option<f3
     }
     m.push_str("}\n");
     Ok(Wgsl { code: m, bindings })
+}
+
+/// A target's output under its logic op (crate::logic): the source saturated to the channels'
+/// widths, the destination from the target's copy at the pixel (the sample, multisampled), the
+/// op's result within the channels. The pixel's position and sample index are the entry point's
+/// own parameters when the shader reads them already.
+fn logic_output(l: &crate::logic::Logic, r: u32, k: K, params: &mut Vec<String>, post: &mut Vec<String>, m: &mut String, bindings: &mut Vec<(u32, Binding)>) {
+    let b = crate::logic::LOGIC_DST.saturating_add(r);
+    let ty = if l.multisampled { "texture_multisampled_2d<u32>" } else { "texture_2d<u32>" };
+    m.push_str(&format!("@group(1) @binding({b}) var lgd{r}: {ty};\n"));
+    bindings.push((b, Binding::LogicDst(l.multisampled)));
+    let builtin = |params: &mut Vec<String>, what: &str, name: &str, ty: &str| -> String {
+        let found = params.iter().find(|p| p.contains(&format!("@builtin({what})"))).and_then(|p| p.split_whitespace().nth(1)).map(|n| n.trim_end_matches(':').to_owned());
+        found.unwrap_or_else(|| {
+            params.push(format!("@builtin({what}) {name}: {ty}"));
+            name.to_owned()
+        })
+    };
+    let pos = builtin(params, "position", "lg_pos", "vec4<f32>");
+    let index = if l.multisampled { builtin(params, "sample_index", "lg_si", "u32") } else { "0".to_owned() };
+    let max: Vec<String> = l.bits.iter().map(|&b| format!("{}u", crate::logic::channel_max(b))).collect();
+    let max = format!("vec4<u32>({})", max.join(", "));
+    post.push(format!("let lg_s{r} = min(o{r}, {max});"));
+    post.push(format!("let lg_d{r} = select(vec4<u32>(), textureLoad(lgd{r}, vec2<i32>({pos}.xy), {index}), all(vec2<u32>({pos}.xy) < textureDimensions(lgd{r}))) & {max};"));
+    let v = l.op.wgsl(&format!("lg_s{r}"), &format!("lg_d{r}"));
+    post.push(if k == K::U { format!("out.c{r} = {v} & {max};") } else { format!("out.c{r} = bitcast<vec4<{}>>({v} & {max});", k.s()) });
 }
 
 pub mod expand;

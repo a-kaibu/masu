@@ -85,9 +85,6 @@ d3d11tex-* ^(want|got) +format (85|86) row
 # the planar and packed video formats (NV12, P010, P016, YUY2, Y210, Y216): kura makes no
 # texture of them (check.rs UNKEPT: the page keeps none), WARP makes one and refuses its view
 d3d11tex-* ^(want|got) +format 10[3-9]: 
-# OutputMergerLogicOp: the page has no logic ops (WebGPU has none), so kura says 0 (WARP 1);
-# CreateBlendState1 still takes them as Windows does
-d3d11copy-* ^(want|got) +options logic_op 
 d3d11copy-* ^(want|got) +depth R32_FLOAT D32_FLOAT   # WebGPU's depth32float holds 0..1 only (frag_depth clamps, NaN undefined): the probe's NaN/inf/out-of-range bits do not survive; 0..1 values do ("depth in01" lines)
 # WARP flushes float denormals on every operation (abs(denormal) = 0, clamp to -0); WebGPU
 # leaves denormals to the GPU and sake does not flush them but in log; log2 just below 1 is

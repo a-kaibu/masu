@@ -326,11 +326,12 @@ fn buffer_cases() -> Result<Vec<String>, String> {
 
 #[cfg(test)]
 mod tests {
-    /// (the cases build: every variant compiles and translates, the fixtures are there)
+    /// (the cases build: every variant compiles and translates, the fixtures are there; 11
+    /// buffer cases and the clip pass's 7 ps_cases)
     #[test]
     fn compute_cases_build() {
         let s = super::cases().unwrap();
-        assert_eq!(s.matches("\"dispatch\"").count(), 11);
+        assert_eq!(s.matches("\"dispatch\"").count(), 18);
     }
 }
 

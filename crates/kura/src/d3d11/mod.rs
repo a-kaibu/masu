@@ -15,6 +15,7 @@ mod deferred;
 pub mod query;
 pub mod check;
 mod expand;
+mod logic;
 pub mod tess;
 mod clear;
 pub mod format;
@@ -337,7 +338,7 @@ pub struct Shader {
     /// page shader and bindings, per pixel shader for vertex shaders (key 0 otherwise)
     /// by the pixel shader a vertex shader feeds (see shader_for) and the samplers addressing
     /// as WebGPU's don't (dxwgsl::addr)
-    pub wgsl: HashMap<(u32, Vec<dxwgsl::addr::Addr>), Option<(u32, Vec<(u32, dxwgsl::Binding)>)>>,
+    pub wgsl: HashMap<(u32, Vec<dxwgsl::addr::Addr>, Vec<dxwgsl::logic::Logic>), Option<(u32, Vec<(u32, dxwgsl::Binding)>)>>,
     /// CreateGeometryShaderWithStreamOutput's (`code` a geometry or a vertex shader's)
     pub so: Option<expand::SoDesc>,
 }
@@ -510,6 +511,9 @@ pub struct D11 {
     /// shader declares) -> the page buffer holding those bytes, zeros past the buffer's end
     /// (as Direct3D reads them), and the bytes last written to it
     cb_copies: HashMap<(u32, u32, u32), (u32, Vec<u8>)>,
+    /// the page textures logic ops read their targets' copies from (logic.rs): by the target's
+    /// level size, page format, multisampled
+    logic_scratch: HashMap<(u32, u32, u32, bool), u32>,
     /// page buffers of raw and structured views' ranges (BUFFER_RANGES uniforms), by bytes
     view_ranges: HashMap<Vec<u8>, u32>,
     /// the page buffers bound where no raw or structured view (or no counter) is: read-only,
@@ -875,6 +879,7 @@ pub unsafe fn init(vtbls: *const u32, count: u32) -> u32 {
                 pipelines: HashMap::new(),
                 sprite_view: (0, [0.0; 2]),
                 cb_copies: HashMap::new(),
+                logic_scratch: HashMap::new(),
                 view_ranges: HashMap::new(),
                 null_views: [0; 2],
                 targets: None,
@@ -2527,8 +2532,8 @@ unsafe fn device_call(d: &mut D11, m: u32, this: u32, a: &dyn Fn(usize) -> u32) 
                 wr(a(2), 0, 1);
             }
             // D3D11_OPTIONS (BOOLs), what the device and context do, as WARP answers (winref
-            // d3d11cb1) but LogicOp (0: WebGPU blends with no logic operation):
-            // OutputMergerLogicOp 0, UAVOnlyRenderingForcedSampleCount 1 (ForcedSampleCount
+            // d3d11cb1): OutputMergerLogicOp 0 (logic.rs and dxwgsl::logic: the pixel shader
+            // applies the op to its target's copy), UAVOnlyRenderingForcedSampleCount 1 (ForcedSampleCount
             // taken), DiscardAPIsSeenByDriver 2 (Discard*), FlagsForUpdateAndCopySeenByDriver 3
             // (CopySubresourceRegion1 / UpdateSubresource1 flags), ClearView 4,
             // CopyWithOverlap 5 (the page copies a box within its subresource through a buffer),
@@ -2536,7 +2541,7 @@ unsafe fn device_call(d: &mut D11, m: u32, this: u32, a: &dyn Fn(usize) -> u32) 
             // cb_binding), MapNoOverwriteOnDynamicConstantBuffer 8 and
             // MapNoOverwriteOnDynamicBufferSRV 9 (Map NO_OVERWRITE of any dynamic buffer)
             if a(1) == 5 && a(3) >= 40 {
-                for k in 1..10 {
+                for k in 0..10 {
                     // SAFETY: wr's own contract: the caller's D3D11_FEATURE_DATA_D3D11_OPTIONS of
                     // a(3) >= 40 bytes
                     unsafe { wr(a(2), k, 1) };
@@ -3820,6 +3825,32 @@ fn view_size(d: &D11, v: u32) -> Option<(u32, u32)> {
 }
 
 /// A render target or depth view's page texture, level and layer.
+/// The page pipeline of `key`, made the first time.
+fn pipeline_of(d: &mut D11, key: PipelineKey) -> u32 {
+    match d.pipelines.get(&key) {
+        Some(&p) => {
+            crate::render::gpu::pipeline_hit();
+            p
+        }
+        None => {
+            let id = page_id();
+            let mut c = vec![gpu::CREATE_PIPELINE2, id, lo32(key.desc.len())];
+            c.extend_from_slice(&key.desc);
+            gpu::record(|q| q.cmd(&c));
+            d.pipelines.insert(key, id);
+            id
+        }
+    }
+}
+
+/// A render target view's texture as the page has it: (texture, level, layer, multisampled,
+/// the level's width and height, page format).
+fn target_texture(d: &D11, v: u32) -> Option<(u32, u32, u32, bool, u32, u32, u32)> {
+    let Some(Data::View(v)) = d.objs.get(&v).map(|o| &o.data) else { return None };
+    let Some(Data::Texture(t)) = d.objs.get(&v.res).map(|o| &o.data) else { return None };
+    Some((t.gpu, v.mip, v.layer, t.samples.0 > 1, (t.w >> v.mip).max(1), (t.h >> v.mip).max(1), t.page))
+}
+
 fn view_target(d: &D11, v: u32) -> Option<(u32, u32, u32)> {
     let Some(Data::View(v)) = d.objs.get(&v).map(|o| &o.data) else { return None };
     let Some(Data::Texture(t)) = d.objs.get(&v.res).map(|o| &o.data) else { return None };
@@ -4342,7 +4373,7 @@ unsafe fn source_bytes(d: &mut D11, id: u32, sub: u32, b: [u32; 6]) -> Option<u3
 /// A shader's page shader and bindings (translated on first use; vertex shaders per pixel shader).
 /// `samplers`: a pixel shader's (those with BORDER or MIRROR_ONCE addressing: the shader does it;
 /// those with a point mip filter: the shader rounds explicit levels)
-fn shader_for(d: &mut D11, sh: u32, ps: u32, sprite: Option<f32>, samplers: &[u32]) -> Option<(u32, Vec<(u32, dxwgsl::Binding)>)> {
+fn shader_for(d: &mut D11, sh: u32, ps: u32, sprite: Option<f32>, samplers: &[u32], logic: &[dxwgsl::logic::Logic]) -> Option<(u32, Vec<(u32, dxwgsl::Binding)>)> {
     let mut addr = Vec::new();
     if matches!(d.objs.get(&sh).map(|o| &o.data), Some(Data::Shader(s)) if s.pixel) {
         for (n, &id) in samplers.iter().enumerate() {
@@ -4359,7 +4390,7 @@ fn shader_for(d: &mut D11, sh: u32, ps: u32, sprite: Option<f32>, samplers: &[u3
     }
     // (point sprite variants of a vertex shader: the pixel shader's id with the top bit set)
     let Some(Data::Shader(s)) = d.objs.get(&sh).map(|o| &o.data) else { return None };
-    let key = (if s.pixel { 0 } else if sprite.is_some() { ps | 0x8000_0000 } else { ps }, addr);
+    let key = (if s.pixel { 0 } else if sprite.is_some() { ps | 0x8000_0000 } else { ps }, addr, if s.pixel { logic.to_vec() } else { Vec::new() });
     if let Some(r) = s.wgsl.get(&key) {
         return r.clone();
     }
@@ -4372,6 +4403,7 @@ fn shader_for(d: &mut D11, sh: u32, ps: u32, sprite: Option<f32>, samplers: &[u3
     let Some(Data::Shader(s)) = d.objs.get_mut(&sh).map(|o| &mut o.data) else { return None };
     let w = match sprite {
         Some(max) if !s.pixel => dxwgsl::translate_point_sprite(&s.code, ps_code.as_deref(), max),
+        _ if s.pixel && !key.2.is_empty() => dxwgsl::translate_logic(&s.code, &key.1, &key.2),
         _ => dxwgsl::translate_addr(&s.code, s.pixel, if s.pixel { None } else { ps_code.as_deref() }, &key.1),
     };
     let r = match w {
@@ -4689,10 +4721,9 @@ unsafe fn draw_with(d: &mut D11, st: &State, indexed: bool, count: u32, instance
     let (count, instances, start, first_instance) = if sprite.is_some() { (6, count, 0, start) } else { (count, instances, start, first_instance) };
     let shaders = match store {
         Some(sd) => Some(sd.vs.clone()),
-        None => shader_for(d, st.vs, st.ps, sprite, &[]),
+        None => shader_for(d, st.vs, st.ps, sprite, &[], &[]),
     };
     let Some((vs, vb)) = shaders else { return };
-    let ps = if st.ps != 0 { shader_for(d, st.ps, 0, None, &st.samplers[1]) } else { None };
     if trace2() {
         // the first vertices and the vertex shader's constants
         let words = |id: u32, from: u32, n: u32| -> Vec<String> {
@@ -4730,6 +4761,11 @@ unsafe fn draw_with(d: &mut D11, st: &State, indexed: bool, count: u32, instance
             break;
         }
     }
+    // logic ops (logic.rs): the pixel shader's, by the targets' formats
+    let blend = state_desc(d, st.blend).cloned();
+    let multisampled: Vec<bool> = st.rtvs.iter().take(formats.len()).map(|&v| target_texture(d, v).is_some_and(|t| t.3)).collect();
+    let (logic_ops, logic_kept) = blend.as_ref().map_or_default(|b| logic::targets(b, &formats, &multisampled));
+    let ps = if st.ps != 0 { shader_for(d, st.ps, 0, None, &st.samplers[1], &logic_ops) } else { None };
     let depth = view_target(d, st.dsv);
     let depth_fmt = depth.and_then(|_| match d.objs.get(&st.dsv).map(|o| &o.data) {
         Some(Data::View(v)) => match d.objs.get(&v.res).map(|o| &o.data) {
@@ -4787,7 +4823,6 @@ unsafe fn draw_with(d: &mut D11, st: &State, indexed: bool, count: u32, instance
         // (more than WebGPU's 8: an invalid pipeline would lose the whole frame)
         return;
     }
-    let blend = state_desc(d, st.blend).cloned();
     let ds = state_desc(d, st.depth).cloned();
     let rs = state_desc(d, st.raster).cloned();
     let topo = match st.topology {
@@ -4869,25 +4904,18 @@ unsafe fn draw_with(d: &mut D11, st: &State, indexed: bool, count: u32, instance
     for (i, f) in formats.iter().enumerate() {
         let rt = if b[1] != 0 { i } else { 0 };
         let t = &b[2 + rt * 8..2 + rt * 8 + 8];
-        key.extend_from_slice(&[*f, t[0], blend_factor(t[1], false).code(), blend_factor(t[2], false).code(), t[3], blend_factor(t[4], true).code(), blend_factor(t[5], true).code(), t[6], t[7] & 0xf]);
+        // (a NOOP logic op: the target written with nothing)
+        let mask = if logic_kept.contains(&lo32(i)) { 0 } else { t[7] & 0xf };
+        key.extend_from_slice(&[*f, t[0], blend_factor(t[1], false).code(), blend_factor(t[2], false).code(), t[3], blend_factor(t[4], true).code(), blend_factor(t[5], true).code(), t[6], mask]);
     }
     // multisampling: AlphaToCoverageEnable, the sample mask (render::d3d pipeline2)
     key.extend_from_slice(&[b[0], st.sample_mask]);
-    let key = PipelineKey { fill, desc: key };
-    let pipe = match d.pipelines.get(&key) {
-        Some(&p) => {
-            crate::render::gpu::pipeline_hit();
-            p
-        }
-        None => {
-            let id = page_id();
-            let mut c = vec![gpu::CREATE_PIPELINE2, id, lo32(key.desc.len())];
-            c.extend_from_slice(&key.desc);
-            gpu::record(|q| q.cmd(&c));
-            d.pipelines.insert(key, id);
-            id
-        }
-    };
+    // (a strip's odd triangle drawn by itself for a logic op: its front face the other way)
+    let mut flipped = key.clone();
+    if let Some(k) = flipped.get_mut(5) {
+        *k ^= 1;
+    }
+    let pipe = pipeline_of(d, PipelineKey { fill, desc: key });
     // draw
     let mut w = vec![gpu::DRAW2, pipe];
     w.extend(st.viewport[0].iter().map(|f| f.to_bits()));
@@ -4930,8 +4958,11 @@ unsafe fn draw_with(d: &mut D11, st: &State, indexed: bool, count: u32, instance
     if sprite.is_some() {
         over.push(sprite_entry(d, st));
     }
+    // (the copies of the targets with logic ops that read them: the pixel shader's LogicDst)
+    let copies: Vec<logic::Copy> = logic_ops.iter().filter(|l| l.op.reads_dst()).filter_map(|l| logic::copy_of(d, st.rtvs.get(us(l.target)).copied().unwrap_or(0), l)).collect();
+    let ps_over: Vec<[u32; 8]> = copies.iter().map(|c| c.entry).collect();
     for (stage, binds) in [(0usize, &vb), (1usize, &ps.as_ref().map_or_default(|p| p.1.clone()))] {
-        let entries = bind_entries(d, st, stage, binds, if stage == 0 { &over } else { &[] }, &mut cbs_read);
+        let entries = bind_entries(d, st, stage, binds, if stage == 0 { &over } else { &ps_over }, &mut cbs_read);
         w.push(lo32(entries.len()));
         for e in entries {
             w.extend_from_slice(&e);
@@ -4997,8 +5028,20 @@ unsafe fn draw_with(d: &mut D11, st: &State, indexed: bool, count: u32, instance
         }
     }
     // (a wireframe draw's edges are a buffer of its own, gone after it: never the same)
-    w.push(if known && wire_buf.is_none() { h | 1 } else { 0 });
-    gpu::record(|q| q.cmd(&w));
+    w.push(if known && wire_buf.is_none() && copies.is_empty() { h | 1 } else { 0 });
+    if copies.is_empty() {
+        gpu::record(|q| q.cmd(&w));
+    } else {
+        let topo = if wire.is_some() { 1 } else { topo };
+        let cuts = if strip != 0 {
+            // SAFETY: draw_with's own contract (the bound index buffer's guest memory is mapped)
+            unsafe { logic::cuts(d, st, start, count) }
+        } else {
+            Vec::new()
+        };
+        let flip = pipeline_of(d, PipelineKey { fill, desc: flipped });
+        logic::split(&w, &copies, topo, &cuts, flip);
+    }
     if let Some(g) = wire_buf {
         gpu::record(|q| q.cmd(&[gpu::DESTROY_BUFFER, g]));
     }
@@ -5064,6 +5107,8 @@ fn bind_entries(d: &mut D11, st: &State, stage: usize, binds: &[(u32, dxwgsl::Bi
             dxwgsl::Binding::BufferView(_) => entries.push(buffer_view_binding(d, st, stage, *bi).0),
             dxwgsl::Binding::Counter => entries.push(counter_binding(d, st, stage, *bi)),
             dxwgsl::Binding::BufferRanges(list) => entries.push(ranges_binding(d, st, stage, list)),
+            // (the draw's copy of a target with a logic op is in `over`: without one, unbound)
+            dxwgsl::Binding::LogicDst(ms) => entries.push([*bi, 4, 0, if *ms { 6 } else { 1 }, 0, 1, 0, 1]),
         }
     }
     entries
@@ -5254,7 +5299,7 @@ fn compute_shader_for(d: &mut D11, cs: u32, fmts: &[(u32, u32)]) -> Option<(u32,
     let trace = d.trace;
     let Some(Data::Shader(s)) = d.objs.get_mut(&cs).map(|o| &mut o.data) else { return None };
     let key = fmts.iter().fold(0x811c_9dc5u32, |h, &(n, f)| (h ^ (n << 8 | f)).wrapping_mul(0x0100_0193));
-    let key = (key, Vec::new());
+    let key = (key, Vec::new(), Vec::new());
     if let Some(r) = s.wgsl.get(&key) {
         return r.clone();
     }
@@ -5378,6 +5423,8 @@ unsafe fn dispatch(d: &mut D11, st: &State, x: u32, y: u32, z: u32) {
             dxwgsl::Binding::BufferView(_) => buffer_view_binding(d, st, 5, *bi).0,
             dxwgsl::Binding::Counter => counter_binding(d, st, 5, *bi),
             dxwgsl::Binding::BufferRanges(list) => ranges_binding(d, st, 5, list),
+            // (pixel shaders only)
+            dxwgsl::Binding::LogicDst(ms) => [*bi, 4, 0, if *ms { 6 } else { 1 }, 0, 1, 0, 1],
         };
         w.extend_from_slice(&e);
     }
