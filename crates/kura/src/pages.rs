@@ -3,6 +3,11 @@
 //! its size, as a doubling Vec does (#234), and never moves what is already written. A page holds
 //! only what was written into it (bytes past its end, up to the file's length, read as zero), so
 //! a small file costs its size and a file made long by set_len costs nothing until written.
+//! Pages are shared between clones and copied only when one is written (copy on write): a save
+//! takes the files' pages under the VFS lock without copying their bytes, and encodes them after
+//! it lets go (review of 6852be1, stage 5).
+
+use std::sync::Arc;
 
 /// Bytes per page.
 pub const PAGE: usize = 1 << 20;
@@ -25,7 +30,7 @@ pub struct TooLong;
 pub struct Pages {
     len: u64,
     /// `ceil(len / PAGE)` pages; page `i` holds at most `min(PAGE, len - i * PAGE)` bytes.
-    pages: Vec<Vec<u8>>,
+    pages: Vec<Arc<Vec<u8>>>,
 }
 
 impl std::fmt::Debug for Pages {
@@ -40,13 +45,13 @@ impl Pages {
     }
 
     pub fn from_slice(b: &[u8]) -> Self {
-        Pages { len: b.len() as u64, pages: b.chunks(PAGE).map(<[u8]>::to_vec).collect() }
+        Pages { len: b.len() as u64, pages: b.chunks(PAGE).map(|c| Arc::new(c.to_vec())).collect() }
     }
 
     pub fn from_vec(v: Vec<u8>) -> Self {
         if v.len() <= PAGE {
             let len = v.len() as u64;
-            return Pages { len, pages: if v.is_empty() { Vec::new() } else { vec![v] } };
+            return Pages { len, pages: if v.is_empty() { Vec::new() } else { vec![Arc::new(v)] } };
         }
         Self::from_slice(&v)
     }
@@ -96,7 +101,8 @@ impl Pages {
             let at = off + done as u64;
             let (i, o) = page_location(at);
             let k = (PAGE - o).min(data.len() - done);
-            let page = &mut self.pages[i];
+            // (a page a clone shares is copied first: the clone keeps what it had)
+            let page = Arc::make_mut(&mut self.pages[i]);
             if page.len() < o + k {
                 let want = o + k;
                 if page.capacity() < want {
@@ -131,13 +137,14 @@ impl Pages {
             self.pages.truncate(count);
             if let Some(last) = self.pages.last_mut() {
                 let keep = (n - (count as u64 - 1) * PAGE as u64) as usize;
+                let last = Arc::make_mut(last);
                 last.truncate(keep);
                 if last.capacity() > 2 * keep.max(4096) {
                     last.shrink_to_fit();
                 }
             }
         } else {
-            self.pages.resize_with(count, Vec::new);
+            self.pages.resize_with(count, Arc::default);
         }
         self.len = n;
         Ok(())
@@ -164,9 +171,10 @@ impl Pages {
         v
     }
 
-    /// Bytes held in memory (what was written, not the file's length).
+    /// Bytes held in memory (what was written, not the file's length; a page shared with a
+    /// clone counts in each).
     pub fn held(&self) -> usize {
-        self.pages.iter().map(Vec::capacity).sum()
+        self.pages.iter().map(|p| p.capacity()).sum()
     }
 }
 
@@ -244,6 +252,49 @@ mod tests {
                 prop_assert!(&got[..k] == want);
             }
             prop_assert!(p.held() <= p.pages.len() * PAGE);
+        }
+
+        /// A clone taken at any point (a save's) keeps the bytes it had whatever is written to
+        /// or cut from either afterwards, and shares the pages neither wrote since.
+        #[test]
+        fn clones_keep_what_they_had(before in prop::collection::vec(op(), 0..10), after in prop::collection::vec((any::<bool>(), op()), 1..12)) {
+            let (mut p, mut m) = (Pages::new(), Vec::new());
+            for o in &before {
+                match o {
+                    Op::Write(at, d) => p.write(*at, d).unwrap(),
+                    Op::SetLen(n) => p.set_len(*n).unwrap(),
+                }
+                apply(&mut m, o);
+            }
+            let mut q = p.clone();
+            let mut mq = m.clone();
+            let mut touched = std::collections::HashSet::new();
+            let mut cut = usize::MAX;
+            for (on_clone, o) in &after {
+                let (x, mx) = if *on_clone { (&mut q, &mut mq) } else { (&mut p, &mut m) };
+                match o {
+                    Op::Write(at, d) => {
+                        x.write(*at, d).unwrap();
+                        if !d.is_empty() {
+                            touched.extend(page_location(*at).0..=page_location(*at + u64::try_from(d.len()).unwrap_or(0) - 1).0);
+                        }
+                    }
+                    Op::SetLen(n) => {
+                        x.set_len(*n).unwrap();
+                        // (a cut drops the pages past it: those after are new ones)
+                        cut = cut.min(page_location(*n).0);
+                    }
+                }
+                apply(mx, o);
+                prop_assert!(p.to_vec() == m, "the original changed by the clone's writes");
+                prop_assert!(q.to_vec() == mq, "the clone changed by the original's writes");
+            }
+            // (pages neither touched: still one page between them)
+            for (i, (a, b)) in p.pages.iter().zip(&q.pages).enumerate().take(cut) {
+                if !touched.contains(&i) && !a.is_empty() {
+                    prop_assert!(Arc::ptr_eq(a, b), "page {} copied though neither wrote it", i);
+                }
+            }
         }
 
         /// A file written in pieces holds the same bytes whatever order the pieces come in.

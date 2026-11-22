@@ -87,7 +87,7 @@ mod tests {
         Page,
         Upload,
         Lost,
-        /// a readback asked for now and answered (true) or failed, after the page wrote again
+        /// a readback asked for, then answered (true) or failed, after the page wrote again
         /// (second bool) or the guest did (third) or not
         Read(bool, bool, bool),
     }

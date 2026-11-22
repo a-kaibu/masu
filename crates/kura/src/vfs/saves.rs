@@ -237,9 +237,11 @@ fn record(b: &[u8]) -> Option<(Record, &[u8])> {
 }
 
 /// One record to write: what it says, borrowed from the namespace.
-enum Out<'a> {
-    File { mtime: i64, data: &'a crate::pages::Pages },
-    Gone(&'a Entry),
+/// (each its own: the bytes of a file in memory its pages, shared with the file until one of
+/// them is written, crate::pages: taken under the VFS lock, written out after it is let go)
+enum Out {
+    File { mtime: i64, data: crate::pages::Pages },
+    Gone(Entry),
     Put(Entry),
     Mode(u32),
 }
@@ -247,14 +249,14 @@ enum Out<'a> {
 /// A record and its name, in the order they are put back: names gone first (deepest first: a
 /// directory's names before it), then directories made (parents first), the other names,
 /// the files in memory, their modes.
-pub(super) struct Saved<'a> {
+pub(super) struct Saved {
     rank: (u8, std::cmp::Reverse<String>, String),
     path: String,
-    what: Out<'a>,
+    what: Out,
 }
 
-impl Saved<'_> {
-    fn new(path: String, what: Out<'_>) -> Saved<'_> {
+impl Saved {
+    fn new(path: String, what: Out) -> Saved {
         let rank = match &what {
             Out::Gone(_) => (0, std::cmp::Reverse(path.clone()), String::new()),
             Out::Put(Entry { kind: Kind::Dir, .. }) => (1, std::cmp::Reverse(String::new()), path.clone()),
@@ -362,8 +364,8 @@ impl Fs {
     }
 
     /// The records for what changed under each of `roots`, each once, in the order they go back.
-    pub(super) fn saved(&self, roots: &[String]) -> Vec<Saved<'_>> {
-        let mut out: BTreeMap<String, Vec<Saved<'_>>> = BTreeMap::new();
+    pub(super) fn saved(&self, roots: &[String]) -> Vec<Saved> {
+        let mut out: BTreeMap<String, Vec<Saved>> = BTreeMap::new();
         for root in roots {
             let mut now: HashMap<String, Family> = HashMap::new();
             let mut here = Vec::new();
@@ -379,7 +381,7 @@ impl Fs {
                     }
                     None => {
                         let Data::File(Content::Upper(data)) = &n.data else { return };
-                        here.push(Saved::new(p.to_owned(), Out::File { mtime: n.mtime, data }));
+                        here.push(Saved::new(p.to_owned(), Out::File { mtime: n.mtime, data: data.clone() }));
                         // (put_file keeps the mode of the file it writes into, else gives FILE_MODE)
                         let given = was.filter(|w| w.kind.family() == Family::File).map_or(FILE_MODE, |w| w.mode);
                         if n.mode != given {
@@ -393,7 +395,7 @@ impl Fs {
             let gone = self.base.range::<str, _>((std::ops::Bound::Included(root.as_str()), std::ops::Bound::Unbounded)).take_while(|(p, _)| under(p, root));
             for (p, was) in gone {
                 if now.get(p) != Some(&was.kind.family()) {
-                    here.push(Saved::new(p.clone(), Out::Gone(was)));
+                    here.push(Saved::new(p.clone(), Out::Gone(was.clone())));
                 }
             }
             for s in here {
@@ -403,17 +405,17 @@ impl Fs {
                 }
             }
         }
-        let mut all: Vec<Saved<'_>> = out.into_values().flatten().collect();
+        let mut all: Vec<Saved> = out.into_values().flatten().collect();
         all.sort_by(|a, b| a.rank.cmp(&b.rank));
         all
     }
 
     /// The records' byte count.
-    pub(super) fn saved_size(saved: &[Saved<'_>]) -> usize {
+    pub(super) fn saved_size(saved: &[Saved]) -> usize {
         saved.iter().map(Saved::size).fold(0, usize::saturating_add)
     }
 
-    pub(super) fn write_saved(saved: &[Saved<'_>], out: &mut dyn super::Out) {
+    pub(super) fn write_saved(saved: &[Saved], out: &mut dyn super::Out) {
         for s in saved {
             s.write(out);
         }

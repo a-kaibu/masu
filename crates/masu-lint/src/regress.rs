@@ -329,7 +329,7 @@ pub(super) fn snorm_targets(tree: &Tree) -> Hits {
 
 /// What the review of kura at 6852be1 found wrong, fixed (2026-11-22), each by its spelling in
 /// the code (comments left out): (file, text it must hold, what is wrong without it).
-pub(super) const REVIEW_6852BE1_HAS: [(&str, &str, &str); 36] = [
+pub(super) const REVIEW_6852BE1_HAS: [(&str, &str, &str); 39] = [
     ("crates/kura/src/d3d11/hazards.rs", "out.extend(st.so.iter()", "stream output targets are not outputs: a vertex buffer of one stays bound (D3D11 unbinds it)"),
     ("crates/kura/src/d3d11/hazards.rs", "for vb in st.vbs.iter_mut()", "the vertex buffers checked are not all 32 slots"),
     ("crates/kura/src/d3d11/op.rs", "if let Uavs::Set { start, views, counts } = uavs {", "OMSetRenderTargetsAndUnorderedAccessViews with KEEP render targets does not resolve its new UAVs"),
@@ -346,7 +346,7 @@ pub(super) const REVIEW_6852BE1_HAS: [(&str, &str, &str); 36] = [
     ("crates/kura/src/d3d9/gpu.rs", "pub struct Readback(u32)", "readback ids are a number each device counts (two devices waited on each other's)"),
     ("crates/kura/src/snap.rs", "fn wait_resume(", "a stop the page gave up on waits for RESUME for ever"),
     ("web/src/savestate.ts", "word(CANCEL)", "the page does not cancel a stop request it gave up on"),
-    ("crates/kura/src/vfs/saves.rs", "Out::Gone(was)", "a store file deleted or renamed is not in the saves (it comes back at the next start)"),
+    ("crates/kura/src/vfs/saves.rs", "Out::Gone(was.clone())", "a store file deleted or renamed is not in the saves (it comes back at the next start)"),
     ("crates/kura/src/vfs.rs", "fs.base = fs.entries();", "the saves are not told against the namespace the store gave"),
     ("web/src/file-records.ts", "(first & TAG) >>> 0 === TAG", "the page does not read kura's tagged records (gone names, directories, store files)"),
     ("crates/koji/src/jit/mod.rs", "global_get(PAGES).add().load8u(0)", "translated code reads the page marks at an address of the run that made it (a saved translation could not run with the checks on)"),
@@ -366,6 +366,9 @@ pub(super) const REVIEW_6852BE1_HAS: [(&str, &str, &str); 36] = [
     ("crates/kura/src/d3d9/gpu.rs", "pub fn readback(&mut self, what: Read, args: &[u32]) -> Readback {", "a readback's id made apart from the command it answers"),
     ("crates/kura/src/d3d9/gpu.rs", "    fn issue() -> Self {", "readback ids anyone can make, not only the queue"),
     ("crates/kura/src/d3d11/mod.rs", "    pub content: crate::content::Content,", "where a D3D11 buffer's newest bytes are kept as flags that can say two things at once"),
+    ("crates/kura/src/pages.rs", "let page = Arc::make_mut(&mut self.pages[i]);", "a file's pages copied whole for a save instead of shared until written"),
+    ("crates/kura/src/vfs/saves.rs", "File { mtime: i64, data: crate::pages::Pages },", "a save's files borrowed from the VFS: written out only while its lock is held"),
+    ("crates/kura/src/vfs.rs", "    let saved = {", "a save written out while the VFS lock is held"),
 ];
 
 /// (file, text it must not hold, what is wrong with it)
