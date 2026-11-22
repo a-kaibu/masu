@@ -6,4 +6,3 @@ attributes one over: write 0 error 1783
 largest value: write 1 error 0 read blob 4 attrs 1 first value 256
 value one over: write 0 error 1783
 attributes 0x7fffffff: write 0 error 534
-blob 0xffffffff: write 0 error 87

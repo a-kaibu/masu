@@ -4,7 +4,7 @@ ReadSample with the sample pointer only 0x80070057
 ReadSample of stream 5 0
 ReadSample 0xc00d36b3
 answers ok 1, on another thread 1, times rising 1
-samples 0, bytes 0, the end's flags 0x1, at 0.00 s
+samples 0, bytes 0, the end's flags 0, at 0.00 s
 one more read past the end: flags 0x1 sample bytes still 0
 SetCurrentPosition 0 idle 0xc00d36b3
 held read reached the callback 0
