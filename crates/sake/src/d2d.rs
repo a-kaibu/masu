@@ -270,27 +270,47 @@ fn hwnd_methods() -> Vec<(com::Method, Handler)> {
     methods
 }
 
+/// The swap chain, device and immediate context of an HWND render target, from its
+/// D2D1_HWND_RENDER_TARGET_PROPERTIES at `hp` (a pixel size of 0: the client area):
+/// (swap chain, device, context, HWND, D3D11CreateDeviceAndSwapChain's HRESULT). The
+/// structures are laid out as the headers lay them out for the guest's architecture
+/// (abi::layouts; review 6852be1f: x86's offsets on x64 read the size from the HWND's upper
+/// half and put three 8-byte outputs 4 bytes apart, each one's upper half over the next).
+pub(crate) fn hwnd_swap_chain(cpu: &mut koji::Cpu, hp: u32) -> (u32, u32, u32, u32, u32) {
+    use crate::abi::{layouts::{D2D1_HWND_RENDER_TARGET_PROPERTIES as P, DXGI_SWAP_CHAIN_DESC as D}, Arch, Arg};
+    let arch = Arch::current();
+    let at = |o: crate::abi::Off| mem::ga(hp) + o.at(arch);
+    let hwnd = mem::rp(at(P::hwnd));
+    let (mut w, mut h) = (r32(at(P::pixelSize_width)), r32(at(P::pixelSize_height)));
+    if (w == 0 || h == 0) && let Some(r) = crate::user::client_rect_screen(hwnd) {
+        (w, h) = ((r.r - r.l).max(1).cast_unsigned(), (r.b - r.t).max(1).cast_unsigned());
+    }
+    // DXGI_SWAP_CHAIN_DESC: w, h, B8G8R8A8, 1 sample, render target output, 1 buffer, the
+    // window, windowed, discard; then the three out-parameters, a pointer-sized slot each
+    let ps = mem::ps();
+    let size = D::SIZE.at(arch);
+    let desc_own = mem::Scratch::new(size + 3 * ps, true);
+    let desc = mem::ga(desc_own.get());
+    for (o, v) in [(D::BufferDesc_Width, w), (D::BufferDesc_Height, h), (D::BufferDesc_Format, 87), (D::SampleDesc_Count, 1), (D::BufferUsage, 0x20), (D::BufferCount, 1), (D::Windowed, 1)] {
+        w32(desc + o.at(arch), v);
+    }
+    mem::wp(desc + D::OutputWindow.at(arch), hwnd);
+    let (sc_out, dev_out, ctx_out) = (desc + size, desc + size + ps, desc + size + 2 * ps);
+    let create = crate::export_once!("d3d11", "D3D11CreateDeviceAndSwapChain");
+    // (adapter NULL, D3D_DRIVER_TYPE_HARDWARE, no software module, BGRA support, the default
+    // feature levels, D3D11_SDK_VERSION, the description, the outputs; no feature level out)
+    let args = [Arg::ZERO, Arg::dword(1), Arg::ZERO, Arg::dword(0x20), Arg::ZERO, Arg::ZERO, Arg::dword(7), Arg::addr(desc.get()), Arg::addr(sc_out.get()), Arg::addr(dev_out.get()), Arg::ZERO, Arg::addr(ctx_out.get())];
+    let hr = kome::num::lo32(crate::abi::call(cpu, create, &args));
+    let (sc, d3d, imm) = (mem::rp(sc_out), mem::rp(dev_out), mem::rp(ctx_out));
+    drop(desc_own);
+    (sc, d3d, imm, hwnd, hr)
+}
+
 /// CreateHwndRenderTarget(render target properties, HWND properties, out)
 fn CreateHwndRenderTarget(c: &mut Ctx) -> u32 {
     let c = &mut c.args::<crate::api::outs::iface::ID2D1Factory7::CreateHwndRenderTarget>();
     let (factory, hp, out) = (c.a::<0>(), c.a::<2>(), c.out::<3>());
-    let hwnd = r32(hp);
-    let (mut w, mut h) = (r32(hp + 4), r32(hp + 8));
-    if (w == 0 || h == 0) && let Some(r) = crate::user::client_rect_screen(hwnd) {
-        (w, h) = ((r.r - r.l).max(1).cast_unsigned(), (r.b - r.t).max(1).cast_unsigned());
-    }
-    // DXGI_SWAP_CHAIN_DESC: w, h, refresh, B8G8R8A8, ..., 1 sample, render target output, 1
-    // buffer, the window, windowed, discard
-    let desc_own = mem::Scratch::new(60 + 16, true);
-    let desc = desc_own.get();
-    for (o, v) in [(0, w), (4, h), (16, 87), (28, 1), (36, 0x20), (40, 1), (44, hwnd), (48, 1)] {
-        w32(desc + o, v);
-    }
-    let (sc_out, dev_out, ctx_out) = (desc + 60, desc + 64, desc + 68);
-    let create = crate::export_once!("d3d11", "D3D11CreateDeviceAndSwapChain");
-    let hr = c.ctx().call(create, &[0, 1, 0, 0x20, 0, 0, 7, desc, sc_out, dev_out, 0, ctx_out]);
-    let (sc, d3d, imm) = (r32(sc_out), r32(dev_out), r32(ctx_out));
-    drop(desc_own);
+    let (sc, d3d, imm, hwnd, hr) = hwnd_swap_chain(c.ctx().cpu, hp);
     if hr != 0 || sc == 0 {
         out.put(0);
         return if hr != 0 { hr } else { 0x8000_4005 };

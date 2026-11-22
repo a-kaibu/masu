@@ -218,7 +218,7 @@ fn int_trunc(v: f32, n: u32, signed: bool) -> u32 {
 }
 
 /// a float to an n-bit UNORM or SNORM value (documented: clamped, scaled, rounded to the
-/// nearest even; NaN is 0; SNORM's product in f32 and its halves away from zero, winref
+/// nearest even; NaN is 0; the product in f32 and SNORM's halves away from zero, winref
 /// d3d11snorm)
 fn norm(v: f32, n: u32, signed: bool) -> u32 {
     let v = if v.is_nan() { 0.0 } else { v };
@@ -228,7 +228,10 @@ fn norm(v: f32, n: u32, signed: bool) -> u32 {
         let q = trunc_i64(f64::from((v.clamp(-1.0, 1.0) * max).round()));
         lo32(q) & mask(n)
     } else {
-        trunc_u32((f64::from(v).clamp(0.0, 1.0) * f64::from(mask(n))).round_ties_even())
+        // (the f32 product: 0.5 / 255's nearest f32 is 0.50000003 / 255, and WARP clears it to
+        // 0, winref d3d11snorm; 2^n - 1 is exact in f32 up to 24 bits)
+        let max = kome::num::to_f32(mask(n));
+        trunc_u32(f64::from((v.clamp(0.0, 1.0) * max).round_ties_even()))
     }
 }
 
@@ -323,6 +326,33 @@ mod tests {
         // ClearView's color on an integer format: each value truncated
         assert_eq!(texel(30, Values::Color([0.25, 0.75, 1.0, 300.0])), Some(vec![0, 0, 1, 255]));
         assert_eq!(texel(32, Values::Color([-1.5, 2.9, f32::NAN, -300.0])), Some(vec![0xff, 2, 0, 0x80]));
+    }
+
+    /// winref d3d11snorm's clears of halves of a step: R16G16_SNORM's halves away from zero,
+    /// R8G8B8A8_UNORM's to even (every row of both builds' golden output)
+    #[test]
+    fn warp_tie_clears() {
+        let mut checked = 0;
+        for name in ["d3d11snorm-32", "d3d11snorm-64"] {
+            let p = format!("{}/../../tests/winref/golden/{name}/stdout.txt", env!("CARGO_MANIFEST_DIR"));
+            let Ok(out) = std::fs::read_to_string(p) else { continue };
+            for line in out.lines() {
+                let t: Vec<&str> = line.split_whitespace().collect();
+                let (dxgi, vals, w) = match t.as_slice() {
+                    ["r16g16_snorm", a, b, w] => (37, vec![*a, b.trim_end_matches(':')], *w),
+                    ["rgba8_unorm", a, b, c, d, w] => (28, vec![*a, b, c, d.trim_end_matches(':')], *w),
+                    _ => continue,
+                };
+                let mut f = [0.0f32; 4];
+                for (x, v) in f.iter_mut().zip(&vals) {
+                    *x = f32::from_bits(u32::from_str_radix(v, 16).unwrap());
+                }
+                let want = u32::from_str_radix(w, 16).unwrap().to_le_bytes();
+                assert_eq!(texel(dxgi, Values::Float(f)), Some(want.to_vec()), "{name}: {line}");
+                checked += 1;
+            }
+        }
+        assert!(checked == 0 || checked == 10, "{checked} clears");
     }
 
     proptest! {

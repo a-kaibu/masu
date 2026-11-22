@@ -12,6 +12,8 @@
 pub mod d2d;
 pub mod d3d10;
 mod deferred;
+mod op;
+use op::ContextOp;
 pub mod query;
 pub mod check;
 mod expand;
@@ -38,6 +40,8 @@ mod draw_tests;
 mod query_tests;
 #[cfg(test)]
 mod deferred_tests;
+#[cfg(test)]
+mod context_op_tests;
 #[cfg(test)]
 mod desc_tests;
 #[cfg(test)]
@@ -350,7 +354,10 @@ pub struct Shader {
     /// page shader and bindings, per pixel shader for vertex shaders (key 0 otherwise)
     /// by the pixel shader a vertex shader feeds (see shader_for) and the samplers addressing
     /// as WebGPU's don't (dxwgsl::addr)
-    pub wgsl: HashMap<(u32, Vec<dxwgsl::addr::Addr>, Vec<dxwgsl::logic::Logic>), Option<(u32, Vec<(u32, dxwgsl::Binding)>)>>,
+    /// translations by variant: the pixel shader's setup samples (a vertex shader's pixel
+    /// shader, its point sprite bit), the samplers' addressing, the targets' logic, the SRVs on
+    /// SNORM twins (snorm_ms_srvs)
+    pub wgsl: HashMap<(u32, Vec<dxwgsl::addr::Addr>, Vec<dxwgsl::logic::Logic>, Vec<(u32, u32)>), Option<(u32, Vec<(u32, dxwgsl::Binding)>)>>,
     /// CreateGeometryShaderWithStreamOutput's (`code` a geometry or a vertex shader's)
     pub so: Option<expand::SoDesc>,
 }
@@ -441,7 +448,7 @@ pub struct Obj {
     pub private: Vec<([u8; 16], Vec<u8>, u32)>,
 }
 
-#[derive(Clone)]
+#[derive(Clone, PartialEq, Debug)]
 pub struct State {
     /// (D3D11_IA_VERTEX_INPUT_RESOURCE_SLOT_COUNT: 32)
     vbs: [(u32, u32, u32); 32],
@@ -561,10 +568,6 @@ enum After {
 fn trace2() -> bool {
     static V: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *V.get_or_init(|| std::env::var("MASU_D3D_TRACE").as_deref() == Ok("2"))
-}
-
-unsafe fn rdf(p: u32, i: usize) -> f32 {
-    f32::from_bits(rd(p, i))
 }
 
 /// Size of the guest's pointers (and HWNDs, SIZE_Ts): 8 for 64-bit programs.
@@ -765,9 +768,15 @@ impl D11 {
     }
 
     fn destroy(&mut self, id: u32) {
-        // (the device, its context and the DXGI objects live as long as the process; but the
-        // adapter objects each enumeration makes, Windows' new ones every time)
-        let made = id != self.adapter && id != self.warp && matches!(self.objs.get(&id).map(|o| &o.data), Some(Data::Adapter(_)));
+        // (the device, its immediate context and the DXGI objects live as long as the process;
+        // but the adapter objects each enumeration makes, Windows' new ones every time, and
+        // deferred contexts: one let go of took its state and its list along, and what they
+        // held, for good)
+        let made = match self.objs.get(&id).map(|o| &o.data) {
+            Some(Data::Adapter(_)) => id != self.adapter && id != self.warp,
+            Some(Data::Deferred(_)) => true,
+            Some(_) | None => false,
+        };
         if !made && matches!(self.objs.get(&id).map(|o| o.iface), Some(IF_DEVICE | IF_CONTEXT | IF_FACTORY | IF_ADAPTER | IF_OUTPUT) | None) {
             return;
         }
@@ -1419,9 +1428,15 @@ fn new_backbuffer(d: &mut D11, w: u32, h: u32, fmt: u32, samples: (u32, u32)) ->
 /// can, see render::d3d create_texture2).
 #[allow(clippy::too_many_arguments)]
 fn new_texture(d: &mut D11, dim: u32, w: u32, h: u32, layers: u32, mips: u32, fmt: u32, usage: u32, bind: u32, cube: bool, samples: u32) -> u32 {
-    let page = format::page(fmt, bind).unwrap_or(format::P_BGRA8);
     let max = w.max(h).max(1).bit_width();
     let mips = if mips == 0 { max } else { mips.min(max) };
+    // (a multisampled 8-bit SNORM texture the page multisamples: its SINT twin, 4 samples, for
+    // good: WebGPU neither draws to nor multisamples SNORM, and a multisampled texture is not
+    // copied through a buffer; logic::snorm_ms_page)
+    let page = match logic::snorm_ms_page(fmt, dim, layers, mips, samples, bind) {
+        Some(twin) => twin,
+        None => format::page(fmt, bind).unwrap_or(format::P_BGRA8),
+    };
     let gpu = page_id();
     let layers = layers.max(1);
     // (bit 8: bound for unordered access, a storage texture on the page; bit 9: multisampled;
@@ -3150,41 +3165,6 @@ unsafe fn child_call(d: &mut D11, iface: u32, m: u32, this: u32, a: &dyn Fn(usiz
 // ---------------------------------------------------------------------------------------------
 // ID3D11DeviceContext
 
-/// Sets `n` slots from `start` of a slot array to the objects in `p` (guest addresses).
-unsafe fn set_slots(d: &mut D11, slots: &mut [u32], start: u32, n: u32, p: u32) {
-    for i in 0..n {
-        let s = us(start + i);
-        if s >= slots.len() {
-            break;
-        }
-        let new = if p == 0 { 0 } else { d.id_of(rdp(p, us(i))) };
-        let old = slots[s];
-        slots[s] = new;
-        d.rebind(new, old);
-    }
-}
-
-/// The hidden counters of `n` views (`views`, guest pointers) set from `counts` (UINTs; NULL or
-/// -1: kept), as *SetUnorderedAccessViews take them.
-unsafe fn initial_counts(d: &mut D11, n: u32, views: u32, counts: u32) {
-    if views == 0 || counts == 0 {
-        return;
-    }
-    for i in 0..us(n) {
-        // SAFETY: the caller's array of n views
-        let p = unsafe { rdp(views, i) };
-        // SAFETY: the caller's array of n counts
-        let c = unsafe { rd(counts, i) };
-        let v = d.id_of(p);
-        if c == u32::MAX {
-            continue;
-        }
-        if let Some(Data::BufferUav(u)) = d.objs.get_mut(&v).map(|o| &mut o.data) && u.counted() {
-            u.counter = Count::Host(c);
-        }
-    }
-}
-
 /// the stage (VS PS GS HS DS CS order of `State`) of each of the six *ConstantBuffers1 methods
 /// (VS HS DS GS PS CS order of the vtable)
 const CB1_STAGE: [usize; 6] = [0, 3, 4, 2, 1, 5];
@@ -3211,47 +3191,9 @@ impl CbRange {
     }
 }
 
-/// *SetConstantBuffers(start, n, buffers) (`firsts` and `counts` 0) and
-/// *SetConstantBuffers1(start, n, buffers, firsts, counts): each slot's buffer and range. A
-/// range is given in 16-byte constants: the first a multiple of 16, the count a multiple of 16
-/// up to 4096 (D3D11.1 functional spec, ConstantBufferOffsetting); either array NULL binds
-/// whole buffers (winref d3d11cb1).
-unsafe fn set_cbs(d: &mut D11, st: &mut State, stage: usize, start: u32, n: u32, bufs: u32, firsts: u32, counts: u32) {
-    let (Some(slots), Some(ranges)) = (st.cbs.get_mut(stage), st.cb_ranges.get_mut(stage)) else { return };
-    // a range not of whole 16-constant blocks, or of more than 4096 constants, makes the call do
-    // nothing: the slots keep what they had (winref d3d11cb1 "first8-num16", "first16-num8",
-    // "first16-num4112"; 0 constants is a range)
-    if firsts != 0 && counts != 0 {
-        let bad = (0..n).any(|i| {
-            // SAFETY: rd's own contract: `firsts` is the caller's array of `n`
-            let first = unsafe { rd(firsts, us(i)) };
-            // SAFETY: as above, `counts`
-            let count = unsafe { rd(counts, us(i)) };
-            !cb_range_taken(first, count)
-        });
-        if bad {
-            return;
-        }
-    }
-    // SAFETY: set_slots' own contract: `bufs` is the caller's array of `n` pointers
-    unsafe { set_slots(d, slots, start, n, bufs) };
-    for i in 0..n {
-        let Some(slot) = ranges.get_mut(us(start.saturating_add(i))) else { break };
-        *slot = if firsts == 0 || counts == 0 {
-            CbRange::WHOLE
-        } else {
-            // SAFETY: rd's own contract: `firsts` and `counts` are the caller's arrays of `n`
-            let first = unsafe { rd(firsts, us(i)) };
-            // SAFETY: (the same)
-            let count = unsafe { rd(counts, us(i)) };
-            CbRange { first, count }
-        };
-    }
-}
-
 /// Whether *SetConstantBuffers1 takes a range of `count` constants from `first`: whole blocks of
 /// 16, at most D3D11_REQ_CONSTANT_BUFFER_ELEMENT_COUNT (4096).
-fn cb_range_taken(first: u32, count: u32) -> bool {
+pub(super) fn cb_range_taken(first: u32, count: u32) -> bool {
     first % 16 == 0 && count % 16 == 0 && count <= 4096
 }
 
@@ -3268,13 +3210,6 @@ unsafe fn get_slots(d: &mut D11, slots: &[u32], start: u32, n: u32, p: u32) {
         }
         wrp(p, us(i), d.addr_of(id));
     }
-}
-
-unsafe fn set_one(d: &mut D11, slot: &mut u32, addr: u32) {
-    let new = d.id_of(addr);
-    let old = *slot;
-    *slot = new;
-    d.rebind(new, old);
 }
 
 unsafe fn get_one(d: &mut D11, id: u32, out: u32) {
@@ -3303,11 +3238,15 @@ unsafe fn context_call(d: &mut D11, m: u32, a: &dyn Fn(usize) -> u32, after: &mu
     r
 }
 
+/// Context method `m` on state `st`: what changes state or resources read as a [`ContextOp`]
+/// and applied (as a deferred context records it, op.rs); the rest (Get*, Map, a query's
+/// data, ...) here.
 unsafe fn context_call2(d: &mut D11, st: &mut State, m: u32, a: &dyn Fn(usize) -> u32, after: &mut After) -> u32 {
-    // (what SetPredication's predicate turns off: draws, dispatches, copies, updates, clears,
-    // resolves, GenerateMips)
-    if matches!(m, 12 | 13 | 20 | 21 | 38..=42 | 46..=48 | 50..=54 | 57 | 132) && predicated_off(d, st) {
-        return 0;
+    // SAFETY: context_call2's own contract: the method's arguments as the guest gave them
+    if let Some(op) = unsafe { ContextOp::read(d, m, a) } {
+        // SAFETY: the objects it names are this device's (read just now)
+        unsafe { op.apply(d, st, after) };
+        return S_OK;
     }
     match m {
         3 => {
@@ -3318,62 +3257,8 @@ unsafe fn context_call2(d: &mut D11, st: &mut State, m: u32, a: &dyn Fn(usize) -
             let ctx = d.context;
             return private_data(d, m, ctx, a);
         }
-        // SAFETY: set_cbs' own contract: the caller's arguments of *SetConstantBuffers
-        7 | 16 => unsafe { set_cbs(d, st, usize::from(m == 16), a(1), a(2), a(3), 0, 0) },
-        8 | 25 => {
-            set_slots(d, &mut st.srvs[usize::from(m == 8)], a(1), a(2), a(3));
-            hazards::after_srvs(d, st, usize::from(m == 8), a(1), a(2));
-        }
-        9 => set_one(d, &mut st.ps, a(1)),
-        10 | 26 => set_slots(d, &mut st.samplers[usize::from(m == 10)], a(1), a(2), a(3)),
-        11 => set_one(d, &mut st.vs, a(1)),
-        12 => draw(d, st, true, a(1), 1, a(2), a(3).cast_signed(), 0),
-        13 => draw(d, st, false, a(1), 1, a(2), 0, 0),
         14 => return map(d, a(1), a(2), a(3), a(5), false, after),
         15 => unmap(d, a(1), a(2)),
-        17 => set_one(d, &mut st.layout, a(1)),
-        18 => {
-            // IASetVertexBuffers(start, n, buffers, strides, offsets)
-            for i in 0..a(2) {
-                let s = us(a(1).saturating_add(i));
-                if s >= st.vbs.len() {
-                    break;
-                }
-                let new = if a(3) == 0 { 0 } else { d.id_of(rdp(a(3), us(i))) };
-                let old = st.vbs[s].0;
-                st.vbs[s] = (new, if a(4) != 0 { rd(a(4), us(i)) } else { 0 }, if a(5) != 0 { rd(a(5), us(i)) } else { 0 });
-                d.rebind(new, old);
-            }
-            hazards::after_buffers(d, st);
-        }
-        19 => {
-            let new = d.id_of(a(1));
-            let old = st.ib.0;
-            st.ib = (new, a(2), a(3));
-            d.rebind(new, old);
-        }
-        // (no instances: nothing drawn)
-        20 => draw(d, st, true, a(1), a(2), a(3), a(4).cast_signed(), a(5)),
-        21 => draw(d, st, false, a(1), a(2), a(3), 0, a(4)),
-        24 => st.topology = a(1),
-        27 | 28 => {
-            // Begin, End
-            let q = d.id_of(a(1));
-            let now = d.stats;
-            let on_page = matches!(d.objs.get(&q).map(|o| &o.data), Some(Data::Query(x)) if x.counts_on_page());
-            let counters = if on_page { expand::counters(d) } else { 0 };
-            // (PIPELINE_STATISTICS counts the clipper's work on the page: the draws while one is
-            // open are expanded, expand.rs)
-            if matches!(d.objs.get(&q).map(|o| &o.data), Some(Data::Query(x)) if x.kind == query::Kind::PipelineStatistics) {
-                d.expand.open.retain(|&x| x != q);
-                if m == 27 {
-                    d.expand.open.push(q);
-                }
-            }
-            if let Some(Data::Query(x)) = d.objs.get_mut(&q).map(|o| &mut o.data) {
-                if m == 28 { x.end(&now) } else { x.begin(&now, counters) }
-            }
-        }
         29 => {
             // GetData(query, data, size, flags)
             let q = d.id_of(a(1));
@@ -3385,263 +3270,13 @@ unsafe fn context_call2(d: &mut D11, st: &mut State, m: u32, a: &dyn Fn(usize) -
             }
             return hr;
         }
-        33 | 34 => {
-            // OMSetRenderTargets(n, rtvs, dsv) (+ UAVs (start, n, uavs): kept, not drawn with)
-            if m == 34 && a(5) != 0xffff_ffff {
-                let mut u = st.uavs[0];
-                set_slots(d, &mut u, 0, 8, 0);
-                set_slots(d, &mut u, a(4), a(5).min(8), a(6));
-                st.uavs[0] = u;
-                // SAFETY: the method's arrays of views and counts
-                unsafe { initial_counts(d, a(5).min(8), a(6), a(7)) };
-            }
-            let n = if m == 34 && a(1) == 0xffff_ffff { u32::MAX } else { a(1) };
-            if n != u32::MAX {
-                let mut rt = st.rtvs;
-                set_slots(d, &mut rt, 0, 8, 0);
-                set_slots(d, &mut rt, 0, n.min(8), a(2));
-                st.rtvs = rt;
-                set_one(d, &mut st.dsv, a(3));
-                if m == 33 {
-                    let mut u = st.uavs[0];
-                    set_slots(d, &mut u, 0, 8, 0);
-                    st.uavs[0] = u;
-                }
-                // the viewport follows the first target when the game never set one
-                if st.viewport[0][2] == 0.0 && let Some((w, h)) = view_size(d, st.rtvs[0]).or_else(|| view_size(d, st.dsv)) {
-                    st.viewport[0] = [0.0, 0.0, w as f32, h as f32, 0.0, 1.0];
-                }
-            }
-            // (KEEP render targets with new UAVs is an output change too)
-            hazards::after_outputs(d, st);
-        }
-        35 => {
-            set_one(d, &mut st.blend, a(1));
-            st.blend_factor = if a(2) != 0 { [rdf(a(2), 0), rdf(a(2), 1), rdf(a(2), 2), rdf(a(2), 3)] } else { [1.0; 4] };
-            st.sample_mask = a(3);
-        }
-        36 => {
-            set_one(d, &mut st.depth, a(1));
-            st.stencil_ref = a(2);
-        }
-        43 => set_one(d, &mut st.raster, a(1)),
-        44 => {
-            st.nviewports = if a(2) != 0 { a(1).min(16) } else { 0 };
-            if a(2) != 0 {
-                for k in 0..us(st.nviewports) {
-                    for i in 0..6 {
-                        st.viewport[k][i] = rdf(a(2), 6 * k + i);
-                    }
-                }
-                if d.trace {
-                    eprintln!("d3d11: viewport {:?}", st.viewport[0]);
-                }
-            }
-        }
-        45 => {
-            st.nscissors = if a(2) != 0 { a(1).min(16) } else { 0 };
-            if a(2) != 0 {
-                for k in 0..us(st.nscissors) {
-                    for i in 0..4 {
-                        st.scissor[k][i] = rd(a(2), 4 * k + i).cast_signed();
-                    }
-                }
-            }
-        }
-        46 => copy_region(d, a(1), a(2), a(3), a(4), a(5), a(6), a(7), a(8)),
-        47 => copy_resource(d, a(1), a(2)),
-        57 => resolve(d, a(1), a(2), a(3), a(4), a(5)),
-        48 => update_subresource(d, a(1), a(2), a(3), a(4), a(5), a(6)),
-        50 => {
-            // ClearRenderTargetView(view, color)
-            let v = d.id_of(a(1));
-            nv12_target(d, v);
-            // (an 8-bit SNORM view, which the page clears no pass of: its texels, as the
-            // runtime converts the color, clear.rs)
-            if matches!(d.objs.get(&v).map(|o| &o.data), Some(Data::View(View { fmt, .. })) if logic::snorm_twin(*fmt).is_some()) {
-                // SAFETY: context_call2's own contract: ClearRenderTargetView's color of four floats
-                let c: [f32; 4] = std::array::from_fn(|i| f32::from_bits(unsafe { rd(a(2), i) }));
-                // SAFETY: clear_view_texels' own contract: a view of this device
-                unsafe { clear_view_texels(d, v, clear::Values::Float(c), &[]) };
-                return S_OK;
-            }
-            if let Some((tex, level, layer)) = view_target(d, v) {
-                let layers = view_layers(d, v);
-                let mut c = [rd(a(2), 0), rd(a(2), 1), rd(a(2), 2), rd(a(2), 3)];
-                // 8-bit UNORM targets: the color as the runtime converts it (each channel
-                // clamped, times 255 in floats, rounded to even), not left to the GPU's own
-                if let Some(Data::View(View { fmt: 28 | 49 | 61 | 65 | 87 | 88, .. })) = d.objs.get(&v).map(|o| &o.data) {
-                    for x in &mut c {
-                        let f = f32::from_bits(*x);
-                        let f = if f.is_nan() { 0.0 } else { f.clamp(0.0, 1.0) };
-                        *x = ((f * 255.0).round_ties_even() / 255.0).to_bits();
-                    }
-                }
-                // (every layer (or 3D slice) the view has)
-                for l in layer..layer + layers {
-                    gpu::record(|q| q.cmd(&[gpu::CLEAR_VIEW, tex, level, l, 1, c[0], c[1], c[2], c[3], 0, 0]));
-                }
-                d.targets = None;
-            }
-        }
-        53 => {
-            // ClearDepthStencilView(view, flags, depth, stencil)
-            let v = d.id_of(a(1));
-            if let Some((tex, level, layer)) = view_target(d, v) {
-                for l in layer..layer + view_layers(d, v) {
-                    gpu::record(|q| q.cmd(&[gpu::CLEAR_VIEW, tex, level, l, (a(2) & 3) << 1, 0, 0, 0, 0, a(3), a(4) & 0xff]));
-                }
-                d.targets = None;
-            }
-        }
-        54 => {
-            let v = d.id_of(a(1));
-            if let Some(Data::View(v)) = d.objs.get(&v).map(|o| &o.data) && let Some(Data::Texture(t)) = d.objs.get(&v.res).map(|o| &o.data) {
-                let g = t.gpu;
-                gpu::record(|q| q.cmd(&[gpu::GEN_MIPS, g]));
-            }
-        }
-        30 => {
-            let mut p = st.predicate.0;
-            set_one(d, &mut p, a(1));
-            st.predicate = (p, a(2));
-        }
         86 => {
             get_one(d, st.predicate.0, a(1));
             wr(a(2), 0, st.predicate.1);
         }
-        // GS, HS, DS, CS: constant buffers, resources, samplers, shaders (kept, not drawn with)
-        // SAFETY: set_cbs' own contract: the caller's arguments of *SetConstantBuffers
-        22 | 62 | 66 | 71 => unsafe { set_cbs(d, st, stage_of(m), a(1), a(2), a(3), 0, 0) },
-        31 | 59 | 63 | 67 => {
-            set_slots(d, &mut st.srvs[stage_of(m)], a(1), a(2), a(3));
-            hazards::after_srvs(d, st, stage_of(m), a(1), a(2));
-        }
-        32 | 61 | 65 | 70 => set_slots(d, &mut st.samplers[stage_of(m)], a(1), a(2), a(3)),
-        23 | 60 | 64 | 69 => set_one(d, &mut st.shaders[stage_of(m) - 2], a(1)),
-        68 => {
-            // CSSetUnorderedAccessViews(start, n, views, initial counts)
-            set_slots(d, &mut st.uavs[1], a(1), a(2), a(3));
-            // SAFETY: the method's arrays of views and counts
-            unsafe { initial_counts(d, a(2), a(3), a(4)) };
-            hazards::after_outputs(d, st);
-        }
-        37 => {
-            // SOSetTargets(n, buffers, offsets): the buffers stream output writes (expand.rs),
-            // each from its offset (-1: on from what it holds; no offsets: 0)
-            let mut so = st.so;
-            set_slots(d, &mut so, 0, 4, 0);
-            set_slots(d, &mut so, 0, a(1).min(4), a(2));
-            st.so = so;
-            for k in 0..a(1).min(4) {
-                let buf = so.get(us(k)).copied().unwrap_or(0);
-                let off = if a(3) == 0 {
-                    0
-                } else {
-                    // SAFETY: rd's own contract: the caller's array of `n` offsets
-                    unsafe { rd(a(3), us(k)) }
-                };
-                if buf != 0 && off != u32::MAX {
-                    expand::set_fill(d, buf, off);
-                }
-            }
-            hazards::after_outputs(d, st);
-        }
-        // ClearUnorderedAccessViewUint(view, values[4]), ClearUnorderedAccessViewFloat(view,
-        // values[4]): the whole view
-        51 | 52 => {
-            let v = d.id_of(a(1));
-            // SAFETY: rd's own contract: the caller's array of four values
-            let vals: [u32; 4] = std::array::from_fn(|i| unsafe { rd(a(2), i) });
-            let vals = if m == 51 { clear::Values::Uint(vals) } else { clear::Values::Float(vals.map(f32::from_bits)) };
-            if let Some(Data::BufferUav(u)) = d.objs.get(&v).map(|o| &o.data) {
-                let (buf, fmt, offset, bytes) = (u.buf, u.view.fmt, u.view.offset, u.view.bytes);
-                // SAFETY: the buffer's guest memory (clear_buffer_view's contract)
-                unsafe { clear_buffer_view(d, buf, fmt, offset, bytes, vals) };
-                return 0;
-            }
-            // SAFETY: clear_view_texels' own contract: a view of this device
-            unsafe { clear_view_texels(d, v, vals, &[]) };
-        }
-        49 => {
-            // CopyStructureCount(buffer, offset, uav): the view's hidden counter, as a UINT at
-            // the offset (a view without one, or a place outside the buffer: nothing written)
-            let (dst, at, v) = (d.id_of(a(1)), a(2), d.id_of(a(3)));
-            let (count, page) = match d.objs.get(&v).map(|o| &o.data) {
-                Some(Data::BufferUav(u)) if u.counted() => (u.counter, u.counter_page),
-                _ => return 0,
-            };
-            let fits = matches!(d.objs.get(&dst).map(|o| &o.data), Some(Data::Buffer(b)) if at % 4 == 0 && u64::from(at) + 4 <= u64::from(b.size));
-            if !fits {
-                return 0;
-            }
-            match count {
-                Count::Host(c) => {
-                    expand::pull(d, dst);
-                    if let Some(Data::Buffer(b)) = d.objs.get_mut(&dst).map(|o| &mut o.data) {
-                        // SAFETY: inside the buffer's guest memory (`fits`)
-                        unsafe { wr(b.mem.wrapping_add(at), 0, c) };
-                        b.dirty = true;
-                    }
-                }
-                // (shaders counted on the page: the copy is the page's, the buffer's bytes
-                // read back when the guest looks at them)
-                Count::Page => {
-                    let g = buffer_gpu(d, dst);
-                    gpu::record(|q| q.cmd(&[gpu::COPY_BUFFER, page, 0, g, at, 4]));
-                    if let Some(Data::Buffer(b)) = d.objs.get_mut(&dst).map(|o| &mut o.data) {
-                        b.newest = Newest::Page;
-                    }
-                }
-            }
-        }
-        // SetResourceMinLOD(resource, MinLOD), GetResourceMinLOD(resource): Windows' device
-        // (WARP, no RESOURCE_MIN_LOD clamp) keeps nothing: Get gives 0 after any Set, on a
-        // texture, a 3D texture or a buffer alike, and what shaders sample is unchanged
-        // (winref d3d11minlod)
-        55 | 56 => return 0,
-        41 => dispatch(d, st, a(1), a(2), a(3)),
-        42 => {
-            // DispatchIndirect(args, offset): the group counts from the buffer
-            expand::pull(d, d.id_of(a(1)));
-            if let Some(Data::Buffer(b)) = d.objs.get(&d.id_of(a(1))).map(|o| &o.data) && u64::from(a(2)) + 12 <= u64::from(b.size) {
-                let p = b.mem + a(2);
-                let (x, y, z) = (rd(p, 0), rd(p, 1), rd(p, 2));
-                dispatch(d, st, x, y, z);
-            }
-        }
-        39 | 40 => {
-            // DrawIndexedInstancedIndirect / DrawInstancedIndirect(args, offset): the counts
-            // from the buffer
-            let n: u32 = if m == 39 { 5 } else { 4 };
-            expand::pull(d, d.id_of(a(1)));
-            if let Some(Data::Buffer(b)) = d.objs.get(&d.id_of(a(1))).map(|o| &o.data) && a(2).is_multiple_of(4) && u64::from(a(2)).saturating_add(u64::from(n) * 4) <= u64::from(b.size) {
-                let p = b.mem.saturating_add(a(2));
-                let [c, inst, first, base, first_inst]: [u32; 5] = std::array::from_fn(|i| {
-                    if i >= us(n) {
-                        return 0;
-                    }
-                    // SAFETY: rd's own contract: the buffer's guest memory, `n` words inside it (checked above)
-                    unsafe { rd(p, i) }
-                });
-                if m == 39 {
-                    // SAFETY: draw's own contract: this context's state
-                    unsafe { draw(d, st, true, c, inst, first, base.cast_signed(), first_inst) };
-                } else {
-                    // SAFETY: draw's own contract: this context's state
-                    unsafe { draw(d, st, false, c, inst, first, 0, base) };
-                }
-            }
-        }
-        38 => {
-            // DrawAuto: the vertices stream output wrote to the buffer in input slot 0 (its
-            // fill, from the offset it is bound at, by its stride)
-            let (buf, stride, off) = st.vbs[0];
-            if buf != 0 && let Some(fill) = expand::fill_of(d, buf) && let Some(n) = fill.saturating_sub(off).checked_div(stride) {
-                // SAFETY: draw's own contract: this context's state
-                unsafe { draw(d, st, false, n, 1, 0, 0, 0) };
-            }
-        }
+        // GetResourceMinLOD(resource): Windows' device (WARP, no RESOURCE_MIN_LOD clamp) keeps
+        // nothing: 0 after any SetResourceMinLOD (winref d3d11minlod)
+        56 => return 0,
         72 | 77 => get_slots(d, &st.cbs[usize::from(m == 77)], a(1), a(2), a(3)),
         73 | 84 => get_slots(d, &st.srvs[usize::from(m == 73)], a(1), a(2), a(3)),
         74 => {
@@ -3724,29 +3359,10 @@ unsafe fn context_call2(d: &mut D11, st: &mut State, m: u32, a: &dyn Fn(usize) -
                 }
             }
         }
-        110 => {
-            // ClearState
-            let old = std::mem::replace(st, default_state());
-            unbind_state(d, &old);
-        }
         111 => gpu::flush(),
         112 => return 0, // immediate
         113 => return 0,
         114 => return DXGI_ERROR_INVALID_CALL,
-        // ID3D11DeviceContext1
-        // CopySubresourceRegion1 / UpdateSubresource1: D3D11_COPY_NO_OVERWRITE and DISCARD only
-        // promise what the program does with the destination; the copy's bytes are the same
-        // (D3D11.1 functional spec, as Windows' WARP answers: winref d3d11cb1)
-        115 => return context_call2(d, st, 46, a, after),
-        116 => return context_call2(d, st, 48, a, after),
-        117 | 118 | 133 => {}                           // Discard*
-        // VS, HS, DS, GS, PS, CS SetConstantBuffers1(start, n, buffers, first, count) and
-        // Get*ConstantBuffers1(start, n, buffers, first, count): each slot's range of constants
-        119..=124 => {
-            let stage = CB1_STAGE.get(us(m.saturating_sub(119))).copied().unwrap_or(0);
-            // SAFETY: set_cbs' own contract: the caller's arguments of *SetConstantBuffers1
-            unsafe { set_cbs(d, st, stage, a(1), a(2), a(3), a(4), a(5)) };
-        }
         125..=130 => {
             let stage = CB1_STAGE.get(us(m.saturating_sub(125))).copied().unwrap_or(0);
             let (Some(slots), Some(ranges)) = (st.cbs.get(stage), st.cb_ranges.get(stage)) else { return S_OK };
@@ -3765,31 +3381,6 @@ unsafe fn context_call2(d: &mut D11, st: &mut State, m: u32, a: &dyn Fn(usize) -
             }
         }
         131 => swap_state(d, st, a(1), a(2)),
-        58 => deferred::execute(d, st, a(1), a(2), after),
-        // ClearView(view, color[4], rects, n): a render target or unordered access view, in
-        // rectangles of the view (none: all of it; NULL with a count: nothing, as Windows does,
-        // winref d3d11clear), the color as a Float clear's, but truncated on an integer format
-        // (D3D11.1 functional spec, ClearView; clear::Values::Color)
-        132 => {
-            if a(3) == 0 && a(4) != 0 {
-                return S_OK;
-            }
-            let v = d.id_of(a(1));
-            // SAFETY: rd's own contract: the caller's color of four floats
-            let c: [u32; 4] = std::array::from_fn(|i| unsafe { rd(a(2), i) });
-            let n = us(a(4).min(4096));
-            let rect = |i: usize, k: usize| {
-                // SAFETY: rd's own contract: the caller's array of `n` D3D11_RECTs
-                unsafe { rd(a(3), i.saturating_mul(4).saturating_add(k)) }.cast_signed()
-            };
-            let rects: Vec<[i32; 4]> = if a(3) != 0 { (0..n).map(|i| std::array::from_fn(|k| rect(i, k))).collect() } else { Vec::new() };
-            if rects.is_empty() && matches!(d.objs.get(&v).map(|o| o.iface), Some(IF_RTV)) {
-                // SAFETY: context_call2's own contract: ClearRenderTargetView(view, color)
-                return unsafe { context_call2(d, st, 50, &|i| if i == 1 { a(1) } else { a(2) }, after) };
-            }
-            // SAFETY: clear_view_texels' own contract: a view of this device
-            unsafe { clear_view_texels(d, v, clear::Values::Color(c.map(f32::from_bits)), &rects) };
-        }
         // ID3D11DeviceContext2: tiled resources and annotations
         134..=139 | 141..=143 => {}
         140 => return 0, // IsAnnotationEnabled
@@ -4105,11 +3696,11 @@ fn texture_written(d: &mut D11, id: u32) {
     }
 }
 
-/// UpdateSubresource(resource, subresource, box, data, row pitch, depth pitch). Of a staging or
-/// immutable resource it does nothing (Windows: winref d3d11copy's "update" of a staging texture
-/// hashes as before it, every format, 2D and 3D).
-unsafe fn update_subresource(d: &mut D11, res: u32, sub: u32, bx: u32, data: u32, pitch: u32, slice: u32) {
-    let id = d.id_of(res);
+/// UpdateSubresource(resource, subresource, box, data, row pitch, depth pitch), `data` the bytes
+/// it reads (op::update_bytes). Of a staging or immutable resource it does nothing (Windows:
+/// winref d3d11copy's "update" of a staging texture hashes as before it, every format, 2D and
+/// 3D).
+unsafe fn update_subresource(d: &mut D11, id: u32, sub: u32, b: Option<[u32; 6]>, data: &[u8], pitch: u32, slice: u32) {
     // (an NV12 texture drawn into: its bytes from the page first, a box changes only itself;
     // a buffer stream output wrote, too)
     nv12_pull(d, id);
@@ -4122,12 +3713,12 @@ unsafe fn update_subresource(d: &mut D11, res: u32, sub: u32, bx: u32, data: u32
     if matches!(usage, 1 | 3) {
         return;
     }
-    let b = if bx != 0 { Some([rd(bx, 0), rd(bx, 1), rd(bx, 2), rd(bx, 3), rd(bx, 4), rd(bx, 5)]) } else { None };
     match d.objs.get_mut(&id).map(|o| &mut o.data) {
         Some(Data::Buffer(buf)) => {
             let (x0, x1) = b.map_or((0, buf.size), |b| (b[0], b[3].min(buf.size)));
-            if x1 > x0 {
-                std::ptr::copy(gc::<u8>(data), gp::<u8>(buf.mem + x0), us(x1 - x0));
+            if x1 > x0 && let Some(src) = data.get(..us(x1 - x0)) {
+                // SAFETY: the buffer's guest memory from x0, x1 - x0 bytes inside it (x1 <= size)
+                unsafe { std::ptr::copy(src.as_ptr(), gp::<u8>(buf.mem + x0), src.len()) };
                 buf.dirty = true;
                 buf.stream = false;
                 if d.trace && buf.size <= 256 {
@@ -4140,10 +3731,11 @@ unsafe fn update_subresource(d: &mut D11, res: u32, sub: u32, bx: u32, data: u32
             // the box's texels start at `data`
             t.clean.clear();
             t.pristine = false;
-            match b {
-                // (upload_texture reads the box's rows from `data` on: the box's first texel)
-                Some(bb) => upload_texture(t, sub, us(data), pitch, slice, Some(bb)),
-                None => upload_texture(t, sub, us(data), pitch, slice, None),
+            // (upload_texture reads the box's rows from `data` on: the box's first texel; none:
+            // nothing to read)
+            if !data.is_empty() {
+                // SAFETY: `data` holds what the box reads with these pitches (op::update_bytes)
+                unsafe { upload_texture(t, sub, data.as_ptr().expose_provenance(), pitch, slice, b) };
             }
         }
         _ => {}
@@ -4179,8 +3771,81 @@ pub unsafe fn write_texture_from(res: u32, data: *const u8, pitch: u32, bx: [u32
     true
 }
 
-unsafe fn copy_resource(d: &mut D11, dst: u32, src: u32) {
-    let (di, si) = (d.id_of(dst), d.id_of(src));
+/// ClearRenderTargetView(view, color)
+unsafe fn clear_target(d: &mut D11, v: u32, color: [u32; 4]) {
+    nv12_target(d, v);
+    // (an 8-bit SNORM view, which the page clears no pass of: its texels, as the runtime
+    // converts the color, clear.rs)
+    if matches!(d.objs.get(&v).map(|o| &o.data), Some(Data::View(View { fmt, .. })) if logic::snorm_twin(*fmt).is_some()) {
+        let c = color.map(f32::from_bits);
+        // (a multisampled one is its SINT twin on the page, logic::snorm_ms_page: a clear pass
+        // of the bytes as integers; the page writes no texels of it)
+        if let (Some((tex, _, _, true, _, _, page)), Some(Data::View(View { fmt, .. }))) = (target_texture(d, v), d.objs.get(&v).map(|o| &o.data))
+            && logic::snorm_twin(*fmt).is_some_and(|t| t.0 == page)
+        {
+            let bytes = clear::texel(*fmt, clear::Values::Float(c)).unwrap_or_default();
+            let ch: [u32; 4] = std::array::from_fn(|i| f32::from(bytes.get(i).copied().unwrap_or(0).cast_signed()).to_bits());
+            gpu::record(|q| q.cmd(&[gpu::CLEAR_VIEW, tex, 0, 0, 1, ch[0], ch[1], ch[2], ch[3], 0, 0]));
+            d.targets = None;
+            return;
+        }
+        // SAFETY: clear_view_texels' own contract: a view of this device
+        unsafe { clear_view_texels(d, v, clear::Values::Float(c), &[]) };
+        return;
+    }
+    if let Some((tex, level, layer)) = view_target(d, v) {
+        let layers = view_layers(d, v);
+        let mut c = color;
+        // 8-bit UNORM targets: the color as the runtime converts it (each channel clamped,
+        // times 255 in floats, rounded to even), not left to the GPU's own
+        if let Some(Data::View(View { fmt: 28 | 49 | 61 | 65 | 87 | 88, .. })) = d.objs.get(&v).map(|o| &o.data) {
+            for x in &mut c {
+                let f = f32::from_bits(*x);
+                let f = if f.is_nan() { 0.0 } else { f.clamp(0.0, 1.0) };
+                *x = ((f * 255.0).round_ties_even() / 255.0).to_bits();
+            }
+        }
+        // (every layer (or 3D slice) the view has)
+        for l in layer..layer + layers {
+            gpu::record(|q| q.cmd(&[gpu::CLEAR_VIEW, tex, level, l, 1, c[0], c[1], c[2], c[3], 0, 0]));
+        }
+        d.targets = None;
+    }
+}
+
+/// CopyStructureCount(buffer, offset, uav): the view's hidden counter, as a UINT at the offset
+/// (a view without one, or a place outside the buffer: nothing written)
+unsafe fn copy_structure_count(d: &mut D11, dst: u32, at: u32, v: u32) {
+    let (count, page) = match d.objs.get(&v).map(|o| &o.data) {
+        Some(Data::BufferUav(u)) if u.counted() => (u.counter, u.counter_page),
+        _ => return,
+    };
+    let fits = matches!(d.objs.get(&dst).map(|o| &o.data), Some(Data::Buffer(b)) if at % 4 == 0 && u64::from(at) + 4 <= u64::from(b.size));
+    if !fits {
+        return;
+    }
+    match count {
+        Count::Host(c) => {
+            expand::pull(d, dst);
+            if let Some(Data::Buffer(b)) = d.objs.get_mut(&dst).map(|o| &mut o.data) {
+                // SAFETY: inside the buffer's guest memory (`fits`)
+                unsafe { wr(b.mem.wrapping_add(at), 0, c) };
+                b.dirty = true;
+            }
+        }
+        // (shaders counted on the page: the copy is the page's, the buffer's bytes read back
+        // when the guest looks at them)
+        Count::Page => {
+            let g = buffer_gpu(d, dst);
+            gpu::record(|q| q.cmd(&[gpu::COPY_BUFFER, page, 0, g, at, 4]));
+            if let Some(Data::Buffer(b)) = d.objs.get_mut(&dst).map(|o| &mut o.data) {
+                b.newest = Newest::Page;
+            }
+        }
+    }
+}
+
+unsafe fn copy_resource(d: &mut D11, di: u32, si: u32) {
     texture_written(d, di);
     // (a buffer stream output wrote: its bytes back first; the destination's past the copy kept)
     expand::pull(d, si);
@@ -4210,8 +3875,7 @@ unsafe fn copy_resource(d: &mut D11, dst: u32, src: u32) {
 /// ResolveSubresource(dst, dst sub, src, src sub, format): a multisampled 2D texture's
 /// subresource into one of a single-sample one of its size, of formats of one typeless group
 /// (Windows does nothing with any other; `format` is a typed one of the group).
-unsafe fn resolve(d: &mut D11, dst: u32, dsub: u32, src: u32, ssub: u32, fmt: u32) {
-    let (di, si) = (d.id_of(dst), d.id_of(src));
+unsafe fn resolve(d: &mut D11, di: u32, dsub: u32, si: u32, ssub: u32, fmt: u32) {
     let (Some(Data::Texture(a)), Some(Data::Texture(b))) = (d.objs.get(&di).map(|o| &o.data), d.objs.get(&si).map(|o| &o.data)) else { return };
     let (dl, dly) = (dsub % a.mips.max(1), dsub / a.mips.max(1));
     let ok = a.dim == 2
@@ -4226,20 +3890,32 @@ unsafe fn resolve(d: &mut D11, dst: u32, dsub: u32, src: u32, ssub: u32, fmt: u3
     if !ok {
         return;
     }
+    // (a multisampled SNORM texture, its SINT twin on the page (logic::snorm_ms_page): resolved
+    // into a SINT texture as WARP resolves, its bits copied into the level)
+    if let Some((page, _)) = logic::snorm_twin(fmt).filter(|t| t.0 == b.page) {
+        let (w, h, ag, bg) = (b.w, b.h, a.gpu, b.gpu);
+        let twin = logic::resolve_twin(d, w, h, page);
+        gpu::record(|q| {
+            q.cmd(&[gpu::RESOLVE_SNORM, twin, bg]);
+            q.cmd(&[gpu::COPY, twin, 0, 0, 0, w, h, ag, dl | dly << 16, 0, 0, w, h, 2]);
+        });
+        d.targets = None;
+        return;
+    }
     let cmd = [gpu::RESOLVE, a.gpu, dl, dly, b.gpu, ssub];
     gpu::record(|q| q.cmd(&cmd));
     d.targets = None;
 }
 
 /// CopySubresourceRegion(dst, dst sub, x, y, z, src, src sub, box)
-unsafe fn copy_region(d: &mut D11, dst: u32, dsub: u32, x: u32, y: u32, z: u32, src: u32, ssub: u32, bx: u32) {
-    let (di, si) = (d.id_of(dst), d.id_of(src));
+unsafe fn copy_region(d: &mut D11, di: u32, dsub: u32, at: [u32; 3], si: u32, ssub: u32, bx: Option<[u32; 6]>) {
+    let x = at[0];
     texture_written(d, di);
     expand::pull(d, si);
     expand::pull(d, di);
     match (d.objs.get(&di).map(|o| &o.data), d.objs.get(&si).map(|o| &o.data)) {
         (Some(Data::Buffer(a)), Some(Data::Buffer(b))) => {
-            let (s0, s1) = if bx != 0 { (rd(bx, 0), rd(bx, 3)) } else { (0, b.size) };
+            let (s0, s1) = bx.map_or((0, b.size), |x| (x[0], x[3]));
             let n = s1.min(b.size).saturating_sub(s0).min(a.size.saturating_sub(x));
             std::ptr::copy(gc::<u8>(b.mem + s0), gp::<u8>(a.mem + x), us(n));
             if let Some(Data::Buffer(a)) = d.objs.get_mut(&di).map(|o| &mut o.data) {
@@ -4247,10 +3923,8 @@ unsafe fn copy_region(d: &mut D11, dst: u32, dsub: u32, x: u32, y: u32, z: u32, 
                 a.stream = false;
             }
         }
-        (Some(Data::Texture(_)), Some(Data::Texture(_))) => {
-            let b = (bx != 0).then(|| [rd(bx, 0), rd(bx, 1), rd(bx, 2), rd(bx, 3), rd(bx, 4), rd(bx, 5)]);
-            copy_sub(d, di, dsub, [x, y, z], si, ssub, b);
-        }
+        // SAFETY: copy_sub's own contract: two textures of this device
+        (Some(Data::Texture(_)), Some(Data::Texture(_))) => unsafe { copy_sub(d, di, dsub, at, si, ssub, bx) },
         _ => {}
     }
 }
@@ -4438,7 +4112,25 @@ unsafe fn source_bytes(d: &mut D11, id: u32, sub: u32, b: [u32; 6]) -> Option<u3
 /// those with a point mip filter: the shader rounds explicit levels)
 /// `setup`: a pixel shader drawn from a setup store (expand.rs), over targets of that many
 /// samples a pixel.
-fn shader_for(d: &mut D11, sh: u32, ps: u32, sprite: Option<f32>, samplers: &[u32], logic: &[dxwgsl::logic::Logic], setup: Option<u32>) -> Option<(u32, Vec<(u32, dxwgsl::Binding)>)> {
+/// The SRVs of stage `stage` (0 VS, 1 PS, ...) that are views of multisampled 8-bit SNORM
+/// textures on their SINT twins (logic::snorm_ms_page): (slot, the format's channels), which
+/// the shader loads as i32 bytes (dxwgsl::translate_views).
+fn snorm_ms_srvs(d: &D11, st: &State, stage: usize) -> Vec<(u32, u32)> {
+    let Some(srvs) = st.srvs.get(stage) else { return Vec::new() };
+    srvs.iter()
+        .enumerate()
+        .filter(|&(_, &v)| v != 0)
+        .filter_map(|(n, &v)| {
+            let Some(Data::View(view)) = d.objs.get(&v).map(|o| &o.data) else { return None };
+            let Some(Data::Texture(t)) = d.objs.get(&view.res).map(|o| &o.data) else { return None };
+            let (page, bits) = logic::snorm_twin(view.fmt)?;
+            (t.samples.0 > 1 && t.page == page).then(|| (lo32(n), lo32(bits.iter().filter(|&&b| b != 0).count())))
+        })
+        .collect()
+}
+
+#[allow(clippy::too_many_arguments)]
+fn shader_for(d: &mut D11, sh: u32, ps: u32, sprite: Option<f32>, samplers: &[u32], logic: &[dxwgsl::logic::Logic], setup: Option<u32>, views: &[(u32, u32)]) -> Option<(u32, Vec<(u32, dxwgsl::Binding)>)> {
     let mut addr = Vec::new();
     if matches!(d.objs.get(&sh).map(|o| &o.data), Some(Data::Shader(s)) if s.pixel) {
         for (n, &id) in samplers.iter().enumerate() {
@@ -4455,7 +4147,7 @@ fn shader_for(d: &mut D11, sh: u32, ps: u32, sprite: Option<f32>, samplers: &[u3
     }
     // (point sprite variants of a vertex shader: the pixel shader's id with the top bit set)
     let Some(Data::Shader(s)) = d.objs.get(&sh).map(|o| &o.data) else { return None };
-    let key = (if s.pixel { setup.unwrap_or(0) } else if sprite.is_some() { ps | 0x8000_0000 } else { ps }, addr, if s.pixel { logic.to_vec() } else { Vec::new() });
+    let key = (if s.pixel { setup.unwrap_or(0) } else if sprite.is_some() { ps | 0x8000_0000 } else { ps }, addr, if s.pixel { logic.to_vec() } else { Vec::new() }, views.to_vec());
     if let Some(r) = s.wgsl.get(&key) {
         return r.clone();
     }
@@ -4466,11 +4158,12 @@ fn shader_for(d: &mut D11, sh: u32, ps: u32, sprite: Option<f32>, samplers: &[u3
     };
     let trace = d.trace;
     let Some(Data::Shader(s)) = d.objs.get_mut(&sh).map(|o| &mut o.data) else { return None };
-    let w = match sprite {
-        Some(max) if !s.pixel => dxwgsl::translate_point_sprite(&s.code, ps_code.as_deref(), max),
-        _ if s.pixel && let Some(samples) = setup => dxwgsl::translate_setup(&s.code, &key.1, &key.2, samples),
-        _ if s.pixel && !key.2.is_empty() => dxwgsl::translate_logic(&s.code, &key.1, &key.2),
-        _ => dxwgsl::translate_addr(&s.code, s.pixel, if s.pixel { None } else { ps_code.as_deref() }, &key.1),
+    // (a vertex shader: the pixel shader it feeds, a point sprite's size; a pixel shader: its
+    // targets' logic and setup samples)
+    let w = if s.pixel {
+        dxwgsl::translate_views(&s.code, true, None, None, &key.1, &key.2, setup, &key.3)
+    } else {
+        dxwgsl::translate_views(&s.code, false, ps_code.as_deref(), sprite, &key.1, &[], None, &key.3)
     };
     let r = match w {
         Ok(w) => {
@@ -4888,7 +4581,10 @@ unsafe fn draw_with(d: &mut D11, st: &State, indexed: bool, count: u32, instance
     let (count, instances, start, first_instance) = if sprite.is_some() { (6, count, 0, start) } else { (count, instances, start, first_instance) };
     let shaders = match store {
         Some(sd) => Some(sd.vs.clone()),
-        None => shader_for(d, st.vs, st.ps, sprite, &[], &[], None),
+        None => {
+            let views = snorm_ms_srvs(d, st, 0);
+            shader_for(d, st.vs, st.ps, sprite, &[], &[], None, &views)
+        }
     };
     let Some((vs, vb)) = shaders else { return };
     if trace2() {
@@ -4943,7 +4639,8 @@ unsafe fn draw_with(d: &mut D11, st: &State, indexed: bool, count: u32, instance
     // (a setup store's draw: the pixel shader evaluates its inputs from the store's planes,
     // at the samples of its targets)
     let setup = store.and_then(|sd| sd.setup).map(|_| if multisampled.iter().any(|&m| m) || target_texture(d, st.dsv).is_some_and(|t| t.3 && crate::render::d3d::page_multisamples(t.6)) { 4 } else { 1 });
-    let ps = if st.ps != 0 { shader_for(d, st.ps, 0, None, &st.samplers[1], &logic_ops, setup) } else { None };
+    let ps_views = snorm_ms_srvs(d, st, 1);
+    let ps = if st.ps != 0 { shader_for(d, st.ps, 0, None, &st.samplers[1], &logic_ops, setup, &ps_views) } else { None };
     // SNORM targets: drawn as their SINT twins, the target's bits copied in before and back after
     let twins: Vec<logic::Twin> = logic_ops
         .iter()
@@ -5104,10 +4801,10 @@ unsafe fn draw_with(d: &mut D11, st: &State, indexed: bool, count: u32, instance
         v
     });
     // (a stash's pass (logic.rs): the stash written whole where the target is, then the mark)
-    let stashed: Vec<&dxwgsl::logic::Logic> = logic_ops.iter().filter(|l| matches!(l.store, dxwgsl::logic::Store::Stash { .. })).collect();
+    let stashed: Vec<&dxwgsl::logic::Logic> = logic_ops.iter().filter(|l| l.stashed()).collect();
     let plain = |f: u32| [f, 0, blend_factor(2, false).code(), blend_factor(1, false).code(), 1, blend_factor(2, true).code(), blend_factor(1, true).code(), 1, 0xf];
     // (a mark of its own after the targets: logic::stash_of)
-    let mark_slot = stashed.iter().any(|l| matches!(l.store, dxwgsl::logic::Store::Stash { mark: dxwgsl::logic::Mark::Slot(at), .. } if us(at) >= formats.len()));
+    let mark_slot = stashed.iter().any(|l| matches!(l.mark(), Some(dxwgsl::logic::Mark::Slot(at)) if us(at) >= formats.len()));
     key.push(lo32(formats.len()).saturating_add(u32::from(mark_slot)));
     let mut masks = Vec::new();
     for (i, f) in formats.iter().enumerate() {
@@ -5117,10 +4814,22 @@ unsafe fn draw_with(d: &mut D11, st: &State, indexed: bool, count: u32, instance
         let mask = if logic_kept.contains(&lo32(i)) { 0 } else { t[7] & 0xf };
         masks.push(mask);
         if let Some(l) = stashed.iter().find(|l| l.target == lo32(i)) {
-            // (a stash at the mark's location: the mark there)
-            key.extend_from_slice(&plain(if l.buffered() { format::P_R8UI } else { logic::uint_page(l.stash_bits()).unwrap_or(*f) }));
-        } else if twins.iter().any(|t| t.target == lo32(i)) {
-            // (an SNORM target's twin: the shader blends, the page writes its bytes)
+            // (a stash at the mark's location: the mark there; an SNORM stash elsewhere: its
+            // target, written by the resolve pass alone)
+            match l.store {
+                dxwgsl::logic::Store::SnormStash { mark, .. } if mark == dxwgsl::logic::Mark::Slot(lo32(i)) => key.extend_from_slice(&plain(format::P_R8UI)),
+                dxwgsl::logic::Store::SnormStash { .. } => {
+                    let mut p = plain(*f);
+                    p[8] = 0;
+                    key.extend_from_slice(&p);
+                }
+                dxwgsl::logic::Store::Stash { .. } | dxwgsl::logic::Store::Plain | dxwgsl::logic::Store::Direct(_) | dxwgsl::logic::Store::Snorm(_) => {
+                    key.extend_from_slice(&plain(if l.buffered() { format::P_R8UI } else { logic::uint_page(l.stash_bits()).unwrap_or(*f) }));
+                }
+            }
+        } else if logic_ops.iter().any(|l| l.target == lo32(i) && matches!(l.store, dxwgsl::logic::Store::Snorm(_))) {
+            // (an SNORM target's twin, or the multisampled target that is one: the shader
+            // blends, the page writes its bytes)
             let mut p = plain(*f);
             p[8] = mask;
             key.extend_from_slice(&p);
@@ -5183,7 +4892,8 @@ unsafe fn draw_with(d: &mut D11, st: &State, indexed: bool, count: u32, instance
     }
     // (an SNORM target's blend constant: the blend state's BlendFactor)
     let constant = logic_ops.iter().any(|l| matches!(l.store, dxwgsl::logic::Store::Snorm(Some(b)) if b.reads_constant()));
-    if constant {
+    // (an SNORM stash's: its resolve pass reads it)
+    if constant || logic_ops.iter().any(|l| matches!(l.store, dxwgsl::logic::Store::SnormStash { .. })) {
         ps_constant(d, st);
     }
     // (a stash's copy is the resolve's, not the shader's)
@@ -5194,8 +4904,9 @@ unsafe fn draw_with(d: &mut D11, st: &State, indexed: bool, count: u32, instance
     if let Some(e) = store.and_then(|sd| sd.setup) {
         ps_over.push(e);
     }
-    let stash = logic::stash_of(d, &st.rtvs, &colors, [dt, dl, dly], &stashed, &masks, &copies);
-    ps_over.extend(stash.as_ref().and_then(|s| s.src));
+    let constant_buf = d.blend_constant.0;
+    let stash = logic::stash_of(d, &st.rtvs, &colors, [dt, dl, dly], &stashed, &masks, &copies, constant_buf);
+    ps_over.extend(stash.as_ref().map_or_default(|s| s.src.clone()));
     for (stage, binds) in [(0usize, &vb), (1usize, &ps.as_ref().map_or_default(|p| p.1.clone()))] {
         let entries = bind_entries(d, st, stage, binds, if stage == 0 { &over } else { &ps_over }, &mut cbs_read);
         w.push(lo32(entries.len()));
@@ -5558,16 +5269,16 @@ fn ps_constant(d: &mut D11, st: &State) {
 }
 
 /// A compute shader's page shader and bindings for UAVs of these page formats (slot, format).
-fn compute_shader_for(d: &mut D11, cs: u32, fmts: &[(u32, u32)]) -> Option<(u32, Vec<(u32, dxwgsl::Binding)>)> {
+fn compute_shader_for(d: &mut D11, cs: u32, fmts: &[(u32, u32)], views: &[(u32, u32)]) -> Option<(u32, Vec<(u32, dxwgsl::Binding)>)> {
     let trace = d.trace;
     let Some(Data::Shader(s)) = d.objs.get_mut(&cs).map(|o| &mut o.data) else { return None };
     let key = fmts.iter().fold(0x811c_9dc5u32, |h, &(n, f)| (h ^ (n << 8 | f)).wrapping_mul(0x0100_0193));
-    let key = (key, Vec::new(), Vec::new());
+    let key = (key, Vec::new(), Vec::new(), views.to_vec());
     if let Some(r) = s.wgsl.get(&key) {
         return r.clone();
     }
     let names: Vec<(u32, &str)> = fmts.iter().map(|&(n, f)| (n, crate::render::d3d::TEX_FORMATS.get(us(f)).map_or("rgba8unorm", |t| t.name()))).collect();
-    let r = match dxwgsl::translate_compute(&s.code, &names) {
+    let r = match dxwgsl::translate_compute_views(&s.code, &names, views) {
         Ok(w) => {
             let id = page_id();
             gpu::record(|q| {
@@ -5628,7 +5339,8 @@ unsafe fn dispatch(d: &mut D11, st: &State, x: u32, y: u32, z: u32) {
             fmts.push((n, page));
         }
     }
-    let Some((sh, binds)) = compute_shader_for(d, cs, &fmts) else { return };
+    let views = snorm_ms_srvs(d, st, 5);
+    let Some((sh, binds)) = compute_shader_for(d, cs, &fmts, &views) else { return };
     let mut w = vec![gpu::DISPATCH, sh, x, y, z, lo32(binds.len())];
     for (bi, kind) in &binds {
         let e = match kind {

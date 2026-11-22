@@ -31,6 +31,9 @@ pub struct Module {
     pub deps: Vec<u32>,
     /// GetModuleHandleEx(PIN): never unloaded
     pub pinned: bool,
+    /// its DllMain(PROCESS_ATTACH) ran and answered TRUE: its unload tells it PROCESS_DETACH
+    /// (false while pending, and for one whose DllMain answered FALSE)
+    pub attached: bool,
 }
 
 /// The 64-bit address an image mapped at `base` (preferring `pref`) has.
@@ -191,6 +194,7 @@ pub fn load_datafile(data: &[u8], path: &str) -> Option<u32> {
         redirected: false,
         deps: Vec::new(),
         pinned: false,
+        attached: false,
     });
     Some(base)
 }
@@ -233,13 +237,9 @@ pub fn free_library(cpu: &mut Cpu, base: u32) -> bool {
 }
 
 fn unload(cpu: &mut Cpu, base: u32) {
-    // (not yet initialized: no DllMain to tell)
-    let fresh = {
-        let mut p = PENDING.locked();
-        let had = p.contains(&base);
-        p.retain(|&b| b != base);
-        had
-    };
+    // (not yet initialized, or its DllMain answered FALSE: no DllMain to tell)
+    PENDING.locked().retain(|&b| b != base);
+    let fresh = !with(base, |m| m.attached || !m.dll).unwrap_or(false);
     // (an exe's entry point is no DllMain)
     let entry = with(base, |m| if m.dll { m.entry } else { 0 }).unwrap_or(0);
     if !fresh {
@@ -724,6 +724,7 @@ pub fn load(data: Vec<u8>, path: &str, resolve: &mut dyn FnMut(&str, Import) -> 
         redirected: false,
         deps: Vec::new(),
         pinned: false,
+        attached: false,
     });
     ldr_add(base);
     // imports (after the module is listed: a DLL importing from itself, or a cycle)
@@ -1165,6 +1166,7 @@ pub fn hle_module(dll: &str) -> u32 {
         redirected: false,
         deps: Vec::new(),
         pinned: false,
+        attached: true,
     });
     drop(_making);
     ldr_add(base);
@@ -1330,6 +1332,9 @@ pub enum LoadFailure {
     NoProc,
     /// The file is no image this process maps: ERROR_BAD_EXE_FORMAT
     BadImage,
+    /// Its DllMain or a dependency's answered FALSE: unloaded again, ERROR_DLL_INIT_FAILED
+    /// (review 6852be1f)
+    Init,
 }
 
 impl LoadFailure {
@@ -1338,6 +1343,7 @@ impl LoadFailure {
             Self::NotFound => 126,
             Self::NoProc => 127,
             Self::BadImage => 193,
+            Self::Init => 1114,
         }
     }
 }
@@ -1639,8 +1645,8 @@ fn abandon(cpu: &mut Cpu, why: LoadFailure) -> LoadFailure {
 
 /// LoadLibrary: an existing module, one of ours, or a DLL file (initialized here), looked for
 /// in the default search (SetDefaultDllDirectories' when set).
-pub fn load_library(cpu: &mut Cpu, name: &str) -> u32 {
-    load_library_searching(cpu, name, &LoadSearch::default()).unwrap_or(0)
+pub fn load_library(cpu: &mut Cpu, name: &str) -> Result<u32, LoadFailure> {
+    load_library_searching(cpu, name, &LoadSearch::default())
 }
 
 /// LoadLibraryEx without a data-file flag: load_library, looked for as `search` says.
@@ -1656,8 +1662,7 @@ pub fn load_library_searching(cpu: &mut Cpu, name: &str, search: &LoadSearch) ->
                 if with_mut(b, |m| m.redirected = true).is_some() {
                     ldr_update(b);
                 }
-                init_dlls(cpu);
-                return Ok(b);
+                return init_loaded(cpu, b);
             }
             Err(DllError::Failed(why)) => return Err(abandon(cpu, why)),
             // (the manifest's file is not there: looked for as the name says)
@@ -1690,13 +1695,10 @@ pub fn load_library_searching(cpu: &mut Cpu, name: &str, search: &LoadSearch) ->
         if let Some(p) = crate::actctx::builtin_dll_path(name) && with_mut(b, |m| m.path = p).is_some() {
             ldr_update(b);
         }
-        return Ok(b);
+        return if b == 0 { Err(LoadFailure::NotFound) } else { Ok(b) };
     }
     match load_dll_file(name, search) {
-        Ok(b) => {
-            init_dlls(cpu);
-            Ok(b)
-        }
+        Ok(b) => init_loaded(cpu, b),
         Err(DllError::Failed(why)) => Err(abandon(cpu, why)),
         Err(DllError::NotThere(e)) => {
             if crate::env_on!("SAKE_TRACE_LOAD") {
@@ -1804,8 +1806,15 @@ fn tls_callbacks(cpu: &mut Cpu, base: u32, reason: u32) {
     }
 }
 
+/// A DLL whose DllMain(PROCESS_ATTACH) answered FALSE: it was told PROCESS_DETACH at once (as
+/// Windows' loader does) and counts as never attached, so its unload tells it nothing more.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct InitFailed(pub u32);
+
 /// DllMain(PROCESS_ATTACH) of the DLLs loaded since, and the exe's TLS callbacks the first time.
-pub fn init_dlls(cpu: &mut Cpu) {
+/// Err: one answered FALSE (review 6852be1f: LoadLibrary went on as if it had loaded); the ones
+/// after it stay pending.
+pub fn init_dlls(cpu: &mut Cpu) -> Result<(), InitFailed> {
     let _g = loader_lock();
     static EXE_DONE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
     loop {
@@ -1828,12 +1837,41 @@ pub fn init_dlls(cpu: &mut Cpu) {
             if crate::env_on!("SAKE_TRACE_LOAD") {
                 eprintln!("sake: DllMain of {:#x} {}: {ok}", base, with(base, |m| m.name.clone()).unwrap_or_default());
             }
+            // (a BOOL: only a DLL's DllMain answers; an exe's entry is not called here)
+            if ok == 0 && with(base, |m| m.dll).unwrap_or(false) {
+                crate::call(cpu, entry, &[base, 0, 0]);
+                tls_callbacks(cpu, base, 0);
+                return Err(InitFailed(base));
+            }
         }
+        let _ = with_mut(base, |m| m.attached = true);
     }
     if !EXE_DONE.swap(true, std::sync::atomic::Ordering::Relaxed) {
         let exe = MODULES.r().iter().find(|m| !m.dll).map(|m| m.base);
         if let Some(b) = exe {
             tls_callbacks(cpu, b, 1);
+        }
+    }
+    Ok(())
+}
+
+/// init_dlls for LoadLibrary of `b`: `b` when every DllMain answered TRUE; else the failed
+/// load's reference goes (FreeLibrary: `b` and the DLLs only it brought in are unloaded, those
+/// already attached told PROCESS_DETACH) and LoadFailure::Init.
+fn init_loaded(cpu: &mut Cpu, b: u32) -> Result<u32, LoadFailure> {
+    match init_dlls(cpu) {
+        Ok(()) => Ok(b),
+        Err(InitFailed(failed)) => {
+            if crate::env_on!("SAKE_TRACE_LOAD") {
+                eprintln!("sake: DllMain(PROCESS_ATTACH) of {failed:#x} failed: unloading {b:#x}");
+            }
+            free_library(cpu, b);
+            // (a DLL the failed one's DllMain could not undo: it was loaded by another
+            // LoadLibrary that is still pending, or by this one as `b` itself)
+            if failed != b && with(failed, |m| !m.attached).unwrap_or(false) {
+                free_library(cpu, failed);
+            }
+            Err(LoadFailure::Init)
         }
     }
 }
@@ -1880,6 +1918,7 @@ mod unload_tests {
             redirected: false,
             deps,
             pinned: false,
+            attached: true,
         });
     }
     fn refs(b: u32) -> Option<u32> {
@@ -2184,6 +2223,7 @@ mod path_tests {
             redirected: false,
             deps: Vec::new(),
             pinned: false,
+            attached: false,
         }
     }
 
@@ -2770,7 +2810,7 @@ mod missing_import_tests {
         put32(&mut v, sec + 20, 0x200);
         put32(&mut v, sec + 36, 0xc000_0040);
         // (rva 0x1000 + k is the file's 0x200 + k)
-        let at = |rva: u32| 0x200 + (rva - 0x1000) as usize;
+        let at = |rva: u32| 0x200 + kome::num::us(rva - 0x1000);
         let text = |v: &mut Vec<u8>, rva: u32, s: &str| v[at(rva)..at(rva) + s.len()].copy_from_slice(s.as_bytes());
         if let Some((d, f)) = import {
             put32(&mut v, dirs + 8, 0x1000);

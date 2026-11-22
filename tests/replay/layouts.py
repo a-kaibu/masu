@@ -26,12 +26,18 @@ TUS = {
     "d3d8": ["d3d8.h"],
     "d3d11": ["d3d11_4.h", "dxgi1_6.h"],
     "ddraw": ["ddraw.h", "d3d.h"],
+    # (Direct2D: only RECORDS below, the structures sake builds itself to call Direct3D 11)
+    "d2d1": ["d2d1.h"],
 }
+# records kept though no method or function above reaches them: sake's abi layouts
+# (crates/sake/build.rs reads them for its own calls: D2D's HWND render target)
+RECORDS = ["D2D1_HWND_RENDER_TARGET_PROPERTIES", "D2D1_RENDER_TARGET_PROPERTIES", "DXGI_SWAP_CHAIN_DESC", "D3D11_TEXTURE2D_DESC"]
 FUNCTIONS = {
     "d3d9": ["Direct3DCreate9", "Direct3DCreate9Ex"],
     "d3d8": ["Direct3DCreate8"],
     "d3d11": ["D3D11CreateDevice", "D3D11CreateDeviceAndSwapChain", "CreateDXGIFactory", "CreateDXGIFactory1", "CreateDXGIFactory2"],
     "ddraw": ["DirectDrawCreate", "DirectDrawCreateEx", "DirectDrawCreateClipper"],
+    "d2d1": [],
 }
 INTS = {
     "char": "i1", "signed char": "i1", "unsigned char": "i1", "_Bool": "i1",
@@ -199,6 +205,7 @@ def main():
             reach(" ".join([ret] + ps))
     for ret, ps in fns.values():
         reach(" ".join([ret] + ps))
+    reach(" ".join("S:" + r for r in RECORDS))
     while todo:
         r = todo.pop()
         if not recs.get(r):

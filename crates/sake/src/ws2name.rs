@@ -1473,7 +1473,7 @@ fn async_reply(hwnd: u32, msg: u32, buf: u32, blen: u32, r: u32, kind: u8) -> u3
         }
     };
     let _ = ok;
-    crate::user::post(hwnd, msg, h, lp);
+    crate::user::post(hwnd, msg, crate::abi::Wparam::handle(h), crate::abi::Lparam::dword(lp));
     h
 }
 

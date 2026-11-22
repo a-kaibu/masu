@@ -240,7 +240,7 @@ pub(super) fn ps_quads(tree: &Tree) -> Hits {
 /// logic-op blend state as a plain write, known.txt holding WARP's 1 as a difference)
 const LOGIC_SITES: [(&str, &str, &str); 19] = [
     ("crates/kura/src/d3d11/mod.rs", "for k in 0..10 {", "D3D11_OPTIONS does not answer every BOOL from OutputMergerLogicOp (0) on"),
-    ("crates/kura/src/d3d11/mod.rs", "dxwgsl::translate_logic(", "the pixel shader of a draw with logic ops is not dxwgsl::translate_logic"),
+    ("crates/kura/src/d3d11/mod.rs", "dxwgsl::translate_views(&s.code, true, None, None, &key.1, &key.2,", "the pixel shader of a draw with logic ops is not translated with its targets' logic (dxwgsl::translate_views)"),
     ("crates/kura/src/d3d11/mod.rs", "logic::targets(", "a draw's logic ops are not taken from its blend state (logic::targets)"),
     ("crates/kura/src/d3d11/mod.rs", "logic::split(&w, &copies, stash.as_ref(),", "a draw reading its target is not split by primitive after the target's copy (logic::split), with its stash passes"),
     ("crates/kura/src/d3d11/mod.rs", "dxwgsl::sample_rate(", "a multisampled target's op is not chosen by the pixel shader's rate (WARP: a pixel-rate shader stays one invocation a pixel under a logic op)"),
@@ -280,14 +280,21 @@ pub(super) fn logic_ops(tree: &Tree) -> Hits {
 
 /// 8-bit SNORM render targets (2026-11-22: kura dropped every clear of and draw to them,
 /// WebGPU rendering to no SNORM format)
-const SNORM_SITES: [(&str, &str, &str); 16] = [
+const SNORM_SITES: [(&str, &str, &str); 26] = [
+    ("crates/kura/src/d3d11/mod.rs", "logic::snorm_ms_page(fmt, dim, layers, mips, samples, bind)", "a multisampled SNORM texture is not its SINT twin on the page (WebGPU multisamples no SNORM format: 4x SNORM would be one sample)"),
+    ("crates/kura/src/d3d11/logic.rs", "Some(blend) if ms && !sample_rate && blend.reads_dst() => Store::SnormStash { blend, mark },", "a multisampled SNORM blend that reads its target under a pixel-rate shader is not done per sample in the resolve pass"),
+    ("crates/kura/src/d3d11/logic.rs", "gpu::SNORM_RESOLVE, tex, copy, stash, mark_tex, mask", "an SNORM stash's draw has no resolve pass after it"),
+    ("crates/kura/src/d3d11/mod.rs", "q.cmd(&[gpu::RESOLVE_SNORM, twin, bg]);", "ResolveSubresource of a multisampled SNORM texture is not WARP's resolve of its bytes"),
+    ("crates/kura/src/d3d11/mod.rs", "let views = snorm_ms_srvs(d, st, 5);", "a compute shader's SRV of a multisampled SNORM texture is not loaded as its bytes' floats"),
+    ("crates/kura/src/d3d11/mod.rs", "let ps_views = snorm_ms_srvs(d, st, 1);", "a pixel shader's SRV of a multisampled SNORM texture is not loaded as its bytes' floats"),
+    ("crates/dxwgsl/src/wgsl.rs", "sn_load(textureLoad({tv}, {args}))", "a load of a multisampled SNORM SRV does not convert its SINT twin's bytes"),
     ("crates/kura/src/d3d11/mod.rs", "logic::twin_of(", "a draw to an SNORM target is not drawn to its SINT twin (logic::twin_of)"),
     ("crates/kura/src/d3d11/mod.rs", "logic::snorm_twin(*fmt).is_some()", "ClearRenderTargetView of an SNORM view does not write its texels (the page clears no SNORM pass)"),
     ("crates/kura/src/d3d11/mod.rs", "logic::split(&w, &copies, stash.as_ref(), &twins,", "a draw's SNORM twins are not loaded before its primitives and stored back after (logic::split)"),
     ("crates/kura/src/d3d11/logic.rs", "31 => Some((f::P_RGBA8SI, [8, 8, 8, 8])),", "R8G8B8A8_SNORM views have no SINT twin"),
     ("crates/kura/src/d3d11/logic.rs", "51 => Some((f::P_RG8SI, [8, 8, 0, 0])),", "R8G8_SNORM views have no SINT twin"),
     ("crates/kura/src/d3d11/logic.rs", "63 => Some((f::P_R8SI, [8, 0, 0, 0])),", "R8_SNORM views have no SINT twin"),
-    ("crates/kura/src/d3d11/logic.rs", "store: Store::Snorm(b)", "an SNORM target's store does not carry its blend (logic::targets)"),
+    ("crates/kura/src/d3d11/logic.rs", "Some(_) | None => Store::Snorm(b),", "an SNORM target's store does not carry its blend (logic::targets)"),
     ("crates/dxwgsl/src/wgsl.rs", "Store::Snorm(blend) =>", "an SNORM target's output does not go through logic_output's store and blend"),
     ("crates/dxwgsl/src/snorm.rs", "kome::num::trunc_i8((clamp_src(v) * 127.0).round())", "an SNORM store no longer rounds WARP's way (the f32 product, halves away from zero; winref d3d11snorm)"),
     ("crates/dxwgsl/src/snorm.rs", "if v.is_nan() { -1.0 } else { v.clamp(-1.0, 1.0) }", "a NaN output to an SNORM target is not -127 (WARP writes NaN as -127; winref d3d11snorm)"),
@@ -296,6 +303,9 @@ const SNORM_SITES: [(&str, &str, &str); 16] = [
     ("crates/dxwgsl/src/snorm.rs", "const SN_LOAD = array<u32, 256>(", "the shader's SNORM load divides (WGSL's division is not exact: the blend's last bit differs from WARP's); it reads load()'s table"),
     ("crates/dxwgsl/src/wgsl.rs", "\"let sn_k = sn_clamp(sn_kv);\"", "an SNORM blend's constant is not clamped to -1..1 in the shader (WARP blends 1.5 as 1; winref d3d11snorm)"),
     ("crates/kura/src/d3d11/mod.rs", "and_then(dxwgsl::snorm::Blend::of).is_some_and(|b| b.takes()))?;", "CreateBlendState takes MIN / MAX with a dual-source factor (WARP: E_INVALIDARG; winref d3d11snorm)"),
+    ("crates/dxwgsl/src/snorm.rs", "f32::from(b.max(-127)) * RESOLVE_RCP", "ResolveSubresource of SNORM reads its samples as the quotient, not WARP's product with the f32 nearest 1/127 (winref d3d11snorm's seed rows: 20 of 960 differ)"),
+    ("crates/dxwgsl/src/snorm.rs", "s = s + sn_r(vec4<f32>(b) * bitcast<f32>(0x{rcp:08x}u),", "the resolve pass's SNORM samples are not WARP's product with 1/127, kept from fusing with the sum"),
+    ("crates/kura/src/d3d11/clear.rs", "trunc_u32(f64::from((v.clamp(0.0, 1.0) * max).round_ties_even()))", "a UNORM clear is not rounded from the f32 product (WARP clears 0.5 / 255's nearest f32 to 0; winref d3d11snorm)"),
     ("crates/dxwgsl/src/snorm.rs", "#[path = \"snorm_tests.rs\"]", "the SNORM conversions and blend are no longer checked against WARP's answers (snorm_tests.rs)"),
 ];
 
@@ -319,10 +329,14 @@ pub(super) fn snorm_targets(tree: &Tree) -> Hits {
 
 /// What the review of kura at 6852be1 found wrong, fixed (2026-11-22), each by its spelling in
 /// the code (comments left out): (file, text it must hold, what is wrong without it).
-pub(super) const REVIEW_6852BE1_HAS: [(&str, &str, &str); 19] = [
+pub(super) const REVIEW_6852BE1_HAS: [(&str, &str, &str); 23] = [
     ("crates/kura/src/d3d11/hazards.rs", "out.extend(st.so.iter()", "stream output targets are not outputs: a vertex buffer of one stays bound (D3D11 unbinds it)"),
     ("crates/kura/src/d3d11/hazards.rs", "for vb in st.vbs.iter_mut()", "the vertex buffers checked are not all 32 slots"),
-    ("crates/kura/src/d3d11/mod.rs", "hazards::after_outputs(d, st);\n        }\n        35 => {", "OMSetRenderTargetsAndUnorderedAccessViews with KEEP render targets does not resolve its new UAVs"),
+    ("crates/kura/src/d3d11/op.rs", "if let Uavs::Set { start, views, counts } = uavs {", "OMSetRenderTargetsAndUnorderedAccessViews with KEEP render targets does not resolve its new UAVs"),
+    ("crates/kura/src/d3d11/mod.rs", "ContextOp::read(d, m, a)", "the immediate context reads a state call its own way, not as the ContextOp a deferred context records"),
+    ("crates/kura/src/d3d11/deferred.rs", "ContextOp::read(d, m, a)", "a deferred context records a call its own way, not as the ContextOp the immediate context applies"),
+    ("crates/kura/src/d3d11/deferred.rs", "recs: std::sync::Arc<Vec<ContextOp<'static>>>", "a command list keeps raw calls (replayed through guest memory) instead of ContextOps"),
+    ("crates/kura/src/d3d11/mod.rs", "Some(Data::Deferred(_)) => true,", "a deferred context let go of is never destroyed (its state and list hold their objects for good)"),
     ("crates/kura/src/jit.rs", "struct SharedCache", "the shared JIT cache's byte count is kept apart from its map (it drifted)"),
     ("crates/kura/src/jit.rs", "jit::TABLE_SLOTS", "the JIT table's size is not koji's (the loader's 20-bit index)"),
     ("host/vnjit.js", "VNJIT.slots", "vnjitRoom does not refuse a table index past the slots the loader encodes"),
@@ -342,7 +356,7 @@ pub(super) const REVIEW_6852BE1_HAS: [(&str, &str, &str); 19] = [
 ];
 
 /// (file, text it must not hold, what is wrong with it)
-pub(super) const REVIEW_6852BE1_NOT: [(&str, &str, &str); 9] = [
+pub(super) const REVIEW_6852BE1_NOT: [(&str, &str, &str); 12] = [
     ("crates/kura/src/d3d11/hazards.rs", "0..16", "a fixed slot count: the slots past it are not checked"),
     ("crates/kura/src/d3d11/hazards.rs", "0..128", "a fixed slot count: the slots past it are not checked"),
     ("crates/kura/src/jit.rs", "SHARED_BYTES", "a byte count of the shared cache apart from what the map holds"),
@@ -352,6 +366,9 @@ pub(super) const REVIEW_6852BE1_NOT: [(&str, &str, &str); 9] = [
     ("crates/kura/src/adec.rs", "LIST_FROM", "the stream list's start kept between calls (a page of it taken for the whole)"),
     ("crates/koji/src/jit/mod.rs", "PAGE_MAP", "the page marks' address as a static of the translator: translations hold it as an immediate"),
     ("crates/kura/src/jit.rs", "profiling() || jit::page_check()", "saved translations refused whenever the page checks are on, the checked ones too"),
+    ("crates/kura/src/d3d11/deferred.rs", "fn pointed(", "a table of what each method's pointers point to, beside the one that reads them"),
+    ("crates/kura/src/d3d11/deferred.rs", "fn objects(m: u32)", "a table of which arguments are objects, beside the one that reads them"),
+    ("crates/kura/src/d3d11/deferred.rs", "guest_alloc(lo32(b.len()))", "a recorded call put back into guest memory to be read again"),
 ];
 
 /// a fix of the review of 6852be1 taken back
@@ -367,6 +384,35 @@ pub(super) fn review_6852be1(tree: &Tree) -> Hits {
         if code.contains(needle) != has {
             let line = if has { 1 } else { code.split(needle).next().map_or(1, |b| b.lines().count().max(1)) };
             out.push((f, line, (*why).to_owned()));
+        }
+    }
+    out.extend(host_files_held(tree));
+    out
+}
+
+/// A kura test that opens files under the host's temporary directory through kura's own file
+/// functions (fs.rs, routed through the VFS when a path is in its tree) without
+/// `vfs::tests::host_files()`: run with the VFS tests, which mount "/", its files were looked
+/// for in their tree (fs::head_copy_tests failed so). Each fn that names `temp_dir()` holds
+/// the guard, or takes it held (`&HostFiles`); vfs.rs's own tests hold TEST_FS through their
+/// trees.
+fn host_files_held(tree: &Tree) -> Hits {
+    let mut out = Hits::new();
+    for f in tree.rs(&["crates/kura/src/"]) {
+        if f.as_str().starts_with("crates/kura/src/vfs") {
+            continue;
+        }
+        let code = tree.code(&f, true);
+        let mut from = 0;
+        while let Some(k) = code.get(from..).and_then(|c| c.find("temp_dir()")) {
+            let at = from.saturating_add(k);
+            let start = code.get(..at).and_then(|c| c.rfind("fn ")).unwrap_or(0);
+            let end = code.get(at..).and_then(|c| c.find("\n    fn ").or_else(|| c.find("\nfn "))).map_or(code.len(), |e| at.saturating_add(e));
+            if !code.get(start..end).is_some_and(|body| body.contains("tests::host_files();") || body.contains("&crate::vfs::tests::HostFiles")) {
+                let line = code.get(..at).map_or(1, |b| b.lines().count().max(1));
+                out.push((f.clone(), line, "a test's host file opened without vfs::tests::host_files() held (a VFS test's tree takes the path)".to_owned()));
+            }
+            from = at.saturating_add("temp_dir()".len());
         }
     }
     out
@@ -431,6 +477,31 @@ pub(super) fn d3d9_status(tree: &Tree) -> Hits {
                 None if !name.as_str().starts_with("S_") => out.push((f.clone(), line, format!("{} is not in regress::D3D9_CODES: add it from d3d9.h", name.as_str()))),
                 None => {}
             }
+        }
+    }
+    out
+}
+
+// --- d3d9dev-formats --------------------------------------------------------------------------
+
+/// the probe and the test that reads its golden
+const D3D9DEV_PROBE: &str = "tests/winref/probes/d3d9dev.c";
+const D3D9DEV_TEST: &str = "crates/kura/src/d3d9/dev_tests.rs";
+
+static D3D9DEV_ROW: LazyLock<Option<Regex>> = LazyLock::new(|| rx(r#"\{\s*(?:D3DFMT_[A-Z0-9_]+|\(D3DFORMAT\)MAKEFOURCC\([^)]*\))\s*,\s*"([A-Za-z0-9_]+)"\s*\}"#));
+
+/// a format of the d3d9dev probe's table that d3d9_answers_as_the_golden has no name for
+pub(super) fn d3d9dev_formats(tree: &Tree) -> Hits {
+    let mut out = Hits::new();
+    let Some(re) = D3D9DEV_ROW.as_ref() else { return out };
+    let (probe, test) = (Rel::new(D3D9DEV_PROBE), Rel::new(D3D9DEV_TEST));
+    let named = tree.text(&test);
+    let text = tree.text(&probe);
+    for c in re.captures_iter(&text) {
+        let Some(n) = c.get(1) else { continue };
+        if !named.contains(&format!("\"{}\" =>", n.as_str())) {
+            let line = crate::code::line_of(&text, n.start());
+            out.push((probe.clone(), line, format!("d3d9dev asks {} but {D3D9DEV_TEST}'s d3d9_answers_as_the_golden has no \"{}\" => arm", n.as_str(), n.as_str())));
         }
     }
     out
@@ -824,7 +895,7 @@ pub(super) fn product_code(tree: &Tree, f: &Rel) -> String {
         let at = from.saturating_add(rel);
         let after = at.saturating_add(12);
         let rest = text.get(after..).unwrap_or_default();
-        let lead = rest.len() - rest.trim_start().len();
+        let lead = rest.len().saturating_sub(rest.trim_start().len());
         let rest = rest.trim_start();
         let open = rest.find('{');
         let inline = rest.starts_with("mod ") && open.is_some_and(|b| rest.find(';').is_none_or(|s| b < s));

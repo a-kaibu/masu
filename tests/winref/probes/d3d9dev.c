@@ -56,6 +56,8 @@ int main(void) {
         { D3DFMT_DXT1, "DXT1" }, { D3DFMT_L8, "L8" }, { D3DFMT_P8, "P8" }, { (D3DFORMAT)MAKEFOURCC('N', 'V', '1', '2'), "NV12" },
         { D3DFMT_A8, "A8" }, { D3DFMT_A8L8, "A8L8" }, { D3DFMT_A1R5G5B5, "A1R5G5B5" }, { D3DFMT_A8B8G8R8, "A8B8G8R8" }, { D3DFMT_G16R16, "G16R16" },
         { D3DFMT_R32F, "R32F" }, { D3DFMT_A32B32G32R32F, "A32B32G32R32F" }, { D3DFMT_V8U8, "V8U8" }, { D3DFMT_X8B8G8R8, "X8B8G8R8" },
+        { D3DFMT_A4R4G4B4, "A4R4G4B4" }, { D3DFMT_X4R4G4B4, "X4R4G4B4" }, { D3DFMT_A2B10G10R10, "A2B10G10R10" }, { D3DFMT_A16B16G16R16, "A16B16G16R16" },
+        { D3DFMT_R16F, "R16F" }, { D3DFMT_G16R16F, "G16R16F" }, { D3DFMT_G32R32F, "G32R32F" },
     };
     const int nf = sizeof fm / sizeof fm[0];
     for (int s = 0; s < nf; s++) {

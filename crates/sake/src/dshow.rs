@@ -213,7 +213,8 @@ fn slot_of(iid: u32) -> Option<Slot> {
 struct Graph {
     refs: u32,
     event: u32,
-    notify: (u32, u32, u32),
+    /// SetNotifyWindow: (hwnd, lMsg, lInstanceData, a LONG_PTR)
+    notify: (u32, u32, crate::abi::Lparam),
     flags: u32,
     events: VecDeque<(u32, u32, u32)>,
     state: State,
@@ -1038,7 +1039,7 @@ fn queue_with(b: u32, code: u32, p1: u32, p2: u32, f: impl FnOnce(&mut Graph)) {
         crate::k32::event_set(ev, true);
     }
     if hwnd != 0 {
-        crate::user::post(hwnd, msg, 0, lp);
+        crate::user::post(hwnd, msg, crate::abi::Wparam::ZERO, lp);
     }
 }
 
@@ -1128,7 +1129,7 @@ fn wait_for_completion(c: &mut Ctx) -> u32 {
     }
 }
 fn set_notify_window(c: &mut Ctx) -> u32 {
-    let n = (c.a(1), c.a(2), c.a(3));
+    let n = (c.a(1), c.a(2), c.lparam(3));
     with(base(c, ME), |g| g.notify = n);
     0
 }
@@ -2046,7 +2047,7 @@ impl Graph {
         Graph {
         refs: 1,
         event,
-        notify: (0, 0, 0),
+        notify: (0, 0, crate::abi::Lparam::ZERO),
         flags: 0,
         events: VecDeque::new(),
         ended: false,

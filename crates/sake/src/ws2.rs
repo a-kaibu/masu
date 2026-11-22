@@ -380,7 +380,7 @@ fn run(acts: Vec<Act>) {
                 crate::k32::event_set(h, false);
             }
             Act::Post(w, m, a, b) => {
-                crate::user::post(w, m, a, b);
+                crate::user::post(w, m, crate::abi::Wparam::dword(a), crate::abi::Lparam::dword(b));
             }
             Act::Apc(tid, f, a) => crate::apc::queue_args(tid, f, &a),
             Act::Complete(h, ov, status, bytes, sync) => iocp::complete(h, ov, status, bytes, sync),
@@ -3227,7 +3227,7 @@ fn TransmitFile(c: &mut Ctx) -> u32 {
             }
             let r: Result<(), u32> = (|| {
                 while left > 0 {
-                    let got = f.read_into(tmp, left.min(65536));
+                    let got = f.read_into(tmp, left.min(65536)).map_err(crate::files::IoFail::code)?;
                     if got == 0 {
                         break;
                     }

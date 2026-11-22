@@ -307,7 +307,7 @@ file	crates/kura/src/d3d11/d3d10.rs	indexing_slicing	105
 file	crates/kura/src/d3d11/d3d10.rs	unsafe_op_in_unsafe_fn	68
 file	crates/kura/src/d3d11/deferred.rs	arithmetic_side_effects	27
 file	crates/kura/src/d3d11/deferred.rs	indexing_slicing	10
-file	crates/kura/src/d3d11/deferred.rs	masu-from_raw_parts	2
+file	crates/kura/src/d3d11/deferred.rs	masu-from_raw_parts	1
 file	crates/kura/src/d3d11/deferred.rs	unsafe_op_in_unsafe_fn	32
 file	crates/kura/src/d3d11/format.rs	arithmetic_side_effects	72
 file	crates/kura/src/d3d11/format.rs	as_conversions	73
@@ -332,6 +332,7 @@ file	crates/kura/src/d3d11/mod.rs	missing_safety_doc	4
 file	crates/kura/src/d3d11/mod.rs	multiple_unsafe_ops_per_block	1
 file	crates/kura/src/d3d11/mod.rs	undocumented_unsafe_blocks	13
 file	crates/kura/src/d3d11/mod.rs	unsafe_op_in_unsafe_fn	471
+file	crates/kura/src/d3d11/op.rs	masu-from_raw_parts	1
 file	crates/kura/src/d3d9/d3d8.rs	arithmetic_side_effects	46
 file	crates/kura/src/d3d9/d3d8.rs	as_conversions	1
 file	crates/kura/src/d3d9/d3d8.rs	indexing_slicing	15

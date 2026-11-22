@@ -100,7 +100,7 @@ fn interface(cpu: &mut koji::Cpu, iid: &[u8]) -> Result<Arc<Interface>, u32> {
     if MISSES.locked().contains(iid) { return Err(NOINTERFACE); }
     let proxy_class = crate::misc::registry_string(&format!("hkcr\\interface\\{}\\proxystubclsid32", text(iid)), "").ok_or(NOINTERFACE)?;
     let dll = crate::misc::registry_string(&format!("hkcr\\clsid\\{proxy_class}\\inprocserver32"), "").ok_or(NOINTERFACE)?;
-    let base = crate::pe::load_library(cpu, &dll);
+    let base = crate::pe::load_library(cpu, &dll).map_err(|_| NOINTERFACE)?;
     let entry = crate::pe::proc_address(base, crate::pe::Import::Name("GetProxyDllInfo")).ok_or(NOTIMPL)?;
     let out_own = mem::Scratch::new(2 * ps(), true);
     let out = out_own.get();
@@ -337,7 +337,7 @@ pub(crate) fn pump(cpu: &mut koji::Cpu, reentrant: bool) {
 pub(crate) fn wake() {
     if !REGISTERED.load(Ordering::Relaxed) { return; }
     let threads = kern::with(|k| k.com.calls.iter().filter(|c| c.to == crate::pid()).map(|c| c.tid).collect::<std::collections::BTreeSet<_>>()).0;
-    for tid in threads { crate::user::post_thread_msg(tid, 0, 0, 0); }
+    for tid in threads { crate::user::post_thread_msg(tid, 0, crate::abi::Wparam::ZERO, crate::abi::Lparam::ZERO); }
 }
 
 #[derive(Clone)]
@@ -463,8 +463,8 @@ pub(crate) fn get_class(cpu: &mut koji::Cpu, clsid: u32, iid: u32, out: crate::a
     if out.is_null() || clsid == 0 || iid == 0 { return POINTER; }
     out.put(0);
     if context & 3 != 0 && let Some(path) = crate::misc::registry_string(&format!("hkcr\\clsid\\{}\\inprocserver32", text(&wire(clsid))), "") {
-        let base = crate::pe::load_library(cpu, &path);
-        if base == 0 { return 0x8007_007e; }
+        // (HRESULT_FROM_WIN32 of LoadLibrary's error: ERROR_MOD_NOT_FOUND, ERROR_DLL_INIT_FAILED)
+        let base = match crate::pe::load_library(cpu, &path) { Ok(b) => b, Err(e) => return 0x8007_0000 | e.error() };
         let Some(entry) = crate::pe::proc_address(base, crate::pe::Import::Name("DllGetClassObject")) else { return 0x8007_007f };
         return crate::call(cpu, entry, &crate::api::words![clsid, iid, out]);
     }

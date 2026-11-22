@@ -228,9 +228,9 @@ fn with_anim<R>(h: u32, f: impl FnOnce(&mut Anim) -> R) -> Option<R> {
 const TIMER_ID: u32 = 0x414e;
 
 fn notify(c: &mut Ctx, h: u32, code: u32) {
-    let (id, parent) = with(|s| s.wins.get(&h).map_or((0, 0), |w| (w.id, w.parent)));
+    let (id, parent) = with(|s| s.wins.get(&h).map_or((0, 0), |w| (w.ctrl_id(), w.parent)));
     if parent != 0 {
-        send(c, parent, 0x111, code << 16 | (id & 0xffff), h);
+        send(c, parent, 0x111, Wparam::dword(code << 16 | (id & 0xffff)), Lparam::handle(h));
     }
 }
 
@@ -307,7 +307,7 @@ fn paint(c: &mut Ctx, h: u32) {
     let ps = ps_own.get();
     let dc = gcall(c, "user32", "BeginPaint", &[h, ps]);
     // the background: the parent's WM_CTLCOLORSTATIC brush (else the dialog face)
-    let mut brush = if parent != 0 { send(c, parent, 0x138, dc, h) } else { 0 };
+    let mut brush = if parent != 0 { send(c, parent, 0x138, Wparam::handle(dc), Lparam::handle(h)).lo32() } else { 0 };
     if brush == 0 {
         brush = crate::gdi::solid_brush(0xf0f0f0);
     }

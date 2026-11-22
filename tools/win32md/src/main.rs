@@ -17,7 +17,8 @@
 //! - crates/sake/src/com_outptrs.txt: the same per method of the interfaces sake names, by vtable
 //!   slot ("interface slot method i,j... k,l...", `this` 0), and "interface # d,d..." each method's x86
 //!   stack dwords (with `this`), its vtable as the metadata has it.
-//! sake writes those with mem::putp/wp; put32/w32 leaves the upper half on x64
+//! - crates/sake/src/returns.txt: what each spec function says when it is not done (fn returns).
+//! sake writes the out parameters with mem::putp/wp; put32/w32 leaves the upper half on x64
 //! (crates/sake/src/outptr_audit.rs).
 // (Rust 1.97: a pub item nothing in the binary uses is dead; tests use more of it, so not under test)
 #![cfg_attr(not(test), warn(dead_code_pub_in_binary))]
@@ -336,6 +337,71 @@ fn main() {
     write("crates/kura/src/d3d11/names.rs", n);
     write("crates/sake/src/outptrs.txt", outptrs(&i32_, &i64_));
     write("crates/sake/src/com_outptrs.txt", com_outptrs(&i32_, &i64_, &root));
+    let specs = std::fs::read_to_string(root.join("crates/sake/src/specs.txt")).expect("specs.txt");
+    write("crates/sake/src/returns.txt", returns(&i32_, &specs));
+}
+
+/// returns.txt: how each function of sake's specs.txt that the metadata knows says "not done",
+/// by its declared result: "dll name hresult" (E_NOTIMPL), "ntstatus" (STATUS_NOT_IMPLEMENTED),
+/// "win32" (an error code result: ERROR_CALL_NOT_IMPLEMENTED), "lasterror" (SetLastError=true:
+/// 0 with that error set), sorted; a function that is none of those (void, a value) is left out,
+/// and sake's api::unimplemented_result answers 0 for it. The metadata names an API set for many
+/// functions (api-ms-win-core-...): a spec line takes the function of that name, when its
+/// declarations agree.
+fn returns(ix: &Index, specs: &str) -> String {
+    #[derive(Clone, Copy, PartialEq, Eq, Debug)]
+    enum Kind {
+        Hresult,
+        Ntstatus,
+        Win32,
+        LastError,
+    }
+    impl Kind {
+        fn word(self) -> &'static str {
+            match self {
+                Kind::Hresult => "hresult",
+                Kind::Ntstatus => "ntstatus",
+                Kind::Win32 => "win32",
+                Kind::LastError => "lasterror",
+            }
+        }
+    }
+    let kind = |f: &MethodDef| -> Option<Kind> {
+        let named = match &f.signature(&[]).return_type {
+            Type::ValueName(n) if n.namespace == "Windows.Win32.Foundation" => match n.name.as_str() {
+                "HRESULT" => Some(Kind::Hresult),
+                "NTSTATUS" => Some(Kind::Ntstatus),
+                "WIN32_ERROR" => Some(Kind::Win32),
+                _ => None,
+            },
+            _ => None,
+        };
+        named.or_else(|| f.impl_map().filter(|m| m.flags().contains(PInvokeAttributes::SupportsLastError)).map(|_| Kind::LastError))
+    };
+    let fns = functions(ix);
+    let mut exact = HashMap::<(String, String), Option<Kind>>::new();
+    let mut by_name = HashMap::<String, Vec<Option<Kind>>>::new();
+    for ((dll, name), f) in &fns {
+        let k = kind(f);
+        exact.insert((dll.clone(), name.clone()), k);
+        by_name.entry(name.clone()).or_default().push(k);
+    }
+    let mut out = std::collections::BTreeSet::new();
+    for l in specs.lines() {
+        let mut it = l.split(' ');
+        let (Some(dll), Some(name)) = (it.next(), it.next()) else { continue };
+        let k = match exact.get(&(dll.to_string(), name.to_string())) {
+            Some(k) => *k,
+            None => match by_name.get(name).map(Vec::as_slice) {
+                Some([first, rest @ ..]) if rest.iter().all(|k| k == first) => *first,
+                _ => None,
+            },
+        };
+        if let Some(k) = k {
+            out.insert(format!("{dll} {name} {}\n", k.word()));
+        }
+    }
+    out.into_iter().collect()
 }
 
 fn outptrs(i32_: &Index, i64_: &Index) -> String {

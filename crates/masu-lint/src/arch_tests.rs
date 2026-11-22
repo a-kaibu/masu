@@ -46,14 +46,52 @@ const GOOD_NTCRT: &str = concat!(
     "}\n",
 );
 
+/// what rebuild::MESSAGE_WIDTH wants, each function saying its part
+const GOOD_IO_RESULT: Files = &[
+    (
+        "crates/sake/src/files.rs",
+        "impl File {\n    pub fn read_into(&self, dst: u32, n: u32) -> Result<u32, IoFail> {}\n    pub fn write_from(&self, src: u32, n: u32) -> Result<u32, IoFail> {\n        let b = crate::mem::try_bytes(src, n).ok_or(IoFail::NoAccess)?;\n    }\n    pub fn read_at(&self, start: Option<SeekFrom>, keep: bool, buf: &mut [u8]) -> Result<usize, ReadAt> {}\n}\nfn read_full() { match x { Err(_) => return Err(IoFail::Read), } }\nfn open_shared() { let entry = share.map(|s| ShareEntry::take(&host, access, s)).transpose()?; }\n",
+    ),
+    ("crates/sake/src/k32.rs", "fn WriteFile(c: &mut Ctx) -> u32 { mem::try_bytes(buf, n).ok_or(files::IoFail::NoAccess) }\n"),
+];
+
+const GOOD_D2D_LAYOUT: Files = &[(
+    "crates/sake/src/d2d.rs",
+    "fn hwnd_swap_chain(cpu: &mut Cpu, hp: u32) { use x::{D2D1_HWND_RENDER_TARGET_PROPERTIES as P, DXGI_SWAP_CHAIN_DESC as D}; let o = (desc + size, desc + size + ps, desc + size + 2 * ps); crate::abi::call(cpu, create, &args); }\nfn CreateHwndRenderTarget(c: &mut Ctx) -> u32 { hwnd_swap_chain(c.ctx().cpu, hp) }\n",
+)];
+
+const GOOD_MESSAGE_WIDTH: Files = &[
+    ("crates/sake/src/user.rs", "fn PostMessageA(c: &mut Ctx) { c.wparam(2), c.lparam(3); }
+fn PostThreadMessageA(c: &mut Ctx) { c.wparam(2), l: c.lparam(3); }
+fn send_message(c: &mut Ctx) { c.wparam(2), c.lparam(3); c.ret_lresult(; }
+fn send_notify(c: &mut Ctx) { c.wparam(2), c.lparam(3); }
+fn SendMessageTimeoutA(c: &mut Ctx) { res.put_size(r.bits()); }
+fn SendDlgItemMessageA(c: &mut Ctx) { c.wparam(3), c.lparam(4); }
+fn CallWindowProcA(c: &mut Ctx) { abi::call_wndproc(; c.ret_lresult(; }
+fn DispatchMessageA(c: &mut Ctx) { c.ret_lresult(; }
+fn call_proc(c: &mut Ctx) { abi::call_wndproc(; }
+abi::write_slot(at + lay.wparam, self.w.guest_bits(arch), arch);
+fn msg_at(c: &mut Ctx) { abi::read_slot(; }
+fn GetWindowLongPtrA(c: &mut Ctx) { LongWidth::Ptr; c.ret_long_ptr(; }
+fn SetWindowLongPtrA(c: &mut Ctx) { c.long_ptr(2); LongWidth::Ptr; }
+fn GetClassLongPtrA(c: &mut Ctx) { LongWidth::Ptr; }
+fn SetClassLongPtrA(c: &mut Ctx) { c.long_ptr(2); }
+fn SetTimer(c: &mut Ctx) { c.wparam(1); }
+fn EndDialog(c: &mut Ctx) { c.long_ptr(1); }
+"),
+    ("crates/sake/src/abi.rs", "fn call_wndproc(c: &mut Ctx) { Arg::handle(hwnd), Arg::dword(msg), w.into(), l.into(); }
+"),
+    ("crates/sake/src/kern.rs", "pub struct XMsg {\n    pub w: u64,\n    pub l: u64,\n}\n"),
+];
+
 /// what rebuild::RUN_PLAN wants, each file saying its part
 const GOOD_RUN_PLAN: Files = &[
     ("tests/winref/run.sh", "{ echo \"# run.sh\"; } > \"$OUT/.plan/$runner\"\n"),
     ("tests/winref/run-browser.mjs", "writeFileSync(join(outDir, \".plan\", runner), text);\n"),
     ("tests/winref/compare.py", "plan_errors = plan.problems(plans, required, got)\nsys.exit(1 if failed or plan_errors else 0)\n"),
-    ("tests/winetest/run.py", "all_jobs, unplanned = plan(listed, sel, expected, explicit)\nif not os.path.isfile(win_path):\n            raise FileNotFoundError(win_path)\nall_jobs, not_adopted, missing = adopt(all_jobs, read_tsv(win_path))\nunplanned += missing\nif unplanned:\n    return 1\n"),
+    ("tests/winetest/run.py", "all_jobs, unplanned = plan(listed, sel, expected, explicit)\nif not os.path.isfile(win_path):\n            raise FileNotFoundError(win_path)\nall_jobs, not_adopted, missing = adopt(all_jobs, read_tsv(win_path))\nunplanned += missing\nresults[k], judged[k] = combine(rs)\nif unplanned:\n    return 1\n"),
     (".github/workflows/winref.yml", "run: compare.py --require-plan node --require-plan browser-0of4\n"),
-    (".github/workflows/conformance.yml", "run: python tests/winetest/run.py --suite rostests --native --arch i386\n"),
+    (".github/workflows/conformance.yml", "run: python tests/winetest/run.py --suite rostests --native --repeat 3 --arch i386\n"),
 ];
 
 fn fixture(r: Rule) -> Fixture {
@@ -162,13 +200,13 @@ fn fixture(r: Rule) -> Fixture {
             mutate: ("crates/dxwgsl/src/wgsl/expand.rs", |t| Some(t.replace("ps_pairs(p,", "clip_count(p,"))),
         },
         Rule::LogicOps => Fixture {
-            bad: &[("crates/kura/src/d3d11/mod.rs", "fn options() {\n    for k in 1..10 {}\n    // dxwgsl::translate_logic( named in a comment\n}\n")],
-            good: &[("crates/kura/src/d3d11/mod.rs", "fn options() {\n    for k in 0..10 {}\n    let s = dxwgsl::translate_logic(c, a, l);\n    let (o, k) = logic::targets(b, f, m, r);\n    let r = dxwgsl::sample_rate(c) && page_multisamples(p);\n    logic::split(&w, &copies, stash.as_ref(), topo, &cuts, flip);\n}\n")],
+            bad: &[("crates/kura/src/d3d11/mod.rs", "fn options() {\n    for k in 1..10 {}\n    // dxwgsl::translate_views(&s.code, true, None, None, &key.1, &key.2, named in a comment\n}\n")],
+            good: &[("crates/kura/src/d3d11/mod.rs", "fn options() {\n    for k in 0..10 {}\n    let s = dxwgsl::translate_views(&s.code, true, None, None, &key.1, &key.2, setup, &key.3);\n    let (o, k) = logic::targets(b, f, m, r);\n    let r = dxwgsl::sample_rate(c) && page_multisamples(p);\n    logic::split(&w, &copies, stash.as_ref(), topo, &cuts, flip);\n}\n")],
             mutate: ("crates/kura/src/d3d11/mod.rs", |t| Some(t.replace("for k in 0..10 {", "for k in 1..10 {"))),
         },
         Rule::SnormTargets => Fixture {
             bad: &[("crates/kura/src/d3d11/logic.rs", "fn snorm_twin(v: u32) -> Option<(u32, [u32; 4])> {\n    // 31 => Some((f::P_RGBA8SI, [8, 8, 8, 8])), named in a comment\n    None\n}\n")],
-            good: &[("crates/kura/src/d3d11/logic.rs", "fn snorm_twin(v: u32) -> Option<(u32, [u32; 4])> {\n    match v {\n        31 => Some((f::P_RGBA8SI, [8, 8, 8, 8])),\n        51 => Some((f::P_RG8SI, [8, 8, 0, 0])),\n        63 => Some((f::P_R8SI, [8, 0, 0, 0])),\n        _ => None,\n    }\n}\nfn t() { let l = Logic { store: Store::Snorm(b) }; }\n")],
+            good: &[("crates/kura/src/d3d11/logic.rs", "fn snorm_twin(v: u32) -> Option<(u32, [u32; 4])> {\n    match v {\n        31 => Some((f::P_RGBA8SI, [8, 8, 8, 8])),\n        51 => Some((f::P_RG8SI, [8, 8, 0, 0])),\n        63 => Some((f::P_R8SI, [8, 0, 0, 0])),\n        _ => None,\n    }\n}\nfn t() { let store = match b { Some(_) | None => Store::Snorm(b), }; }\nfn u() { let s = match b { Some(blend) if ms && !sample_rate && blend.reads_dst() => Store::SnormStash { blend, mark }, }; let r = vec![gpu::SNORM_RESOLVE, tex, copy, stash, mark_tex, mask]; }\n")],
             mutate: ("crates/kura/src/d3d11/mod.rs", |t| Some(t.replace("logic::twin_of(", "logic::copy_of("))),
         },
         Rule::Review6852be1 => Fixture {
@@ -192,6 +230,17 @@ fn fixture(r: Rule) -> Fixture {
                 ("crates/sake/src/d3d7.rs", "const D3DERR_INVALIDCALL: u32 = 0x8007_0057;\n"),
             ],
             mutate: ("crates/kura/src/d3d9/device.rs", |t| Some(t.replace("0x0876_086f", "0x0876_087f"))),
+        },
+        Rule::D3d9DevFormats => Fixture {
+            bad: &[
+                ("tests/winref/probes/d3d9dev.c", "static const struct { D3DFORMAT f; const char *n; } fm[] = { { D3DFMT_L8, \"L8\" }, { (D3DFORMAT)MAKEFOURCC('N', 'V', '1', '2'), \"NV12\" } };\n"),
+                ("crates/kura/src/d3d9/dev_tests.rs", "let named = |n: &str| match n { \"L8\" => f::L8, other => panic!() };\n"),
+            ],
+            good: &[
+                ("tests/winref/probes/d3d9dev.c", "static const struct { D3DFORMAT f; const char *n; } fm[] = { { D3DFMT_L8, \"L8\" }, { (D3DFORMAT)MAKEFOURCC('N', 'V', '1', '2'), \"NV12\" } };\n"),
+                ("crates/kura/src/d3d9/dev_tests.rs", "let named = |n: &str| match n { \"L8\" => f::L8, \"NV12\" => nv12, other => panic!() };\n"),
+            ],
+            mutate: ("crates/kura/src/d3d9/dev_tests.rs", |t| Some(t.replace("\"G32R32F\" => f::G32R32F,", ""))),
         },
         Rule::ConsoleLines => Fixture {
             bad: &[("crates/sake/src/crt.rs", "fn puts(s: &str) { eprint!(\"{s}\"); }\n")],
@@ -627,9 +676,79 @@ fn fixture(r: Rule) -> Fixture {
                 ("tests/winetest/run.py", "        if not os.path.exists(exe):\n            print(f\"missing {exe}\", file=sys.stderr)\n            continue\n"),
                 ("tests/winetest/run.py", "windows = read_tsv(win_path) if os.path.exists(win_path) else {}\n"),
                 ("tests/winetest/run.py", "def report(path):\n    with open(path, \"w\") as f:\n        f.write(msg)\n"),
+                ("tests/winetest/run.py", "for k, rs in runs.items():\n    results[k] = rs[-1]\n"),
+                (".github/workflows/conformance.yml", "run: python tests/winetest/run.py --suite rostests --native --arch i386\n"),
             ],
             good: GOOD_RUN_PLAN,
             mutate: ("tests/winref/compare.py", |t| Some(t.replace("sys.exit(1 if failed or plan_errors else 0)", "sys.exit(1 if failed else 0)"))),
+        },
+        Rule::MessageWidth => Fixture {
+            bad: &[
+                ("crates/sake/src/user.rs", "fn GetWindowLongPtrA(c: &mut Ctx) -> u32 {\n    GetWindowLongA(c)\n}\nfn PostMessageA(c: &mut Ctx) -> u32 {\n    post(c.a(0), c.a(1), c.a(2), c.a(3)) as u32\n}\n"),
+                ("crates/sake/src/abi.rs", "impl From<u32> for Wparam { fn from(v: u32) -> Wparam { Wparam(v.into()) } }\n"),
+                ("crates/sake/src/kern.rs", "pub struct XMsg {\n    pub w: u32,\n    pub l: u32,\n}\n"),
+            ],
+            good: GOOD_MESSAGE_WIDTH,
+            mutate: ("crates/sake/src/user.rs", |t| Some(t.replace("let (h, m, w, l) = (c.a(0), c.a(1), c.wparam(2), c.lparam(3));", "let (h, m, w, l) = (c.a(0), c.a(1), c.a(2), c.a(3));"))),
+        },
+        Rule::NotDone => Fixture {
+            bad: &[
+                ("crates/sake/src/api.rs", "pub fn unimplemented_result(name: &str) -> u32 {\n    0\n}\nfn unimplemented_call(c: &mut Ctx) -> u32 {\n    let r = unimplemented_result(&n);\n    r\n}\n"),
+                ("crates/sake/src/returns.txt", "kernel32 CreateFileA lasterror\nole32 CoCreateInstance hresult_\n"),
+            ],
+            good: &[
+                ("crates/sake/src/api.rs", "fn returns() -> &'static R {\n    include_str!(\"returns.txt\")\n}\npub fn unimplemented_result(name: &str) -> NotDone {\n    if let Some(k) = returns().get(&(key.as_str(), f)) {}\n}\nfn unimplemented_call(c: &mut Ctx) -> u32 {\n    let (r, err) = unimplemented_result(&n).result();\n}\n"),
+                ("crates/sake/src/returns.txt", "kernel32 CreateFileA lasterror\nole32 CoCreateInstance hresult\n"),
+            ],
+            mutate: ("crates/sake/src/api.rs", |t| Some(t.replace("let (r, err) = unimplemented_result(&n).result();", "let (r, err) = (0, None::<u32>);"))),
+        },
+        Rule::GdiLockOrder => Fixture {
+            bad: &[
+                ("crates/sake/src/gdi.rs", "fn bit_blt(dst: u32, src: u32) -> u32 {\n    u32::from(draw(dst, |t, ds, c| {\n        let Some(s) = source(t, src) else { return Rect::default() };\n        blit(c, s)\n    }))\n}\nthread_local! { static HELD: u32 = 0; }\n"),
+                ("crates/sake/src/user.rs", "fn ensure_surface(w: &mut Window) {\n    if crate::gdi::holds(p) {}\n}\n"),
+            ],
+            good: &[(
+                "crates/sake/src/gdi.rs",
+                "fn draw_src(dc: u32, src: u32, mut f: impl FnMut(&Objs, &DcState, &mut Canvas, Option<&Source>) -> Rect) -> bool {\n    let from = if src != 0 && src != dc { source(t, src) } else { None };\n}\nfn AlphaBlend() -> u32 {\n    if src == dst && s.0 + s.2 > d.0 && s.0 < d.0 + d.2 && s.1 + s.3 > d.1 && s.1 < d.1 + d.3 {\n        crate::k32::last_error(87);\n        return 0;\n    }\n}\nfn bit_blt(dst: u32, src: u32) -> u32 {\n    u32::from(draw_src(dst, src, |t, ds, c, from| blit(c, from)))\n}\nfn redraw(x: u32) { x.draw(source(1)); }\n",
+            )],
+            mutate: ("crates/sake/src/gdi.rs", |t| Some(t.replace("u32::from(draw_src(dst, src, |_, _, cv, from| {", "u32::from(draw_src(dst, src, |t, _, cv, from| {\n        let _ = source(t, src);"))),
+        },
+        Rule::Lifetimes => Fixture {
+            bad: &[
+                ("crates/sake/src/pe.rs", "pub fn load_library(cpu: &mut Cpu, name: &str) -> u32 {\n    match load_dll_file(name) {\n        Ok(b) => {\n            init_dlls(cpu);\n            b\n        }\n    }\n}\n"),
+                ("crates/sake/src/k32.rs", "pub fn exit_thread(code: u32) -> ! {\n    if t.tid == crate::process::first_tid(crate::pid()) {\n        // the main thread: the process\n    }\n}\n"),
+            ],
+            good: &[
+                ("crates/sake/src/pe.rs", "pub fn init_dlls(cpu: &mut Cpu) -> Result<(), InitFailed> {\n    return Err(InitFailed(base));\n}\nfn init_loaded(cpu: &mut Cpu, b: u32) -> Result<u32, LoadFailure> {}\npub fn load_library_searching(cpu: &mut Cpu) -> Result<u32, LoadFailure> {\n    match x { Ok(b) => init_loaded(cpu, b), }\n}\n"),
+                ("crates/sake/src/k32.rs", "pub fn exit_thread(code: u32) -> ! {\n    let last = crate::lives::ends(t.tid);\n}\n"),
+                ("crates/sake/src/lib.rs", "fn start() {\n    if let Err(pe::InitFailed(b)) = pe::init_dlls(cpu) {}\n}\n"),
+            ],
+            mutate: ("crates/sake/src/k32.rs", |t| Some(t.replace("let last = crate::lives::ends(t.tid);", "let last = t.tid == crate::process::first_tid(crate::pid());"))),
+        },
+        Rule::IoResult => Fixture {
+            bad: &[
+                ("crates/sake/src/files.rs", "impl File {\n    pub fn write_from(&self, src: u32, n: u32) -> u32 {\n        let mut f = self.f.locked();\n        f.write_all(&crate::mem::bytes(src, n)).map_or(0, |()| n)\n    }\n}\n"),
+                ("crates/sake/src/k32.rs", "fn WriteFile(c: &mut Ctx) -> u32 {\n    f.write_at(start, crate::iocp::is_overlapped(h), &mem::bytes(buf, n))\n}\n"),
+            ],
+            good: GOOD_IO_RESULT,
+            mutate: ("crates/sake/src/files.rs", |t| Some(t.replace("let b = crate::mem::try_bytes(src, n).ok_or(IoFail::NoAccess)?;", "let b = crate::mem::bytes(src, n);"))),
+        },
+        Rule::HandleKey => Fixture {
+            bad: &[
+                ("crates/sake/src/obj.rs", "impl Objs {\n    pub fn key(&self, h: &u32) -> Option<Key> {\n        self.handles.get(h).copied().or_else(|| self.map.contains_key(&Key(*h)).then_some(Key(*h)))\n    }\n}\n"),
+                ("crates/sake/src/k32.rs", "static GATE: Mutex<Vec<(u32, u32)>> = Mutex::new(Vec::new());\nfn ResumeThread(c: &mut Ctx) -> u32 {\n    if let Some((_, n)) = GATE.locked().iter_mut().find(|(x, n)| *x == h && *n > 0) {}\n}\n"),
+            ],
+            good: &[
+                ("crates/sake/src/obj.rs", "impl Objs {\n    pub fn key(&self, h: &u32) -> Option<Key> {\n        self.handles.get(h).copied()\n    }\n}\n"),
+                ("crates/sake/src/k32.rs", "static GATE: Mutex<Vec<(obj::Key, u32)>> = Mutex::new(Vec::new());\nfn gate_key(h: u32) -> Option<obj::Key> {\n    obj::key_of(h)\n}\n"),
+                ("crates/sake/src/lib.rs", "pub fn spawn_gated(start: u32, param: u32, stack: u32, obj: u32, gate: Option<obj::Key>, kind: Lives) -> u32 {}\n"),
+            ],
+            mutate: ("crates/sake/src/obj.rs", |t| Some(t.replace("        self.handles.get(h).copied()\n    }", "        self.handles.get(h).copied().or_else(|| self.map.contains_key(&Key(*h)).then_some(Key(*h)))\n    }"))),
+        },
+        Rule::D2dLayout => Fixture {
+            bad: &[("crates/sake/src/d2d.rs", "fn CreateHwndRenderTarget(c: &mut Ctx) -> u32 {\n    let hwnd = r32(hp);\n    let (mut w, mut h) = (r32(hp + 4), r32(hp + 8));\n    for (o, v) in [(0, w), (4, h), (44, hwnd)] { w32(desc + o, v); }\n    let (sc_out, dev_out, ctx_out) = (desc + 60, desc + 64, desc + 68);\n}\n")],
+            good: GOOD_D2D_LAYOUT,
+            mutate: ("crates/sake/src/d2d.rs", |t| Some(t.replace("(desc + size, desc + size + ps, desc + size + 2 * ps)", "(desc + size, desc + size + 4, desc + size + 8)"))),
         },
         Rule::WarpSetup => Fixture {
             bad: &[
@@ -903,3 +1022,13 @@ fn each_depth_guard_is_in_the_real_tree() {
     }
 }
 
+
+/// rebuild's rules read a Rust file without each of its inline test modules, wherever they are
+/// (k32.rs has one near its top: cutting at the first lost the rest of the file)
+#[test]
+fn rebuild_reads_past_each_test_module() {
+    let code = "fn a() {}\n#[cfg(test)]\nmod t {\n    fn x() { if y { z } }\n}\nfn b() {}\n#[cfg(test)]\nmod outside;\n#[cfg(test)]\npub(crate) mod u { fn w() {} }\nfn c() {}\n";
+    let got = super::rebuild::without_tests(code);
+    assert!(got.contains("fn a()") && got.contains("fn b()") && got.contains("fn c()") && got.contains("mod outside;"), "{got}");
+    assert!(!got.contains("fn x()") && !got.contains("fn w()"), "{got}");
+}

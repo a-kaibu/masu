@@ -53,6 +53,29 @@ impl Factor {
         })
     }
 
+    /// Its D3D11_BLEND value ([`Factor::of`]'s inverse).
+    pub fn word(self) -> u32 {
+        match self {
+            Factor::Zero => 1,
+            Factor::One => 2,
+            Factor::SrcColor => 3,
+            Factor::InvSrcColor => 4,
+            Factor::SrcAlpha => 5,
+            Factor::InvSrcAlpha => 6,
+            Factor::DestAlpha => 7,
+            Factor::InvDestAlpha => 8,
+            Factor::DestColor => 9,
+            Factor::InvDestColor => 10,
+            Factor::SrcAlphaSat => 11,
+            Factor::BlendFactor => 14,
+            Factor::InvBlendFactor => 15,
+            Factor::Src1Color => 16,
+            Factor::InvSrc1Color => 17,
+            Factor::Src1Alpha => 18,
+            Factor::InvSrc1Alpha => 19,
+        }
+    }
+
     /// Whether the factor reads the destination.
     pub fn reads_dst(self) -> bool {
         match self {
@@ -172,6 +195,16 @@ impl BlendOp {
             _ => return None,
         })
     }
+    /// Its D3D11_BLEND_OP value ([`BlendOp::of`]'s inverse).
+    pub fn word(self) -> u32 {
+        match self {
+            BlendOp::Add => 1,
+            BlendOp::Subtract => 2,
+            BlendOp::RevSubtract => 3,
+            BlendOp::Min => 4,
+            BlendOp::Max => 5,
+        }
+    }
 
     /// The op over the source's and destination's terms (`s` the source times its factor, `d`
     /// the destination times its factor) and, for min and max, the source and destination
@@ -235,6 +268,12 @@ impl Blend {
             color: Equation { src: Factor::of(s)?, dst: Factor::of(d)?, op: BlendOp::of(o)? },
             alpha: Equation { src: Factor::of(sa)?, dst: Factor::of(da)?, op: BlendOp::of(oa)? },
         })
+    }
+    /// Its D3D11 words ([`Blend::of`]'s inverse): SrcBlend, DestBlend, BlendOp, SrcBlendAlpha,
+    /// DestBlendAlpha, BlendOpAlpha.
+    pub fn words(&self) -> [u32; 6] {
+        let (c, a) = (self.color, self.alpha);
+        [c.src.word(), c.dst.word(), c.op.word(), a.src.word(), a.dst.word(), a.op.word()]
     }
     /// Whether CreateBlendState takes both equations ([`Equation::takes`]).
     pub fn takes(&self) -> bool {
@@ -360,6 +399,87 @@ pub fn blend_wgsl(b: &Blend, src: &str, src1: &str, dst: &str, out: &str) -> Vec
         format!("let sn_d = sn_load({dst});"),
         format!("{out} = sn_store(vec4<f32>({x}, {y}, {z}, {}));", equation_wgsl(&b.alpha, "w")),
     ]
+}
+
+/// The WGSL of the resolve pass of an SNORM stash (crate::logic::Store::SnormStash) of blend
+/// `b`: `vs_resolve` the full-target triangle, `fs_resolve` run for each sample: a sample the
+/// shader's pass marked (bit `bit` of channel `channel` of the mark's texel) gets the blend of
+/// the pixel's sources (the target's buffer at LOGIC_STASH, crate::logic::SNORM_SRC's layout)
+/// over the sample of the target's copy (LOGIC_DST) with the constant (SNORM_CONSTANT, a
+/// uniform vec4<f32>), the rest nothing.
+pub fn resolve_wgsl(b: &Blend, channel: u32, bit: u32) -> String {
+    use crate::logic::{LOGIC_DST, LOGIC_MARK, LOGIC_STASH};
+    let body = blend_wgsl(b, "s", "s1", "d", "o");
+    format!(
+        "{}@group(0) @binding({LOGIC_DST}) var dst: texture_multisampled_2d<i32>;\n\
+         @group(0) @binding({LOGIC_STASH}) var<storage, read> src: array<u32>;\n\
+         @group(0) @binding({LOGIC_MARK}) var mark: texture_multisampled_2d<u32>;\n\
+         @group(0) @binding({SNORM_CONSTANT}) var<uniform> sn_kv: vec4<f32>;\n\
+         @vertex fn vs_resolve(@builtin(vertex_index) i: u32) -> @builtin(position) vec4<f32> {{\n\
+         \x20 return vec4<f32>(f32(i >> 1u) * 4.0 - 1.0, f32(i & 1u) * 4.0 - 1.0, 0.0, 1.0);\n\
+         }}\n\
+         @fragment fn fs_resolve(@builtin(position) p: vec4<f32>, @builtin(sample_index) si: u32) -> @location(0) vec4<i32> {{\n\
+         \x20 let q = vec2<i32>(p.xy);\n\
+         \x20 let m = select(vec4<u32>(), textureLoad(mark, q, i32(si)), all(vec2<u32>(q) < textureDimensions(mark)));\n\
+         \x20 if (((m[{channel}] >> {bit}u) & 1u) == 0u) {{ discard; }}\n\
+         \x20 let i = 4u + (u32(q.y) * src[0] + u32(q.x)) * 8u;\n\
+         \x20 if (i + 7u >= arrayLength(&src)) {{ discard; }}\n\
+         \x20 let s = bitcast<vec4<f32>>(vec4<u32>(src[i], src[i + 1u], src[i + 2u], src[i + 3u]));\n\
+         \x20 let s1 = bitcast<vec4<f32>>(vec4<u32>(src[i + 4u], src[i + 5u], src[i + 6u], src[i + 7u]));\n\
+         \x20 let d = select(vec4<i32>(), textureLoad(dst, q, i32(si)), all(vec2<u32>(q) < textureDimensions(dst)));\n\
+         \x20 var o: vec4<i32>;\n\
+         \x20 {{ let sn_k = sn_clamp(sn_kv); {} }}\n\
+         \x20 return o;\n\
+         }}\n",
+        helpers(),
+        body.join(" ")
+    )
+}
+
+/// A sample's value as WARP's resolve reads it: the byte (-128 as -127) times the f32 nearest
+/// 1/127, not [`load`]'s correctly rounded quotient (winref d3d11snorm's seed rows: 960 of 960
+/// with the product, 940 with the quotient).
+pub fn resolve_load(b: i8) -> f32 {
+    f32::from(b.max(-127)) * RESOLVE_RCP
+}
+
+/// The f32 nearest 1/127 ([`resolve_load`]).
+pub const RESOLVE_RCP: f32 = 1.0 / 127.0;
+
+/// ResolveSubresource of a multisampled SNORM texture: a channel's byte from its samples'
+/// bytes, as WARP resolves (winref d3d11snorm): the samples' values ([`resolve_load`]) summed
+/// in f32 in sample order, times 1 / their count, times 127, rounded to the nearest (ties to
+/// even).
+pub fn resolve(samples: &[i8]) -> i8 {
+    let sum = samples.iter().fold(0.0f32, |a, &b| a + resolve_load(b));
+    let n = kome::num::to_f32(u32::try_from(samples.len()).unwrap_or(1).max(1));
+    kome::num::trunc_i8((clamp_src(sum * (1.0 / n)) * 127.0).round_ties_even())
+}
+
+/// The WGSL of [`resolve`] as a pass (`vs` the full-target triangle, `fs` a pixel): the
+/// samples of `src` (a multisampled SNORM texture's SINT twin) into its SINT twin. Each
+/// sample's product goes through `sn_r` with the bits of its byte + 128 past bit 8 (zero for a
+/// byte), so no driver fuses it with the sum's add.
+pub fn ms_resolve_wgsl() -> String {
+    format!(
+        "{}@group(0) @binding(0) var src: texture_multisampled_2d<i32>;\n\
+         @vertex fn vs(@builtin(vertex_index) i: u32) -> @builtin(position) vec4<f32> {{\n\
+         \x20 return vec4<f32>(f32(i >> 1u) * 4.0 - 1.0, f32(i & 1u) * 4.0 - 1.0, 0.0, 1.0);\n\
+         }}\n\
+         @fragment fn fs(@builtin(position) p: vec4<f32>) -> @location(0) vec4<i32> {{\n\
+         \x20 let q = vec2<i32>(p.xy);\n\
+         \x20 let n = textureNumSamples(src);\n\
+         \x20 var s = vec4<f32>(0.0f);\n\
+         \x20 for (var k = 0u; k < n; k++) {{\n\
+         \x20   let b = max(select(vec4<i32>(), textureLoad(src, q, i32(k)), all(vec2<u32>(q) < textureDimensions(src))), vec4<i32>(-127));\n\
+         \x20   s = s + sn_r(vec4<f32>(b) * bitcast<f32>(0x{rcp:08x}u), vec4<u32>(b + vec4<i32>(128)) >> vec4<u32>(8u));\n\
+         \x20 }}\n\
+         \x20 let c = sn_clamp(s * (1.0f / f32(max(n, 1u))));\n\
+         \x20 return vec4<i32>(round(sn_r(c * 127.0f, bitcast<vec4<u32>>(c) & vec4<u32>(0x40000000u))));\n\
+         }}\n",
+        helpers(),
+        rcp = RESOLVE_RCP.to_bits()
+    )
 }
 
 #[cfg(test)]

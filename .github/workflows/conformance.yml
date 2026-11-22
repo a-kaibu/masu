@@ -257,7 +257,7 @@ jobs:
           path: target/rostests/bin
       - name: ReactOS's tests on Windows
         shell: bash
-        run: python tests/winetest/run.py --suite rostests --native --arch ${{ matrix.arch }} -j 4 --timeout 120
+        run: python tests/winetest/run.py --suite rostests --native --repeat 3 --arch ${{ matrix.arch }} -j 4 --timeout 120
       # (the file to commit as tests/rostests/windows-<arch>.tsv when Windows' answers change)
       - name: Windows' results
         if: always()

@@ -413,7 +413,7 @@ fn opened(c: &mut Ctx, b: u32, cb: u32, ctx: u32, hr: u32) {
         // (the program's OnSample / OnStatus run on this thread: Windows' 1 MB stack, not 64 KB;
         // its handle closed, the thread holds its own)
         let h = crate::obj::new_thread_obj(0);
-        crate::spawn_gated(entry, b, 0x10_0000, h, false);
+        crate::spawn_gated(entry, b, 0x10_0000, h, None, crate::Lives::Helper);
         crate::obj::close(h);
     }
 }

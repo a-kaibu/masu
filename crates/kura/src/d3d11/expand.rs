@@ -113,7 +113,7 @@ enum Key {
     Clip { src: u32, stream: u32, corners: u32 },
     Hull { hs: u32, vs: u32 },
     Domain { ds: u32, hs: u32 },
-    Setup { src: u32, stream: u32, ps: u32 },
+    Setup { src: u32, stream: u32, ps: u32, prim: x::setup::Prim },
     SetupVertex { stride: u32 },
 }
 
@@ -869,9 +869,10 @@ pub unsafe fn run(d: &mut D11, st: &State, indexed: bool, count: u32, instances:
     // 5. drawn: through the setup (setup.rs) when the pixel shader reads interpolated inputs
     if wants_setup && let Some(r) = raster {
         let (stv, osgn, slots) = store_of(r);
-        if stv.corners() == 3 {
+        let fill = state_desc(d, st.raster).and_then(|r| r.first().copied()).unwrap_or(3);
+        if let Some(prim) = x::setup::Prim::of(stv.corners(), Fill::of(fill) == Fill::Wireframe) {
             let entries = store_entries();
-            match setup_draw(d, st, &stv, &osgn, src, r, slots, &xw, &entries) {
+            match setup_draw(d, st, &stv, &osgn, src, r, slots, &xw, &entries, prim) {
                 SetupDone::Drawn => return After::Done,
                 SetupDone::Not => {}
             }
@@ -1050,14 +1051,10 @@ fn layout_of(d: &mut D11, ps: u32) -> Option<x::setup::Layout> {
     l
 }
 
-/// Whether the draw's triangles go through the setup: a pixel shader that reads inputs WARP
-/// interpolates (setup.rs), triangles filled solid, or clip or cull distances from the vertex
-/// shader (WebGPU's pipeline clips against none).
+/// Whether the draw's primitives go through the setup: a pixel shader that reads inputs WARP
+/// interpolates (setup.rs: triangles, wireframe edges, lines and points), or clip or cull
+/// distances from the vertex shader (WebGPU's pipeline clips against none).
 fn setup_wanted(d: &mut D11, st: &State) -> bool {
-    let r = state_desc(d, st.raster).cloned().unwrap_or_else(|| vec![3, 3, 0, 0, 0, 0, 1, 0, 0, 0]);
-    if Fill::of(r.first().copied().unwrap_or(3)) != Fill::Solid {
-        return false;
-    }
     // (the stage whose outputs are rasterized: the geometry, domain or vertex shader)
     let last = [st.shaders[0], st.shaders[2], st.vs].into_iter().find(|&s| s != 0).unwrap_or(0);
     let distances = code_of(d, last).is_some_and(|c| dxwgsl::signature(c, true).iter().any(|e| matches!(e.sysval, 2 | 3)));
@@ -1067,7 +1064,7 @@ fn setup_wanted(d: &mut D11, st: &State) -> bool {
 /// The setup pass over the store's list triangles and the draw of their fan triangles, in pieces
 /// of at most SETUP_BYTES of slots.
 #[allow(clippy::too_many_arguments)]
-fn setup_draw(d: &mut D11, st: &State, stv: &Store, osgn: &[dxwgsl::dxbc::SigElement], src: u32, stream: u32, slots: u32, xw: &[u32; x::xd::WORDS], entries: &[Over]) -> SetupDone {
+fn setup_draw(d: &mut D11, st: &State, stv: &Store, osgn: &[dxwgsl::dxbc::SigElement], src: u32, stream: u32, slots: u32, xw: &[u32; x::xd::WORDS], entries: &[Over], prim: x::setup::Prim) -> SetupDone {
     // (no pixel shader: the clip distances' planes alone)
     let ps_code = code_of(d, st.ps).map(<[u8]>::to_vec);
     let layout = match &ps_code {
@@ -1079,18 +1076,18 @@ fn setup_draw(d: &mut D11, st: &State, stv: &Store, osgn: &[dxwgsl::dxbc::SigEle
     };
     let stride = layout.stride();
     let user = osgn.iter().filter(|e| e.stream == stream && e.sysval == 2).map(|e| e.mask.count_ones()).sum::<u32>();
-    let per = x::setup::slots(user);
+    let per = prim.slots(user);
     let ps_obj = st.ps;
     let (stc, oc, pc) = (stv.clone(), osgn.to_vec(), ps_code.clone());
-    let Some(sh) = shader(d, Key::Setup { src, stream, ps: ps_obj }, move |_| x::setup::setup_pass(&stc, &oc, pc.as_deref())) else { return SetupDone::Not };
+    let Some(sh) = shader(d, Key::Setup { src, stream, ps: ps_obj, prim }, move |_| x::setup::setup_pass(&stc, &oc, pc.as_deref(), prim)) else { return SetupDone::Not };
     let Some(vsh) = shader(d, Key::SetupVertex { stride }, move |_| Ok(x::setup::setup_vertex(stride))) else { return SetupDone::Not };
     let slot_bytes = per.saturating_mul(stride).saturating_mul(16).max(1);
-    let chunk = (SETUP_BYTES / slot_bytes).max(1);
+    let chunk = SETUP_BYTES.checked_div(slot_bytes).unwrap_or(1).max(1);
     let mut sx = *xw;
     raster_words(d, st, &mut sx);
     let mut first = 0u32;
     while first < slots {
-        let n = (slots - first).min(chunk);
+        let n = slots.saturating_sub(first).min(chunk);
         let sbuf = scratch(d, SETUP, n.saturating_mul(slot_bytes));
         put(&mut sx, x::xd::ITEMS, 0, n);
         put(&mut sx, x::xd::FIRST, 0, first);

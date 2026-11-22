@@ -627,9 +627,9 @@ fn wave_notify(c: &mut Ctx, hwo: u32, cb: WaveCb, msg: u32, p1: u32) {
             c.call(f, &[hwo, msg, inst, p1, 0]);
         }
         WaveCb::Window(w) => {
-            crate::user::post(w, msg, hwo, p1);
+            crate::user::post(w, msg, crate::abi::Wparam::handle(hwo), crate::abi::Lparam::addr(p1));
         }
-        WaveCb::Thread(t) => crate::user::post_thread_msg(t, msg, hwo, p1),
+        WaveCb::Thread(t) => crate::user::post_thread_msg(t, msg, crate::abi::Wparam::handle(hwo), crate::abi::Lparam::addr(p1)),
         WaveCb::Event(e) => crate::k32::set_event(e),
         WaveCb::Null => {}
     }

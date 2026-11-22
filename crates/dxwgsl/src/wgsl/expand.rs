@@ -777,7 +777,7 @@ fn clip_count(p: array<vec4<f32>, 3>, n: u32) -> u32 {
             let da = clip_d(a, k);
             let db = clip_d(b, k);
             if (da >= 0.0f && o < 12u) { next[o] = a; o += 1u; }
-            if ((da >= 0.0f) != (db >= 0.0f) && o < 12u) { next[o] = a + (b - a) * (da / (da - db)); o += 1u; }
+            if ((da >= 0.0f) != (db >= 0.0f) && o < 12u) { next[o] = a + ps_r4((b - a) * ps_div(da, da - db)); o += 1u; }
             if (!closed && db >= 0.0f && o < 12u) { next[o] = b; o += 1u; }
         }
         m = o;
@@ -805,10 +805,12 @@ pub fn clip_pass(store: &Store, osgn: &[SigElement]) -> Result<Wgsl, String> {
     bindings.push((B_COUNTERS, Binding::StorageBuffer(true)));
     m.push_str(CLIP_COUNT);
     m.push_str(ps::WGSL);
+    m.push_str(ps::DIV);
     let corners = store.corners();
     let regs = store.regs();
     let pos = osgn.iter().find(|e| e.stream == stream && e.sysval == 1).map(|e| e.reg);
     wln!(m, "@compute @workgroup_size(64)\nfn main(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(num_workgroups) nwg: vec3<u32>) {{\n    {ITEM}");
+    m.push_str(ps::ENTRY);
     wln!(m, "    let t = item;\n    let first = list[({}) * {corners}u];\n    if (first == 0xffffffffu) {{ return; }}", store.slot("t"));
     m.push_str("    var p: array<vec4<f32>, 3>;\n");
     wln!(m, "    for (var c = 0u; c < {corners}u; c += 1u) {{\n        let e = list[({}) * {corners}u + c];", store.slot("t"));

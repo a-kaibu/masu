@@ -35,6 +35,12 @@ ClearRenderTargetView of R8G8B8A8_SNORM
   3f000000 bf000000 3f7efdfc bf7efdfc: 817fc040
   0da24260 8da24260 3b810204 bb810204: ff010000
   nan inf -inf snan: 00817f00
+ClearRenderTargetView of R16G16_SNORM and R8G8B8A8_UNORM: halves of a step (the first pair each, as bits)
+  r16g16_snorm 37800100 38400180: 00020001
+  r16g16_snorm 38a00140 b8a00140: fffd0003
+  r16g16_snorm 3f000000 bf000000: c0004000
+  rgba8_unorm 3b008081 3bc0c0c1 3c20a0a1 3c60e0e1: 04020200
+  rgba8_unorm 3efdfdfe 3f000000 3f010101 3f7f7f7f: fe80807e
 blend set 0: src 0.25 -0.5 0.75 0.6 src1 0.5 -0.25 1.25 -0.7 dst 3081c040 factor 0.3 -0.5 1.5 0.75
  color (alpha one zero add): op src: each dest factor
   add zero: 4c000000 4c81c040 4ca12010 4ce0a030 4cb4da26 4ccde61a 4cd0e818 4cb1d828 4c7f2020 4c81a020 4cb4da26 4c812013 4c00a02d 4c811020 4c00b020 4c592dd3 4c81936d
@@ -308,6 +314,68 @@ blend set 2: src 0.1 0.9 -0.95 1 src1 0.05 -1.5 0.8 -0.9 dst 7f7efb05 factor 0.3
   rev_subtract inv_src1_alpha: 8187720d 8e87720d 8e87720d 8187720d 8e87720d 8187720d 8e87720d 8187720d 8187720d 8187720d 0087720d
   min zero: 7f87720d 7f87720d 7f87720d 7f87720d 7f87720d 7f87720d 7f87720d 7f87720d 7f87720d CreateBlendState failed 0x80070057 7f87720d CreateBlendState failed 0x80070057 7f87720d
   max zero: 7f87720d 7f87720d 7f87720d 7f87720d 7f87720d 7f87720d 7f87720d 7f87720d 7f87720d CreateBlendState failed 0x80070057 7f87720d CreateBlendState failed 0x80070057 7f87720d
+NaN and infinite sources blended over 3081c040 (factor 0.3 -0.5 1.5 0.75): src, src1 as bits, then each blend (src dst op, alpha the same)
+  7fc00000 3f000000 ffc00000 7f800001 / 3f000000 3e800000 3f000000 3f000000: 81814081 b18100c1 7f81817f d07fe0c0 c0c010c0 18c0e020 81007f81 8181c081 30814040
+  7f800000 ff800000 7fc00000 3f000000 / 7fc00000 ffc00000 7f800000 7fc00000: 4081817f 7081817f 3881a060 187f4040 c0817f81 d07f40c0 1000c13f 30818140 4081c07f
+  3f000000 7fc00000 3e800000 7fc00000 / 3e800000 3f000000 ff800000 3f000000: 81208140 b1a1817f 7f81ff41 d0e04020 c0e0c010 18c0e020 817fc100 81818140 3020c040
+  ffc00000 7f800000 ff800000 3e800000 / 7fc00000 7fc00000 7fc00000 7fc00000: 20817f81 50813fc1 2c81f010 0c7fc0c0 e07f817f d07f40c0 f0007f81 2081c081 30817f40
+MIN / MAX with every factor pair: what CreateBlendState takes (o) or refuses (x), each src factor's row of dest factors
+  min color zero: oooooooooooooxxxx
+  min color one: oooooooooooooxxxx
+  min color src_color: oooooooooooooxxxx
+  min color inv_src_color: oooooooooooooxxxx
+  min color src_alpha: oooooooooooooxxxx
+  min color inv_src_alpha: oooooooooooooxxxx
+  min color dest_alpha: oooooooooooooxxxx
+  min color inv_dest_alpha: oooooooooooooxxxx
+  min color dest_color: oooooooooooooxxxx
+  min color inv_dest_color: oooooooooooooxxxx
+  min color src_alpha_sat: oooooooooooooxxxx
+  min color blend_factor: oooooooooooooxxxx
+  min color inv_blend_factor: oooooooooooooxxxx
+  min color src1_color: xxxxxxxxxxxxxxxxx
+  min color inv_src1_color: xxxxxxxxxxxxxxxxx
+  min color src1_alpha: xxxxxxxxxxxxxxxxx
+  min color inv_src1_alpha: xxxxxxxxxxxxxxxxx
+  min alpha zero: oooooooooxx
+  min alpha one: oooooooooxx
+  min alpha src_alpha: oooooooooxx
+  min alpha inv_src_alpha: oooooooooxx
+  min alpha dest_alpha: oooooooooxx
+  min alpha inv_dest_alpha: oooooooooxx
+  min alpha src_alpha_sat: oooooooooxx
+  min alpha blend_factor: oooooooooxx
+  min alpha inv_blend_factor: oooooooooxx
+  min alpha src1_alpha: xxxxxxxxxxx
+  min alpha inv_src1_alpha: xxxxxxxxxxx
+  max color zero: oooooooooooooxxxx
+  max color one: oooooooooooooxxxx
+  max color src_color: oooooooooooooxxxx
+  max color inv_src_color: oooooooooooooxxxx
+  max color src_alpha: oooooooooooooxxxx
+  max color inv_src_alpha: oooooooooooooxxxx
+  max color dest_alpha: oooooooooooooxxxx
+  max color inv_dest_alpha: oooooooooooooxxxx
+  max color dest_color: oooooooooooooxxxx
+  max color inv_dest_color: oooooooooooooxxxx
+  max color src_alpha_sat: oooooooooooooxxxx
+  max color blend_factor: oooooooooooooxxxx
+  max color inv_blend_factor: oooooooooooooxxxx
+  max color src1_color: xxxxxxxxxxxxxxxxx
+  max color inv_src1_color: xxxxxxxxxxxxxxxxx
+  max color src1_alpha: xxxxxxxxxxxxxxxxx
+  max color inv_src1_alpha: xxxxxxxxxxxxxxxxx
+  max alpha zero: oooooooooxx
+  max alpha one: oooooooooxx
+  max alpha src_alpha: oooooooooxx
+  max alpha inv_src_alpha: oooooooooxx
+  max alpha dest_alpha: oooooooooxx
+  max alpha inv_dest_alpha: oooooooooxx
+  max alpha src_alpha_sat: oooooooooxx
+  max alpha blend_factor: oooooooooxx
+  max alpha inv_blend_factor: oooooooooxx
+  max alpha src1_alpha: xxxxxxxxxxx
+  max alpha inv_src1_alpha: xxxxxxxxxxx
 two triangles of one draw blended (src 0.3 -0.3 0.6 0.5 over 0): one one add, src_alpha inv_src_alpha add, dest_color src_color add
   0: 7f78817f
   1: 3831cb2d
@@ -334,4 +402,20 @@ what was drawn, read by a shader (Load, as float bits) and by CopyResource
   row 2: 3eb56ad6.bf010204.3d418306.3f03060c 3eb56ad6.bf010204.3d418306.3f03060c 3eb56ad6.bf010204.3d418306.3f03060c 3eb56ad6.bf010204.3d418306.3f03060c 3eb56ad6.bf010204.3d418306.3f03060c 3eb56ad6.bf010204.3d418306.3f03060c 3eb56ad6.bf010204.3d418306.3f03060c 3eb56ad6.bf010204.3d418306.3f03060c 3f010204.bf010204.bf800000.3ec18306 3f010204.bf010204.bf800000.3ec18306 3eb56ad6.bf010204.3d418306.3f03060c 3eb56ad6.bf010204.3d418306.3f03060c 3f010204.bf010204.bf800000.3ec18306 3f010204.bf010204.bf800000.3ec18306 3f010204.bf010204.bf800000.3ec18306 3f010204.bf010204.bf800000.3ec18306
   row 3: 3eb56ad6.bf010204.3d418306.3f03060c 3eb56ad6.bf010204.3d418306.3f03060c 3eb56ad6.bf010204.3d418306.3f03060c 3eb56ad6.bf010204.3d418306.3f03060c 3eb56ad6.bf010204.3d418306.3f03060c 3eb56ad6.bf010204.3d418306.3f03060c 3eb56ad6.bf010204.3d418306.3f03060c 3eb56ad6.bf010204.3d418306.3f03060c 3eb56ad6.bf010204.3d418306.3f03060c 3eb56ad6.bf010204.3d418306.3f03060c 3eb56ad6.bf010204.3d418306.3f03060c 3eb56ad6.bf010204.3d418306.3f03060c 3f010204.bf010204.bf800000.3ec18306 3f010204.bf010204.bf800000.3ec18306 3eb56ad6.bf010204.3d418306.3f03060c 3eb56ad6.bf010204.3d418306.3f03060c
   resolved: 38c4c037 3081c040 3081c040 3081c040 4106c02d 38c4c037 3081c040 3081c040 4106c02d 4106c02d 38c4c037 3081c040 4106c02d 4106c02d 4106c02d 38c4c037
+  ResolveSubresource of samples each its own (ps_samples: each seed's pixels' resolved words)
+  seed 0: d3ebd0b8 1808e50d dee6fae2 23030ff6 e9e0240a 2efdf8df f41a0d34 f9f7e2c8 ff14f71d 04f10cf2 0a0f2006 0fecf51a d5090aef 1ae6df44 e003f4d8 2520092d
+  seed 17: e4fce2ca 29daf61e eff70bf2 f4142007 faf1f51c ff0e0af0 05ebde44 0a08f3d9 d02508ee 15031d02 dbe0f2d7 20fd062c e61adcc0 2bf7f015 f11405ea f7f11afe
+  seed 34: f50df3da faeb07ef 0008dc04 05e5f1d8 0b02062c 101f1ac2 d6fcf016 1b1904ea e1f719ff 2614ee14 ecf103e8 f10e183c f7ebedd2 fd080126 02e516fa 0802eb0f
+  seed 51: 06df04eb 0bfcd800 d119ed15 16f602e9 dc13173e 21f02cd2 e70d0127 2c2ad6fb f207ea10 f8e5ff24 fd0214ba 02df280e 08fcfde3 0e19d2f7 13f6e70b d913fce0
+  seed 68: d7f014fc 1c0dea11 e2eafe26 270713ba ede4e80f f201fde4 f81e12f8 fefbe60c 03d9fbe1 08f61035 0e1325ca d4f0fa1f 190d0ef3 dfeae408 2407f81c ea240df1
+  seed 85: e801250d 2ddefbe2 f3fb0f36 f818e4cc fef5f920 03120ef4 09f02209 0f0cf71e 14ea0cf2 da07e146 1fe4f6dc e5010bf0 2a1e2005 f0fbf4d9 f518092e fbf6dec3
+  seed 102: f912f71e ffef0cf3 040ce148 09e9f5dc 0f060af1 d5231f06 1a01f4da e0de092e 25fbdec4 eb18f218 30f507ec f6121c01 fbeff116 010c05ea 0629da3e 0c06efd4
+  seed 119: 0ae30830 10001dc4 151df219 dbfa06ed 2017db02 e6f5f016 2b1205eb f1ef1a40 f60ceed4 fce90329 010618fe 0723ed12 0c000226 d21d16bc 17faec10 ddd800e5
+  seed 136: 1bf41940 e1112ed5 26ee032a ec0bd8fe f128ecd3 f7050128 fce316bc 02002a11 07ddffe6 0dfad4fa 1217e90e d8f4fee3 1d111338 e3ee27cc 280bfc21 eee9d2f5
+  seed 153: 2c05ea12 f222ffe6 f7ff14fb fd1ce90f 02f9fde4 08d71239 0df4e7cd d311fc22 18ee10f6 de0be60b 23e8fa1f e9050ff4 ee222409 f400f9dd f9dd0ef2 fffae206
+  seed 170: fd16fb23 03f310f8 0810240c 0eedfa20 130a0ef5 d9e8e30a 1e05f8df e4e20df3 29ff2207 ef1cf6dc f4f90b30 fa16e0c6 00f4f51a 05100aee 0bee1e03 100bf418
+  seed 187: 0ee70cf4 d4042108 1921f6dd dffe0b32 24dce0c6 eaf9f41b f01609f0 f5f31e04 fa10f318 00ed08ed 060adc42 0b27f1d6 1004062b 16e21bff dcff30d4 211c0428
+  seed 204: 1ff8dd05 e515f21a 2af207ee f0101c42 f5edf1d7 fb0a052c 00e71a01 0604efd5 0c21042a 11fe18be d71bee13 1cf802e8 e2d617fc 27f3ec10 ed1001e5 f2ed163a
+  seed 221: f009eed6 f626032b fc0418c0 01e12c14 07fe02e8 0c1bd6fd 12f8eb12 171500e6 ddf2153b 220f2ad0 e8ecfe24 2d09d4f8 f3e7e80d f804fd22 fee112f6 03fe260b
+  seed 238: 011affe7 07f8143c 0d15e9d0 12f2fe25 d80f12f9 1dece80e e309fc22 28e611f7 ee03e60c f320fbe1 f9fd0ff5 fedbe409 04f8f9de 09150e32 0ff223c8 140ff81c
 done
