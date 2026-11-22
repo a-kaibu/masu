@@ -653,7 +653,11 @@ fn release_build_only(tree: &Tree) -> Hits {
 }
 
 /// what must stay in place: (file, text, why)
-pub const REQUIRED: [(&str, &str, &str); 48] = [
+pub const REQUIRED: [(&str, &str, &str); 52] = [
+    ("crates/sake/src/files.rs", "        if self.shared != 0 && let Ok(p) = self.g.stream_position() {\n            let id = self.shared;\n            crate::kern::with(|k| k.set_file_pos(id, p));", "a file handle processes share keeps its file pointer in the kernel (the child's write did not move the parent's tell: msvcrt:file test_file_inherit; 2026-11-22)"),
+    ("crates/sake/src/process.rs", "        Obj::File(f) => f.share().map(|id| KRef::File { id }),", "an inheritable file handle reaches the child (2026-11-22)"),
+    ("crates/sake/src/k32.rs", "    // (lpSecurityAttributes's bInheritHandle: a child CreateProcess starts gets it)\n    sa_inherit(c.a(3), h)", "CreateFile honours bInheritHandle (msvcrt:file test_stdout_handle's file never reached the child; 2026-11-22)"),
+    ("crates/sake/src/crt_io.rs", "    let handles = rest.get(n..).unwrap_or(&[]);", "lpReserved2's handles follow all the count's flags even when cbReserved2 cuts the block (msvcrt_init_io; 2026-11-22)"),
     ("crates/sake/src/crt_io.rs", "    if let Some(d) = get(fd).filter(|d| d.text && !matches!(d.kind, Kind::Std(_))) {\n        return text_read(fd, d, buf, n.min(i32::MAX as u32));", "a text-mode descriptor's _read makes CR LF an LF (it gave the raw bytes: msvcrt:file test_file_write_read; 2026-11-22)"),
     ("crates/sake/src/crt_io.rs", "    // a stream on `to` (stdout after freopen) now reads and writes what `to` names\n    super::follow_fd(to);", "a stream follows its descriptor through _dup2 (stdout freopen'ed to a file never came back to the console: ucrtbase:file printed nothing; 2026-11-22)"),
     ("crates/sake/src/crt_io.rs", "fn getwc_of(fp: u32) -> u32 {\n    if !stream_is_text(fp) {", "a binary stream's wide characters are two raw bytes each (msvcrt:file test_fgetwc; 2026-11-22)"),
