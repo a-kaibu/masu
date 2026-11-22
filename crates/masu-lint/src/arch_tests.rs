@@ -178,7 +178,7 @@ fn fixture(r: Rule) -> Fixture {
             ],
             good: &[
                 ("crates/kura/src/jit.rs", "struct SharedCache { map: M, bytes: usize }\nfn init() { vnvm_jit_init(p, n, jit::TABLE_SLOTS); }\nlet i = es.filter(|&i| s.entries.get(i).is_some_and(|e| e.pages.runs_now())).max();\n"),
-                ("crates/kura/src/vfs.rs", "fn change<R: Refused>(f: F) -> R { r }\nfn h_read() { x.allows(Use::Read, false)?; }\n"),
+                ("crates/kura/src/vfs.rs", "fn change<R: Refused>(f: F) -> R { r }\nfn h_read() { x.allows(Use::Read, false)?; }\nfn load() { fs.base = fs.entries(); }\n"),
             ],
             mutate: ("crates/kura/src/vfs/shared.rs", |t| Some(t.replace("fs.undo();", "fs.undo = None;"))),
         },
