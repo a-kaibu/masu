@@ -1473,10 +1473,10 @@ fn Sleep(c: &mut Ctx) -> u32 {
     0
 }
 
-/// Sleeps `ms` (INFINITE: for good); a save state may be taken meanwhile (the call starts over
-/// in a restored copy).
+/// Sleeps `ms` (INFINITE: for good); a save state may be taken meanwhile (a restored copy calls
+/// it again and sleeps what was left, snap::wait_end).
 pub(crate) fn sleep_ms(ms: u32) {
-    let end = (ms != u32::MAX).then(|| kome::time::from_now(std::time::Duration::from_millis(u64::from(ms))));
+    let end = crate::snap::wait_end(ms);
     loop {
         let left = match end {
             Some(e) => match e.checked_duration_since(std::time::Instant::now()) {

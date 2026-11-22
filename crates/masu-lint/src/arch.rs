@@ -90,10 +90,11 @@ pub enum Rule {
     Lifetimes,
     GdiLockOrder,
     NotDone,
+    WaitDeadline,
 }
 
 impl Rule {
-    pub const ALL: [Rule; 73] = [
+    pub const ALL: [Rule; 74] = [
         Rule::BuildOutput,
         Rule::HresultCopy,
         Rule::KomeCopy,
@@ -167,6 +168,7 @@ impl Rule {
         Rule::Lifetimes,
         Rule::GdiLockOrder,
         Rule::NotDone,
+        Rule::WaitDeadline,
     ];
 
     /// the name a site list and a message use
@@ -245,6 +247,7 @@ impl Rule {
             Rule::Lifetimes => "lifetimes",
             Rule::GdiLockOrder => "gdi-lock-order",
             Rule::NotDone => "not-done",
+            Rule::WaitDeadline => "wait-deadline",
         }
     }
 
@@ -316,8 +319,8 @@ impl Rule {
             Rule::MissingImportFails => "a DLL LoadLibrary loads whose import names a DLL file that is not there (or a function its DLL file lacks) fails the LoadLibrary with ERROR_MOD_NOT_FOUND (ERROR_PROC_NOT_FOUND), the images that load mapped unmapped with no DllMain run, as Windows' loader does (review b5dacf4 2.1, winref dllsearch: the import was bound to a trap and the DLL loaded, crashing when called); only the process's own imports keep binding traps (OnMissing::Traps): resolve_import_with notes the failure, load_library_searching abandons the load, LoadLibrary answers its error (regress::MISSING_IMPORT)",
             Rule::DrawPlan => "a D3D11 draw's topology, fill and indices on the page come from one typed plan (d3d11::DrawPlan::of: PageTopo, Indices::Draw or Made), and the logic-op split takes that plan's PageTopo with the indices it draws (review b5dacf4 3.1: an adjacency list made for the draw was split as the line list of a wireframe's edges, and topology numbers were matched by hand in three places): draw_with builds the plan, logic::primitives takes a PageTopo (regress::DRAW_PLAN)",
             Rule::RunPlan => "a test run that ran nothing, or less than it meant to, fails (review 6852be1f: compare.py passed with Windows' answers and an empty sake directory, winetest/run.py passed when the selected test program was missing): run.sh and run-browser.mjs write <out>/.plan/<runner> before running, compare.py fails on no plan, an empty plan, a planned probe without a result and a missing --require-plan, run.py plans every test before sharding and fails on a missing program or an expected test no longer listed, and --suite rostests runs on sake only what Windows passes (tests/rostests/windows-<arch>.tsv, required, every planned test measured; Windows runs them in conformance.yml) (rebuild::RUN_PLAN / RUN_PLAN_NOT)",
-            Rule::RunPlan => "a test run that ran nothing, or less than it meant to, fails (review 6852be1f: compare.py passed with Windows' answers and an empty sake directory, winetest/run.py passed when the selected test program was missing): run.sh and run-browser.mjs write <out>/.plan/<runner> before running, compare.py fails on no plan, an empty plan, a planned probe without a result and a missing --require-plan, run.py plans every test before sharding and fails on a missing program or an expected test no longer listed (rebuild::RUN_PLAN / RUN_PLAN_NOT)",
             Rule::GdiLockOrder => "GDI takes its locks in one order, the GDI table, user32, a window surface, never back: a draw op's closure (gdi::draw / draw_src) finds no window, locks no surface and reads no source DC itself, draw_src hands it the source copied before the destination's surface is locked (review 6852be1f: a blit from a window DC found its target with the destination surface held while SetWindowPos resized a surface under user32's lock, and two blits between two windows locked their surfaces in opposite orders) (rebuild::gdi_lock_order)",
+            Rule::WaitDeadline => "A timed wait a save state cuts ends in the restored copy when it would have in the whole run: Sleep and the object waits take their end from snap::wait_end, the state keeps it (snap::Deadline, the program's clock) with the call the copy makes again (review 6852be1f section 7: a wait called again waited its whole time again) (rebuild::WAIT_DEADLINE / _NOT; tests/snap.sh snapwait)",
             Rule::NotDone => "An export sake knows but does not implement answers its declared result's failure, from the Win32 metadata (crates/sake/src/returns.txt, written by tools/win32md: HRESULT E_NOTIMPL, NTSTATUS STATUS_NOT_IMPLEMENTED, WIN32_ERROR and SetLastError functions ERROR_CALL_NOT_IMPLEMENTED), typed as api::NotDone (review 6852be1f: 0 for all of them, S_OK / ERROR_SUCCESS / STATUS_SUCCESS with the outputs never written) (rebuild::NOT_DONE / _NOT)",
             Rule::Lifetimes => "A DLL lives only once its DllMain answered TRUE, a process as long as one of the program's threads runs (review 6852be1f: LoadLibrary answered a DLL whose DllMain said FALSE, and the process ended with its first thread whatever else ran): pe::init_dlls answers Err(InitFailed), load_library a LoadFailure::Init (ERROR_DLL_INIT_FAILED) after unloading what it loaded, exit_thread asks crate::lives whether it was the last (rebuild::LIFETIMES / _NOT)",
             Rule::IoResult => "A file read or write answers what happened, typed: the bytes moved, or files::IoFail (NoAccess for a buffer that is not guest memory, Read/Write for the host) and ReadAt::Eof apart from a failure; CreateFile's sharing check and its entry are one ShareEntry::take under one lock (review 6852be1f: WriteFile from a bad buffer wrote nothing and answered TRUE with the count, a read error was the end of the file, two exclusive opens racing both got in) (rebuild::IO_RESULT / _NOT)",
@@ -403,6 +406,7 @@ impl Rule {
             Rule::Lifetimes => rebuild::lifetimes(tree),
             Rule::GdiLockOrder => rebuild::gdi_lock_order(tree),
             Rule::NotDone => rebuild::not_done(tree),
+            Rule::WaitDeadline => rebuild::wait_deadline(tree),
         };
         hits.into_iter().map(|(file, line, what)| Finding { rule: self, file, line, what }).collect()
     }
