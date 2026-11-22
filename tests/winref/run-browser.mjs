@@ -27,7 +27,15 @@ const allLines = new Set(existsSync(allLinesList) ? readFileSync(allLinesList, "
 // (NO_GAMES=1: not the trial games' replays, testdata/apitrace, a minute of frames each: the
 // interpreter's pass leaves them to the JIT's, or the two passes outrun the job's hour)
 const game = (n) => /^replay_(?:[bs]\d{4}_|dl_|r1_)/.test(n);
-const names = partition(existsSync(list) ? readFileSync(list, "utf8").split(/\s+/).filter((n) => n && n.includes(filter) && (process.env.BROWSER64 || !n.endsWith("-64")) && !(process.env.NO_GAMES && game(n))) : [], process.env.SHARD);
+// (build.sh always writes browser.txt, empty or not: without it the exes are not build.sh's)
+if (!existsSync(list)) throw new Error(`${list} missing: not an exe directory build.sh made`);
+const shard = process.env.SHARD ?? "0/1";
+const names = partition(readFileSync(list, "utf8").split(/\s+/).filter((n) => n && n.includes(filter) && (process.env.BROWSER64 || !n.endsWith("-64")) && !(process.env.NO_GAMES && game(n))), shard);
+// (the plan before anything runs, plan.py's format: compare.py fails a planned probe without
+// a result and a missing --require-plan, so a lost shard or a crash midway cannot pass)
+const runner = `browser${process.env.BROWSER64 ? "64" : ""}-${shard.replace("/", "of")}${filter ? `-${filter.replace(/[^A-Za-z0-9_.-]/g, "_")}` : ""}`;
+mkdirSync(join(outDir, ".plan"), { recursive: true });
+writeFileSync(join(outDir, ".plan", runner), [`# run-browser.mjs exe=${exeDir} filter=${filter || "none"} shard=${shard}${process.env.NO_GAMES ? " no-games" : ""}`, ...names].map((l) => l + "\n").join(""));
 if (!names.length) process.exit(0);
 
 const work = mkdtempSync(join(tmpdir(), "winref-"));

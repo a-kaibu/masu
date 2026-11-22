@@ -642,7 +642,7 @@ pub(super) fn stage_run(tree: &Tree) -> Hits {
 }
 
 /// A file's code without its comments, cut at its first inline #[cfg(test)] module.
-fn product_code(tree: &Tree, f: &Rel) -> String {
+pub(super) fn product_code(tree: &Tree, f: &Rel) -> String {
     let code = tree.code(f, true);
     let mut end = code.len();
     for (at, _) in code.match_indices("#[cfg(test)]") {

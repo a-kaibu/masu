@@ -36,6 +36,14 @@ const names = [
   ["snapz.mjs", "runtime.ts"],
 ];
 
+/** Methods that must not touch a field of their class: [file, method, field]. */
+/** @type {[string, string, string][]} */
+const untouched = [
+  // (a GET's revision is the base of the next store only once the caller took its bytes:
+  // SaveTransport.adopt; review 22bb061 §3, a GET's bytes left aside and its ETag kept)
+  ["save-transport.ts", "load", "revisions"],
+];
+
 /** OPFS folders each owned by one module: getDirectoryHandle("<folder>") elsewhere is an error. */
 /** @type {[string, string][]} */
 const folders = [["states", "snapshot-store.ts"]];
@@ -62,8 +70,15 @@ export function check(program) {
       /\.test\.tsx?$/.test(source.fileName)
     )
       continue;
-    function visit(node, owner) {
+    function visit(node, owner, method) {
       if (ts.isFunctionDeclaration(node)) owner = node;
+      if (ts.isMethodDeclaration(node) && ts.isIdentifier(node.name)) method = node.name.text;
+      if (method && ts.isPropertyAccessExpression(node) && node.expression.kind === ts.SyntaxKind.ThisKeyword)
+        for (const [file, m, field] of untouched)
+          if (source.fileName.endsWith("/src/" + file) && m === method && node.name.text === field) {
+            const line = source.getLineAndCharacterOfPosition(node.getStart()).line + 1;
+            errors.push(`${source.fileName}:${line}: ${m} must not touch this.${field}`);
+          }
       if (
         ts.isCallExpression(node) &&
         ts.isPropertyAccessExpression(node.expression) &&
@@ -133,7 +148,7 @@ export function check(program) {
           }
         }
       }
-      ts.forEachChild(node, (child) => visit(child, owner));
+      ts.forEachChild(node, (child) => visit(child, owner, method));
     }
     visit(source);
   }
