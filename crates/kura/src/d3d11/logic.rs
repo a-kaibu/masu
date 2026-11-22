@@ -12,7 +12,7 @@
 //! (gpu::LOGIC_RESOLVE, dxwgsl::logic::resolve_wgsl) then gives each marked sample the op over
 //! its own bits.
 
-use dxwgsl::logic::{Logic, Op, Sign, Store};
+use dxwgsl::logic::{Logic, Mark, Op, Sign, Store};
 
 use super::format as f;
 use super::{gpu, target_texture, Data, State, D11};
@@ -64,13 +64,15 @@ pub fn snorm_twin(view_dxgi: u32) -> Option<(u32, [u32; 4])> {
 /// words, then (LogicOpEnable, LogicOp) per target) asks of targets of these page formats
 /// (`views`: the render target views' DXGI formats; multisampled or not) under a pixel shader
 /// of sample rate or not: how the shader writes each integer target and each 8-bit SNORM one
-/// (its blend: WARP ignores a logic op there, winref d3d11logic), and the targets left as they
-/// are (NOOP: their write mask 0). A multisampled target with an op that reads it under a
-/// pixel-rate shader is a stash, its mark at the first location no target takes
-/// (`formats.len()`).
+/// (its blend: WARP ignores a logic op there, winref d3d11logic), and the targets left as they are (NOOP: their write mask 0). A
+/// multisampled target with an op that reads it under a pixel-rate shader is a stash, its
+/// mark at the first location no target takes (`formats.len()`), or with 8 targets in the
+/// first stash that can carry it (dxwgsl::logic::carry). Eight targets whose stashes are all
+/// of four 16-bit channels have no place for a mark: their ops are the shader's, per sample.
 pub fn targets(blend: &[u32], formats: &[u32], views: &[u32], multisampled: &[bool], sample_rate: bool) -> (Vec<Logic>, Vec<u32>) {
     let independent = blend.get(1).copied().unwrap_or(0) != 0;
-    let mark = lo32(formats.len());
+    // (placeholder until the stashes are known)
+    let mark = Mark::Slot(lo32(formats.len()));
     let (mut out, mut kept) = (Vec::new(), Vec::new());
     for (i, &page) in formats.iter().enumerate() {
         let rt = if independent { i } else { 0 };
@@ -95,7 +97,35 @@ pub fn targets(blend: &[u32], formats: &[u32], views: &[u32], multisampled: &[bo
         };
         out.push(Logic { target, store, bits, sign, multisampled: ms });
     }
+    if formats.len() >= 8 {
+        let carrier = out.iter().filter(|l| matches!(l.store, Store::Stash { .. })).find_map(|l| dxwgsl::logic::carry(l.bits).map(|(_, channel, bit)| Mark::Carried { by: l.target, channel, bit }));
+        for l in &mut out {
+            if let Store::Stash { op, .. } = l.store {
+                l.store = match carrier {
+                    Some(mark) => Store::Stash { op, mark },
+                    None => Store::Direct(op),
+                };
+            }
+        }
+    }
     (out, kept)
+}
+
+/// The UINT page format of channels `bits` (a stash's: dxwgsl::logic::Logic::stash_bits).
+pub fn uint_page(bits: [u32; 4]) -> Option<u32> {
+    Some(match bits {
+        [8, 8, 8, 8] => f::P_RGBA8UI,
+        [8, 8, 0, 0] => f::P_RG8UI,
+        [8, 0, 0, 0] => f::P_R8UI,
+        [16, 16, 16, 16] => f::P_RGBA16UI,
+        [16, 16, 0, 0] => f::P_RG16UI,
+        [16, 0, 0, 0] => f::P_R16UI,
+        [32, 32, 32, 32] => f::P_RGBA32UI,
+        [32, 32, 0, 0] => f::P_RG32UI,
+        [32, 0, 0, 0] => f::P_R32UI,
+        [10, 10, 10, 2] => f::P_RGB10A2UI,
+        _ => return None,
+    })
 }
 
 /// One primitive of a draw as a draw of its own: its first vertex (from the draw's start), its
@@ -217,13 +247,13 @@ pub fn copy_of(d: &mut D11, rtv: u32, l: &Logic, twins: &[Twin]) -> Option<Copy>
 }
 
 /// A stash target's two passes (crate doc): the targets the shader's pass draws to (the stash
-/// in the target's place, the mark after the last), the mark's clear before it, the resolve
-/// after it.
+/// in the target's place, the mark after the last when it has a slot of its own), the mark's
+/// clear before it, the resolve after it.
 #[derive(Clone, Debug)]
 pub struct Stash {
     pub targets: Vec<u32>,
     pub clear: [u32; 11],
-    pub resolves: Vec<[u32; 12]>,
+    pub resolves: Vec<[u32; 14]>,
 }
 
 /// The stash passes of a draw to targets `colors` (SET_TARGETS2's (tex level layer) words)
@@ -231,17 +261,32 @@ pub struct Stash {
 /// their write masks `masks` and copies `copies`.
 pub fn stash_of(d: &mut D11, rtvs: &[u32], colors: &[u32], depth: [u32; 3], stashes: &[&Logic], masks: &[u32], copies: &[Copy]) -> Option<Stash> {
     let first = stashes.first()?;
+    let Store::Stash { mark, .. } = first.store else { return None };
     let (_, _, _, _, w, h, _) = target_texture(d, rtvs.get(usize::try_from(first.target).ok()?).copied()?)?;
-    let mark = scratch(d, (MARK, w, h, f::P_R8UI, true));
     let mut targets = colors.to_vec();
     let mut resolves = Vec::new();
+    let mut stash_tex = Vec::new();
     for l in stashes {
-        let Store::Stash { op, .. } = l.store else { continue };
         let rtv = rtvs.get(usize::try_from(l.target).ok()?).copied()?;
-        let (tex, _, _, _, tw, th, page) = target_texture(d, rtv)?;
-        let stash = scratch(d, (STASH_OF | l.target, tw, th, page, true));
+        let (_, _, _, _, tw, th, _) = target_texture(d, rtv)?;
+        let stash = scratch(d, (STASH_OF | l.target, tw, th, uint_page(l.stash_bits())?, true));
+        stash_tex.push((l.target, stash));
         let at = usize::try_from(l.target).ok()?.checked_mul(3)?;
         targets.get_mut(at..at.checked_add(3)?)?.copy_from_slice(&[stash, 0, 0]);
+    }
+    let mark_tex = match mark {
+        Mark::Slot(_) => {
+            let m = scratch(d, (MARK, w, h, f::P_R8UI, true));
+            targets.extend_from_slice(&[m, 0, 0]);
+            m
+        }
+        Mark::Carried { by, .. } => stash_tex.iter().find(|s| s.0 == by)?.1,
+    };
+    let (ch, bit) = mark.flag();
+    for (l, &(_, stash)) in stashes.iter().zip(&stash_tex) {
+        let Store::Stash { op, .. } = l.store else { continue };
+        let rtv = rtvs.get(usize::try_from(l.target).ok()?).copied()?;
+        let (tex, ..) = target_texture(d, rtv)?;
         let copy = copies.iter().find(|c| c.entry[0] == dxwgsl::logic::LOGIC_DST.saturating_add(l.target)).map_or(0, |c| c.entry[2]);
         let mask = masks.get(usize::try_from(l.target).ok()?).copied().unwrap_or(0xf);
         let sign = match l.sign {
@@ -249,13 +294,14 @@ pub fn stash_of(d: &mut D11, rtvs: &[u32], colors: &[u32], depth: [u32; 3], stas
             Sign::Signed => 1,
         };
         let op_word = Op::ALL.iter().position(|&o| o == op).map_or(0, lo32);
-        resolves.push([gpu::LOGIC_RESOLVE, tex, copy, stash, mark, mask, op_word, l.bits[0], l.bits[1], l.bits[2], l.bits[3], sign]);
+        resolves.push([gpu::LOGIC_RESOLVE, tex, copy, stash, mark_tex, mask, op_word, l.bits[0], l.bits[1], l.bits[2], l.bits[3], sign, ch, bit]);
     }
-    targets.extend_from_slice(&[mark, 0, 0]);
     let mut set = vec![gpu::SET_TARGETS2, lo32(targets.len() / 3)];
     set.extend_from_slice(&targets);
     set.extend_from_slice(&depth);
-    Some(Stash { targets: set, clear: [gpu::CLEAR_VIEW, mark, 0, 0, 1, 0, 0, 0, 0, 0, 0], resolves })
+    // (before each primitive the mark's texture, its own or the carrier's stash, cleared to 0:
+    // no sample marked)
+    Some(Stash { targets: set, clear: [gpu::CLEAR_VIEW, mark_tex, 0, 0, 1, 0, 0, 0, 0, 0, 0], resolves })
 }
 
 /// Which of the `count` indices from `start` of the bound index buffer are a strip's restart

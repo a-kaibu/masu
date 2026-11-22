@@ -93,7 +93,7 @@ pub fn translate(code: &[u8], pixel: bool, ps: Option<&[u8]>) -> Result<Wgsl, St
     crate::wgsl::translate(code, pixel, ps)
 }
 
-pub use crate::wgsl::{BUFFER_RANGES, LOAD_TEXTURES, translate_addr, translate_logic, sample_rate, translate_compute, translate_point_sprite, thread_group, uav_slots, GsDecl, Phase, TessDecl, TessFactor, PATCH_CONSTANTS};
+pub use crate::wgsl::{BUFFER_RANGES, LOAD_TEXTURES, translate_addr, translate_logic, translate_setup, sample_rate, translate_compute, translate_point_sprite, thread_group, uav_slots, GsDecl, Phase, TessDecl, TessFactor, PATCH_CONSTANTS};
 /// Geometry shaders, stream output and clipper counts as compute passes (wgsl/expand.rs).
 pub use crate::wgsl::expand;
 

@@ -41,7 +41,9 @@ struct VI { float3 p : POSITION; float2 t : TEXCOORD0; float4 c : COLOR; float4 
 struct VO { float4 p : SV_Position; float4 c : COLOR; };
 VO main(VI v) { VO o; o.p = float4(v.p, 1) + v.i; o.c = v.c + float4(v.t, 0, 0); return o; }
 ";
-const PS: &str = "float4 main(float4 p : SV_Position, float4 c : COLOR) : SV_Target { return c; }";
+// (a constant input: the draw stays the render pipeline's, whose vertex fetch this checks; one
+// that interpolates goes through the setup's passes, expand.rs, which the model does not run)
+const PS: &str = "float4 main(float4 p : SV_Position, nointerpolation float4 c : COLOR) : SV_Target { return c; }";
 
 /// (semantic, index, DXGI format, bytes)
 const ELEMS: [(&str, u32, u32, u32); 4] = [("POSITION", 0, 6, 12), ("TEXCOORD", 0, 16, 8), ("COLOR", 0, 28, 4), ("TEXCOORD", 1, 2, 16)];

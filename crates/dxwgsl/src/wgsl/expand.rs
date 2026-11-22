@@ -94,11 +94,13 @@ pub mod xd {
     pub const RASTER: usize = 52;
     /// the pixels that can be drawn (4 i32: ps::Raster::rect)
     pub const RECT: usize = 53;
+    /// the viewport's MinDepth and MaxDepth (2 f32: the setup pass's depth plane, setup.rs)
+    pub const DEPTH: usize = 44;
     /// the words
     pub const WORDS: usize = 60;
     /// The words' names in the passes' WGSL (`const XD_<name>`), so the shaders say which word
     /// they read
-    pub const NAMED: [(&str, usize); 18] = [
+    pub const NAMED: [(&str, usize); 19] = [
         ("COUNT", COUNT),
         ("START", START),
         ("BASE", BASE),
@@ -117,6 +119,7 @@ pub mod xd {
         ("VIEWPORT", VIEWPORT),
         ("RASTER", RASTER),
         ("RECT", RECT),
+        ("DEPTH", DEPTH),
     ];
 }
 
@@ -831,6 +834,9 @@ pub use tess::{ds_pass, hs_cp_regs, hs_pass, tess_decl, HsOut, B_DPTS, B_HCP, B_
 
 #[path = "ps.rs"]
 pub mod ps;
+
+#[path = "setup.rs"]
+pub mod setup;
 
 #[cfg(test)]
 #[path = "expand_tests.rs"]

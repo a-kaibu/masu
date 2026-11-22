@@ -80,8 +80,9 @@ pub const GEN_MIPS_POINT: u32 = 42; // tex
 /// each sample of `tex` that `mark` (r8uint, multisampled) marks gets the op (its place in
 /// dxwgsl::logic::Op::ALL) over its bits in `stash` (the shader's source) and `copy` (the
 /// target before the primitive), masked to the channels' bits, under write mask `mask`
-/// (textures of the same size and format but the mark's, 4 samples; sign 1: signed channels).
-pub const LOGIC_RESOLVE: u32 = 43; // tex copy stash mark mask op bits0 bits1 bits2 bits3 sign
+/// (textures of the same size, 4 samples; the stash and mark UINT; sign 1: signed channels); a
+/// sample is marked where bit `bit` of channel `ch` of its mark texel is 1 (dxwgsl::logic::Mark).
+pub const LOGIC_RESOLVE: u32 = 43; // tex copy stash mark mask op bits0 bits1 bits2 bits3 sign ch bit
 
 /// What a QUERY_END ends.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]

@@ -2439,21 +2439,29 @@ fn texture_type(dim: u32, k: K, depth: bool) -> R<(String, u32)> {
 
 /// DXBC (shader model 4/5) to WGSL; `ps`: the pixel shader a vertex shader feeds.
 pub fn translate(code: &[u8], pixel: bool, ps: Option<&[u8]>) -> R<Wgsl> {
-    translate_with(code, pixel, ps, None, &[], &[])
+    translate_with(code, pixel, ps, None, &[], &[], None)
 }
 
 /// [`translate`] for samplers with BORDER / MIRROR_ONCE addressing (`addr`, by sampler
 /// register): what they sample at and the border (crate::addr). For 2D textures and arrays
 /// sampled without offsets or comparison; the rest samples as the sampler does (clamped).
 pub fn translate_addr(code: &[u8], pixel: bool, ps: Option<&[u8]>, addr: &[crate::addr::Addr]) -> R<Wgsl> {
-    translate_with(code, pixel, ps, None, addr, &[])
+    translate_with(code, pixel, ps, None, addr, &[], None)
 }
 
 /// [`translate_addr`] of a pixel shader whose targets `logic` have logic operations
 /// (crate::logic): each such output read against its target's copy and written as the op's
 /// result.
 pub fn translate_logic(code: &[u8], addr: &[crate::addr::Addr], logic: &[crate::logic::Logic]) -> R<Wgsl> {
-    translate_with(code, true, None, None, addr, logic)
+    translate_with(code, true, None, None, addr, logic, None)
+}
+
+/// [`translate_logic`] of a pixel shader drawn from a setup store (expand::setup): its
+/// interpolated inputs, SV_Position's depth and w, and its clip and cull distances evaluated
+/// from the planes of the fan triangle it draws (location 0, flat), as WARP does, over a target
+/// of `samples` samples a pixel.
+pub fn translate_setup(code: &[u8], addr: &[crate::addr::Addr], logic: &[crate::logic::Logic], samples: u32) -> R<Wgsl> {
+    translate_with(code, true, None, None, addr, logic, Some(samples))
 }
 
 /// Whether a pixel shader runs once a sample (it reads SV_SampleIndex, or an input
@@ -2477,7 +2485,7 @@ pub fn sample_rate(code: &[u8]) -> bool {
 /// output (PSIZE, clamped to 1..`max_size`) in pixels. The viewport's half size comes in a
 /// uniform at binding 15 of group 0 (xy).
 pub fn translate_point_sprite(code: &[u8], ps: Option<&[u8]>, max_size: f32) -> R<Wgsl> {
-    translate_with(code, false, ps, Some(max_size), &[], &[])
+    translate_with(code, false, ps, Some(max_size), &[], &[], None)
 }
 
 /// The typed UAVs a compute shader declares: (slot, dimension as dcl_uav_typed has it (2 1D,
@@ -2728,7 +2736,8 @@ fn module_decls(w: &mut W, m: &mut String, bindings: &mut Vec<(u32, Binding)>, g
     Ok(())
 }
 
-fn translate_with(code: &[u8], pixel: bool, ps: Option<&[u8]>, sprite: Option<f32>, addr: &[crate::addr::Addr], logic: &[crate::logic::Logic]) -> R<Wgsl> {
+#[allow(clippy::too_many_arguments)]
+fn translate_with(code: &[u8], pixel: bool, ps: Option<&[u8]>, sprite: Option<f32>, addr: &[crate::addr::Addr], logic: &[crate::logic::Logic], setup: Option<u32>) -> R<Wgsl> {
     let (c, p) = parse(code)?;
     if p.kind != if pixel { tpf::PIXEL } else { tpf::VERTEX } {
         return Err(format!("program type {} for a {} shader", p.kind, if pixel { "pixel" } else { "vertex" }));
@@ -2763,7 +2772,13 @@ fn translate_with(code: &[u8], pixel: bool, ps: Option<&[u8]>, sprite: Option<f3
     };
     if pixel {
         let vary = w.ps_varyings();
+        if let Some(samples) = setup {
+            expand::setup::inputs(code, samples, &mut params, &mut pre, &mut m, &mut bindings)?;
+        }
         for (&r, d) in &w.inputs {
+            if setup.is_some() && matches!(d.sysval, 0..=3) {
+                continue;
+            }
             match d.sysval {
                 0 => {
                     let Some(v) = vary.iter().find(|v| v.reg == r) else { return Err(format!("v{r} without its varying")) };
@@ -2780,7 +2795,9 @@ fn translate_with(code: &[u8], pixel: bool, ps: Option<&[u8]>, sprite: Option<f3
                     pre.push(assign(format!("v{r}"), d.mask, "vec4<u32>(select(0u, 0xffffffffu, in_ff))".into()));
                 }
                 10 => {
-                    params.push("@builtin(sample_index) in_si: u32".into());
+                    if !params.iter().any(|p| p.starts_with("@builtin(sample_index)")) {
+                        params.push("@builtin(sample_index) in_si: u32".into());
+                    }
                     pre.push(assign(format!("v{r}"), d.mask, "vec4<u32>(in_si)".into()));
                 }
                 s => return Err(format!("pixel shader input system value {s}")),
@@ -2791,7 +2808,9 @@ fn translate_with(code: &[u8], pixel: bool, ps: Option<&[u8]>, sprite: Option<f3
             match logic.iter().find(|l| l.target == r) {
                 // (an integer target: its output as the target stores it, the attachment's type)
                 Some(l) => {
-                    fields.push(format!("@location({r}) c{r}: vec4<{}>", l.scalar()));
+                    // (a stash is UINT whatever the target's sign)
+                    let scalar = if matches!(l.store, crate::logic::Store::Stash { .. }) { "u32" } else { l.scalar() };
+                    fields.push(format!("@location({r}) c{r}: vec4<{scalar}>"));
                     // (an SNORM target's blend may read SV_Target1, the second source)
                     let src1 = if w.outputs.contains_key(&1) { "bitcast<vec4<f32>>(o1)" } else { "vec4<f32>()" };
                     logic_output(l, r, k, src1, &mut params, &mut post, &mut m, &mut bindings);
@@ -2805,15 +2824,17 @@ fn translate_with(code: &[u8], pixel: bool, ps: Option<&[u8]>, sprite: Option<f3
         // (a pixel-rate shader over a multisampled target with a logic op: the mark of the
         // samples it writes, for the resolve pass)
         if let Some(mark) = logic.iter().find_map(|l| match l.store {
-            crate::logic::Store::Stash { mark, .. } => Some(mark),
-            crate::logic::Store::Plain | crate::logic::Store::Direct(_) | crate::logic::Store::Snorm(_) => None,
+            crate::logic::Store::Stash { mark: crate::logic::Mark::Slot(mark), .. } => Some(mark),
+            crate::logic::Store::Stash { mark: crate::logic::Mark::Carried { .. }, .. } | crate::logic::Store::Plain | crate::logic::Store::Direct(_) | crate::logic::Store::Snorm(_) => None,
         }) {
             fields.push(format!("@location({mark}) lg_mark: u32"));
             post.push("out.lg_mark = 1u;".into());
         }
         if w.sys_in.contains(&tpf::INPUT_COVERAGE_MASK) {
             m.push_str("var<private> vcov: vec4<u32>;\n");
-            params.push("@builtin(sample_mask) in_cov: u32".into());
+            if !params.iter().any(|p| p.starts_with("@builtin(sample_mask)")) {
+                params.push("@builtin(sample_mask) in_cov: u32".into());
+            }
             pre.push("vcov = vec4<u32>(in_cov);".into());
         }
         if w.depth_out {
@@ -2940,7 +2961,17 @@ fn logic_output(l: &crate::logic::Logic, r: u32, k: K, src1: &str, params: &mut 
     let max = l.max_wgsl();
     match l.store {
         Store::Plain => post.push(format!("out.c{r} = {};", l.saturate_wgsl(&o))),
-        Store::Stash { .. } => post.push(format!("out.c{r} = {};", l.bits_out_wgsl(&format!("{o} & {max}")))),
+        // (the stash is UINT: the source's bits, and the mark where this stash carries it)
+        Store::Stash { mark, .. } => {
+            let flag = match mark {
+                crate::logic::Mark::Carried { by, channel, bit } if by == r => {
+                    let f: Vec<String> = (0..4u32).map(|c| if c == channel { format!("{}u", 1u32 << bit.min(31)) } else { "0u".to_owned() }).collect();
+                    format!(" | vec4<u32>({})", f.join(", "))
+                }
+                crate::logic::Mark::Carried { .. } | crate::logic::Mark::Slot(_) => String::new(),
+            };
+            post.push(format!("out.c{r} = ({o} & {max}){flag};"));
+        }
         Store::Snorm(blend) => {
             snorm_helpers(m);
             let src = format!("bitcast<vec4<f32>>({o})");
