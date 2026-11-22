@@ -10,7 +10,7 @@ import { FILE, type FromFrame, type Init } from "./frame-protocol";
 import { relayPorts } from "./gameport";
 import { toApp } from "./skynovel";
 import { fileUrl, frameReady, readSync } from "./sync-read";
-import { folderDirs, HELLO_AGAIN, HELLO_WAIT_MS, normPath as norm } from "./webstore";
+import { folderDirs, HELLO_AGAIN, HELLO_WAIT_MS, normPath as norm, pageHasNode } from "./webstore";
 
 type Changed = (key: string) => void;
 
@@ -202,8 +202,7 @@ const changed: Changed = (key) => keep && post({ masu: "set", key, value: items.
 // Electron games' pages are under resources/app/ (they run without Node: contextIsolation,
 // and a global `process` stops a PixiJS game's title buttons), unless the game asks for Node
 // (nodeIntegration, as older Electron did by default: #masu-node); NW.js ones beside the exe
-const node =
-  !/\/resources\/app\//i.test(decodeURIComponent(location.pathname)) || location.hash === "#masu-node";
+const node = pageHasNode(location.pathname, location.hash);
 Object.defineProperty(window, "localStorage", { value: storage(items, changed) });
 if (node) {
   Object.assign(window, { require: nodeRequire(folder, items, changed), process: nodeProcess() });

@@ -19,7 +19,7 @@
 const pw = await import(process.env.PLAYWRIGHT ?? "playwright");
 const { chromium } = pw.default ?? pw;
 import { writeFileSync } from "node:fs";
-import { GROUPS, MIN_ROUNDS, VERSION } from "./suite.mjs";
+import { argParams, GROUPS, MIN_ROUNDS, VERSION } from "./suite.mjs";
 import { runScenario } from "./scenario.mjs";
 
 const [out, ...groups] = process.argv.slice(2);
@@ -67,7 +67,7 @@ async function runOnce(build, c) {
   const args = [c.args, c.args && scale].filter(Boolean).join(",");
   const url =
     `${build.url}/play.html?autostart&headless&env=MASU_NOPACE%3D1${extraEnv}&mount=/masu/game=bench${c.page ? `&${c.page}` : ""}` +
-    `${args ? `&args=${encodeURIComponent(args)}` : ""}&run=${encodeURIComponent(`Z:\\masu\\game\\${c.exe}`)}`;
+    `${argParams(args)}&run=${encodeURIComponent(`Z:\\masu\\game\\${c.exe}`)}`;
   const context = await browser.newContext({ viewport: { width: 1280, height: 720 } });
   const page = await context.newPage();
   const metrics = {}, checks = {}, log = [];

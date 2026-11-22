@@ -9,6 +9,7 @@
 // (game-sw.ts), which asks this page for them (gameport.ts): this page reads them from the device
 // or straight from the bucket (treeread.ts), not through the server.
 import { electronNode, electronPages } from "./electron";
+import { missingFeature, SYNC_READS_NEED } from "./launch-plan";
 import { fromFrame, type Init } from "./frame-protocol";
 import type { GivePort } from "./gameport";
 import type { TreeWorkerAsk } from "./tree-worker";
@@ -82,6 +83,41 @@ async function electronPageNode(tree: TreeReader, dir: string): Promise<boolean>
   return code !== null && electronNode(code, await text(`${dir}version`));
 }
 
+/** How a web game's pages run (review 22bb061 §4): NW.js pages have Node; Electron's have it
+ * when the game asks (nodeIntegration), else they run isolated. */
+export type WebGameMode =
+  | { readonly runtime: "nwjs" }
+  | { readonly runtime: "electron"; readonly node: boolean };
+
+/** What the frame is given for `mode`: a page with Node reads the game's files synchronously
+ * (its fs: the folder's URL, its file names and a port to the tree's worker, sync-read.ts);
+ * an Electron page says so in its address (frame.ts tells NW.js pages by their path). */
+export function frameWiring(mode: WebGameMode): { hash: string; syncReads: boolean } {
+  const node = mode.runtime === "nwjs" || mode.node;
+  return { hash: mode.runtime === "electron" && mode.node ? "#masu-node" : "", syncReads: node };
+}
+
+/** The frame's first page of the game (game-boot.html's `to`): the page in `tree`, with the
+ * mark of `wiring`. */
+export const frameTarget = (tree: string, page: string, wiring: { hash: string }) =>
+  `/tree/${encodeURIComponent(tree)}/${enc(page)}${wiring.hash}`;
+
+/** Which mode the game in `dir` runs in and its first page; null: not a web game. */
+export async function webGamePage(
+  tree: TreeReader,
+  dir: string,
+): Promise<{ page: string; mode: WebGameMode } | null> {
+  // NW.js: package.json beside the exe; Electron: resources/app (its pages run without Node:
+  // contextIsolation, and a global `process` stops a PixiJS game's title buttons)
+  const nw = await startPage(tree, dir);
+  if (nw) return { page: nw, mode: { runtime: "nwjs" } };
+  const electron = await startPage(tree, `${dir}resources/app/`);
+  // (older Electron games, as TyranoScript v5's, have Node in the page: saves through fs)
+  return electron
+    ? { page: electron, mode: { runtime: "electron", node: await electronPageNode(tree, dir) } }
+    : null;
+}
+
 /**
  * Opens the program as a web game when it is one; false when it is not (sake runs it).
  * `saveName` names its saves (as sake's), `oldSaves` their name before the rename (Z:\vnvm).
@@ -96,18 +132,18 @@ export async function startWebGame(
   const at = where(run, mounts);
   if (!at) return false;
   const tree = await openTree(at.tree, location.href);
+  const found = await webGamePage(tree, at.dir);
+  if (!found) return false;
+  const { page } = found;
+  const wiring = frameWiring(found.mode);
+  if (wiring.syncReads) {
+    const problem = missingFeature(SYNC_READS_NEED);
+    if (problem) throw new Error(problem);
+  }
   // (the frame's reads answered by a worker: the frame's synchronous reads (sync-read.ts) hold
-  // the main thread, which this page shares with it)
+  // the main thread, which this page shares with it; made once the program is a web game)
   const reads = new Worker(new URL("./tree-worker.ts", import.meta.url), { type: "module" });
   reads.postMessage({ tree: at.tree, page: location.href } satisfies TreeWorkerAsk);
-  // NW.js: package.json beside the exe; Electron: resources/app (its pages run without Node:
-  // contextIsolation, and a global `process` stops a PixiJS game's title buttons)
-  let page = await startPage(tree, at.dir);
-  const node = !!page;
-  page ??= await startPage(tree, `${at.dir}resources/app/`);
-  if (!page) return false;
-  // (older Electron games, as TyranoScript v5's, have Node in the page: saves through fs)
-  const electronWithNode = !node && (await electronPageNode(tree, at.dir));
   log("Web ゲームとして開いています");
   const origin = await gameOrigin();
 
@@ -156,11 +192,11 @@ export async function startWebGame(
   addEventListener("visibilitychange", () => document.visibilityState === "hidden" && void save());
   addEventListener("pagehide", () => void save());
 
-  // NW.js games read their files synchronously (Node's fs): the frame reads them from the
+  // pages with Node read their files synchronously (Node's fs): the frame reads them from the
   // folder when asked (frame.ts, sync-read.ts); it gets the folder's URL and file names
-  const base = node ? `${origin}/tree/${encodeURIComponent(at.tree)}/${enc(at.dir)}` : "";
+  const base = wiring.syncReads ? `${origin}/tree/${encodeURIComponent(at.tree)}/${enc(at.dir)}` : "";
   const names: string[] = [];
-  if (node)
+  if (wiring.syncReads)
     for (const { path } of tree.files.values())
       if (path.startsWith(at.dir)) names.push(path.slice(at.dir.length));
 
@@ -178,7 +214,7 @@ export async function startWebGame(
     "allow-modals",
   );
   // (its first page registers the worker that answers the game's files, then opens the game's)
-  const to = `/tree/${encodeURIComponent(at.tree)}/${enc(page)}${electronWithNode ? "#masu-node" : ""}`;
+  const to = frameTarget(at.tree, page, wiring);
   frame.src = `${origin}/game-boot.html?to=${encodeURIComponent(to)}`;
   addEventListener("message", (e: MessageEvent) => {
     if (e.source !== frame.contentWindow || e.origin !== origin) return;
@@ -194,10 +230,10 @@ export async function startWebGame(
     } else if (m?.masu === "hello") {
       // (each page of the game asks: a reload gets the saves as they are now)
       const init: Init = { masu: "init", items: [...items], base, names };
-      // (NW.js: a port to the tree's worker for the synchronous reads, sync-read.ts)
+      // (a page with Node: a port to the tree's worker for the synchronous reads, sync-read.ts)
       const ch = new MessageChannel();
-      if (node) reads.postMessage({ port: ch.port1 } satisfies TreeWorkerAsk, [ch.port1]);
-      frame.contentWindow!.postMessage(init, origin, node ? [ch.port2] : []);
+      if (wiring.syncReads) reads.postMessage({ port: ch.port1 } satisfies TreeWorkerAsk, [ch.port1]);
+      frame.contentWindow!.postMessage(init, origin, wiring.syncReads ? [ch.port2] : []);
     } else if (m?.masu === "set") {
       if (!saves.set(m.key, m.value)) {
         if (!refused) log("ゲームのセーブが大きすぎるため、これ以上は保存しません");

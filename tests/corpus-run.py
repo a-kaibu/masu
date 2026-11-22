@@ -145,7 +145,8 @@ while True:
         # (saves on: a fresh browser each title, and a launcher's settings file reaches the game it
         # starts, BISHOP's bsxx.ini)
         qs = 'autostart&headless&load&mount=/masu/game=g&run=' + urllib.parse.quote(winexe)
-        if args: qs += '&args=' + urllib.parse.quote(args)
+        # (the command line's text after the program, as winplay.py gives it on Windows)
+        if args: qs += '&cmdline=' + urllib.parse.quote(args)
         qs += os.environ.get('CORPUS_QS', '')  # (more page parameters, e.g. &env=NAME%3Dvalue)
         st, at, pre, tat = steps.get(tid, ('key:Return wait:3', '', '', ''))
         e2 = dict(env)

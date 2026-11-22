@@ -73,3 +73,56 @@ test("save states' index and bodies change only inside SnapshotStore's locked wa
     "/src/savestate.ts:3: OPFS states/ belongs to snapshot-store.ts",
   ]);
 });
+
+test("the address's launch plan keys are launch-plan.ts's alone", () => {
+  const files = {
+    "/src/lib.d.ts": `declare class URLSearchParams { get(k: string): string | null; getAll(k: string): string[]; set(k: string, v: string): void; has(k: string): boolean }`,
+    "/src/launch-plan.ts": `export function readPlan(p: URLSearchParams) { return [p.get("run"), p.getAll("arg")]; }`,
+    "/src/play.ts": `
+      const params = new URLSearchParams();
+      params.get("args")?.split(",");
+      params.getAll("mount");
+      params.set("run", "x.exe");
+      params.has("game");
+      const m = new Map<string, string>(); m.get("run");
+    `,
+  };
+  const options = { noLib: true, module: ts.ModuleKind.ESNext, strict: true };
+  const host = ts.createCompilerHost(options);
+  host.fileExists = (f) => f in files;
+  host.directoryExists = (dir) => dir === "/src";
+  host.getSourceFile = (f) =>
+    files[f] === undefined ? undefined : ts.createSourceFile(f, files[f], ts.ScriptTarget.Latest, true);
+  const findings = check(ts.createProgram(Object.keys(files), options, host)).filter((f) =>
+    f.includes("launch plan"),
+  );
+  // (the Map's "run" and the address's "game" are not a plan's)
+  expect(findings).toEqual([
+    "/src/play.ts:3: the address's \"args\" is a launch plan's: launch-plan.ts",
+    "/src/play.ts:4: the address's \"mount\" is a launch plan's: launch-plan.ts",
+    "/src/play.ts:5: the address's \"run\" is a launch plan's: launch-plan.ts",
+  ]);
+});
+
+test("the runtime's files are named in runtime.ts alone", () => {
+  const files = {
+    "/src/runtime.ts": "export const ids = () => `${base}build-id.txt`; const t = 'jit-version.txt';",
+    "/src/offline.ts":
+      "const a = `${base}build-id.txt`; const b = `x${1}snapz.mjs${2}`; const c = 'sake.wasm';",
+    "/src/savestate.ts": 'fetch("sake/jit-version.txt");',
+  };
+  const options = { noLib: true, module: ts.ModuleKind.ESNext };
+  const host = ts.createCompilerHost(options);
+  host.fileExists = (f) => f in files;
+  host.directoryExists = (dir) => dir === "/src";
+  host.getSourceFile = (f) =>
+    files[f] === undefined ? undefined : ts.createSourceFile(f, files[f], ts.ScriptTarget.Latest, true);
+  const findings = check(ts.createProgram(Object.keys(files), options, host)).filter((f) =>
+    f.includes("named by"),
+  );
+  expect(findings).toEqual([
+    "/src/offline.ts:1: build-id.txt is named by runtime.ts only (its manifest)",
+    "/src/offline.ts:1: snapz.mjs is named by runtime.ts only (its manifest)",
+    "/src/savestate.ts:1: jit-version.txt is named by runtime.ts only (its manifest)",
+  ]);
+});

@@ -30,6 +30,7 @@
 import { readdirSync, readFileSync } from "node:fs";
 import { shots } from "./shots.mjs";
 import { profile } from "./profile.mjs";
+import { argParams } from "./suite.mjs";
 
 const linux = process.platform === "linux";
 // (BENCH_VERBOSE=1: the page's lines as they come; BENCH_URL_EXTRA="&d3dstats" and the like: more
@@ -120,7 +121,7 @@ export async function runScenario(browser, build, c, timeout) {
   let error;
   const shot = shots(c.name ?? c.exe.replace(/\.exe$/, ""));
   const url = (args, extra = "") =>
-    `${build.url}/play.html?autostart&headless&mount=/masu/game=bench&args=${encodeURIComponent(args)}` +
+    `${build.url}/play.html?autostart&headless&mount=/masu/game=bench${argParams(args)}` +
     `&run=${encodeURIComponent(`Z:\\masu\\game\\${c.exe}`)}${extra}${process.env.BENCH_URL_EXTRA ?? ""}` +
     (c.env ?? []).map((e) => `&env=${encodeURIComponent(e)}`).join("");
   // a start up to the title in its own page of `ctx`: ms, or throws

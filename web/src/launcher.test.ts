@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 import { applyGame, listUrl, needsListBelow, nextRunUrl, type GameEntry } from "./launcher";
+import { readPlan } from "./launch-plan";
 
 // anemoi from the list: Start.exe opens StartData\StartMenu.exe (ShellExecuteExW, /from="autorun"),
 // which opens GameData\SiglusEngine.exe (/fullscreen)
@@ -61,7 +62,8 @@ describe("nextRunUrl", () => {
     expect(url.searchParams.getAll("env")).toEqual(["SAKE_X=1"]);
     expect(url.searchParams.get("saves")).toBe("Z__masu_game_Start.exe-c1b96914");
     expect(url.searchParams.get("run")).toBe("Z:\\masu\\game\\StartData\\StartMenu.exe");
-    expect(url.searchParams.get("args")).toBe('/from="autorun"');
+    expect(url.searchParams.get("cmdline")).toBe('/from="autorun"');
+    expect(url.searchParams.has("arg")).toBe(false);
     // (the player pressed 起動 for the launcher: the next program starts by itself)
     expect(url.searchParams.has("autostart")).toBe(true);
 
@@ -74,13 +76,14 @@ describe("nextRunUrl", () => {
     );
     expect(url2.searchParams.getAll("mount")).toEqual(["/masu/game=anemoi"]);
     expect(url2.searchParams.get("saves")).toBe("Z__masu_game_Start.exe-c1b96914");
-    expect(url2.searchParams.get("args")).toBe("/fullscreen");
+    expect(url2.searchParams.get("cmdline")).toBe("/fullscreen");
   });
 
-  it("drops the arguments when there are none and a memory state of the program before", () => {
-    const params = new URLSearchParams("run=a.exe&args=x,y&state=2&debug&mount=/masu/game=t");
-    const url = nextRunUrl("http://h/play.html?run=a.exe", params, "b.exe", "  ");
-    expect(url.searchParams.has("args")).toBe(false);
+  it("drops the arguments of the program before and a memory state of it", () => {
+    const params = new URLSearchParams("run=a.exe&arg=x&arg=y&state=2&debug&mount=/masu/game=t");
+    const url = nextRunUrl("http://h/play.html?run=a.exe", params, "b.exe", "");
+    expect(url.searchParams.has("arg")).toBe(false);
+    expect(url.searchParams.get("cmdline")).toBe("");
     expect(url.searchParams.has("state")).toBe(false);
     expect(url.searchParams.has("debug")).toBe(true);
     expect(url.searchParams.getAll("mount")).toEqual(["/masu/game=t"]);
@@ -98,7 +101,7 @@ describe("nextRunUrl", () => {
         id: word(),
         title: word(),
         run: `Z:\\masu\\game\\${word()}.exe`,
-        args: Array.from({ length: Math.floor(r() * 3) }, word).filter((a) => !/[\s,]/.test(a)),
+        args: Array.from({ length: Math.floor(r() * 3) }, word),
         mounts: Array.from({ length: Math.floor(r() * 3) }, () => `/masu/${word()}=${word()}`),
         env: Array.from({ length: Math.floor(r() * 3) }, () => `${word()}=${word()}`),
       };
@@ -112,9 +115,8 @@ describe("nextRunUrl", () => {
       const got = url.searchParams;
       expect(params.toString()).toBe(before.toString());
       expect(got.get("run")).toBe(run);
-      const want = args.split(/\s+/).filter(Boolean);
-      expect(got.get("args")?.split(",") ?? []).toEqual(want.length ? want.join(",").split(",") : []);
-      for (const k of new Set([...before.keys()].filter((k) => k !== "run" && k !== "args"))) {
+      expect(readPlan(got).args).toEqual({ kind: "line", line: args });
+      for (const k of new Set([...before.keys()].filter((k) => k !== "run" && k !== "arg"))) {
         expect(got.getAll(k)).toEqual(before.getAll(k));
       }
     }

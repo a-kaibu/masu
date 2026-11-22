@@ -22,15 +22,7 @@ import {
   treeChunks,
   treeChunkSizes,
 } from "./net";
-import {
-  fileVersion,
-  gameChunksName,
-  jitBase,
-  lastSakeBuild,
-  sakeBase,
-  translatorVersion,
-  versioned,
-} from "./runtime";
+import { gameChunksName, jitBase, lastSakeBuild, offlineRuntime, translatorVersion } from "./runtime";
 
 const store = () => new URL("store/", location.href).href;
 
@@ -299,15 +291,15 @@ export async function offlineState(g: GameEntry): Promise<OfflineState | null> {
 }
 
 /**
- * Fetches what play.ts loads for `g` besides the chunks, at the URLs it uses: sake.js and
- * sake.wasm (or the -grow ones this device ran last, runtime.ts sakeBuild), the saved regions and the lists (sw.ts keeps them). Nothing when there is no
- * service worker (dev, or a browser without one): the browser's HTTP cache only.
+ * Fetches what play.ts loads for `g` besides the chunks, at the URLs it uses: the runtime's
+ * files (runtime.ts offlineRuntime: the same manifest a start reads, of the build this device ran
+ * last and its fallback, build-id.txt included), the saved regions and the lists (sw.ts keeps
+ * them). Nothing when there is no service worker (dev, or a browser without one): the
+ * browser's HTTP cache only.
  */
-async function saveApp(g: GameEntry, signal: AbortSignal): Promise<void> {
+export async function saveApp(g: GameEntry, signal: AbortSignal): Promise<void> {
   if (!navigator.serviceWorker?.controller) return;
-  const base = sakeBase();
-  const build = lastSakeBuild();
-  const wasm = fileVersion(`${base}${build.name}.wasm`);
+  const { manifest, files } = await offlineRuntime(lastSakeBuild());
   const get = (u: string) => fetchRetry(u, {}, { signal, giveUpMs: 60000 });
   // (no saved regions yet, and the like: not needed to start)
   const maybe = (u: string) =>
@@ -315,7 +307,7 @@ async function saveApp(g: GameEntry, signal: AbortSignal): Promise<void> {
       if (!(e instanceof HttpError)) throw e;
       return new Uint8Array();
     });
-  const name = `${jitBase(g.run)}-${await translatorVersion(wasm)}${build.jit}`;
+  const name = `${jitBase(g.run)}-${await translatorVersion(Promise.resolve(manifest.wasmVersion))}${manifest.build.jit}`;
   const parts = new TextDecoder()
     .decode(await maybe(`jit/${name}.parts`))
     .split("\n")
@@ -326,8 +318,7 @@ async function saveApp(g: GameEntry, signal: AbortSignal): Promise<void> {
     });
   const cover = coverUrl(g);
   await Promise.all([
-    get(versioned(`${base}${build.name}.js`, await fileVersion(`${base}${build.name}.js`))),
-    get(versioned(`${base}${build.name}.wasm`, await wasm)),
+    ...files.map(get),
     maybe(`jit/${gameChunksName(g.id)}.chunks`),
     maybe(`jit/${name}.chunks`),
     maybe("jit/_shared.chunks"),

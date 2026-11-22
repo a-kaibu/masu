@@ -10,7 +10,7 @@ let stopPlay: (() => void) | undefined;
 //   /play.html                      the game list (web/src/launcher.ts, masu add-game)
 //   /play.html?game=id              a game from the list (its run, mount, args and env)
 //   /play.html?run=C:\path\to.exe   program to start
-//   &args=a,b                       its arguments
+//   &arg=a                          an argument (repeated; or &cmdline=: launch-plan.ts)
 //   &mount=/masu/game=tree          also mount a store tree (repeatable; Z:\masu\game\...)
 //   &env=NAME=value                 extra environment variable (repeatable, e.g. SAKE_TRACE_FILES=1)
 //   &nosave                         no saved games (masu serve's pre-run: its x86 regions only)
@@ -23,6 +23,7 @@ import { chunkCacheMb } from "./chunkcache";
 import { keepSaving, loadSaves, type SavesModule } from "./saves";
 import { memGate } from "./memgate";
 import { startWebGame } from "./html";
+import { argsText, hasRun, missingFeature, readPlan, SAKE_NEEDS, sakeArguments } from "./launch-plan";
 import { linuxKeycode } from "./keymap";
 import { AutoAdvance, DEFAULT_SETTINGS, parseSettings, type AutoSettings } from "./autoadvance";
 import { AudioOut } from "./audio";
@@ -54,7 +55,7 @@ import {
   withRetries,
 } from "./net";
 import {
-  fileVersion,
+  runtimeManifest,
   fnv,
   jitBase as jitBaseOf,
   gameChunksName,
@@ -268,11 +269,12 @@ const leftOut = (n: number) =>
   console.warn(`(${n} lines of the program's output not shown: too many at once)`);
 
 async function boot(audio: Promise<AudioOut>): Promise<void> {
-  const run = params.get("run") ?? "C:\\wintest.exe";
+  const plan = readPlan(params);
+  const run = plan.run;
   // saved games: per program and mounts; what it writes in its folders and the user folders
   // (&saves: the launcher's, kept by the program it started: BISHOP's startup.exe writes the
   // bsxx.ini its game reads)
-  const mounts = params.getAll("mount");
+  const mounts = [...plan.mounts];
   const saveNameOf = (r: string, m: string[]) =>
     `${r.replace(/[^A-Za-z0-9_.-]/g, "_")}-${fnv(new TextEncoder().encode(m.join(":")))}`;
   const saveName = params.get("saves") ?? saveNameOf(run, mounts);
@@ -293,6 +295,9 @@ async function boot(audio: Promise<AudioOut>): Promise<void> {
     if (!nosave && params.get("game")) stopPlay = trackPlay(params.get("game")!);
     return;
   }
+  // (what sake needs of the browser: checked for this start, the list works without it)
+  const problem = missingFeature(SAKE_NEEDS);
+  if (problem) throw new Error(problem);
   log("sake を読み込み中");
   const BASE = sakeBase();
   // a save state to go on from (&state=<slot>: the states dialog starts the page again so), in
@@ -344,12 +349,14 @@ async function boot(audio: Promise<AudioOut>): Promise<void> {
   recorder = new FlightRecorder(params.get("game") ?? run.slice(run.lastIndexOf("\\") + 1), {
     game: params.get("game") ?? "",
     run,
-    args: params.get("args") ?? "",
-    mounts: params.getAll("mount").join(" "),
-    env: params.getAll("env").join(" "),
+    args: argsText(plan.args),
+    mounts: plan.mounts.join(" "),
+    env: plan.env.join(" "),
   });
   // the browser keeps a versioned sake.wasm with its compiled code (see masu serve)
-  const wasmVersion = fileVersion(`${BASE}${WASM}`);
+  // (the runtime's files this start reads: the same manifest offline.ts saves, runtime.ts)
+  const manifest = runtimeManifest(build);
+  const wasmVersion = manifest.then((m) => m.wasmVersion);
   // x86 regions earlier runs of this program saved (masu serve /jit), per build of sake.wasm
   // (which has the translator); &jit=0 for none
   const jitBase = params.get("jit") ?? jitBaseOf(run);
@@ -378,12 +385,12 @@ async function boot(audio: Promise<AudioOut>): Promise<void> {
   const ahead = jitName ? readAhead(listed, jit, chunkSizes, busyWidth) : undefined;
   // versioned too: the game's threads past the pool each start a worker from it, and a URL the
   // browser must revalidate fails while the link is down (the game then hangs)
-  const scriptUrl = versioned(`${BASE}${build.name}.js`, await fileVersion(`${BASE}${build.name}.js`));
+  const scriptUrl = (await manifest).script;
   const factory = (await import(/* @vite-ignore */ scriptUrl)).default as (m: object) => Promise<SakeModule>;
   const version = await wasmVersion;
   // sake's wasm from the bucket when the browser lacks the server's (wasmsource.ts): a far or
   // slow server held the start for minutes; &wasm=server: always the server's
-  const wasmUrl = new URL(versioned(`${BASE}${WASM}`, version), location.href).href;
+  const wasmUrl = (await manifest).wasm;
   const wasmBytes = runtimeWasm(
     WASM,
     wasmUrl,
@@ -497,10 +504,7 @@ async function boot(audio: Promise<AudioOut>): Promise<void> {
     // (the release's trees' chunks on its Pages, for the network worker: release-trees.ts)
     masuPages: pagesChunks(),
     // (sake takes the host path: Z:\\x\\y.exe is /x/y.exe)
-    arguments: [
-      run.replace(/^z:/i, "").replaceAll("\\", "/"),
-      ...(params.get("args")?.split(",").filter(Boolean) ?? []),
-    ],
+    arguments: sakeArguments(plan).argv,
     mainScriptUrlOrBlob: scriptUrl,
     // (sake.wasm: the 4 GB the page could reserve, see sakeBuild; or the memory a state filled,
     // the module starting its threads where they stood)
@@ -518,7 +522,7 @@ async function boot(audio: Promise<AudioOut>): Promise<void> {
     )),
     vnvmEnv: {
       // "/=": an empty tree at the root, so every path is kura's (no emscripten file system)
-      MASU_MOUNTS: ["/=", "/masu/prefix=prefix32", ...params.getAll("mount")].join(":"),
+      MASU_MOUNTS: ["/=", "/masu/prefix=prefix32", ...plan.mounts].join(":"),
       LANG: "ja_JP.UTF-8",
       // sake's C:\ (the prefix's fonts)
       SAKE_C: "/masu/prefix/drive_c",
@@ -547,9 +551,9 @@ async function boot(audio: Promise<AudioOut>): Promise<void> {
       ...(/^z:\\/i.test(run)
         ? { MASU_CWD: run.slice(2, run.lastIndexOf("\\")).replaceAll("\\", "/") || "/" }
         : {}),
-      ...Object.fromEntries(
-        params.getAll("env").map((e) => [e.slice(0, e.indexOf("=")), e.slice(e.indexOf("=") + 1)]),
-      ),
+      // (a program's own command line text, kept as written: launch-plan.ts)
+      ...sakeArguments(plan).env,
+      ...Object.fromEntries(plan.env.map((e) => [e.slice(0, e.indexOf("=")), e.slice(e.indexOf("=") + 1)])),
     },
     // read by kura's file system as "@saves" (host/vnfs.js); a state has its files already
     vnvmSaves: stateMem ? null : joinRecords(saved, installation),
@@ -770,7 +774,7 @@ async function boot(audio: Promise<AudioOut>): Promise<void> {
   }
   ahead?.(sake);
   // what each script of the trees names, read by the server ahead: kura foresees from it (foresee.ts)
-  void fetchForesee(mountedTrees(params.getAll("mount")), (tree, text) => {
+  void fetchForesee(mountedTrees(mounts), (tree, text) => {
     void (async () => {
       // (a save state is being taken: the memory stays as it is)
       while (snapping()) await new Promise((r) => setTimeout(r, 50));
@@ -1438,12 +1442,6 @@ function attachInput(current: () => SakeModule): void {
   document.addEventListener("visibilitychange", () => document.visibilityState === "hidden" && away());
 }
 
-function checkSupport(): string | null {
-  if (!crossOriginIsolated) return "SharedArrayBuffer が使えません (COOP/COEP ヘッダが必要)";
-  if (!("gpu" in navigator)) return "WebGPU に対応していないブラウザです";
-  return null;
-}
-
 // the game list: play.html / index.html only (bench.html and game.html have none)
 const library = !!document.querySelector("#ui[data-library]");
 
@@ -1479,14 +1477,8 @@ async function main(): Promise<void> {
   // a weak link: say that the game waits for the network (the requests are being retried)
   watchRetries((n) => setUi({ net: n > 0 }));
   void trimChunks(savedChunks).catch(() => undefined);
-  const problem = checkSupport();
-  if (problem) {
-    log(problem);
-    setStart({ disabled: true });
-    return;
-  }
   // the list: picking a game starts it from that click
-  if (library && !params.has("run") && !params.has("game")) {
+  if (library && !hasRun(params) && !params.has("game")) {
     setStart({ shown: false });
     log("");
     const games = await fetchGames();
@@ -1505,7 +1497,7 @@ async function main(): Promise<void> {
   }
   const id = params.get("game");
   if (library && id && needsListBelow(history.state, id)) {
-    if (params.has("run")) {
+    if (hasRun(params)) {
       // the program a game started in its place (closeGame): over the game's entry, the list's
       // still under it
       history.replaceState({ game: id }, "", location.href);
@@ -1516,7 +1508,7 @@ async function main(): Promise<void> {
       history.pushState({ game: id }, "", here);
     }
   }
-  if (id && !params.has("run")) {
+  if (id && !hasRun(params)) {
     const g = (await fetchGames()).find((x) => x.id === id);
     if (!g) throw new Error(`ゲーム ${id} が一覧にありません`);
     applyGame(params, g);
