@@ -1,15 +1,23 @@
-//! The output merger's logic operations (Direct3D 11.1 D3D11_LOGIC_OP, CreateBlendState1's
-//! LogicOpEnable / LogicOp per render target) in the pixel shader: WebGPU has none, so the
-//! shader reads the target's texel from a copy made before the primitive (binding
-//! [`LOGIC_DST`] + target) and writes op(source, destination) to the format's channels.
+//! The output merger's integer stores in the pixel shader: Direct3D 11.1's logic operations
+//! (D3D11_LOGIC_OP, CreateBlendState1's LogicOpEnable / LogicOp per render target) and the
+//! saturation of an integer target's plain writes. WebGPU has no logic ops and leaves an
+//! integer attachment's out-of-range values to the implementation, so the shader reads the
+//! target's texel from a copy made before the primitive (binding [`LOGIC_DST`] + target) and
+//! writes the stored channels itself.
 //!
-//! The source is the shader's output as the target stores it (an unsigned integer channel
-//! saturated to its width, the format's own conversion), the destination the bits the target
-//! holds; the op works on the channel's bits and the result keeps the channel's width. A
-//! multisampled target is read and written sample by sample (sample_index).
+//! As WARP measured them (winref d3d11logic):
+//! - a logic op works on the channel's low bits: the source is the shader's output & the
+//!   channel's mask (not saturated), the destination the bits the target holds, the result
+//!   kept in the channel's width; UINT and SINT targets alike (FORMAT_SUPPORT2 names only the
+//!   UINT formats, WARP applies the op to SINT ones too); UNORM, SNORM and FLOAT targets ignore it;
+//! - without a logic op an integer target saturates: UINT to 0..max, SINT to its range;
+//! - a multisampled target: the op on each covered sample's bits, the shader still run once a
+//!   pixel (its position, interpolation and SV_Coverage a pixel's: crates/kura d3d11 logic.rs
+//!   draws it in two passes, the shader's ([`Store::Stash`]) then [`resolve_wgsl`]'s), a shader
+//!   of sample rate a sample's own.
 //!
-//! The page draws such a primitive by itself, after the copy, so a later primitive of the same
-//! draw reads what an earlier one wrote (crates/kura d3d11 draw_logic).
+//! The page draws a primitive whose op reads the destination by itself, after the copy, so a
+//! later primitive of the same draw reads what an earlier one wrote (crates/kura d3d11 logic.rs).
 
 /// The first binding of the targets' copies: LOGIC_DST + the target's slot.
 pub const LOGIC_DST: u32 = 960;
@@ -123,14 +131,100 @@ impl Op {
     }
 }
 
-/// A target's logic op for the pixel shader: its slot, the op, the bits of each of its
-/// channels (0: a channel the format has not), whether it is multisampled.
+/// Whether an integer target's channels are signed (SINT) or not (UINT).
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Hash, PartialOrd, Ord)]
+pub enum Sign {
+    Unsigned,
+    Signed,
+}
+
+/// How the pixel shader writes an integer target:
+/// - `Plain`: its output saturated (no logic op);
+/// - `Direct`: the logic op's result over the target's copy (a target that is not
+///   multisampled, or a shader of sample rate);
+/// - `Stash`: the source's bits into a multisampled stash of the target's format, and a mark
+///   of 1 at output location `mark` (a pixel-rate shader over a multisampled target: the
+///   resolve pass, [`resolve_wgsl`], applies the op to each sample it marked).
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Hash, PartialOrd, Ord)]
+pub enum Store {
+    Plain,
+    Direct(Op),
+    Stash { op: Op, mark: u32 },
+}
+
+/// An integer target for the pixel shader: its slot, how it is written, the bits of each of
+/// its channels (0: a channel the format has not), their sign, whether it is multisampled.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Hash, PartialOrd, Ord)]
 pub struct Logic {
     pub target: u32,
-    pub op: Op,
+    pub store: Store,
     pub bits: [u32; 4],
+    pub sign: Sign,
     pub multisampled: bool,
+}
+
+impl Logic {
+    /// The logic op, if any.
+    pub fn op(&self) -> Option<Op> {
+        match self.store {
+            Store::Plain => None,
+            Store::Direct(op) | Store::Stash { op, .. } => Some(op),
+        }
+    }
+
+    /// Whether the target's copy is read (by the shader, `Direct`, or the resolve pass).
+    pub fn reads_copy(&self) -> bool {
+        self.op().is_some_and(Op::reads_dst)
+    }
+
+    /// The channels' masks as a WGSL vec4<u32>.
+    pub fn max_wgsl(&self) -> String {
+        let max: Vec<String> = self.bits.iter().map(|&b| format!("{}u", channel_max(b))).collect();
+        format!("vec4<u32>({})", max.join(", "))
+    }
+
+    /// WGSL of `bits` (a vec4<u32> of the channels' bits, within their masks) as the
+    /// attachment's value: as they are (UINT), sign-extended from each channel's width (SINT).
+    pub fn bits_out_wgsl(&self, bits: &str) -> String {
+        match self.sign {
+            Sign::Unsigned => bits.to_owned(),
+            Sign::Signed => {
+                let sh: Vec<String> = self.bits.iter().map(|&b| format!("{}u", 32u32.saturating_sub(b).min(31))).collect();
+                let on: Vec<&str> = self.bits.iter().map(|&b| if b == 0 { "false" } else { "true" }).collect();
+                format!("select(vec4<i32>(0), bitcast<vec4<i32>>(({bits}) << vec4<u32>({0})) >> vec4<u32>({0}), vec4<bool>({1}))", sh.join(", "), on.join(", "))
+            }
+        }
+    }
+
+    /// WGSL of the attachment's value `v` (vec4<u32>, or vec4<i32> for SINT) as the channels'
+    /// bits within their masks.
+    pub fn bits_in_wgsl(&self, v: &str) -> String {
+        match self.sign {
+            Sign::Unsigned => format!("({v} & {})", self.max_wgsl()),
+            Sign::Signed => format!("(bitcast<vec4<u32>>({v}) & {})", self.max_wgsl()),
+        }
+    }
+
+    /// WGSL of the shader's output bits `o` (vec4<u32>) saturated to the channels, as the
+    /// attachment's value.
+    pub fn saturate_wgsl(&self, o: &str) -> String {
+        match self.sign {
+            Sign::Unsigned => format!("min({o}, {})", self.max_wgsl()),
+            Sign::Signed => {
+                let lo: Vec<String> = self.bits.iter().map(|&b| if b == 0 { "0".to_owned() } else { format!("{}", i64::from(channel_max(b) >> 1).saturating_neg().saturating_sub(1)) }).collect();
+                let hi: Vec<String> = self.bits.iter().map(|&b| format!("{}", channel_max(b) >> 1)).collect();
+                format!("clamp(bitcast<vec4<i32>>({o}), vec4<i32>({}), vec4<i32>({}))", lo.join(", "), hi.join(", "))
+            }
+        }
+    }
+
+    /// The attachment's WGSL scalar type.
+    pub fn scalar(&self) -> &'static str {
+        match self.sign {
+            Sign::Unsigned => "u32",
+            Sign::Signed => "i32",
+        }
+    }
 }
 
 /// The largest value of a channel of `bits` (0..=32).
@@ -138,14 +232,67 @@ pub fn channel_max(bits: u32) -> u32 {
     if bits >= 32 { u32::MAX } else { (1u32 << bits).wrapping_sub(1) }
 }
 
-/// What the target holds after a pixel of source `s` (the shader's output) over `d` (the
-/// target's channels), by the module's rule.
+/// The channel's bits saturated from `v` (a shader's output bits): UINT to 0..max, SINT to
+/// -2^(bits-1)..2^(bits-1)-1 (as two's complement bits of the channel).
+pub fn saturate(bits: u32, sign: Sign, v: u32) -> u32 {
+    let max = channel_max(bits);
+    match sign {
+        Sign::Unsigned => v.min(max),
+        Sign::Signed if bits == 0 => 0,
+        Sign::Signed => {
+            let hi = i64::from(max >> 1);
+            let x = i64::from(v.cast_signed()).clamp(hi.saturating_neg().saturating_sub(1), hi);
+            u32::try_from(x & i64::from(max)).unwrap_or(0)
+        }
+    }
+}
+
+/// What the target holds (its channels' bits) after a pixel of source `s` (the shader's
+/// output bits) over `d` (the target's channels' bits), by the module's rule.
 pub fn result(l: &Logic, s: [u32; 4], d: [u32; 4]) -> [u32; 4] {
     std::array::from_fn(|c| {
         let (bits, sv, dv) = (l.bits.get(c).copied().unwrap_or(0), s.get(c).copied().unwrap_or(0), d.get(c).copied().unwrap_or(0));
         let max = channel_max(bits);
-        l.op.apply(sv.min(max), dv & max) & max
+        match l.op() {
+            None => saturate(bits, l.sign, sv),
+            Some(op) => op.apply(sv & max, dv & max) & max,
+        }
     })
+}
+
+/// The first binding of the multisampled stashes of a pixel-rate shader's sources (the
+/// resolve pass's): LOGIC_STASH + the target's slot.
+pub const LOGIC_STASH: u32 = 970;
+/// The resolve pass's mark of the samples the shader wrote (an r8uint multisampled texture).
+pub const LOGIC_MARK: u32 = 980;
+
+/// The WGSL of the resolve pass of a `Stash` target (None for the others): `vs_resolve` the
+/// full-target triangle, `fs_resolve` run for each sample: the sample the shader wrote (its
+/// mark 1) gets the op of the stash's source over the target's copy, the rest nothing.
+pub fn resolve_wgsl(l: &Logic) -> Option<String> {
+    let Store::Stash { op, .. } = l.store else { return None };
+    let k = l.scalar();
+    let (dst, stash, mark) = (LOGIC_DST.saturating_add(l.target), LOGIC_STASH.saturating_add(l.target), LOGIC_MARK);
+    let zero = format!("vec4<{k}>()");
+    let load = |t: &str| format!("select({zero}, textureLoad({t}, q, i32(si)), all(vec2<u32>(q) < textureDimensions({t})))");
+    let s = l.bits_in_wgsl(&load("stash"));
+    let d = l.bits_in_wgsl(&load("dst"));
+    let out = l.bits_out_wgsl(&format!("({}) & {}", op.wgsl("s", "d"), l.max_wgsl()));
+    Some(format!(
+        "@group(0) @binding({dst}) var dst: texture_multisampled_2d<{k}>;\n\
+         @group(0) @binding({stash}) var stash: texture_multisampled_2d<{k}>;\n\
+         @group(0) @binding({mark}) var mark: texture_multisampled_2d<u32>;\n\
+         @vertex fn vs_resolve(@builtin(vertex_index) i: u32) -> @builtin(position) vec4<f32> {{\n\
+         \x20 return vec4<f32>(f32(i >> 1u) * 4.0 - 1.0, f32(i & 1u) * 4.0 - 1.0, 0.0, 1.0);\n\
+         }}\n\
+         @fragment fn fs_resolve(@builtin(position) p: vec4<f32>, @builtin(sample_index) si: u32) -> @location(0) vec4<{k}> {{\n\
+         \x20 let q = vec2<i32>(p.xy);\n\
+         \x20 if (select(vec4<u32>(), textureLoad(mark, q, i32(si)), all(vec2<u32>(q) < textureDimensions(mark))).x == 0u) {{ discard; }}\n\
+         \x20 let s = {s};\n\
+         \x20 let d = {d};\n\
+         \x20 return {out};\n\
+         }}\n"
+    ))
 }
 
 #[cfg(test)]

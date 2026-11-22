@@ -54,7 +54,7 @@ fn binding(b: &dxwgsl::Binding) -> String {
         dxwgsl::Binding::BufferView(rw) => format!("v{}", u8::from(*rw)),
         dxwgsl::Binding::Counter => "c".into(),
         dxwgsl::Binding::BufferRanges(v) => format!("r{}", v.iter().map(|b| b.to_string()).collect::<Vec<_>>().join(",")),
-        dxwgsl::Binding::LogicDst(ms) => format!("g{}", u8::from(*ms)),
+        dxwgsl::Binding::LogicDst { multisampled, sign } => format!("g{}{}", u8::from(*multisampled), u8::from(*sign == dxwgsl::logic::Sign::Signed)),
     }
 }
 

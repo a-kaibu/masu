@@ -730,6 +730,22 @@ float4 ps(float4 pos : SV_Position, uint si : SV_SampleIndex) : SV_Target {
     }
 }
 
+/// SV_Coverage as a pixel shader input (shader model 5): vCoverage declared, one component,
+/// read as WGSL's sample_mask (winref d3d11logic: 0xf of a covered pixel of a 4x target, 0xc
+/// on a triangle's edge); shader model 4 has none.
+#[test]
+fn coverage_input() {
+    const SRC: &str = "uint4 ps(float4 pos : SV_Position, uint c : SV_Coverage) : SV_Target { return uint4(c, c * 2, 0, 1); }";
+    let code = compile(SRC, "ps", "ps_5_0");
+    let w = wgsl(&code, true, None);
+    assert!(w.contains("@builtin(sample_mask) in_cov: u32") && w.contains("vcov = vec4<u32>(in_cov);"), "{w}");
+    assert!(!dxwgsl::sample_rate(&code), "coverage alone keeps the shader per pixel");
+    let mut inc = |_: &str, _: bool| None;
+    if let Ok(c4) = super::compile(SRC, &[], &mut inc, "ps", "ps_4_0", 0) {
+        assert!(dxwgsl::translate(&c4, true, None).is_ok_and(|w| !w.code.contains("in_cov")));
+    }
+}
+
 /// `code` with the instruction `inst` put before its last one (ret), its SHDR/SHEX chunk and the
 /// container's chunk offsets after it moved on (the checksum is not read).
 fn splice(code: &[u8], inst: &[u32]) -> Vec<u8> {

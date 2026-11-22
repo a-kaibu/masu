@@ -518,6 +518,7 @@ int main(void) {
             { "position, value, coverage, no logic op", 2, 1, FALSE, D3D11_LOGIC_OP_NOOP, 0xffffffff, 1 },
             { "position, value, coverage, xor over 0", 2, 1, TRUE, D3D11_LOGIC_OP_XOR, 0xffffffff, 1 },
             { "position, value, coverage, or over 0", 2, 1, TRUE, D3D11_LOGIC_OP_OR, 0xffffffff, 1 },
+            { "position, value, coverage, sample mask 5, no logic op", 2, 1, FALSE, D3D11_LOGIC_OP_NOOP, 0x5, 1 },
             { "sample-rate shader, xor", 1, 2, TRUE, D3D11_LOGIC_OP_XOR, 0xffffffff, 1 },
             { "sample-rate shader, no logic op", 1, 2, FALSE, D3D11_LOGIC_OP_NOOP, 0xffffffff, 1 },
             { "counted, no logic op", 1, 3, FALSE, D3D11_LOGIC_OP_NOOP, 0xffffffff, 0 },

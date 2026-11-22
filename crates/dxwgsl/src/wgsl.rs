@@ -503,6 +503,10 @@ fn declarations(w: &mut W, p: &Program) -> R<()> {
             Opcode::DclInput if i.ops[0].ty.is_compute_input() && p.kind == tpf::COMPUTE => {
                 w.sys_in.insert(i.ops[0].ty);
             }
+            // (vCoverage: SV_Coverage's input, the samples the pixel's primitive covers)
+            Opcode::DclInput if i.ops.first().is_some_and(|o| o.ty == tpf::INPUT_COVERAGE_MASK) && p.kind == tpf::PIXEL => {
+                w.sys_in.insert(tpf::INPUT_COVERAGE_MASK);
+            }
             Opcode::DclInput if matches!(i.ops.first().map(|o| o.ty), Some(tpf::INPUT_PRIMITIVEID | tpf::INPUT_GS_INSTANCE_ID)) && p.kind == tpf::GEOMETRY => {
                 if let Some(o) = i.ops.first() {
                     w.sys_in.insert(o.ty);
@@ -1218,6 +1222,7 @@ impl W {
             tpf::THREAD_GROUP_ID => "vgid".into(),
             tpf::THREAD_ID_IN_GROUP => "vltid".into(),
             tpf::THREAD_ID_IN_GROUP_FLATTENED => "vlidx".into(),
+            tpf::INPUT_COVERAGE_MASK if self.sys_in.contains(&tpf::INPUT_COVERAGE_MASK) => "vcov".into(),
             t => return Err(format!("operand type {t}")),
         })
     }
@@ -2451,6 +2456,21 @@ pub fn translate_logic(code: &[u8], addr: &[crate::addr::Addr], logic: &[crate::
     translate_with(code, true, None, None, addr, logic)
 }
 
+/// Whether a pixel shader runs once a sample (it reads SV_SampleIndex, or an input
+/// interpolated at the sample: linear_sample, linear_noperspective_sample); not a pixel shader
+/// or not read: false.
+pub fn sample_rate(code: &[u8]) -> bool {
+    let Ok((c, p)) = parse(code) else { return false };
+    if p.kind != tpf::PIXEL {
+        return false;
+    }
+    let mut w = W::new(true, c.signature(false), c.signature(true));
+    if declarations(&mut w, &p).is_err() {
+        return false;
+    }
+    w.inputs.values().any(|d| d.sysval == 10 || matches!(d.interp, 6 | 7))
+}
+
 /// Point sprites (what ANGLE's point sprite geometry shader does, for a page without geometry
 /// shaders): the vertex shader runs once per point as an instance and six times per instance,
 /// once per corner of two triangles, moving its position by the corner times the point size
@@ -2768,12 +2788,31 @@ fn translate_with(code: &[u8], pixel: bool, ps: Option<&[u8]>, sprite: Option<f3
         }
         for &r in w.outputs.keys() {
             let k = sig_k(&w.osgn, r);
-            fields.push(format!("@location({r}) c{r}: {}", vty(k, 4)));
             match logic.iter().find(|l| l.target == r) {
-                // (a logic op: the output's bits, an unsigned integer target's)
-                Some(l) => logic_output(l, r, k, &mut params, &mut post, &mut m, &mut bindings),
-                None => post.push(if k == K::U { format!("out.c{r} = o{r};") } else { format!("out.c{r} = bitcast<vec4<{}>>(o{r});", k.s()) }),
+                // (an integer target: its output as the target stores it, the attachment's type)
+                Some(l) => {
+                    fields.push(format!("@location({r}) c{r}: vec4<{}>", l.scalar()));
+                    logic_output(l, r, k, &mut params, &mut post, &mut m, &mut bindings);
+                }
+                None => {
+                    fields.push(format!("@location({r}) c{r}: {}", vty(k, 4)));
+                    post.push(if k == K::U { format!("out.c{r} = o{r};") } else { format!("out.c{r} = bitcast<vec4<{}>>(o{r});", k.s()) });
+                }
             }
+        }
+        // (a pixel-rate shader over a multisampled target with a logic op: the mark of the
+        // samples it writes, for the resolve pass)
+        if let Some(mark) = logic.iter().find_map(|l| match l.store {
+            crate::logic::Store::Stash { mark, .. } => Some(mark),
+            crate::logic::Store::Plain | crate::logic::Store::Direct(_) => None,
+        }) {
+            fields.push(format!("@location({mark}) lg_mark: u32"));
+            post.push("out.lg_mark = 1u;".into());
+        }
+        if w.sys_in.contains(&tpf::INPUT_COVERAGE_MASK) {
+            m.push_str("var<private> vcov: vec4<u32>;\n");
+            params.push("@builtin(sample_mask) in_cov: u32".into());
+            pre.push("vcov = vec4<u32>(in_cov);".into());
         }
         if w.depth_out {
             fields.push("@builtin(frag_depth) depth: f32".into());
@@ -2887,30 +2926,47 @@ fn translate_with(code: &[u8], pixel: bool, ps: Option<&[u8]>, sprite: Option<f3
     Ok(Wgsl { code: m, bindings })
 }
 
-/// A target's output under its logic op (crate::logic): the source saturated to the channels'
-/// widths, the destination from the target's copy at the pixel (the sample, multisampled), the
-/// op's result within the channels. The pixel's position and sample index are the entry point's
-/// own parameters when the shader reads them already.
+/// An integer target's output (crate::logic): saturated (`Plain`), the op's result over the
+/// target's copy at the pixel (the sample, multisampled: `Direct`), or the source's bits into
+/// the stash and the mark (`Stash`). The pixel's position and sample index are the entry
+/// point's own parameters when the shader reads them already.
 fn logic_output(l: &crate::logic::Logic, r: u32, k: K, params: &mut Vec<String>, post: &mut Vec<String>, m: &mut String, bindings: &mut Vec<(u32, Binding)>) {
-    let b = crate::logic::LOGIC_DST.saturating_add(r);
-    let ty = if l.multisampled { "texture_multisampled_2d<u32>" } else { "texture_2d<u32>" };
-    m.push_str(&format!("@group(1) @binding({b}) var lgd{r}: {ty};\n"));
-    bindings.push((b, Binding::LogicDst(l.multisampled)));
-    let builtin = |params: &mut Vec<String>, what: &str, name: &str, ty: &str| -> String {
-        let found = params.iter().find(|p| p.contains(&format!("@builtin({what})"))).and_then(|p| p.split_whitespace().nth(1)).map(|n| n.trim_end_matches(':').to_owned());
-        found.unwrap_or_else(|| {
-            params.push(format!("@builtin({what}) {name}: {ty}"));
-            name.to_owned()
-        })
-    };
-    let pos = builtin(params, "position", "lg_pos", "vec4<f32>");
-    let index = if l.multisampled { builtin(params, "sample_index", "lg_si", "u32") } else { "0".to_owned() };
-    let max: Vec<String> = l.bits.iter().map(|&b| format!("{}u", crate::logic::channel_max(b))).collect();
-    let max = format!("vec4<u32>({})", max.join(", "));
-    post.push(format!("let lg_s{r} = min(o{r}, {max});"));
-    post.push(format!("let lg_d{r} = select(vec4<u32>(), textureLoad(lgd{r}, vec2<i32>({pos}.xy), {index}), all(vec2<u32>({pos}.xy) < textureDimensions(lgd{r}))) & {max};"));
-    let v = l.op.wgsl(&format!("lg_s{r}"), &format!("lg_d{r}"));
-    post.push(if k == K::U { format!("out.c{r} = {v} & {max};") } else { format!("out.c{r} = bitcast<vec4<{}>>({v} & {max});", k.s()) });
+    use crate::logic::Store;
+    let o = if k == K::U { format!("o{r}") } else { format!("bitcast<vec4<u32>>(o{r})") };
+    let max = l.max_wgsl();
+    match l.store {
+        Store::Plain => post.push(format!("out.c{r} = {};", l.saturate_wgsl(&o))),
+        Store::Stash { .. } => post.push(format!("out.c{r} = {};", l.bits_out_wgsl(&format!("{o} & {max}")))),
+        // (an op of the source alone (CLEAR SET COPY COPY_INVERTED): no copy read, no sample
+        // index (which would make the shader run per sample))
+        Store::Direct(op) if !op.reads_dst() => {
+            post.push(format!("let lg_s{r} = {o} & {max};"));
+            let v = op.wgsl(&format!("lg_s{r}"), "vec4<u32>()");
+            post.push(format!("out.c{r} = {};", l.bits_out_wgsl(&format!("({v}) & {max}"))));
+        }
+        Store::Direct(op) => {
+            let b = crate::logic::LOGIC_DST.saturating_add(r);
+            let sk = l.scalar();
+            let ty = if l.multisampled { format!("texture_multisampled_2d<{sk}>") } else { format!("texture_2d<{sk}>") };
+            m.push_str(&format!("@group(1) @binding({b}) var lgd{r}: {ty};\n"));
+            bindings.push((b, Binding::LogicDst { multisampled: l.multisampled, sign: l.sign }));
+            let builtin = |params: &mut Vec<String>, what: &str, name: &str, ty: &str| -> String {
+                let found = params.iter().find(|p| p.contains(&format!("@builtin({what})"))).and_then(|p| p.split_whitespace().nth(1)).map(|n| n.trim_end_matches(':').to_owned());
+                found.unwrap_or_else(|| {
+                    params.push(format!("@builtin({what}) {name}: {ty}"));
+                    name.to_owned()
+                })
+            };
+            let pos = builtin(params, "position", "lg_pos", "vec4<f32>");
+            let index = if l.multisampled { builtin(params, "sample_index", "lg_si", "u32") } else { "0".to_owned() };
+            post.push(format!("let lg_s{r} = {o} & {max};"));
+            let zero = format!("vec4<{sk}>()");
+            let load = format!("select({zero}, textureLoad(lgd{r}, vec2<i32>({pos}.xy), {index}), all(vec2<u32>({pos}.xy) < textureDimensions(lgd{r})))");
+            post.push(format!("let lg_d{r} = {};", l.bits_in_wgsl(&load)));
+            let v = op.wgsl(&format!("lg_s{r}"), &format!("lg_d{r}"));
+            post.push(format!("out.c{r} = {};", l.bits_out_wgsl(&format!("({v}) & {max}"))));
+        }
+    }
 }
 
 pub mod expand;

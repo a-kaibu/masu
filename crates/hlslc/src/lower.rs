@@ -1645,6 +1645,18 @@ impl<'a> L<'a> {
             }
             return Ok(());
         }
+        // (a pixel shader's SV_Coverage input: vCoverage, shader model 5)
+        if up == "SV_COVERAGE" && self.o.pixel() && !output && self.o.major >= 5 {
+            if t.comps() != 1 || t.base() == B::Float || !t.numeric() {
+                return Err(format!("{sem} of type {t:?}"));
+            }
+            let ty = dxwgsl::tpf::INPUT_COVERAGE_MASK;
+            if !self.sys_inputs.iter().any(|s| s.0 == ty) {
+                self.sys_inputs.push((ty, 1));
+            }
+            out.push(C::R(Reg { f: RegF::Sys(ty), rel: None }, Lane::X));
+            return Ok(());
+        }
         if up == "SV_TESSFACTOR" || up == "SV_INSIDETESSFACTOR" {
             return self.tess_factor_sig(t, up == "SV_INSIDETESSFACTOR", index, output, out);
         }

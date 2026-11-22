@@ -76,6 +76,12 @@ pub const COUNT_END: u32 = 41; // ticket
 /// above (Direct3D 9's D3DTEXF_POINT AutoGenFilterType: winref d3d9tex's 1x1 level of the four
 /// quadrants is the bottom right one's).
 pub const GEN_MIPS_POINT: u32 = 42; // tex
+/// Direct3D 11.1 logic ops on a multisampled target under a pixel-rate shader (d3d11/logic.rs):
+/// each sample of `tex` that `mark` (r8uint, multisampled) marks gets the op (its place in
+/// dxwgsl::logic::Op::ALL) over its bits in `stash` (the shader's source) and `copy` (the
+/// target before the primitive), masked to the channels' bits, under write mask `mask`
+/// (textures of the same size and format but the mark's, 4 samples; sign 1: signed channels).
+pub const LOGIC_RESOLVE: u32 = 43; // tex copy stash mark mask op bits0 bits1 bits2 bits3 sign
 
 /// What a QUERY_END ends.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]

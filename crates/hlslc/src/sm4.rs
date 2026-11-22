@@ -1062,8 +1062,8 @@ fn program(s: &mut Shader) -> Result<Vec<u32>, String> {
     let reg_tok2 = |ty: OpType, mask: u8| (reg_tok(ty, mask) & !(3 << 20)) | (2 << 20);
     let sys_decls = |w: &mut Vec<u32>, sys: &[(OpType, u8)]| {
         for &(ty, mask) in sys {
-            // (vThreadIDInGroupFlattened, vOutputControlPointID, vForkInstanceID are one component)
-            let t = if matches!(ty, tpf::THREAD_ID_IN_GROUP_FLATTENED | tpf::OUTPUT_CONTROL_POINT_ID | tpf::INPUT_FORK_INSTANCE_ID) { 1 | ty_bits(ty) } else { 2 | (u32::from(mask) << 4) | ty_bits(ty) };
+            // (vThreadIDInGroupFlattened, vOutputControlPointID, vForkInstanceID, vCoverage are one component)
+            let t = if matches!(ty, tpf::THREAD_ID_IN_GROUP_FLATTENED | tpf::OUTPUT_CONTROL_POINT_ID | tpf::INPUT_FORK_INSTANCE_ID | tpf::INPUT_COVERAGE_MASK) { 1 | ty_bits(ty) } else { 2 | (u32::from(mask) << 4) | ty_bits(ty) };
             decl(w, Opcode::DclInput, 0, &[t]);
         }
     };

@@ -1,5 +1,6 @@
 //! Which targets get logic ops, and a draw's primitives as draws of their own.
 use super::*;
+use dxwgsl::logic::{Logic, Op, Sign, Store};
 
 /// targets 0..2 of R8G8B8A8_UINT, R32_UINT, R8G8B8A8_UNORM; blend state words with logic ops
 fn blend(independent: bool, ops: [(u32, u32); 3]) -> Vec<u32> {
@@ -14,16 +15,58 @@ fn blend(independent: bool, ops: [(u32, u32); 3]) -> Vec<u32> {
 }
 
 #[test]
-fn targets_of_uint_formats_only() {
+fn targets_of_integer_formats_only() {
     let fmts = [f::P_RGBA8UI, f::P_R32UI, f::P_RGBA8];
-    let (ops, kept) = targets(&blend(true, [(1, 10), (1, 4), (1, 10)]), &fmts, &[false, true, false]);
-    assert_eq!(ops, vec![Logic { target: 0, op: Op::Xor, bits: [8, 8, 8, 8], multisampled: false }]);
+    let (ops, kept) = targets(&blend(true, [(1, 10), (1, 4), (1, 10)]), &fmts, &[false, true, false], false);
+    assert_eq!(ops, vec![Logic { target: 0, store: Store::Direct(Op::Xor), bits: [8, 8, 8, 8], sign: Sign::Unsigned, multisampled: false }]);
     assert_eq!(kept, vec![1]);
-    // (without IndependentBlendEnable every target has target 0's)
-    let (ops, _) = targets(&blend(false, [(1, 6), (0, 0), (0, 0)]), &fmts, &[false, true, false]);
-    assert_eq!(ops.iter().map(|l| (l.target, l.op, l.multisampled)).collect::<Vec<_>>(), vec![(0, Op::And, false), (1, Op::And, true)]);
-    // (LogicOpEnable off: none)
-    assert!(targets(&blend(true, [(0, 10), (0, 10), (0, 10)]), &fmts, &[false; 3]).0.is_empty());
+    // (without IndependentBlendEnable every target has target 0's; a multisampled one under a
+    // pixel-rate shader a stash, its mark after the targets)
+    let (ops, _) = targets(&blend(false, [(1, 6), (0, 0), (0, 0)]), &fmts, &[false, true, false], false);
+    assert_eq!(ops.iter().map(|l| (l.target, l.store, l.multisampled)).collect::<Vec<_>>(), vec![(0, Store::Direct(Op::And), false), (1, Store::Stash { op: Op::And, mark: 3 }, true)]);
+    // (a shader of sample rate: each sample its own invocation, the op in the shader)
+    let (ops, _) = targets(&blend(false, [(1, 6), (0, 0), (0, 0)]), &fmts, &[false, true, false], true);
+    assert_eq!(ops.iter().map(|l| l.store).collect::<Vec<_>>(), vec![Store::Direct(Op::And), Store::Direct(Op::And)]);
+    // (LogicOpEnable off: the integer targets written plainly, saturated)
+    let (ops, kept) = targets(&blend(true, [(0, 10), (0, 10), (0, 10)]), &fmts, &[false; 3], false);
+    assert_eq!(ops.iter().map(|l| (l.target, l.store)).collect::<Vec<_>>(), vec![(0, Store::Plain), (1, Store::Plain)]);
+    assert!(kept.is_empty());
+    // (SINT: the op too (winref d3d11logic), signed)
+    let (ops, _) = targets(&blend(false, [(1, 8), (0, 0), (0, 0)]), &[f::P_RGBA8SI, f::P_R32SI], &[false; 2], false);
+    assert_eq!(ops.iter().map(|l| (l.store, l.sign, l.bits)).collect::<Vec<_>>(), vec![(Store::Direct(Op::Or), Sign::Signed, [8, 8, 8, 8]), (Store::Direct(Op::Or), Sign::Signed, [32, 0, 0, 0])]);
+}
+
+proptest::proptest! {
+    /// Every target's store follows WARP's rules: none for a format without integer channels,
+    /// plain without the op, kept for NOOP, a stash only for a multisampled target with an op
+    /// that reads it under a pixel-rate shader.
+    #[test]
+    fn stores_follow_warp(page in 0u32..64, op in 0u32..16, on: bool, ms: bool, rate: bool) {
+        let b = blend(false, [(u32::from(on), op), (0, 0), (0, 0)]);
+        let (ops, kept) = targets(&b, &[page], &[ms], rate);
+        let op = Op::of(op);
+        match (int_bits(page), op.filter(|_| on)) {
+            (None, _) => proptest::prop_assert!(ops.is_empty() && kept.is_empty()),
+            (Some(_), None) => proptest::prop_assert_eq!(ops.iter().map(|l| l.store).collect::<Vec<_>>(), vec![Store::Plain]),
+            (Some(_), Some(Op::Noop)) => proptest::prop_assert!(ops.is_empty() && kept == vec![0]),
+            (Some((bits, sign)), Some(o)) => {
+                let store = if ms && !rate && o.reads_dst() { Store::Stash { op: o, mark: 1 } } else { Store::Direct(o) };
+                proptest::prop_assert_eq!(ops, vec![Logic { target: 0, store, bits, sign, multisampled: ms }]);
+            }
+        }
+    }
+}
+
+#[test]
+fn copies_are_by_slot() {
+    // (two targets of one size and format: two scratch keys, not one; the first word of the key)
+    for (a, b) in [(COPY_OF, STASH_OF), (STASH_OF, MARK), (COPY_OF, MARK)] {
+        assert_eq!(a & 0xff, 0);
+        assert_ne!(a, b);
+    }
+    assert_ne!(COPY_OF | 1, COPY_OF);
+    assert_eq!(unbound(961, true, Sign::Signed), [961, 5, 0, 6, 0, 1, 0, 1]);
+    assert_eq!(unbound(960, false, Sign::Unsigned), [960, 4, 0, 1, 0, 1, 0, 1]);
 }
 
 #[test]

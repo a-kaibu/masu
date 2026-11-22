@@ -511,9 +511,9 @@ pub struct D11 {
     /// shader declares) -> the page buffer holding those bytes, zeros past the buffer's end
     /// (as Direct3D reads them), and the bytes last written to it
     cb_copies: HashMap<(u32, u32, u32), (u32, Vec<u8>)>,
-    /// the page textures logic ops read their targets' copies from (logic.rs): by the target's
-    /// level size, page format, multisampled
-    logic_scratch: HashMap<(u32, u32, u32, bool), u32>,
+    /// the page textures of logic ops' own (logic.rs scratch): by what for (a kind and the
+    /// target's slot), the level's size, page format, multisampled
+    logic_scratch: HashMap<(u32, u32, u32, u32, bool), u32>,
     /// page buffers of raw and structured views' ranges (BUFFER_RANGES uniforms), by bytes
     view_ranges: HashMap<Vec<u8>, u32>,
     /// the page buffers bound where no raw or structured view (or no counter) is: read-only,
@@ -3529,6 +3529,12 @@ unsafe fn context_call2(d: &mut D11, st: &mut State, m: u32, a: &dyn Fn(usize) -
             // SAFETY: rd's own contract: the caller's array of four values
             let vals: [u32; 4] = std::array::from_fn(|i| unsafe { rd(a(2), i) });
             let vals = if m == 51 { clear::Values::Uint(vals) } else { clear::Values::Float(vals.map(f32::from_bits)) };
+            if let Some(Data::BufferUav(u)) = d.objs.get(&v).map(|o| &o.data) {
+                let (buf, fmt, offset, bytes) = (u.buf, u.view.fmt, u.view.offset, u.view.bytes);
+                // SAFETY: the buffer's guest memory (clear_buffer_view's contract)
+                unsafe { clear_buffer_view(d, buf, fmt, offset, bytes, vals) };
+                return 0;
+            }
             // SAFETY: clear_view_texels' own contract: a view of this device
             unsafe { clear_view_texels(d, v, vals, &[]) };
         }
@@ -3855,6 +3861,41 @@ fn view_target(d: &D11, v: u32) -> Option<(u32, u32, u32)> {
     let Some(Data::View(v)) = d.objs.get(&v).map(|o| &o.data) else { return None };
     let Some(Data::Texture(t)) = d.objs.get(&v.res).map(|o| &o.data) else { return None };
     Some((t.gpu, v.mip, v.layer))
+}
+
+/// A clear of an unordered access view of buffer `buf` (DXGI format `fmt`, bytes [offset,
+/// offset + bytes)): a raw or structured view (R32_TYPELESS, UNKNOWN) gets the first value in
+/// every 32-bit word by ClearUnorderedAccessViewUint (winref d3d11logic: a raw view's count
+/// cleared to 0 between draws), a typed one the texel `clear::texel` makes in every element;
+/// the buffer's GPU-written bytes read back first.
+///
+/// # Safety
+/// The buffer's guest memory is mapped.
+unsafe fn clear_buffer_view(d: &mut D11, buf: u32, fmt: u32, offset: u32, bytes: u32, vals: clear::Values) {
+    // (DXGI_FORMAT_UNKNOWN: structured; R32_TYPELESS: raw)
+    const UNKNOWN: u32 = 0;
+    const R32_TYPELESS: u32 = 39;
+    let texel = match (fmt, vals) {
+        (R32_TYPELESS | UNKNOWN, clear::Values::Uint(v)) => v[0].to_le_bytes().to_vec(),
+        (R32_TYPELESS | UNKNOWN, clear::Values::Float(_)) => return,
+        _ => match clear::texel(fmt, vals) {
+            Some(t) => t,
+            None => return,
+        },
+    };
+    if texel.is_empty() {
+        return;
+    }
+    expand::pull(d, buf);
+    let Some(Data::Buffer(b)) = d.objs.get_mut(&buf).map(|o| &mut o.data) else { return };
+    let end = u64::from(offset).saturating_add(u64::from(bytes)).min(u64::from(b.size));
+    let n = usize::try_from(end.saturating_sub(u64::from(offset))).unwrap_or(0);
+    let p = b.mem.wrapping_add(offset);
+    for (k, byte) in texel.iter().cycle().take(n.saturating_sub(n.checked_rem(texel.len()).unwrap_or(0))).enumerate() {
+        // SAFETY: inside the buffer's guest memory (`end` is at most its size); the caller's contract
+        unsafe { *gp::<u8>(p.wrapping_add(lo32(k))) = *byte };
+    }
+    b.dirty = true;
 }
 
 /// A clear of a render target or unordered access view of a texture by its texels: each of
@@ -4763,8 +4804,13 @@ unsafe fn draw_with(d: &mut D11, st: &State, indexed: bool, count: u32, instance
     }
     // logic ops (logic.rs): the pixel shader's, by the targets' formats
     let blend = state_desc(d, st.blend).cloned();
-    let multisampled: Vec<bool> = st.rtvs.iter().take(formats.len()).map(|&v| target_texture(d, v).is_some_and(|t| t.3)).collect();
-    let (logic_ops, logic_kept) = blend.as_ref().map_or_default(|b| logic::targets(b, &formats, &multisampled));
+    // (multisampled on the page: a format WebGPU does not multisample has one sample there)
+    let multisampled: Vec<bool> = st.rtvs.iter().take(formats.len()).map(|&v| target_texture(d, v).is_some_and(|t| t.3 && crate::render::d3d::page_multisamples(t.6))).collect();
+    let sample_rate = match d.objs.get(&st.ps).map(|o| &o.data) {
+        Some(Data::Shader(s)) => dxwgsl::sample_rate(&s.code),
+        _ => false,
+    };
+    let (logic_ops, logic_kept) = blend.as_ref().map_or_default(|b| logic::targets(b, &formats, &multisampled, sample_rate));
     let ps = if st.ps != 0 { shader_for(d, st.ps, 0, None, &st.samplers[1], &logic_ops) } else { None };
     let depth = view_target(d, st.dsv);
     let depth_fmt = depth.and_then(|_| match d.objs.get(&st.dsv).map(|o| &o.data) {
@@ -4900,13 +4946,25 @@ unsafe fn draw_with(d: &mut D11, st: &State, indexed: bool, count: u32, instance
         }
         v
     });
-    key.push(lo32(formats.len()));
+    // (a stash's pass (logic.rs): the stash written whole where the target is, then the mark)
+    let stashed: Vec<&dxwgsl::logic::Logic> = logic_ops.iter().filter(|l| matches!(l.store, dxwgsl::logic::Store::Stash { .. })).collect();
+    let plain = |f: u32| [f, 0, blend_factor(2, false).code(), blend_factor(1, false).code(), 1, blend_factor(2, true).code(), blend_factor(1, true).code(), 1, 0xf];
+    key.push(lo32(formats.len()).saturating_add(u32::from(!stashed.is_empty())));
+    let mut masks = Vec::new();
     for (i, f) in formats.iter().enumerate() {
         let rt = if b[1] != 0 { i } else { 0 };
         let t = &b[2 + rt * 8..2 + rt * 8 + 8];
         // (a NOOP logic op: the target written with nothing)
         let mask = if logic_kept.contains(&lo32(i)) { 0 } else { t[7] & 0xf };
-        key.extend_from_slice(&[*f, t[0], blend_factor(t[1], false).code(), blend_factor(t[2], false).code(), t[3], blend_factor(t[4], true).code(), blend_factor(t[5], true).code(), t[6], mask]);
+        masks.push(mask);
+        if stashed.iter().any(|l| l.target == lo32(i)) {
+            key.extend_from_slice(&plain(*f));
+        } else {
+            key.extend_from_slice(&[*f, t[0], blend_factor(t[1], false).code(), blend_factor(t[2], false).code(), t[3], blend_factor(t[4], true).code(), blend_factor(t[5], true).code(), t[6], mask]);
+        }
+    }
+    if !stashed.is_empty() {
+        key.extend_from_slice(&plain(format::P_R8UI));
     }
     // multisampling: AlphaToCoverageEnable, the sample mask (render::d3d pipeline2)
     key.extend_from_slice(&[b[0], st.sample_mask]);
@@ -4959,8 +5017,10 @@ unsafe fn draw_with(d: &mut D11, st: &State, indexed: bool, count: u32, instance
         over.push(sprite_entry(d, st));
     }
     // (the copies of the targets with logic ops that read them: the pixel shader's LogicDst)
-    let copies: Vec<logic::Copy> = logic_ops.iter().filter(|l| l.op.reads_dst()).filter_map(|l| logic::copy_of(d, st.rtvs.get(us(l.target)).copied().unwrap_or(0), l)).collect();
-    let ps_over: Vec<[u32; 8]> = copies.iter().map(|c| c.entry).collect();
+    let copies: Vec<logic::Copy> = logic_ops.iter().filter(|l| l.reads_copy()).filter_map(|l| logic::copy_of(d, st.rtvs.get(us(l.target)).copied().unwrap_or(0), l)).collect();
+    // (a stash's copy is the resolve's, not the shader's)
+    let ps_over: Vec<[u32; 8]> = copies.iter().filter(|c| !stashed.iter().any(|l| c.entry[0] == dxwgsl::logic::LOGIC_DST.saturating_add(l.target))).map(|c| c.entry).collect();
+    let stash = logic::stash_of(d, &st.rtvs, &colors, [dt, dl, dly], &stashed, &masks, &copies);
     for (stage, binds) in [(0usize, &vb), (1usize, &ps.as_ref().map_or_default(|p| p.1.clone()))] {
         let entries = bind_entries(d, st, stage, binds, if stage == 0 { &over } else { &ps_over }, &mut cbs_read);
         w.push(lo32(entries.len()));
@@ -5040,7 +5100,11 @@ unsafe fn draw_with(d: &mut D11, st: &State, indexed: bool, count: u32, instance
             Vec::new()
         };
         let flip = pipeline_of(d, PipelineKey { fill, desc: flipped });
-        logic::split(&w, &copies, topo, &cuts, flip);
+        logic::split(&w, &copies, stash.as_ref(), topo, &cuts, flip);
+        if stash.is_some() {
+            // (the page's targets are the stash's now)
+            d.targets = None;
+        }
     }
     if let Some(g) = wire_buf {
         gpu::record(|q| q.cmd(&[gpu::DESTROY_BUFFER, g]));
@@ -5108,7 +5172,7 @@ fn bind_entries(d: &mut D11, st: &State, stage: usize, binds: &[(u32, dxwgsl::Bi
             dxwgsl::Binding::Counter => entries.push(counter_binding(d, st, stage, *bi)),
             dxwgsl::Binding::BufferRanges(list) => entries.push(ranges_binding(d, st, stage, list)),
             // (the draw's copy of a target with a logic op is in `over`: without one, unbound)
-            dxwgsl::Binding::LogicDst(ms) => entries.push([*bi, 4, 0, if *ms { 6 } else { 1 }, 0, 1, 0, 1]),
+            dxwgsl::Binding::LogicDst { multisampled, sign } => entries.push(logic::unbound(*bi, *multisampled, *sign)),
         }
     }
     entries
@@ -5424,7 +5488,7 @@ unsafe fn dispatch(d: &mut D11, st: &State, x: u32, y: u32, z: u32) {
             dxwgsl::Binding::Counter => counter_binding(d, st, 5, *bi),
             dxwgsl::Binding::BufferRanges(list) => ranges_binding(d, st, 5, list),
             // (pixel shaders only)
-            dxwgsl::Binding::LogicDst(ms) => [*bi, 4, 0, if *ms { 6 } else { 1 }, 0, 1, 0, 1],
+            dxwgsl::Binding::LogicDst { multisampled, sign } => logic::unbound(*bi, *multisampled, *sign),
         };
         w.extend_from_slice(&e);
     }

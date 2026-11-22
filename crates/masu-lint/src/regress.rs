@@ -238,12 +238,19 @@ pub(super) fn ps_quads(tree: &Tree) -> Hits {
 
 /// Direct3D 11.1's logic ops (2026-11-22: kura answered OutputMergerLogicOp 0 and drew a
 /// logic-op blend state as a plain write, known.txt holding WARP's 1 as a difference)
-const LOGIC_SITES: [(&str, &str, &str); 8] = [
+const LOGIC_SITES: [(&str, &str, &str); 15] = [
     ("crates/kura/src/d3d11/mod.rs", "for k in 0..10 {", "D3D11_OPTIONS does not answer every BOOL from OutputMergerLogicOp (0) on"),
     ("crates/kura/src/d3d11/mod.rs", "dxwgsl::translate_logic(", "the pixel shader of a draw with logic ops is not dxwgsl::translate_logic"),
     ("crates/kura/src/d3d11/mod.rs", "logic::targets(", "a draw's logic ops are not taken from its blend state (logic::targets)"),
-    ("crates/kura/src/d3d11/mod.rs", "logic::split(&w, &copies,", "a draw reading its target is not split by primitive after the target's copy (logic::split)"),
-    ("crates/dxwgsl/src/wgsl.rs", "Some(l) => logic_output(", "a logic target's output does not go through logic_output"),
+    ("crates/kura/src/d3d11/mod.rs", "logic::split(&w, &copies, stash.as_ref(),", "a draw reading its target is not split by primitive after the target's copy (logic::split), with its stash passes"),
+    ("crates/kura/src/d3d11/mod.rs", "dxwgsl::sample_rate(", "a multisampled target's op is not chosen by the pixel shader's rate (WARP: a pixel-rate shader stays one invocation a pixel under a logic op)"),
+    ("crates/kura/src/d3d11/mod.rs", "page_multisamples(", "a target the page does not multisample is taken as multisampled for its logic op"),
+    ("crates/kura/src/d3d11/logic.rs", "Some(op) if ms && !sample_rate && op.reads_dst() => Store::Stash { op, mark },", "a multisampled target's op under a pixel-rate shader is not a stash resolved per sample (WARP: per sample, the shader per pixel)"),
+    ("crates/kura/src/d3d11/logic.rs", "scratch(d, (COPY_OF | l.target,", "a target's copy is not kept by its slot (two targets of one size and format shared one copy)"),
+    ("crates/kura/src/d3d11/logic.rs", "f::P_RGBA8SI => ([8, 8, 8, 8], s),", "SINT targets get no logic ops (WARP applies them, though FORMAT_SUPPORT2 lists UINT formats only)"),
+    ("crates/dxwgsl/src/logic.rs", "None => saturate(bits, l.sign, sv),", "an integer target's plain write is not saturated (WARP: min of the value and the channel's largest)"),
+    ("crates/kura/src/render/d3d.rs", "LOGIC_RESOLVE => {", "the page does not do LOGIC_RESOLVE (a multisampled target's op per sample)"),
+    ("crates/dxwgsl/src/wgsl.rs", "logic_output(l, r, k,", "a logic target's output does not go through logic_output"),
     ("crates/dxwgsl/src/wgsl.rs", "crate::logic::LOGIC_DST", "logic_output does not read the target's copy at LOGIC_DST"),
     ("crates/dxwgsl/src/logic.rs", "#[path = \"logic_tests.rs\"]", "the ops are no longer checked against D3D11_LOGIC_OP's table (logic_tests.rs)"),
     ("crates/kura/src/d3d11/logic.rs", "#[path = \"logic_tests.rs\"]", "the targets and primitives of a logic draw are no longer tested (logic_tests.rs)"),

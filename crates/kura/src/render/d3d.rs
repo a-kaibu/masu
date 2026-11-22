@@ -282,6 +282,11 @@ fn renderable(f: Tf) -> bool {
 fn multisamplable(f: Tf) -> bool {
     (renderable(f) || is_depth(f)) && !(f.info().bits == 32 && f.bpp() >= 8)
 }
+/// Whether the page multisamples a multisampled texture of page format `page` (else it has one
+/// sample: create_texture2).
+pub(crate) fn page_multisamples(page: u32) -> bool {
+    multisamplable(tex_format(page))
+}
 /// Whether a multisampled texture of format `f` resolves (the blendable color formats).
 fn resolvable(f: Tf) -> bool {
     multisamplable(f) && !is_depth(f) && blendable(f) && f != Tf::R32Float
@@ -1010,6 +1015,9 @@ pub struct D3d {
     /// the shader resolve (resolve_into): module, pipeline and layout per target format
     resolve_module: Id,
     resolve_pipes: HashMap<Tf, (Id, Id)>,
+    /// LOGIC_RESOLVE's pipelines (logic_resolve): by its words after the textures and the
+    /// target's format; pipeline, its bind group layout
+    logic_pipes: HashMap<([u32; 7], Tf), (Id, Id)>,
     /// Direct3D 11 depth textures a shader reads as floats (R16_UNORM, R32_FLOAT and the like
     /// views of typeless ones): depth texture -> (its r32float copy, the depth texture's stamp
     /// when copied); see depth_twin
@@ -1117,6 +1125,7 @@ impl D3d {
             snap_graves: Vec::new(),
             resolve_module: 0,
             resolve_pipes: HashMap::new(),
+            logic_pipes: HashMap::new(),
             twins: HashMap::new(),
             next_twin: TWIN_IDS,
             twin_pipe: [(0, 0); 2],
@@ -1602,6 +1611,11 @@ impl D3d {
                     self.resolve(a(1), a(2), a(3), a(4), a(5));
                     i += 6;
                 }
+                LOGIC_RESOLVE => {
+                    let w: [u32; 7] = std::array::from_fn(|k| a(k.saturating_add(5)));
+                    self.logic_resolve(a(1), a(2), a(3), a(4), w);
+                    i = i.saturating_add(12);
+                }
                 QUERY_BEGIN => {
                     self.query_begin(a(1));
                     i = i.saturating_add(2);
@@ -1718,7 +1732,7 @@ impl D3d {
             WRITE_TEXTURE | WRITE_TEXTURE_MEM if c[2] == 0 => self.touch_box(c[1], Some([c[3], c[4], c[3].saturating_add(c[5]), c[4].saturating_add(c[6])])),
             CREATE_TEXTURE | CREATE_TEXTURE2 | DESTROY_TEXTURE | WRITE_TEXTURE | WRITE_TEXTURE_MEM | WRITE_TEXTURE2 | FILL | GEN_MIPS | GEN_MIPS_POINT => self.touch(c[1]),
             COPY => self.touch(c[7]),
-            RESOLVE => self.touch(c[1]),
+            RESOLVE | LOGIC_RESOLVE => self.touch(c[1]),
             _ => {}
         }
     }
@@ -3384,6 +3398,76 @@ impl D3d {
                 self.clear_groups2();
             }
         }
+    }
+
+    /// LOGIC_RESOLVE (d3d11/logic.rs): the op over the bits of stash texture `stash` and copy
+    /// `copy` (the target before the primitive) into multisampled target `tex`, at the samples
+    /// mark texture `mark` marks; `w`: the target's write mask, the op (its place in
+    /// dxwgsl::logic::Op::ALL), the bits of its channels, their sign (1: signed).
+    fn logic_resolve(&mut self, tex: u32, copy: u32, stash: u32, mark: u32, w: [u32; 7]) {
+        let ok = |t: Option<&Tex>| t.is_some_and(|t| t.samples > 1);
+        if !(ok(self.textures.get(&tex)) && ok(self.textures.get(&copy)) && ok(self.textures.get(&stash)) && ok(self.textures.get(&mark))) {
+            return;
+        }
+        let Some(fmt) = self.textures.get(&tex).map(|t| t.format) else { return };
+        for id in [tex, copy, stash, mark] {
+            self.settle(id);
+        }
+        self.end_pass();
+        let Some((pipe, layout)) = self.logic_pipe(w, fmt) else { return };
+        let view = |s: &Self, id: u32| s.textures.get(&id).map_or(0, |t| t.view);
+        let group = gpu::bind_group(
+            layout,
+            &[(dxwgsl::logic::LOGIC_DST, Res::Obj(view(self, copy))), (dxwgsl::logic::LOGIC_STASH, Res::Obj(view(self, stash))), (dxwgsl::logic::LOGIC_MARK, Res::Obj(view(self, mark)))],
+        );
+        let dv = self.view2(tex, 1, 0, 1, 0, 1, false);
+        for id in [tex, copy, stash, mark] {
+            self.use_tex(id);
+        }
+        self.traffic(tex, 0, true, true);
+        self.open = true;
+        gpu::begin_pass(&format!(r#"{{"colorAttachments":[{{"view":{dv},"loadOp":"load","storeOp":"store"}}]}}"#));
+        gpu::set_pipeline(pipe);
+        gpu::set_bind_group(0, group, &[]);
+        gpu::draw(3, 1, 0, 0);
+        gpu::end_pass();
+        gpu::drop(group);
+        self.touch(tex);
+        STATS[2].fetch_add(1, Relaxed);
+    }
+
+    /// LOGIC_RESOLVE's pipeline for words `w` (see logic_resolve) into a target of `format`:
+    /// pipeline, its bind group layout. None: words of no op.
+    fn logic_pipe(&mut self, w: [u32; 7], format: Tf) -> Option<(Id, Id)> {
+        if let Some(&p) = self.logic_pipes.get(&(w, format)) {
+            return Some(p);
+        }
+        let [mask, op, b0, b1, b2, b3, sign] = w;
+        let op = *dxwgsl::logic::Op::ALL.get(us(op))?;
+        let sign = if sign == 0 { dxwgsl::logic::Sign::Unsigned } else { dxwgsl::logic::Sign::Signed };
+        let l = dxwgsl::logic::Logic { target: 0, store: dxwgsl::logic::Store::Stash { op, mark: 0 }, bits: [b0, b1, b2, b3], sign, multisampled: true };
+        let m = gpu::shader(&dxwgsl::logic::resolve_wgsl(&l)?);
+        let kind = match sign {
+            dxwgsl::logic::Sign::Unsigned => "uint",
+            dxwgsl::logic::Sign::Signed => "sint",
+        };
+        let e = |b: u32, k: &str| format!(r#"{{"binding":{b},"visibility":2,"texture":{{"sampleType":"{k}","viewDimension":"2d","multisampled":true}}}}"#);
+        let layout = gpu::bind_group_layout(&format!(
+            r#"{{"entries":[{},{},{}]}}"#,
+            e(dxwgsl::logic::LOGIC_DST, kind),
+            e(dxwgsl::logic::LOGIC_STASH, kind),
+            e(dxwgsl::logic::LOGIC_MARK, "uint")
+        ));
+        let pl = gpu::pipeline_layout(&format!(r#"{{"bindGroupLayouts":[{layout}]}}"#));
+        let p = gpu::render_pipeline(&format!(
+            r#"{{"layout":{pl},"vertex":{{"module":{m},"entryPoint":"vs_resolve"}},"fragment":{{"module":{m},"entryPoint":"fs_resolve","targets":[{{"format":{},"writeMask":{}}}]}},"primitive":{{"topology":"triangle-list"}},"multisample":{{"count":4}}}}"#,
+            qf(format),
+            mask & 0xf
+        ));
+        gpu::drop(pl);
+        gpu::drop(m);
+        self.logic_pipes.insert((w, format), (p, layout));
+        Some((p, layout))
     }
 
     /// The shader resolve into `format` (see resolve_into): pipeline, its bind group layout.
