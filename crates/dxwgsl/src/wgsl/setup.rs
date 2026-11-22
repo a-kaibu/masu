@@ -1278,7 +1278,7 @@ pub fn setup_pass(store: &Store, osgn: &[SigElement], ps: Option<&[u8]>, prim: P
     let vw = bitcast<f32>(xw(XD_VIEWPORT + 2u)); let vh = bitcast<f32>(xw(XD_VIEWPORT + 3u));
     let zn = bitcast<f32>(xw(XD_DEPTH)); let zf = bitcast<f32>(xw(XD_DEPTH + 1u));
     nf = 0u;
-    sx_wz = -3.40282347e38f;
+    sx_wz = bitcast<f32>(0xff7fffffu);
     for (var i = 1u; i + 1u < n; i += 1u) {
         let k = vec3<u32>(poly[0], poly[i], poly[i + 1u]);
         var s: array<vec2<i32>, 3>;
@@ -1639,9 +1639,20 @@ pub(crate) fn inputs(ps: &[u8], samples: u32, params: &mut Vec<String>, pre: &mu
     m.push_str(SX_ROUND);
     m.push_str(ps::DIV);
     m.push_str("fn sx_at(o: u32, c: u32, p: vec2<f32>) -> f32 {\n    return (bitcast<f32>(setup[o + 2u][c]) + sx_r(bitcast<f32>(setup[o + 1u][c]) * p.y)) + sx_r(bitcast<f32>(setup[o][c]) * p.x);\n}\n");
+    // (the header's rhw and depth planes: one vec4 each, (gx, gy, c, _); an input's component's
+    // plane is down three vec4s, sx_at)
+    m.push_str("fn sx_head(o: u32, p: vec2<f32>) -> f32 {\n    let g = bitcast<vec4<f32>>(setup[o]);\n    return (g.z + sx_r(g.y * p.y)) + sx_r(g.x * p.x);\n}\n");
     pre.push("sx_k = in_slot & 0x80000000u;".into());
     pre.push(format!("let sx_o = in_slot * {stride}u;"));
     pre.push("let sx_c = floor(in_pos.xy) + vec2<f32>(0.5f);".into());
+    if samples == 1 {
+        // (the depth written: the depth plane at the pixel's centre, as WARP writes it (winref
+        // d3d11wire: WebGPU's own interpolation of the drawn triangle's corners was an ulp or
+        // two off), held to the viewport's range by WebGPU; with more samples each sample's
+        // depth is the rasterizer's at that sample)
+        pre.push("sx_depth = sx_head(sx_o + 4u, sx_c);".into());
+        m.push_str("var<private> sx_depth: f32;\n");
+    }
     // (an aliased line's slot: the pixel lit by lines.md §1.2's test at its centre, the
     // triangle drawn only bounds it)
     m.push_str(SX_LINE_COVERS);
@@ -1658,7 +1669,7 @@ pub(crate) fn inputs(ps: &[u8], samples: u32, params: &mut Vec<String>, pre: &mu
         let all = (1u32 << offs.len()).wrapping_sub(1);
         pre.push(format!("var sx_cen = sx_c;\n    if ((in_cov & {all}u) != {all}u) {{ let k = firstTrailingBit(in_cov & {all}u); sx_cen = sx_c + SX_COFFS[min(k, {}u)]; }}", offs.len().saturating_sub(1)));
     }
-    let rhw_at = |pt: &str| format!("ps_div(1.0f, sx_at(sx_o + 3u, 0u, {pt}))");
+    let rhw_at = |pt: &str| format!("ps_div(1.0f, sx_head(sx_o + 3u, {pt}))");
     for (i, inp) in (0u32..).zip(&layout.inputs) {
         let o = HEADER.saturating_add(i.saturating_mul(3));
         for c in bits(inp.mask) {
@@ -1687,7 +1698,7 @@ pub(crate) fn inputs(ps: &[u8], samples: u32, params: &mut Vec<String>, pre: &mu
                 let v = match c {
                     0 => format!("bitcast<u32>({pt}.x)"),
                     1 => format!("bitcast<u32>({pt}.y)"),
-                    2 => format!("bitcast<u32>(sx_at(sx_o + 4u, 0u, {pt}))"),
+                    2 => format!("bitcast<u32>(sx_head(sx_o + 4u, {pt}))"),
                     _ => format!("bitcast<u32>({})", rhw_at(&pt)),
                 };
                 pre.push(format!("v{r}.{x} = {v};"));

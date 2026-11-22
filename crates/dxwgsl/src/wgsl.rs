@@ -2901,6 +2901,10 @@ pub fn translate_views(code: &[u8], pixel: bool, ps: Option<&[u8]>, sprite: Opti
         if w.depth_out {
             fields.push("@builtin(frag_depth) depth: f32".into());
             post.push("out.depth = bitcast<f32>(oDepth);".into());
+        } else if setup == Some(1) {
+            // (a setup's fragment: its depth plane's value, expand::setup::inputs)
+            fields.push("@builtin(frag_depth) depth: f32".into());
+            post.push("out.depth = sx_depth;".into());
         }
         if w.mask_out {
             fields.push("@builtin(sample_mask) mask: u32".into());

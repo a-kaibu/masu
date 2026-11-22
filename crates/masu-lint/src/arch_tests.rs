@@ -754,7 +754,7 @@ fn fixture(r: Rule) -> Fixture {
             bad: &[
                 ("crates/kura/src/d3d11/expand.rs", "// setup_wanted(d, st) setup_draw(d, st, \nfn draw() {}\n"),
                 ("crates/dxwgsl/src/wgsl.rs", "fn inputs() { let a = \"@location(0) @interpolate(linear) v0: vec4<f32>\"; }\n"),
-                ("crates/dxwgsl/src/wgsl/setup.rs", "fn sx_plane() {}\nconst W: &str = \"let g = fma(d10, dy20, d20 * dy01);\";\n"),
+                ("crates/dxwgsl/src/wgsl/setup.rs", "fn sx_plane() {}\nconst W: &str = \"let g = fma(d10, dy20, d20 * dy01);\";\nfn rhw() -> String { format!(\"ps_div(1.0f, sx_at(sx_o + 3u, 0u, {pt}))\") }\n"),
             ],
             good: &[
                 ("crates/kura/src/d3d11/expand.rs", "fn draw(d: &mut D11, st: &State) { let w = setup_wanted(d, st); setup_draw(d, st, &stv); }\n"),
@@ -765,7 +765,7 @@ fn fixture(r: Rule) -> Fixture {
         },
         Rule::WarpWire => Fixture {
             bad: &[
-                ("crates/dxwgsl/src/wgsl/setup.rs", "fn wire() { let l = line(); }\n#[cfg(test)]\nmod t { fn f() { l.z.c += b.of(zmax, s); let w = \"sx_bias(sx_wz, 1.0)\"; } }\n"),
+                ("crates/dxwgsl/src/wgsl/setup.rs", "fn wire() { let l = line(); }\nconst F: &str = \"sx_wz = -3.40282347e38f;\";\n#[cfg(test)]\nmod t { fn f() { l.z.c += b.of(zmax, s); let w = \"sx_bias(sx_wz, 1.0)\"; } }\n"),
                 ("crates/kura/src/d3d11/expand.rs", "fn raster_words() { put(w, x::xd::RASTER, 0, bits); let c = crate::render::gpu::has_feature(\"depth-clip-control\"); }\n"),
                 ("crates/kura/src/d3d11/mod.rs", "unsafe fn wire_edges(d: &D11) {}\nfn triangle_edges(idx: &[u32]) {}\n"),
             ],
@@ -822,11 +822,11 @@ fn fixture(r: Rule) -> Fixture {
         },
         Rule::DrawPlan => Fixture {
             bad: &[
-                ("crates/kura/src/d3d11/mod.rs", "fn draw_with() {\n    let topo = match st.topology { 1 => 0, _ => 3 };\n    let topo = if wire.is_some() { 1 } else { topo };\n}\n// DrawPlan::of(assembled, adjacent, fill, sprite.is_some(), store.is_some(), count) logic::primitives(plan.topo, drawn, &cuts)\n"),
+                ("crates/kura/src/d3d11/mod.rs", "fn draw_with() {\n    let topo = match st.topology { 1 => 0, _ => 3 };\n    let topo = if wire.is_some() { 1 } else { topo };\n}\n// DrawPlan::of(assembled, adjacent, fill, sprite.is_some(), squares) logic::primitives(plan.topo, drawn, &cuts)\n"),
                 ("crates/kura/src/d3d11/logic.rs", "pub fn primitives(topo: u32, n: u32, cuts: &[u32]) -> Vec<Prim> { Vec::new() }\n"),
             ],
             good: &[
-                ("crates/kura/src/d3d11/mod.rs", "fn draw_with() {\n    let plan = match DrawPlan::of(assembled, adjacent, fill, sprite.is_some(), store.is_some(), count) { _ => return };\n    let prims = logic::primitives(plan.topo, drawn, &cuts);\n}\n#[cfg(test)]\nmod t { fn f() { let topo = match st.topology { _ => 3 }; } }\n"),
+                ("crates/kura/src/d3d11/mod.rs", "fn draw_with() {\n    let plan = match DrawPlan::of(assembled, adjacent, fill, sprite.is_some(), squares) { _ => return };\n    let prims = logic::primitives(plan.topo, drawn, &cuts);\n}\n#[cfg(test)]\nmod t { fn f() { let topo = match st.topology { _ => 3 }; } }\n"),
                 ("crates/kura/src/d3d11/logic.rs", "pub fn primitives(topo: super::PageTopo, n: u32, cuts: &[u32]) -> Vec<Prim> { match topo { PageTopo::Points => Vec::new() } }\n"),
             ],
             mutate: ("crates/kura/src/d3d11/mod.rs", |t| Some(t.replace("logic::primitives(plan.topo, drawn, &cuts)", "logic::primitives(PageTopo::Lines, count, &cuts)"))),

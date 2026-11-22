@@ -995,8 +995,16 @@ pub const WARP_SETUP: [(&str, &str); 4] = [
 ];
 
 /// What WARP_SETUP's files must not say: a fused multiply-add in the setup's WGSL (one rounding
-/// where WARP's plane equations round after the multiply and after the add).
-pub const WARP_SETUP_NOT: [(&str, &str); 2] = [("crates/dxwgsl/src/wgsl/setup.rs", "fma("), ("crates/dxwgsl/src/wgsl/setup.rs", "mul_add(")];
+/// where WARP's plane equations round after the multiply and after the add); the slot header's
+/// rhw or depth plane (one vec4 (gx, gy, c, _) each) read as an input's (three vec4s down: the
+/// pixel shader's SV_Position.z and .w and every perspective input came out wrong, winref
+/// d3d11wire on the page).
+pub const WARP_SETUP_NOT: [(&str, &str); 4] = [
+    ("crates/dxwgsl/src/wgsl/setup.rs", "fma("),
+    ("crates/dxwgsl/src/wgsl/setup.rs", "mul_add("),
+    ("crates/dxwgsl/src/wgsl/setup.rs", "sx_at(sx_o + 3u"),
+    ("crates/dxwgsl/src/wgsl/setup.rs", "sx_at(sx_o + 4u"),
+];
 
 /// Each of WARP_SETUP missing from its file's code, each of WARP_SETUP_NOT in it.
 pub(super) fn warp_setup(tree: &Tree) -> Hits {
@@ -1018,12 +1026,18 @@ pub const WARP_WIRE: [(&str, &str); 6] = [
 
 /// What WARP_WIRE's files must not say: the edges of the draw's own triangles as a line list
 /// (no culling, no bias: review b5dacf4 3.2); a device feature asked from the draw's side (the
-/// device is the page's: the sake worker has none, and asking threw there).
-pub const WARP_WIRE_NOT: [(&str, &str); 4] = [
+/// device is the page's: the sake worker has none, and asking threw there); an f32 literal of
+/// the 38th power in the hand-written WGSL (Tint reads it as a double and refused
+/// -3.40282347e38f, past f32's largest: `bitcast<f32>(0xff7fffffu)` or dxwgsl::f32_text).
+pub const WARP_WIRE_NOT: [(&str, &str); 8] = [
     ("crates/kura/src/d3d11/mod.rs", "fn wire_edges("),
     ("crates/kura/src/d3d11/mod.rs", "fn triangle_edges("),
     ("crates/kura/src/d3d11/mod.rs", "has_feature("),
     ("crates/kura/src/d3d11/expand.rs", "has_feature("),
+    ("crates/dxwgsl/src/wgsl/setup.rs", "e38f"),
+    ("crates/dxwgsl/src/wgsl/ps.rs", "e38f"),
+    ("crates/dxwgsl/src/wgsl/expand.rs", "e38f"),
+    ("crates/dxwgsl/src/wgsl.rs", "e38f"),
 ];
 
 /// Each of WARP_WIRE missing from its file's code, each of WARP_WIRE_NOT in it.
@@ -1100,7 +1114,7 @@ pub(super) fn missing_import(tree: &Tree) -> Hits {
 /// its topology and the count of the indices it draws (review b5dacf4 3.1): (file, what its code
 /// outside the tests says).
 pub const DRAW_PLAN: [(&str, &str); 3] = [
-    ("crates/kura/src/d3d11/mod.rs", "DrawPlan::of(assembled, adjacent, fill, sprite.is_some(), store.is_some(), count)"),
+    ("crates/kura/src/d3d11/mod.rs", "DrawPlan::of(assembled, adjacent, fill, sprite.is_some(), squares)"),
     ("crates/kura/src/d3d11/mod.rs", "logic::primitives(plan.topo, drawn, &cuts)"),
     ("crates/kura/src/d3d11/logic.rs", "pub fn primitives(topo: super::PageTopo"),
 ];
