@@ -74,3 +74,11 @@ export const GROUPS = {
   ],
   onscripter64: [{ exe: "onscripter64\\onscripter.exe", name: "onscripter64", args: "--registry,play.reg", load: "--registry,load.reg", scenario: true }],
 };
+
+/** A case's arguments (comma-separated, the cases' own format) in a page's address: `&arg=` for
+ * each (web/src/launch-plan.ts), and `&args=` too for the older builds a run compares with,
+ * whose pages took the comma-joined list (a page that has `&arg=` leaves `&args=` aside). */
+export const argParams = (args) =>
+  args
+    ? `&args=${encodeURIComponent(args)}` + args.split(",").map((a) => `&arg=${encodeURIComponent(a)}`).join("")
+    : "";

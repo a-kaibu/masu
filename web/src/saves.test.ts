@@ -1,9 +1,12 @@
 import { simulate, deferred } from "./test/simulation";
+import { ASK, COVERED, COVERS } from "./save-transport";
 import { exclusiveLocks } from "./test/browser";
 import { afterAll, beforeAll, expect, test, vi } from "vite-plus/test";
 import {
   keepSaving,
   loadSaves,
+  movedSaves,
+  type LoadOutcome,
   savesFor,
   stashesToDrop,
   STASH_KEEP,
@@ -21,19 +24,30 @@ class Server {
   rev = 0;
   data: Uint8Array | null = null;
   history: Uint8Array[] = [];
+  /** the records of browsers an upload named as held or superseded (saves.rs save_covers) */
+  covers = new Set<string>();
   up = true;
+  /** PUTs fail while GETs answer (the link drops mid-upload, the server's disk is full) */
+  putsFail = false;
   request: typeof fetch = async (_url, init) => {
     if (!this.up || !navigator.onLine) throw new TypeError("Failed to fetch");
+    const headers = new Headers(init?.headers);
     if (init?.method === "PUT") {
-      const want = Number(new Headers(init.headers).get("if-match")?.replaceAll('"', ""));
+      if (this.putsFail) throw new TypeError("Failed to fetch");
+      const want = Number(headers.get("if-match")?.replaceAll('"', ""));
       if (want !== this.rev) return new Response(null, { status: 412 });
       this.data = new Uint8Array(init.body as Uint8Array);
       this.history.push(this.data);
       this.rev++;
+      const covers = headers.get(COVERS);
+      if (covers) this.covers.add(covers);
       return new Response(null, { status: 204, headers: { etag: `"${this.rev}"` } });
     }
     if (!this.data) return new Response(null, { status: 404 });
-    return new Response(this.data.slice(), { headers: { etag: `"${this.rev}"` } });
+    const asked = headers.get(ASK);
+    return new Response(this.data.slice(), {
+      headers: { etag: `"${this.rev}"`, ...(asked && this.covers.has(asked) ? { [COVERED]: asked } : {}) },
+    });
   };
 }
 
@@ -77,11 +91,13 @@ afterAll(() => {
 const blob = (n: number) => new Uint8Array([n & 255, n >> 8]);
 const eq = (a: Uint8Array | null | undefined, b: Uint8Array | null | undefined) =>
   !!a && !!b && a.length === b.length && a.every((x, i) => x === b[i]);
-/** A new page on `d`: the start (loadSaves) and what it returned. */
-async function page(d: Device, s: Server, notice?: (m: string) => void) {
+/** A new page on `d`: the start (loadSaves) and what each side held of it. */
+async function start(d: Device, s: Server, notice?: (m: string) => void) {
   savesFor(d.files, s.request);
   return loadSaves("game", notice);
 }
+/** A new page on `d`: the bytes its start returned. */
+const page = async (d: Device, s: Server, notice?: (m: string) => void) => (await start(d, s, notice)).data;
 const save = (n: number) =>
   storeSaves("game", blob(n)).then(
     () => true,
@@ -234,11 +250,27 @@ test("an older page's copy, not known to be sent, is kept aside when the server'
   expect(eq(phone.current(), blob(7))).toBe(true);
 });
 
+/** A start whose bytes `data` both sides hold (as a keeper's tests take them: what they began from). */
+const held = (data: Uint8Array): LoadOutcome => ({
+  data: data as Uint8Array<ArrayBuffer>,
+  local: { kind: "holds", generation: "held" },
+  server: { kind: "holds", revision: '"0"' },
+});
+
 /** keepSaving over `d` and `s` with a game whose files are `files()` (the export), a clock the
  * test moves, and the 5 s timer and page events left out (the test calls the save itself). */
-async function keeper(d: Device, s: Server, files: () => Uint8Array<ArrayBuffer>, last: Uint8Array | null) {
-  // (a page's start first: it learns the server's revision, or that it was out of reach)
-  await page(d, s);
+async function keeper(
+  d: Device,
+  s: Server,
+  files: () => Uint8Array<ArrayBuffer>,
+  from?: LoadOutcome,
+  started = false,
+) {
+  // (a page's start first: it learns the server's revision, or that it was out of reach; `from`:
+  // a start the test made or stood for itself, what the keeper goes on from)
+  // (`started`: `from` is this page's own start, made by the test: no second start)
+  const own = started ? undefined : await start(d, s);
+  const begun = from ?? own!;
   let changes = 0;
   let t = 0;
   let reads = 0;
@@ -247,7 +279,7 @@ async function keeper(d: Device, s: Server, files: () => Uint8Array<ArrayBuffer>
   const had = g.addEventListener;
   g.addEventListener ??= () => {};
   vi.useFakeTimers();
-  const save = keepSaving(m, "game", [], last, {
+  const save = keepSaving(m, "game", [], begun, {
     now: () => t,
     read: () => (reads++, files()),
   });
@@ -272,7 +304,7 @@ test("offline, a changed save is written to this browser once, and the upload ba
   const d = new Device();
   online = true;
   let current = blob(1);
-  const k = await keeper(d, s, () => current as Uint8Array<ArrayBuffer>, null);
+  const k = await keeper(d, s, () => current as Uint8Array<ArrayBuffer>);
   s.up = false;
   current = blob(2);
   k.write();
@@ -302,7 +334,7 @@ test("offline, the game writing the same bytes again makes no new local write", 
   const d = new Device();
   online = true;
   s.up = false;
-  const k = await keeper(d, s, () => blob(3) as Uint8Array<ArrayBuffer>, blob(1));
+  const k = await keeper(d, s, () => blob(3) as Uint8Array<ArrayBuffer>, held(blob(1)));
   for (let i = 0; i < 4; i++) {
     k.write();
     k.at(i * 10);
@@ -317,7 +349,7 @@ test("a forced save (the game quits) uploads at once, even in the pause after a 
   const d = new Device();
   online = true;
   s.up = false;
-  const k = await keeper(d, s, () => blob(4) as Uint8Array<ArrayBuffer>, blob(1));
+  const k = await keeper(d, s, () => blob(4) as Uint8Array<ArrayBuffer>, held(blob(1)));
   k.write();
   await k.save();
   s.up = true;
@@ -341,7 +373,7 @@ test("saves asked for while one is stuck wait as one, not one per tick", async (
     return request(u, init);
   };
   let current = blob(5);
-  const k = await keeper(d, s, () => current as Uint8Array<ArrayBuffer>, blob(1));
+  const k = await keeper(d, s, () => current as Uint8Array<ArrayBuffer>, held(blob(1)));
   k.write();
   const first = k.save();
   const waiting = Array.from({ length: 50 }, () => k.save());
@@ -376,7 +408,7 @@ test("property: uploads at most once a minute unless forced, the newest always o
     online = true;
     let v = 1;
     let current = blob(v);
-    const k = await keeper(d, s, () => current as Uint8Array<ArrayBuffer>, blob(v));
+    const k = await keeper(d, s, () => current as Uint8Array<ArrayBuffer>, held(blob(v)));
     let t = 0;
     let lastPlain = -Infinity;
     for (let step = 0; step < 40; step++) {
@@ -472,7 +504,7 @@ test("another device's newer save stops the uploads: the player is told once", a
   const had = g.addEventListener;
   g.addEventListener ??= () => {};
   vi.useFakeTimers();
-  const save = keepSaving(m, "game", [], null, {
+  const save = keepSaving(m, "game", [], movedSaves(null), {
     now: () => t,
     read: () => current as Uint8Array<ArrayBuffer>,
     notice: (n) => notices.push(n),
@@ -497,7 +529,7 @@ test("an upload pause followed by a revert persists the last save across restart
   const s = new Server();
   const d = new Device();
   let data = blob(1);
-  const k = await keeper(d, s, () => data, null);
+  const k = await keeper(d, s, () => data);
   await k.save();
   data = blob(2);
   k.write();
@@ -530,7 +562,7 @@ test.each(["poll", "hide then poll", "poll then hide"])(
       await page(device, server);
       let version = 1;
       const game = { _vnhost_vfs_changes: () => version } as unknown as SavesModule;
-      const save = keepSaving(game, "game", [], null, { read: () => blob(version) });
+      const save = keepSaving(game, "game", [], movedSaves(null), { read: () => blob(version) });
       const first = save();
       await accepted.promise;
       version++;
@@ -586,10 +618,15 @@ test.each([false, true])(
         savesFor(device.files, server.request);
       }
       const notices: string[] = [];
-      expect(await page(device, server, (message) => notices.push(message))).toEqual(blob(1));
-      expect(notices).toHaveLength(conflict ? 1 : 0);
-      expect(server.data).toEqual(blob(1));
-      if (conflict) expect(device.kept()).toContainEqual(blob(2));
+      // (the upload of 1 landed, naming this device's record: the other device's 2, made from
+      // 1 after it, is the newest and is not written over by this device's unsent-looking 1;
+      // review b5dacf4 1.1)
+      const latest = conflict ? blob(2) : blob(1);
+      expect(await page(device, server, (message) => notices.push(message))).toEqual(latest);
+      expect(notices).toHaveLength(0);
+      expect(server.data).toEqual(latest);
+      expect(server.history).toContainEqual(blob(1));
+      expect(device.current()).toEqual(latest);
     });
   },
 );
@@ -720,7 +757,7 @@ test("a local write that failed once is tried again: the save after it is kept (
   const d = new Device();
   online = true;
   let current = blob(1);
-  const k = await keeper(d, s, () => current as Uint8Array<ArrayBuffer>, null);
+  const k = await keeper(d, s, () => current as Uint8Array<ArrayBuffer>);
   current = blob(1);
   k.write();
   await k.save();
@@ -747,7 +784,7 @@ test("this browser's copy not written, the server's written: the next start does
   const d = new Device();
   online = true;
   let current = blob(1);
-  const k = await keeper(d, s, () => current as Uint8Array<ArrayBuffer>, null);
+  const k = await keeper(d, s, () => current as Uint8Array<ArrayBuffer>);
   // (A: kept here only, the server down)
   s.up = false;
   k.write();
@@ -781,21 +818,225 @@ test("this browser's copy not written, the server's written: the next start does
   expect(eq(s.data, blob(2))).toBe(true);
 });
 
-// Random runs of the keeper with OPFS writes failing now and then, the server up and down,
-// forced saves (property, seeded): after the last save with everything working, this browser's
-// copy and the server hold the newest export, and a restart returns it; never an older one.
+/** `d`'s writes of the files `failing(file)` names fail (an OPFS quota denied, say). */
+function failWrites(d: Device, failing: (file: string) => boolean) {
+  const write = d.files.write.bind(d.files);
+  d.files.write = async (f, data) => {
+    if (failing(f)) throw new Error("QuotaExceededError");
+    return write(f, data);
+  };
+}
+const isBlob = (f: string) => /^game\.v2\.[01]\.bin$/.test(f);
+const isRecord = (f: string) => f === "game.v2.sync.json";
+
+for (const how of ["keepSaving", "storeSaves"] as const)
+  test(`this browser's blob and record both unwritable, the server's written: the next start does not go back to the unsent older copy (${how}, review b5dacf4 1.1)`, async () => {
+    const s = new Server();
+    const d = new Device();
+    online = true;
+    let current = blob(1);
+    const k = await keeper(d, s, () => current as Uint8Array<ArrayBuffer>);
+    const store = async (force: boolean) => {
+      if (how === "keepSaving") {
+        k.write();
+        return k.save(force);
+      }
+      await storeSaves("game", current).catch(() => undefined);
+    };
+    // (A on both sides; B here only, the server down)
+    await store(true);
+    s.up = false;
+    current = blob(2);
+    await store(false);
+    expect(eq(d.current(), blob(2))).toBe(true);
+    // (C: neither the blob nor the record can be written here, the upload goes through)
+    s.up = true;
+    let failing = true;
+    failWrites(d, (f) => failing && (isBlob(f) || isRecord(f)));
+    current = blob(3);
+    await store(true);
+    expect(eq(s.data, blob(3))).toBe(true);
+    expect(eq(d.current(), blob(2))).toBe(true);
+    // (OPFS works again: the restart takes C, and the server stays at C)
+    failing = false;
+    expect(eq(await page(d, s), blob(3))).toBe(true);
+    expect(eq(s.data, blob(3))).toBe(true);
+    expect(eq(d.current(), blob(3))).toBe(true);
+  });
+
+test("simulation: a failed local write's upload does not settle another tab's newer save (review b5dacf4 1.2)", async () => {
+  await simulate(async ({ advance }) => {
+    const device = new Device();
+    const server = new Server();
+    server.data = blob(1);
+    server.rev = 1;
+    const failing = deferred<void>();
+    const failGo = deferred<void>();
+    let failNext = false;
+    const write = device.files.write.bind(device.files);
+    device.files.write = async (f, data) => {
+      if (failNext && isBlob(f)) {
+        failNext = false;
+        failing.resolve();
+        await failGo.promise;
+        throw new Error("QuotaExceededError");
+      }
+      return write(f, data);
+    };
+    const tab = async (request: typeof fetch) => {
+      vi.resetModules();
+      const session = await import("./saves");
+      session.savesFor(device.files, request);
+      return session;
+    };
+    // (tab B: its uploads in their pause (the server refuses them), its saves kept here only)
+    const b = await tab(async (url, init) => {
+      if (init?.method === "PUT") throw new TypeError("Failed to fetch");
+      return server.request(url, init);
+    });
+    const begunB = await b.loadSaves("game");
+    let version = 3;
+    const game = { _vnhost_vfs_changes: () => version } as unknown as SavesModule;
+    const saveB = b.keepSaving(game, "game", [], begunB, { read: () => blob(version) });
+    await saveB();
+    // (tab A: its save 2's local write fails; tab B saves 4 while A's failure is out)
+    const a = await tab(server.request);
+    await a.loadSaves("game");
+    failNext = true;
+    const storing = a.storeSaves("game", blob(2));
+    await failing.promise;
+    version = 4;
+    const savingB = saveB();
+    failGo.resolve();
+    expect(await storing).toMatchObject({ kind: "sent-not-kept" });
+    await savingB;
+    await advance(10);
+    expect(server.data).toEqual(blob(2));
+    expect(device.current()).toEqual(blob(4));
+    // (the restart: tab B's 4, the newest of this browser, still unsent: it wins and goes up)
+    expect((await (await tab(server.request)).loadSaves("game")).data).toEqual(blob(4));
+    expect(server.data).toEqual(blob(4));
+  });
+});
+
+test("a start whose upload failed: the keeper sends what it started from, unchanged (review b5dacf4 1.3)", async () => {
+  const s = new Server();
+  const d = new Device();
+  online = true;
+  await page(d, s);
+  expect((await storeSaves("game", blob(1))).kind).toBe("sent");
+  expect((await storeSaves("game", blob(2), false)).kind).toBe("kept");
+  // (the start: B is the newest, its upload fails)
+  s.putsFail = true;
+  const begun = await start(d, s);
+  expect(begun.data).toEqual(blob(2));
+  expect(begun.server.kind).toBe("behind");
+  expect(eq(s.data, blob(1))).toBe(true);
+  // (the link back, the game writes nothing new, the page is hidden: B goes up)
+  s.putsFail = false;
+  const k = await keeper(d, s, () => blob(2) as Uint8Array<ArrayBuffer>, begun, true);
+  await k.save(true);
+  expect(eq(s.data, blob(2))).toBe(true);
+});
+
+test("a start whose local write failed: the keeper writes what it started from here, unchanged (review b5dacf4 1.3)", async () => {
+  const s = new Server();
+  const d = new Device();
+  const pc = new Device();
+  online = true;
+  await page(d, s);
+  expect((await storeSaves("game", blob(1))).kind).toBe("sent");
+  await page(pc, s);
+  expect((await storeSaves("game", blob(2))).kind).toBe("sent");
+  // (the start takes the other device's B; this browser's copy cannot be written)
+  let failing = true;
+  failWrites(d, (f) => failing && isBlob(f));
+  const begun = await start(d, s);
+  expect(begun.data).toEqual(blob(2));
+  expect(begun.local.kind).toBe("behind");
+  expect(eq(d.current(), blob(1))).toBe(true);
+  // (OPFS works again, the game writes nothing new: B is written here; offline later, B)
+  failing = false;
+  const k = await keeper(d, s, () => blob(2) as Uint8Array<ArrayBuffer>, begun, true);
+  await k.save();
+  expect(eq(d.current(), blob(2))).toBe(true);
+  online = false;
+  expect(eq(await page(d, s), blob(2))).toBe(true);
+  online = true;
+});
+
+test("an older app still open saves offline after this one took its files over: the next start has it (review b5dacf4 1.4)", async () => {
+  for (const startOnline of [true, false]) {
+    const s = new Server();
+    const d = new Device();
+    online = true;
+    const old = await import("./test/legacy/saves-e18bf44");
+    old.savesFor(d.files, s.request);
+    await old.loadSaves("game");
+    expect(await old.storeSaves("game", blob(1))).not.toBe(false);
+    // (this app starts: takes the files over)
+    expect(eq(await page(d, s), blob(1))).toBe(true);
+    // (the older app's tab, open since before the update, saves B with the link down)
+    old.savesFor(d.files, s.request);
+    online = false;
+    await old.storeSaves("game", blob(2)).catch(() => undefined);
+    online = startOnline;
+    // (this app's next start: B, and online it goes up)
+    expect(eq(await page(d, s), blob(2)), `online ${startOnline}`).toBe(true);
+    if (startOnline) expect(eq(s.data, blob(2))).toBe(true);
+    online = true;
+    expect(eq(await page(d, s), blob(2))).toBe(true);
+    expect(eq(s.data, blob(2))).toBe(true);
+  }
+});
+
+test("an older app's save before this app's newer one: this app's is the newest, the older app's not taken again (review b5dacf4 1.4)", async () => {
+  const s = new Server();
+  const d = new Device();
+  online = true;
+  const old = await import("./test/legacy/saves-e18bf44");
+  old.savesFor(d.files, s.request);
+  await old.loadSaves("game");
+  await old.storeSaves("game", blob(1));
+  online = false;
+  // (taken over offline; the older app saves B, then this app saves C, both unsent)
+  expect(eq(await page(d, s), blob(1))).toBe(true);
+  old.savesFor(d.files, s.request);
+  await old.storeSaves("game", blob(2)).catch(() => undefined);
+  savesFor(d.files, s.request);
+  expect((await storeSaves("game", blob(3), false)).kind).toBe("kept");
+  online = true;
+  expect(eq(await page(d, s), blob(3))).toBe(true);
+  expect(eq(s.data, blob(3))).toBe(true);
+  // (and both unsent, the older app's after: the older app's newest taken, this app's kept aside)
+  online = false;
+  expect((await storeSaves("game", blob(4), false)).kind).toBe("kept");
+  old.savesFor(d.files, s.request);
+  await old.storeSaves("game", blob(5)).catch(() => undefined);
+  online = true;
+  expect(eq(await page(d, s), blob(5))).toBe(true);
+  expect(d.kept().some((k) => eq(k, blob(4)))).toBe(true);
+});
+
+// Random runs of the keeper with OPFS writes (blobs, records, both) failing now and then, the
+// server up and down, uploads failing while reads answer, restarts while those still fail
+// (property, seeded): a restart never returns a save older than the newest either side holds;
+// after the last save with everything working, this browser's copy and the server hold the
+// newest export, and a restart returns it. Failures at the restart itself were left out before
+// (review b5dacf4 1.3), and only blob writes failed (1.1).
 test("property: failed local writes and uploads never bring back an older save", async () => {
   let x = 4242;
   const rnd = (n: number) => ((x = (Math.imul(x, 1103515245) + 12345) >>> 0) >>> 8) % n;
-  for (let run = 0; run < 200; run++) {
+  for (let run = 0; run < 300; run++) {
     const s = new Server();
     const d = new Device();
     online = true;
     let v = 1;
     let current = blob(v);
-    let k = await keeper(d, s, () => current as Uint8Array<ArrayBuffer>, null);
-    let fail = false;
-    failBlobs(d, () => fail);
+    let k = await keeper(d, s, () => current as Uint8Array<ArrayBuffer>);
+    // (0 none, 1 blobs, 2 records, 3 both)
+    let fail = 0;
+    failWrites(d, (f) => ((fail & 1) !== 0 && isBlob(f)) || ((fail & 2) !== 0 && isRecord(f)));
     let t = 0;
     for (let step = 0; step < 20; step++) {
       t += rnd(40_000);
@@ -804,26 +1045,29 @@ test("property: failed local writes and uploads never bring back an older save",
         current = blob(++v);
         k.write();
       }
-      fail = rnd(3) === 0;
+      fail = rnd(2) ? 0 : rnd(4);
       s.up = rnd(3) !== 0;
+      s.putsFail = rnd(5) === 0;
       await k.save(rnd(4) === 0);
-      // (whatever failed: a restart (a new page, sometimes) never returns a save older than
-      // the newest either copy holds)
+      // (whatever failed, now or at the restart itself: a restart (a new page, sometimes)
+      // never returns a save older than the newest either copy holds)
       if (rnd(4) === 0) {
-        fail = false;
+        fail = rnd(2) ? 0 : rnd(4);
         const newest = Math.max(d.current()?.[0] ?? 0, s.data?.[0] ?? 0);
         const up = s.up;
         s.up = true;
-        const got = await page(d, s);
+        s.putsFail = rnd(3) === 0;
+        const begun = await start(d, s);
+        const got = begun.data;
         expect(got?.[0] ?? 0, `run ${run} step ${step}: restart`).toBe(newest);
-        if (got) current = got as Uint8Array<ArrayBuffer>;
-        k = await keeper(d, s, () => current as Uint8Array<ArrayBuffer>, got);
+        if (got) current = got;
+        k = await keeper(d, s, () => current as Uint8Array<ArrayBuffer>, begun, true);
         s.up = up;
-        failBlobs(d, () => fail);
       }
     }
-    fail = false;
+    fail = 0;
     s.up = true;
+    s.putsFail = false;
     k.at(t + 10 * UPLOAD_EVERY);
     await k.save(true);
     expect(eq(d.current(), current), `run ${run}: here`).toBe(true);
@@ -874,9 +1118,14 @@ test("simulation: an acknowledgement while a start's GET is out keeps the newer 
     expect(await storing).toMatchObject({ kind: "sent" });
     getGo.resolve();
     // (B's acknowledgement changed only the record's dirty and base: A's older answer is not taken)
-    expect(await starting).toEqual(blob(2));
+    expect((await starting).data).toEqual(blob(2));
     expect(device.current()).toEqual(blob(2));
     expect(server.data).toEqual(blob(2));
+    // (and A's next save goes over the revision of what it started from, not its older GET's:
+    // no other write came, so no SaveConflict; review 22bb061 §3)
+    expect(await a.storeSaves("game", blob(3))).toMatchObject({ kind: "sent" });
+    expect(server.data).toEqual(blob(3));
+    expect(device.current()).toEqual(blob(3));
   });
 });
 
@@ -897,7 +1146,7 @@ test("simulation: a slow upload does not hold the next save's local write (revie
     await page(device, server);
     let version = 1;
     const game = { _vnhost_vfs_changes: () => version } as unknown as SavesModule;
-    const save = keepSaving(game, "game", [], null, { read: () => blob(version) });
+    const save = keepSaving(game, "game", [], movedSaves(null), { read: () => blob(version) });
     const first = save();
     await putStarted.promise;
     version = 2;

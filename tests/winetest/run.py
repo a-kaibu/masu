@@ -135,6 +135,41 @@ def read_tsv(path):
     return res
 
 
+def plan(listed, sel, expected, explicit):
+    """The tests to run, before sharding, and what the plan cannot cover.
+
+    listed: {dll: (exe, its --list names, or None when the exe is missing)}. A missing test
+    program, a dll whose --list names nothing, and a test of the expected file that its
+    dll no longer lists all go to the second list: each fails the run, so a broken build or a
+    selection that matches nothing cannot pass with fewer tests run. explicit (--expected):
+    every row of the file must be planned, whatever the dll list says.
+    -> ([(dll, exe, test)], [problem])"""
+    jobs, problems = [], []
+    wanted = lambda d, t: not sel.get(d) or "" in sel[d] or t in sel[d]
+    for d, (exe, tests) in listed.items():
+        if tests is None:
+            problems.append(f"{d}: test program missing ({exe})")
+            continue
+        if not tests:
+            # (still run: its output says why it lists nothing)
+            problems.append(f"{d}: --list gave no tests")
+            jobs.append((d, exe, "--list"))
+        jobs.extend((d, exe, t) for t in tests if wanted(d, t))
+    have = {f"{d}:{t}" for d, _, t in jobs}
+    for k in sorted(expected):
+        d, _, t = k.partition(":")
+        if k in have or t == "--list":
+            continue
+        if explicit or (d in listed and listed[d][1] and wanted(d, t)):
+            problems.append(f"{k}: expected test is not planned (not listed by its program, or not selected)")
+    for d, ts in sel.items():
+        problems.extend(f"{d}:{t}: selected test not listed by its program" for t in sorted(ts)
+                        if t and d in listed and listed[d][1] and t not in listed[d][1])
+    if not jobs:
+        problems.append("nothing planned: no test selected")
+    return jobs, problems
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--arch", default="i386")
@@ -162,23 +197,20 @@ def main():
     if sel:
         dlls = [d for d in dlls if d in sel] + [d for d in sel if d not in dlls]
 
-    jobs = []
+    exp_path = a.expected or os.path.join(HERE, f"expected-{a.arch}{suffix}.tsv")
+    if a.expected and not os.path.isfile(exp_path):
+        raise FileNotFoundError(exp_path)
+    expected = read_tsv(exp_path)
     env = dict(os.environ, SAKE_C=tempfile.mkdtemp(prefix="winetest-c-"), SAKE_NO_EXEC="1")  # (listing only)
+    listed = {}
     for d in dlls:
         exe = os.path.join(bindir, d.split(".")[0] + "_test.exe")
-        if not os.path.exists(exe):
-            print(f"missing {exe}", file=sys.stderr)
-            continue
-        tests = list_tests(sake, exe, env)
-        if not tests:
-            print(f"{d}: --list gave no tests", file=sys.stderr)
-            jobs.append((d, exe, "--list"))
-        for t in tests:
-            if not sel.get(d) or "" in sel[d] or t in sel[d]:
-                jobs.append((d, exe, t))
+        listed[d] = (exe, list_tests(sake, exe, env) if os.path.exists(exe) else None)
     shutil.rmtree(env["SAKE_C"], ignore_errors=True)
+    all_jobs, unplanned = plan(listed, sel, expected, bool(a.expected))
     si, sn = map(int, a.shard.split("/"))
-    jobs = jobs[si::sn]
+    jobs = all_jobs[si::sn]
+    print(f"plan: {len(jobs)} of {len(all_jobs)} tests (shard {a.shard})", file=sys.stderr)
 
     results = {}
     if a.browser:
@@ -202,15 +234,11 @@ def main():
             results[f"{d}:{t}"] = r
             print(f"{r['status']:7} {d}:{t} {r['executed']} tests, {r['failures']} failures ({r['secs']:.0f}s)", flush=True)
 
-    exp_path = a.expected or os.path.join(HERE, f"expected-{a.arch}{suffix}.tsv")
-    if a.expected and not os.path.isfile(exp_path):
-        raise FileNotFoundError(exp_path)
-    expected = read_tsv(exp_path)
     # tests whose failure count depends on thread timing: only their status is compared
     flaky = {l.split()[0] for l in open(os.path.join(HERE, "flaky.txt")) if l.strip() and not l.startswith("#")}
-    worse, better = [], []
-    if a.expected:
-        worse.extend(f"{k}: expected test did not run" for k in sorted(expected.keys() - results.keys()))
+    worse, better = list(unplanned), []
+    # (every planned test answered: a job that left no result is a test that did not run)
+    worse.extend(f"{d}:{t}: planned, no result" for d, _, t in jobs if f"{d}:{t}" not in results)
     for k in sorted(results):
         r = results[k]
         if k not in expected:
@@ -246,6 +274,10 @@ def main():
         print(f"new     {k}: {results[k]['status']} ({results[k]['failures']})")
     for l in worse:
         print(f"WORSE   {l}")
+    if unplanned:
+        # (--update too: a run that could not plan everything must not rewrite the baseline's gaps away)
+        print(f"\n{len(unplanned)} tests or programs the run could not plan")
+        return 1
     if worse and not a.update:
         print(f"\n{len(worse)} regressions against {os.path.relpath(exp_path, ROOT)}")
         return 1

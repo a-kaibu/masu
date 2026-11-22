@@ -13,7 +13,7 @@
 
 import type { Reply, Request } from "./snapz-worker";
 import { memGate } from "./memgate";
-import { sakeBase, type SakeBuild } from "./runtime";
+import { buildIdsUrl, snapzUrl, type SakeBuild } from "./runtime";
 import { bgraToRgba } from "./screen-stats";
 import {
   cache,
@@ -122,13 +122,12 @@ function fail(w: Worker, e: Error): void {
   for (const p of waiting.values()) p.reject(e);
   waiting.clear();
 }
-const snapzUrl = () => `${sakeBase()}snapz.mjs`;
 
 let buildIds: Promise<Map<string, string>> | undefined;
 /** The ids of this page's sake builds, by name (crates/sake/build.sh writes build-id.txt:
  * "<name> <id>" lines). */
 export function builds(): Promise<Map<string, string>> {
-  buildIds ??= fetch(`${sakeBase()}build-id.txt`, { cache: "no-cache" }).then(
+  buildIds ??= fetch(buildIdsUrl(), { cache: "no-cache" }).then(
     async (r) =>
       new Map(
         r.ok

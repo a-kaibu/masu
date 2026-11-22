@@ -20,6 +20,7 @@
 //   &pre=x,y              clicked every 3 s before the title (a first-start dialog; client pixels)
 //   &env=MASU_JIT_PROFILE=1  print the executed instruction counts at the end (console)
 
+import { hasRun, readPlan, writePlan } from "./launch-plan";
 import { setBench } from "./ui/store";
 import { renderShell } from "./ui/Shell";
 const NATIVE = { title: 5.9, cores: 0.18 };
@@ -46,14 +47,17 @@ const earlier: Rows[] = (() => {
     return [];
   }
 })();
-if (!params.has("run")) {
-  params.set("run", "Z:\\masu\\game\\reunion.exe");
-  params.set("mount", "/masu/game=reunion");
+if (!hasRun(params)) {
+  // (the screen the numbers were taken on: on kura's 1366x768 default Reunion's title ignores
+  // clicks)
+  writePlan(params, {
+    run: "Z:\\masu\\game\\reunion.exe",
+    args: { kind: "list", list: [] },
+    mounts: ["/masu/game=reunion"],
+    env: ["MASU_SCREEN=1280x720"],
+  });
   params.set("autostart", "");
   params.set("load", "");
-  // the screen the numbers were taken on: on kura's 1366x768 default Reunion's title ignores
-  // clicks
-  params.append("env", "MASU_SCREEN=1280x720");
   history.replaceState(null, "", `?${params}`);
 }
 
@@ -231,7 +235,7 @@ async function story(): Promise<void> {
     device,
   ];
   // &env=MASU_JIT_PROFILE=1: the executed instruction counts (to stderr, the console)
-  if (params.getAll("env").some((e) => e.startsWith("MASU_JIT_PROFILE="))) sake()?._vnhost_jit_profile?.();
+  if (readPlan(params).env.some((e) => e.startsWith("MASU_JIT_PROFILE="))) sake()?._vnhost_jit_profile?.();
   await fetch("bench-log", { method: "PUT", body: lines.join("\n") }).catch(() => undefined);
   if (round < runs) {
     try {

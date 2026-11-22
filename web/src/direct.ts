@@ -10,7 +10,7 @@ import { blake3Hex } from "./blake3";
 import { CLASS } from "./budget";
 import { fetchRetry, HttpError, type RetryOptions } from "./net";
 import { chunkHome } from "./release-trees";
-import { sakeBase } from "./runtime";
+import { snapzUrl } from "./runtime";
 
 export interface DirectInfo {
   url: string;
@@ -88,9 +88,7 @@ const UNZSTD_MAX = 64 << 20;
  * 64 MiB once more: each try's 16 or 64 MiB grew snapz's memory for good, and with no _free each
  * decode leaked them). */
 export const snapzUnzstd: Unzstd = async (frame) => {
-  snapz ??= import(/* @vite-ignore */ `${sakeBase()}snapz.mjs`).then((m: { default: () => Promise<Snapz> }) =>
-    m.default(),
-  );
+  snapz ??= import(/* @vite-ignore */ snapzUrl()).then((m: { default: () => Promise<Snapz> }) => m.default());
   const z = await snapz.catch((e: unknown) => {
     snapz = undefined;
     throw e;

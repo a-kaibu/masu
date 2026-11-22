@@ -10,7 +10,7 @@ let stopPlay: (() => void) | undefined;
 //   /play.html                      the game list (web/src/launcher.ts, masu add-game)
 //   /play.html?game=id              a game from the list (its run, mount, args and env)
 //   /play.html?run=C:\path\to.exe   program to start
-//   &args=a,b                       its arguments
+//   &arg=a                          an argument (repeated; or &cmdline=: launch-plan.ts)
 //   &mount=/masu/game=tree          also mount a store tree (repeatable; Z:\masu\game\...)
 //   &env=NAME=value                 extra environment variable (repeatable, e.g. SAKE_TRACE_FILES=1)
 //   &nosave                         no saved games (masu serve's pre-run: its x86 regions only)
@@ -20,9 +20,11 @@ let stopPlay: (() => void) | undefined;
 //   &warm=0                         don't fetch the rest of the game's files onto the device while it plays (warm.ts)
 
 import { chunkCacheMb } from "./chunkcache";
-import { keepSaving, loadSaves, type SavesModule } from "./saves";
+import { keepSaving, loadSaves, movedSaves, type LoadOutcome, type SavesModule } from "./saves";
 import { memGate } from "./memgate";
 import { startWebGame } from "./html";
+import { inputTarget, ProcessTable } from "./session";
+import { argsText, hasRun, missingFeature, readPlan, SAKE_NEEDS, sakeArguments } from "./launch-plan";
 import { linuxKeycode } from "./keymap";
 import { AutoAdvance, DEFAULT_SETTINGS, parseSettings, type AutoSettings } from "./autoadvance";
 import { AudioOut } from "./audio";
@@ -54,7 +56,7 @@ import {
   withRetries,
 } from "./net";
 import {
-  fileVersion,
+  runtimeManifest,
   fnv,
   jitBase as jitBaseOf,
   gameChunksName,
@@ -149,7 +151,7 @@ interface SakeModule {
   _vnhost_video_fail(id: number): void;
   _free(ptr: number): void;
   _vnhost_adec_doorbell(): number;
-  _vnhost_adec_list(out: number, max: number): number;
+  _vnhost_adec_list(out: number, max: number, from: number): number;
   _vnhost_adec_chunk(id: number, gen: number, size: number, seq: number): number;
   _vnhost_adec_pcm(id: number, gen: number, pcm: number, frames: number, channels: number): void;
   _vnhost_adec_done(id: number, gen: number, seq: number): void;
@@ -250,12 +252,14 @@ async function loadSavesOrOld(
   name: string,
   old: string | null,
   notice: (m: string) => void,
-): Promise<Uint8Array | null> {
+): Promise<LoadOutcome> {
   const saves = await loadSaves(name, notice);
-  if (saves?.length || !old) return saves;
-  const moved = renameRecords(await loadSaves(old, notice));
-  if (moved?.length) log(`以前のセーブを引き継ぎました (${old})`);
-  return moved ?? saves;
+  if (saves.data?.length || !old) return saves;
+  const moved = renameRecords((await loadSaves(old, notice)).data);
+  if (!moved) return saves;
+  if (moved.length) log(`以前のセーブを引き継ぎました (${old})`);
+  // (written under this name by the keeper: neither side of it holds them yet)
+  return movedSaves(moved);
 }
 
 /** The guest's lines shown in the console (all of them reach the crash log); &alllines: every
@@ -268,11 +272,12 @@ const leftOut = (n: number) =>
   console.warn(`(${n} lines of the program's output not shown: too many at once)`);
 
 async function boot(audio: Promise<AudioOut>): Promise<void> {
-  const run = params.get("run") ?? "C:\\wintest.exe";
+  const plan = readPlan(params);
+  const run = plan.run;
   // saved games: per program and mounts; what it writes in its folders and the user folders
   // (&saves: the launcher's, kept by the program it started: BISHOP's startup.exe writes the
   // bsxx.ini its game reads)
-  const mounts = params.getAll("mount");
+  const mounts = [...plan.mounts];
   const saveNameOf = (r: string, m: string[]) =>
     `${r.replace(/[^A-Za-z0-9_.-]/g, "_")}-${fnv(new TextEncoder().encode(m.join(":")))}`;
   const saveName = params.get("saves") ?? saveNameOf(run, mounts);
@@ -293,6 +298,9 @@ async function boot(audio: Promise<AudioOut>): Promise<void> {
     if (!nosave && params.get("game")) stopPlay = trackPlay(params.get("game")!);
     return;
   }
+  // (what sake needs of the browser: checked for this start, the list works without it)
+  const problem = missingFeature(SAKE_NEEDS);
+  if (problem) throw new Error(problem);
   log("sake を読み込み中");
   const BASE = sakeBase();
   // a save state to go on from (&state=<slot>: the states dialog starts the page again so), in
@@ -344,12 +352,14 @@ async function boot(audio: Promise<AudioOut>): Promise<void> {
   recorder = new FlightRecorder(params.get("game") ?? run.slice(run.lastIndexOf("\\") + 1), {
     game: params.get("game") ?? "",
     run,
-    args: params.get("args") ?? "",
-    mounts: params.getAll("mount").join(" "),
-    env: params.getAll("env").join(" "),
+    args: argsText(plan.args),
+    mounts: plan.mounts.join(" "),
+    env: plan.env.join(" "),
   });
   // the browser keeps a versioned sake.wasm with its compiled code (see masu serve)
-  const wasmVersion = fileVersion(`${BASE}${WASM}`);
+  // (the runtime's files this start reads: the same manifest offline.ts saves, runtime.ts)
+  const manifest = runtimeManifest(build);
+  const wasmVersion = manifest.then((m) => m.wasmVersion);
   // x86 regions earlier runs of this program saved (masu serve /jit), per build of sake.wasm
   // (which has the translator); &jit=0 for none
   const jitBase = params.get("jit") ?? jitBaseOf(run);
@@ -378,12 +388,12 @@ async function boot(audio: Promise<AudioOut>): Promise<void> {
   const ahead = jitName ? readAhead(listed, jit, chunkSizes, busyWidth) : undefined;
   // versioned too: the game's threads past the pool each start a worker from it, and a URL the
   // browser must revalidate fails while the link is down (the game then hangs)
-  const scriptUrl = versioned(`${BASE}${build.name}.js`, await fileVersion(`${BASE}${build.name}.js`));
+  const scriptUrl = (await manifest).script;
   const factory = (await import(/* @vite-ignore */ scriptUrl)).default as (m: object) => Promise<SakeModule>;
   const version = await wasmVersion;
   // sake's wasm from the bucket when the browser lacks the server's (wasmsource.ts): a far or
   // slow server held the start for minutes; &wasm=server: always the server's
-  const wasmUrl = new URL(versioned(`${BASE}${WASM}`, version), location.href).href;
+  const wasmUrl = (await manifest).wasm;
   const wasmBytes = runtimeWasm(
     WASM,
     wasmUrl,
@@ -401,15 +411,11 @@ async function boot(audio: Promise<AudioOut>): Promise<void> {
   );
   const saveRoots = [...mounts.map((m) => m.slice(0, m.indexOf("="))), "/masu/prefix/drive_c/users"];
   const { files: installation, registry: legacyRegistry } = await loadInstallation();
-  const saved = nosave
+  // (what each side holds goes to the keeper: the bytes below are what the game starts from)
+  const savesLoaded = nosave
     ? null
-    : withRegistry(
-        selectRecords(
-          await loadSavesOrOld(saveName, oldSaves, (m) => (log(m), toast.warning(m))),
-          portablePath,
-        ),
-        legacyRegistry,
-      );
+    : await loadSavesOrOld(saveName, oldSaves, (m) => (log(m), toast.warning(m)));
+  const saved = savesLoaded && withRegistry(selectRecords(savesLoaded.data, portablePath), legacyRegistry);
   let stateMem: WebAssembly.Memory | undefined;
   // sake.wasm got its 4 GB and still did not start (runtime.ts growRetry): again on sake-grow
   let started = false;
@@ -484,7 +490,10 @@ async function boot(audio: Promise<AudioOut>): Promise<void> {
   let activeModule: SakeModule | undefined;
   let rootModule: SakeModule | undefined;
   let rootExited = false;
-  let pendingChildren = 0;
+  // (the run's processes: the last one to end, whichever, ends the run and goes back; review
+  // 22bb061 §5: a child without a window left after the root was never noticed)
+  const procs = new ProcessTable(() => setTimeout(closeGame, 0));
+  currentRun = procs;
   const moduleArg = {
     vnvmAccount,
     vnvmSensitive,
@@ -497,10 +506,7 @@ async function boot(audio: Promise<AudioOut>): Promise<void> {
     // (the release's trees' chunks on its Pages, for the network worker: release-trees.ts)
     masuPages: pagesChunks(),
     // (sake takes the host path: Z:\\x\\y.exe is /x/y.exe)
-    arguments: [
-      run.replace(/^z:/i, "").replaceAll("\\", "/"),
-      ...(params.get("args")?.split(",").filter(Boolean) ?? []),
-    ],
+    arguments: sakeArguments(plan).argv,
     mainScriptUrlOrBlob: scriptUrl,
     // (sake.wasm: the 4 GB the page could reserve, see sakeBuild; or the memory a state filled,
     // the module starting its threads where they stood)
@@ -518,7 +524,7 @@ async function boot(audio: Promise<AudioOut>): Promise<void> {
     )),
     vnvmEnv: {
       // "/=": an empty tree at the root, so every path is kura's (no emscripten file system)
-      MASU_MOUNTS: ["/=", "/masu/prefix=prefix32", ...params.getAll("mount")].join(":"),
+      MASU_MOUNTS: ["/=", "/masu/prefix=prefix32", ...plan.mounts].join(":"),
       LANG: "ja_JP.UTF-8",
       // sake's C:\ (the prefix's fonts)
       SAKE_C: "/masu/prefix/drive_c",
@@ -547,9 +553,9 @@ async function boot(audio: Promise<AudioOut>): Promise<void> {
       ...(/^z:\\/i.test(run)
         ? { MASU_CWD: run.slice(2, run.lastIndexOf("\\")).replaceAll("\\", "/") || "/" }
         : {}),
-      ...Object.fromEntries(
-        params.getAll("env").map((e) => [e.slice(0, e.indexOf("=")), e.slice(e.indexOf("=") + 1)]),
-      ),
+      // (a program's own command line text, kept as written: launch-plan.ts)
+      ...sakeArguments(plan).env,
+      ...Object.fromEntries(plan.env.map((e) => [e.slice(0, e.indexOf("=")), e.slice(e.indexOf("=") + 1)])),
     },
     // read by kura's file system as "@saves" (host/vnfs.js); a state has its files already
     vnvmSaves: stateMem ? null : joinRecords(saved, installation),
@@ -575,7 +581,7 @@ async function boot(audio: Promise<AudioOut>): Promise<void> {
       console.log(`exit code ${code}`);
       stopPlay?.();
       rootExited = true;
-      exited = childProcesses.size === 0 && pendingChildren === 0;
+      procs.rootExited();
     },
     printErr: (line: string) => {
       if (shirusu.take(line)) return;
@@ -597,7 +603,7 @@ async function boot(audio: Promise<AudioOut>): Promise<void> {
     sharedFs: SharedArrayBuffer,
   ): void {
     noStates();
-    pendingChildren++;
+    const ticket = procs.child();
     const surface = document.createElement("canvas");
     surface.className = "process-screen";
     surface.dataset.pid = String(request.pid);
@@ -606,17 +612,10 @@ async function boot(audio: Promise<AudioOut>): Promise<void> {
     canvas.after(surface);
     let child: SakeModule | undefined;
     let finished = false;
-    let settled = false;
     let rect = 0;
     let observer: ResizeObserver | undefined;
     let timer: ReturnType<typeof setInterval> | undefined;
     let stopWatch: (() => void) | undefined;
-    const settle = () => {
-      if (!settled) {
-        settled = true;
-        pendingChildren--;
-      }
-    };
     const finish = () => {
       if (finished) return;
       finished = true;
@@ -633,16 +632,15 @@ async function boot(audio: Promise<AudioOut>): Promise<void> {
         (window as unknown as { vnvmSake: SakeModule }).vnvmSake = rootModule;
         void audio.then((out) => out.attach(rootModule!));
       }
-      if (rootExited && !childProcesses.size && !pendingChildren) exited = true;
+      ticket.ended();
     };
     const failed = () => {
-      settle();
       finish();
       toast.error("プログラムを起動できませんでした。");
     };
     // (a second or third 4 GB memory is what a phone refuses: then the module makes its own, or
     // its start fails through the catch below; a throw here used to escape spawn with
-    // pendingChildren up for good, and the page never went back to the list)
+    // its ticket open for good, and the page never went back to the list)
     let memory: WebAssembly.Memory | undefined;
     if (build.memory)
       try {
@@ -672,12 +670,8 @@ async function boot(audio: Promise<AudioOut>): Promise<void> {
       quit: () => {},
     })
       .then((module) => {
-        settle();
         child = module;
-        if (finished) {
-          if (rootExited && !childProcesses.size && !pendingChildren) exited = true;
-          return;
-        }
+        if (finished) return;
         childProcesses.add(module);
         module._vnhost_render_resize(
           ...surfaceSize(canvas.clientWidth, canvas.clientHeight, devicePixelRatio),
@@ -742,7 +736,7 @@ async function boot(audio: Promise<AudioOut>): Promise<void> {
         );
         clearInterval(timer);
         new Uint8Array(vnvmAccount, 4).fill(0);
-      } else if (Date.now() >= until || exited) {
+      } else if (Date.now() >= until || procs.ended) {
         clearInterval(timer);
         new Uint8Array(vnvmAccount, 4).fill(0);
       }
@@ -752,9 +746,15 @@ async function boot(audio: Promise<AudioOut>): Promise<void> {
   recorder.attach(sake);
   if (!nosave) {
     // (the game quits: the upload tried now, even in the pause after a failed one)
-    const save = keepSaving(sake as unknown as SavesModule, saveName, saveRoots, saved, {
-      notice: (m) => (log(m), toast.warning(m, { duration: 15_000 })),
-    });
+    const save = keepSaving(
+      sake as unknown as SavesModule,
+      saveName,
+      saveRoots,
+      savesLoaded ?? movedSaves(null),
+      {
+        notice: (m) => (log(m), toast.warning(m, { duration: 15_000 })),
+      },
+    );
     saveNow = () => save(true);
   }
   // for tests/play.mjs (headless Chromium can't present WebGPU canvases)
@@ -770,7 +770,7 @@ async function boot(audio: Promise<AudioOut>): Promise<void> {
   }
   ahead?.(sake);
   // what each script of the trees names, read by the server ahead: kura foresees from it (foresee.ts)
-  void fetchForesee(mountedTrees(params.getAll("mount")), (tree, text) => {
+  void fetchForesee(mountedTrees(mounts), (tree, text) => {
     void (async () => {
       // (a save state is being taken: the memory stays as it is)
       while (snapping()) await new Promise((r) => setTimeout(r, 50));
@@ -1247,10 +1247,8 @@ function watch(
   // the drawing's WebGPU device lost and made again, or not (host/vngpu.js)
   let lost = 0;
   const frame = () => {
-    if (exited) {
-      stop();
-      return closeGame();
-    }
+    // (the run ended: its table goes back, ProcessTable's onEnded)
+    if (runEnded()) return stop();
     if (!live()) return stop();
     // (a state is being taken: the memory stays as it is)
     if (memGate.closed) return;
@@ -1310,10 +1308,11 @@ function attachAuto(current: () => SakeModule): void {
   const a = new AutoAdvance({
     push: (kind, x, y, data) => {
       // (the game is gone: closeGame stops this)
-      if (exited) return;
+      if (runEnded()) return;
       memGate.run(() => void current()._vnhost_render_input(kind, x, y, data));
     },
-    closed: () => memGate.closed,
+    // (a state being taken, or the page's UI taking the keys: no clicks for the game meanwhile)
+    closed: () => memGate.closed || inputTarget(document.activeElement) === "overlay",
     // (no pointer yet: the middle of the screen, low, where the text usually is)
     at: () => pointerAt ?? [Math.round(canvas.width / 2), Math.round(canvas.height * 0.85)],
   });
@@ -1416,6 +1415,9 @@ function attachInput(current: () => SakeModule): void {
     { passive: false },
   );
   const key = (kind: number) => (e: KeyboardEvent) => {
+    // (a key typed in the page's own UI is its own: not the game's, and not kept from it;
+    // review 22bb061 §5, a Tab in a field went to the game and moved no focus)
+    if (inputTarget(e.target) === "overlay") return;
     const vk = virtualKey(e.code);
     if (!vk) return;
     // PC scan code set 1 matches the Linux keycodes below 89
@@ -1435,13 +1437,9 @@ function attachInput(current: () => SakeModule): void {
     for (const d of r.keys) push(KEY_UP, 0, 0, d);
   };
   window.addEventListener("blur", away);
+  // (the page's UI taking the keys, a dialog opened: what the game had held is let go)
+  document.addEventListener("focusin", (e) => inputTarget(e.target) === "overlay" && away());
   document.addEventListener("visibilitychange", () => document.visibilityState === "hidden" && away());
-}
-
-function checkSupport(): string | null {
-  if (!crossOriginIsolated) return "SharedArrayBuffer が使えません (COOP/COEP ヘッダが必要)";
-  if (!("gpu" in navigator)) return "WebGPU に対応していないブラウザです";
-  return null;
 }
 
 // the game list: play.html / index.html only (bench.html and game.html have none)
@@ -1479,14 +1477,8 @@ async function main(): Promise<void> {
   // a weak link: say that the game waits for the network (the requests are being retried)
   watchRetries((n) => setUi({ net: n > 0 }));
   void trimChunks(savedChunks).catch(() => undefined);
-  const problem = checkSupport();
-  if (problem) {
-    log(problem);
-    setStart({ disabled: true });
-    return;
-  }
   // the list: picking a game starts it from that click
-  if (library && !params.has("run") && !params.has("game")) {
+  if (library && !hasRun(params) && !params.has("game")) {
     setStart({ shown: false });
     log("");
     const games = await fetchGames();
@@ -1505,7 +1497,7 @@ async function main(): Promise<void> {
   }
   const id = params.get("game");
   if (library && id && needsListBelow(history.state, id)) {
-    if (params.has("run")) {
+    if (hasRun(params)) {
       // the program a game started in its place (closeGame): over the game's entry, the list's
       // still under it
       history.replaceState({ game: id }, "", location.href);
@@ -1516,7 +1508,7 @@ async function main(): Promise<void> {
       history.pushState({ game: id }, "", here);
     }
   }
-  if (id && !params.has("run")) {
+  if (id && !hasRun(params)) {
     const g = (await fetchGames()).find((x) => x.id === id);
     if (!g) throw new Error(`ゲーム ${id} が一覧にありません`);
     applyGame(params, g);
@@ -1546,8 +1538,10 @@ main().catch((e) => {
 
 /** After the game quit: leaves fullscreen and goes back to the start screen (a fresh page). */
 let saveNow: () => Promise<void> = async () => {};
-/** The program ended the runtime (Module.onExit). */
-let exited = false;
+/** The running game's processes (boot's); none before it starts. */
+let currentRun: ProcessTable | undefined;
+/** The run ended: its last process did. */
+const runEnded = () => currentRun?.ended ?? false;
 
 /** The program the game started in its own place (a launcher's game), run when it exits. */
 let nextRun: { run: string; args: string } | undefined;

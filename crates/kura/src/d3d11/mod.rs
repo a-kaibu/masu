@@ -223,8 +223,20 @@ pub struct Buffer {
     pub stream: bool,
     /// a dynamic buffer's bytes as last uploaded (what `stream` uploads are diffed against)
     pub shadow: Vec<u8>,
-    /// stream output wrote `gpu` since `mem` was its bytes (expand::pull reads it back)
-    pub gpu_written: bool,
+    /// which copy holds the bytes: `mem`, or `gpu` once stream output wrote it (expand::pull
+    /// reads it back; only a readback that came makes `mem` the newest again)
+    pub newest: Newest,
+}
+
+/// Where a buffer's newest bytes are (Buffer::newest). A readback that failed leaves `Page`:
+/// the next pull asks again (a bool cleared whatever the readback's answer lost them for good,
+/// review of 6852be1).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Newest {
+    /// the guest's memory (`mem`)
+    Guest,
+    /// the page's buffer (`gpu`): stream output wrote it since
+    Page,
 }
 
 pub struct Texture {
@@ -521,7 +533,6 @@ pub struct D11 {
     null_views: [u32; 2],
     /// page targets set in this batch generation
     targets: Option<(u64, Vec<u32>)>,
-    next_gpu: u32,
     /// the page's lost devices seen (render::lost_gen, see `after_lost`)
     lost_seen: u32,
     /// the expanded draws' page buffers and shaders, the queries that count on the page
@@ -538,7 +549,7 @@ enum After {
     /// (to window `.0`)
     Present(u32),
     /// readbacks to wait for
-    Readback(Vec<u32>),
+    Readback(Vec<gpu::Readback>),
     /// milliseconds to sleep
     Sleep(u64),
 }
@@ -883,7 +894,6 @@ pub unsafe fn init(vtbls: *const u32, count: u32) -> u32 {
                 view_ranges: HashMap::new(),
                 null_views: [0; 2],
                 targets: None,
-                next_gpu: 0,
                 lost_seen: crate::render::lost_gen(),
                 expand: expand::Gpu::default(),
             })
@@ -1534,7 +1544,7 @@ fn after_lost(d: &mut D11) {
             Some(Data::Buffer(b)) if b.gpu != 0 => {
                 b.dirty = true;
                 b.stream = false;
-                b.gpu_written = false;
+                b.newest = Newest::Guest;
             }
             Some(Data::Texture(t)) if t.gpu != 0 && !t.bits.is_empty() => {
                 let mut subs: Vec<(u32, Vec<u8>)> = t.bits.iter().map(|(&k, v)| (k, v.clone())).collect();
@@ -2230,7 +2240,7 @@ unsafe fn device_call(d: &mut D11, m: u32, this: u32, a: &dyn Fn(usize) -> u32) 
             if a(2) != 0 {
                 std::ptr::copy_nonoverlapping(gc::<u8>(rdp(a(2), 0)), gp::<u8>(mem), us(size));
             }
-            let o = d.new_obj(IF_BUFFER, Data::Buffer(Buffer { size, usage, bind, cpu, misc, stride, mem, gpu: 0, dirty: true, stream: false, shadow: Vec::new(), gpu_written: false }));
+            let o = d.new_obj(IF_BUFFER, Data::Buffer(Buffer { size, usage, bind, cpu, misc, stride, mem, gpu: 0, dirty: true, stream: false, shadow: Vec::new(), newest: Newest::Guest }));
             if d.trace && size <= 256 {
                 let f: Vec<f32> = (0..size / 4).map(|i| *(gc::<f32>(mem + 4 * i))).collect();
                 eprintln!("d3d11: new buffer {o} bind {bind:#x} usage {usage} = {f:?}");
@@ -2910,9 +2920,8 @@ unsafe fn nv12_pull(d: &mut D11, id: u32) {
         std::ptr::write_bytes(gp::<u8>(tmp), 0, us(size));
         let mut reqs = Vec::new();
         for (g, gw, gh, at) in [(luma_gpu, w, h, tmp), (chroma_gpu, w / 2, h / 2, tmp + pitch * h)] {
-            d.next_gpu += 1;
-            let req = 0x4000_0000 | d.next_gpu;
-            let c = [gpu::READBACK, req, g, l << 16, 0, 0, gw, gh, at, pitch];
+            let req = gpu::Readback::new();
+            let c = [gpu::READBACK, req.word(), g, l << 16, 0, 0, gw, gh, at, pitch];
             gpu::record(|q| q.cmd(&c));
             reqs.push(req);
         }
@@ -3566,7 +3575,7 @@ unsafe fn context_call2(d: &mut D11, st: &mut State, m: u32, a: &dyn Fn(usize) -
                     let g = buffer_gpu(d, dst);
                     gpu::record(|q| q.cmd(&[gpu::COPY_BUFFER, page, 0, g, at, 4]));
                     if let Some(Data::Buffer(b)) = d.objs.get_mut(&dst).map(|o| &mut o.data) {
-                        b.gpu_written = true;
+                        b.newest = Newest::Page;
                     }
                 }
             }
@@ -3971,7 +3980,7 @@ unsafe fn map(d: &mut D11, res: u32, sub: u32, ty: u32, out: u32, dxgi: bool, af
     // (what stream output wrote, back first: but for WRITE_DISCARD, whose bytes are new)
     if ty == 4 {
         if let Some(Data::Buffer(b)) = d.objs.get_mut(&id).map(|o| &mut o.data) {
-            b.gpu_written = false;
+            b.newest = Newest::Guest;
         }
     } else {
         expand::pull(d, id);
@@ -4030,10 +4039,9 @@ unsafe fn map(d: &mut D11, res: u32, sub: u32, ty: u32, out: u32, dxgi: bool, af
                 let (_, layer, ..) = sub_size(t, sub);
                 if ty != 4 && holds_bits(t) && !keeps_bits(t) && !t.clean.contains(&sub) && !(fresh && t.pristine) {
                     for z in 0..depth {
-                        d.next_gpu += 1;
-                        let req = 0x4000_0000 | d.next_gpu;
+                        let req = gpu::Readback::new();
                         let (g, l) = (t.gpu, level | (layer + z) << 16);
-                        gpu::record(|q| q.cmd(&[gpu::READBACK, req, g, l, 0, 0, lw, lh, mem + z * pitch * rows, pitch]));
+                        gpu::record(|q| q.cmd(&[gpu::READBACK, req.word(), g, l, 0, 0, lw, lh, mem + z * pitch * rows, pitch]));
                         reqs.push(req);
                     }
                 } else if ty != 4 && !t.clean.contains(&sub) {
@@ -4379,9 +4387,8 @@ unsafe fn source_bytes(d: &mut D11, id: u32, sub: u32, b: [u32; 6]) -> Option<u3
         }
         for z in 0..depth {
             std::ptr::write_bytes(gp::<u8>(tmp), 0, us(n));
-            d.next_gpu += 1;
-            let req = 0x4000_0000 | d.next_gpu;
-            let c = [gpu::READBACK, req, g, level | (layer + z0 + z) << 16, x0, y0, w, h, tmp, pp];
+            let req = gpu::Readback::new();
+            let c = [gpu::READBACK, req.word(), g, level | (layer + z0 + z) << 16, x0, y0, w, h, tmp, pp];
             gpu::record(|q| q.cmd(&c));
             gpu::wait_readback(req);
             let page = std::slice::from_raw_parts(gc::<u8>(tmp), us(n));
@@ -4397,9 +4404,8 @@ unsafe fn source_bytes(d: &mut D11, id: u32, sub: u32, b: [u32; 6]) -> Option<u3
     }
     let mut reqs = Vec::new();
     for z in 0..depth {
-        d.next_gpu += 1;
-        let req = 0x4000_0000 | d.next_gpu;
-        let c = [gpu::READBACK, req, g, level | (layer + z0 + z) << 16, x0, y0, w, h, mem + z * pitch * rows, pitch];
+        let req = gpu::Readback::new();
+        let c = [gpu::READBACK, req.word(), g, level | (layer + z0 + z) << 16, x0, y0, w, h, mem + z * pitch * rows, pitch];
         gpu::record(|q| q.cmd(&c));
         reqs.push(req);
     }
@@ -5052,7 +5058,7 @@ unsafe fn draw_with(d: &mut D11, st: &State, indexed: bool, count: u32, instance
     // and with other bytes written around it (0: unknown)
     // (a buffer stream output wrote: the page's bytes are not the guest's, unknown)
     let mem = |id: u32| match d.objs.get(&id).map(|o| &o.data) {
-        Some(Data::Buffer(b)) if !b.gpu_written => Some((b.mem, b.size)),
+        Some(Data::Buffer(b)) if b.newest == Newest::Guest => Some((b.mem, b.size)),
         _ => None,
     };
     let mut known = count <= 4096 && store.is_none();
@@ -5240,7 +5246,7 @@ fn buffer_view_binding(d: &mut D11, st: &State, stage: usize, bi: u32) -> ([u32;
     let g = buffer_gpu(d, buf);
     if rw && let Some(Data::Buffer(b)) = d.objs.get_mut(&buf).map(|o| &mut o.data) {
         // (the shader may write it: the page's bytes are the buffer's from now on)
-        b.gpu_written = true;
+        b.newest = Newest::Page;
     }
     let at = off & !255;
     // (`at` is `off` with its low 8 bits cleared: never above it)

@@ -237,12 +237,14 @@ jobs:
       - name: Compare with Windows immediately (without waiting for the GPU)
         env:
           MODE: ${{ matrix.mode }}
-        run: python3 tests/winref/compare.py tests/winref/golden "out/$MODE" --known tests/winref/known.txt --quarantine tests/winref/quarantine.tsv
+        run: python3 tests/winref/compare.py tests/winref/golden "out/$MODE" --known tests/winref/known.txt --quarantine tests/winref/quarantine.tsv --require-plan node
       - uses: actions/upload-artifact@v7.0.2
         if: always()
         with:
           name: winref-out-node-${{ matrix.mode }}
           path: out
+          # (out/<mode>/.plan: which probes each runner meant to run, compare.py's --require-plan)
+          include-hidden-files: true
           retention-days: 7
 
   sake-browser:
@@ -312,6 +314,8 @@ jobs:
         with:
           name: winref-out-browser-${{ matrix.shard }}
           path: out
+          # (out/<mode>/.plan: which probes each runner meant to run, compare.py's --require-plan)
+          include-hidden-files: true
           retention-days: 7
 
   sake:
@@ -327,10 +331,10 @@ jobs:
           merge-multiple: true
           path: out
       - name: sake (JIT) against Windows
-        run: python3 tests/winref/compare.py tests/winref/golden out/jit --known tests/winref/known.txt --quarantine tests/winref/quarantine.tsv --png png --report jit.md
+        run: python3 tests/winref/compare.py tests/winref/golden out/jit --known tests/winref/known.txt --quarantine tests/winref/quarantine.tsv --require-plan node --require-plan browser-0of4 --require-plan browser-1of4 --require-plan browser-2of4 --require-plan browser-3of4 --require-plan browser64-0of4-d2d-64 --require-plan browser64-1of4-d2d-64 --require-plan browser64-2of4-d2d-64 --require-plan browser64-3of4-d2d-64 --png png --report jit.md
       - name: sake (interpreter) against Windows
         if: always()
-        run: python3 tests/winref/compare.py tests/winref/golden out/interp --known tests/winref/known.txt --quarantine tests/winref/quarantine.tsv --report interp.md
+        run: python3 tests/winref/compare.py tests/winref/golden out/interp --known tests/winref/known.txt --quarantine tests/winref/quarantine.tsv --require-plan node --require-plan browser-0of4 --require-plan browser-1of4 --require-plan browser-2of4 --require-plan browser-3of4 --require-plan browser64-0of4-d2d-64 --require-plan browser64-1of4-d2d-64 --require-plan browser64-2of4-d2d-64 --require-plan browser64-3of4-d2d-64 --report interp.md
       - name: Summary
         if: always()
         run: cat jit.md interp.md >> "$GITHUB_STEP_SUMMARY" 2>/dev/null || true

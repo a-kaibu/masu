@@ -115,6 +115,33 @@ fn arguments(s: &[char], mut i: usize, prog: String) -> Vec<String> {
     out
 }
 
+/// An argument quoted the way programs build command lines for CommandLineToArgvW (quotes
+/// only when needed; backslashes doubled before a quote and at the end of a quoted one).
+pub fn quote(a: &str) -> String {
+    if !a.is_empty() && !a.contains([' ', '\t', '"']) {
+        return a.to_string();
+    }
+    let mut out = String::from("\"");
+    let mut slashes = 0;
+    for ch in a.chars() {
+        match ch {
+            '\\' => slashes += 1,
+            '"' => {
+                // (the n already written, n more and one for the quote)
+                out.extend(std::iter::repeat_n('\\', slashes + 1));
+                out.push('"');
+                slashes = 0;
+                continue;
+            }
+            _ => slashes = 0,
+        }
+        out.push(ch);
+    }
+    out.extend(std::iter::repeat_n('\\', slashes));
+    out.push('"');
+    out
+}
+
 /// Splits a command line into the program and the rest.
 pub fn split_command(cmd: &str) -> (String, String) {
     let cmd = cmd.trim_start();
@@ -522,7 +549,7 @@ pub fn running() -> Vec<u32> {
 
 #[cfg(test)]
 mod argv_tests {
-    use super::{argv, split_env_entry};
+    use super::{argv, quote, split_env_entry};
     use proptest::prelude::*;
 
     fn v(s: &[&str]) -> Vec<String> {
@@ -558,33 +585,6 @@ mod argv_tests {
         assert_eq!(split_env_entry("=C:=C:\\dir"), ("=C:".into(), "C:\\dir".into()));
         assert_eq!(split_env_entry("A=b=c"), ("A".into(), "b=c".into()));
         assert_eq!(split_env_entry("A="), ("A".into(), "".into()));
-    }
-
-    /// An argument quoted the way programs build command lines for CommandLineToArgvW (quotes
-    /// only when needed; backslashes doubled before a quote and at the end of a quoted one).
-    fn quote(a: &str) -> String {
-        if !a.is_empty() && !a.contains([' ', '\t', '"']) {
-            return a.to_string();
-        }
-        let mut out = String::from("\"");
-        let mut slashes = 0;
-        for ch in a.chars() {
-            match ch {
-                '\\' => slashes += 1,
-                '"' => {
-                    // (the n already written, n more and one for the quote)
-                    out.extend(std::iter::repeat_n('\\', slashes + 1));
-                    out.push('"');
-                    slashes = 0;
-                    continue;
-                }
-                _ => slashes = 0,
-            }
-            out.push(ch);
-        }
-        out.extend(std::iter::repeat_n('\\', slashes));
-        out.push('"');
-        out
     }
 
     proptest! {

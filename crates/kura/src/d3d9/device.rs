@@ -418,7 +418,6 @@ pub struct Device {
     modules: HashMap<ModKey, u32, super::FastHash>,
     next_gpu: u32,
     serial: u32,
-    readbacks: u32,
     pub dummy: u32,
     /// the last uniform blocks written in this batch (bytes, offset)
     last_vs: (Vec<u8>, u32),
@@ -1445,7 +1444,6 @@ unsafe fn create_device(d: &mut D3d, d3d: u32, ty: u32, focus: u32, behavior: u3
         modules: HashMap::default(),
         next_gpu: 0,
         serial: 0,
-        readbacks: 0,
         dummy: 0,
         last_vs: (Vec::new(), 0),
         last_ps: (Vec::new(), 0),
@@ -3236,24 +3234,26 @@ unsafe fn lock_surface(d: &mut D3d, s: u32, out: u32, rect: u32, flags: u32, aft
 /// (`x`, `y`, `w`, `h`: the box of the level read, to `mem` as its first texel)
 fn readback_as(d: &mut D3d, gpu: u32, level: u32, x: u32, y: u32, w: u32, h: u32, f: u32, mem: u32, pitch: u32) -> After {
     if fmt::same_on_page(f) || f == fmt::A32B32G32R32F {
-        return After::Readback(readback(d, gpu, level, x, y, w, h, mem, pitch));
+        return readback(d, gpu, level, x, y, w, h, mem, pitch).map_or(After::None, After::Readback);
     }
     let page = fmt::page_bpp(f);
     let staging = d.guest_alloc(w * h * page);
     if staging == 0 {
         return After::None;
     }
-    let req = readback(d, gpu, level, x, y, w, h, staging, w * page);
+    let Some(req) = readback(d, gpu, level, x, y, w, h, staging, w * page) else {
+        d.guest_free(staging);
+        return After::None;
+    };
     After::ReadbackAs { req, staging, fmt: f, w, h, dst: mem, pitch }
 }
 
-fn readback(d: &mut D3d, gpu: u32, level: u32, x: u32, y: u32, w: u32, h: u32, mem: u32, pitch: u32) -> u32 {
-    // (0: no device, no readback made)
-    let Some(dev) = d.dev.as_mut() else { return 0 };
-    dev.readbacks += 1;
-    let req = dev.readbacks;
-    gpu::record(|b| b.cmd(&[gpu::READBACK, req, gpu, level, x, y, w, h, mem, pitch]));
-    req
+fn readback(d: &mut D3d, gpu: u32, level: u32, x: u32, y: u32, w: u32, h: u32, mem: u32, pitch: u32) -> Option<gpu::Readback> {
+    // (None: no device, no readback made)
+    d.dev.as_ref()?;
+    let req = gpu::Readback::new();
+    gpu::record(|b| b.cmd(&[gpu::READBACK, req.word(), gpu, level, x, y, w, h, mem, pitch]));
+    Some(req)
 }
 
 unsafe fn unlock_surface(d: &mut D3d, s: u32) -> u32 {
@@ -4438,11 +4438,10 @@ unsafe fn front_buffer_data(d: &mut D3d, after: &mut After, chain: Option<(u32, 
     if x1 <= x0 || y1 <= y0 {
         return S_OK;
     }
-    dev.readbacks += 1;
-    let req = dev.readbacks;
+    let req = gpu::Readback::new();
     let at = mem + y0.cast_unsigned() * pitch + x0.cast_unsigned() * 4;
     let (sx, sy) = ((x0 - client[0]).cast_unsigned(), (y0 - client[1]).cast_unsigned());
-    gpu::record(|b| b.cmd(&[gpu::READBACK, req, kept, 0, sx, sy, (x1 - x0).cast_unsigned(), (y1 - y0).cast_unsigned(), at, pitch]));
+    gpu::record(|b| b.cmd(&[gpu::READBACK, req.word(), kept, 0, sx, sy, (x1 - x0).cast_unsigned(), (y1 - y0).cast_unsigned(), at, pitch]));
     *after = After::Readback(req);
     S_OK
 }

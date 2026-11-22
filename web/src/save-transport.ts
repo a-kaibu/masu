@@ -1,6 +1,24 @@
 import { same } from "./file-records";
+/** The request headers naming a record of this browser (crates/masu/src/saves.rs): a PUT's
+ * the record its bytes hold or supersede, a GET's the record asked about; the GET's answer
+ * repeats it when an upload named it. */
+export const COVERS = "x-masu-covers";
+export const ASK = "x-masu-ask";
+export const COVERED = "x-masu-covered";
 /** Bytes per second an upload is given at least before it is given up (a phone's poor link). */
 const SLOW_LINK = 64 * 1024;
+
+/** A revision (ETag) of the server's copy, as a load got it: only adopt takes it as the base of
+ * the next store, together with the bytes it is of. */
+export type Revision = string & { readonly __revision: unique symbol };
+const NONE = '"0"' as Revision;
+
+/** The server's copy as one GET answered: its bytes and the revision they are at. */
+export interface ServerCopy {
+  readonly data: Uint8Array<ArrayBuffer> | null;
+  readonly covered: boolean;
+  readonly revision: Revision;
+}
 
 /** What a store that met another device's newer save rejects with (every later store of the
  * page too: the player must reload to take the other device's save). */
@@ -27,18 +45,30 @@ export class SaveTransport {
   private limit(bytes = 0): AbortSignal {
     return AbortSignal.timeout(this.waitMs + Math.ceil((bytes / SLOW_LINK) * 1000));
   }
-  async load(url: string): Promise<Uint8Array | null> {
-    const r = await this.request(url, { cache: "no-store", signal: this.limit() });
-    if (r.status === 404) {
-      this.revisions.set(url, '"0"');
-      return null;
-    }
+  /** The server's copy (null: none) and the revision it is at, and whether an upload named
+   * `asked` (a record of this browser) as one it holds or supersedes (`covered`; saves.ts,
+   * review b5dacf4 1.1). Nothing is kept here: the caller says which revision the next store
+   * goes over (`adopt`, or `startedOffline` for this browser's copy) once it has decided what
+   * the game starts from (review 22bb061 §3: a GET's bytes left aside as older, its ETag kept,
+   * and the first save after was a SaveConflict). */
+  async load(url: string, asked: string | null): Promise<ServerCopy> {
+    const r = await this.request(url, {
+      cache: "no-store",
+      signal: this.limit(),
+      ...(asked ? { headers: { [ASK]: asked } } : {}),
+    });
+    if (r.status === 404) return { data: null, covered: false, revision: NONE };
     if (!r.ok) throw new Error(`セーブの取得に失敗しました: HTTP ${r.status}`);
     const revision = r.headers.get("etag");
     if (!revision) throw new Error("セーブのバージョンがありません");
     const data = new Uint8Array(await r.arrayBuffer());
-    this.revisions.set(url, revision);
-    return data;
+    return { data, covered: !!asked && r.headers.get(COVERED) === asked, revision: revision as Revision };
+  }
+  /** The game started from `copy`'s bytes (or overwrites them next): the next store of `url`
+   * goes over its revision. */
+  adopt(url: string, copy: ServerCopy): void {
+    this.bases.delete(url);
+    this.revisions.set(url, copy.revision);
   }
   /**
    * The server was out of reach at the start, so the game started from `data` (this browser's
@@ -72,7 +102,9 @@ export class SaveTransport {
   }
   /** Writes `data` as the server's copy: the revision it is there as (the one this write made,
    * not whatever a later store left in `revision(url)` by the time the caller looks). */
-  store(url: string, data: Uint8Array<ArrayBuffer>): Promise<string> {
+  /** (`covers`: the record of this browser these bytes hold or supersede, kept by the server
+   * beside the revision: a start asks for it when that record is still marked unsent) */
+  store(url: string, data: Uint8Array<ArrayBuffer>, covers: string | null): Promise<string> {
     // (the caller's array as it is: callers hand a fresh export and do not change it)
     const snapshot = data;
     const previous = this.queues.get(url) ?? Promise.resolve();
@@ -82,7 +114,7 @@ export class SaveTransport {
         if (!this.revisions.has(url)) await this.learnRevision(url);
         const r = await this.request(url, {
           method: "PUT",
-          headers: { "if-match": this.revisions.get(url)! },
+          headers: { "if-match": this.revisions.get(url)!, ...(covers ? { [COVERS]: covers } : {}) },
           body: snapshot,
           keepalive: snapshot.length < 60000,
           signal: this.limit(snapshot.length),

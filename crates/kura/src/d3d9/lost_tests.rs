@@ -51,7 +51,7 @@ fn page_cells(s: u32, req: u32) -> Vec<i64> {
     });
     let dst = unsafe { alloc(16 * 16 * 4) as u32 };
     gpu::record(|b| b.cmd(&[gpu::READBACK, req, g, 0, 0, 0, 16, 16, dst, 64]));
-    assert!(gpu::wait_readback(req));
+    assert!(gpu::wait_readback(gpu::Readback::of_word(req)));
     (0..16)
         .map(|c| {
             let (cx, cy) = (c % 4, c / 4);

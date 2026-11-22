@@ -250,10 +250,9 @@ struct Point {
     made: Option<Made>,
 }
 
-/// WARP's `(f32(b - a) * dIn) / den + a`, in double, rounded once (ps.rs's lerp).
-fn lerp(a: f32, b: f32, d_in: f32, den: f32) -> f32 {
-    to_f32(f64::from(b - a) * f64::from(d_in) / f64::from(den) + f64::from(a))
-}
+/// WARP's `(f32(b - a) * dIn) / den + a`, in double, rounded once: the clipper's one
+/// interpolation (ps.rs).
+use ps::lerp;
 
 /// The noperspective step's s from the positions' w (clip.md §5b).
 fn screen_s(w_in: f32, w_out: f32, d_in: f32, d_out: f32) -> f32 {

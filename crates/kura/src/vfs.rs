@@ -73,6 +73,34 @@ struct Handle {
     flags: c_int,
 }
 
+/// What a handle is used for: each one needs the access the handle was opened with, checked
+/// here for every caller (h_read, h_write, h_set_len) and not by each Win32 API (a read-only
+/// handle's truncate succeeded here where the host's ftruncate refuses it, review of 6852be1).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Use {
+    /// read
+    Read,
+    /// write or change the size
+    Write,
+}
+
+impl Handle {
+    /// The error when the handle was not opened for `u`: EBADF for a read or a write, as
+    /// read(2) and write(2); EINVAL for a size change, as ftruncate(2) on Linux.
+    fn allows(&self, u: Use, sizes: bool) -> Result<(), c_int> {
+        let mode = self.flags & libc::O_ACCMODE;
+        let ok = match u {
+            Use::Read => mode != libc::O_WRONLY,
+            Use::Write => mode != libc::O_RDONLY,
+        };
+        match (ok, sizes) {
+            (true, _) => Ok(()),
+            (false, false) => Err(libc::EBADF),
+            (false, true) => Err(libc::EINVAL),
+        }
+    }
+}
+
 #[derive(Default)]
 struct Fs {
     nodes: Vec<Option<Node>>,
@@ -2332,6 +2360,15 @@ fn handle(h: u32) -> Option<(Ino, u64, c_int)> {
     with(|fs| fs.handles.get(&h).map(|x| (x.ino, x.pos, x.flags)))
 }
 
+/// Handle `h`'s inode, position and flags, when it was opened for `u` (`sizes`: a size change).
+fn handle_for(h: u32, u: Use, sizes: bool) -> Result<(Ino, u64, c_int), c_int> {
+    with(|fs| {
+        let x = fs.handles.get(&h).ok_or(libc::EBADF)?;
+        x.allows(u, sizes)?;
+        Ok((x.ino, x.pos, x.flags))
+    })
+}
+
 fn set_pos(h: u32, pos: u64) {
     with(|fs| {
         if let Some(x) = fs.handles.get_mut(&h) {
@@ -2345,10 +2382,8 @@ pub(crate) fn h_read(h: u32, buf: &mut [u8]) -> Result<usize, c_int> {
     let (ino, pos, lower) = with(|fs| {
         let x = fs.handles.get(&h).ok_or(libc::EBADF)?;
         let (ino, pos) = (x.ino, x.pos);
-        if x.flags & libc::O_ACCMODE == libc::O_WRONLY {
-            return Err(libc::EBADF);
-        }
-        Ok((ino, pos, lookup(fs, ino, buf, pos)?))
+        x.allows(Use::Read, false)?;
+        Ok::<_, c_int>((ino, pos, lookup(fs, ino, buf, pos)?))
     })?;
     if trace() {
         eprintln!("vfs: read {h} ino {ino} {}@{pos}", buf.len());
@@ -2376,10 +2411,7 @@ pub(crate) fn h_prefetch(h: u32, off: u64, len: u64) {
 }
 
 pub(crate) fn h_write(h: u32, data: &[u8]) -> Result<usize, c_int> {
-    let (ino, pos, flags) = handle(h).ok_or(libc::EBADF)?;
-    if flags & libc::O_ACCMODE == libc::O_RDONLY {
-        return Err(libc::EBADF);
-    }
+    let (ino, pos, flags) = handle_for(h, Use::Write, false)?;
     let at = if flags & libc::O_APPEND != 0 { with(|fs| fs.file_size(ino)) } else { pos };
     let n = write_at(ino, data, at)?;
     set_pos(h, at + n as u64);
@@ -2405,7 +2437,7 @@ pub(crate) fn h_seek(h: u32, off: i64, whence: c_int) -> Result<u64, c_int> {
 }
 
 pub(crate) fn h_set_len(h: u32, size: u64) -> Result<(), c_int> {
-    let (ino, _, _) = handle(h).ok_or(libc::EBADF)?;
+    let (ino, _, _) = handle_for(h, Use::Write, true)?;
     set_size(ino, size)
 }
 
@@ -3862,6 +3894,55 @@ mod proptests {
         assert!(matches!(rename_at("/f", "/c"), At::Ours(Err(libc::EISDIR))));
         assert!(matches!(rename_at("/c", "/f"), At::Ours(Err(libc::ENOTDIR))));
         tree_holds().unwrap();
+    }
+
+    /// Each open mode against each use of the handle, here and on the host's own file system
+    /// (Linux's open/read/write/ftruncate): the same success or the same refusal (a read-only
+    /// handle's truncate succeeded here, review of 6852be1).
+    #[test]
+    fn handles_allow_what_the_host_allows() {
+        let _g = fresh_tree();
+        let dir = std::env::temp_dir().join(format!("kura-modes-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        let host = dir.join("f");
+        let modes = [libc::O_RDONLY, libc::O_WRONLY, libc::O_RDWR];
+        for (k, &mode) in modes.iter().enumerate() {
+            for op in 0..3 {
+                std::fs::write(&host, b"0123456789").unwrap();
+                let At::Ours(Ok(h0)) = open_handle("/m/f", libc::O_CREAT | libc::O_RDWR, 0o644) else { panic!() };
+                h_set_len(h0, 0).unwrap();
+                h_write(h0, b"0123456789").unwrap();
+                release(h0);
+                let path = std::ffi::CString::new(host.to_str().unwrap()).unwrap();
+                // SAFETY: a path and buffers of their own lengths
+                let theirs = unsafe {
+                    let fd = libc::open(path.as_ptr(), mode);
+                    assert!(fd >= 0);
+                    let mut b = [0u8; 4];
+                    let r = match op {
+                        0 => libc::read(fd, b.as_mut_ptr().cast(), 4) >= 0,
+                        1 => libc::write(fd, b"ab".as_ptr().cast(), 2) >= 0,
+                        _ => libc::ftruncate(fd, 3) == 0,
+                    };
+                    libc::close(fd);
+                    r
+                };
+                let At::Ours(Ok(h)) = open_handle("/m/f", mode, 0) else { panic!() };
+                let mut b = [0u8; 4];
+                let ours = match op {
+                    0 => h_read(h, &mut b).is_ok(),
+                    1 => h_write(h, b"ab").is_ok(),
+                    _ => h_set_len(h, 3).is_ok(),
+                };
+                release(h);
+                assert_eq!(ours, theirs, "mode {k}, op {op}");
+                // (and what a refused one leaves: the file as it was)
+                let ours_len = info_at("/m/f", true).ok().map(|i| i.len);
+                let theirs_len = std::fs::metadata(&host).ok().map(|m| m.len());
+                assert_eq!(ours_len, theirs_len, "mode {k}, op {op}: the size after");
+            }
+        }
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     impl<T> At<T> {

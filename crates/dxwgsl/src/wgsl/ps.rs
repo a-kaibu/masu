@@ -128,7 +128,7 @@ fn distances(p: &[f32; 4], depth_clip: bool) -> [f32; 6] {
 
 /// WARP's interpolation from the inside value `a` toward the outside `b` (dIn, dOut the
 /// distances): `(f32(b - a) * dIn) / f32(dIn - dOut) + a` in double, rounded once.
-fn lerp(a: f32, b: f32, d_in: f32, den: f32) -> f32 {
+pub(super) fn lerp(a: f32, b: f32, d_in: f32, den: f32) -> f32 {
     to_f32(f64::from(b - a) * f64::from(d_in) / f64::from(den) + f64::from(a))
 }
 
