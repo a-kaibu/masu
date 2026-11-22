@@ -2233,6 +2233,7 @@ fn text_tell_from(raw_at: impl Fn(u64, usize) -> Vec<u8>, size: u64, from: u64, 
 const IOREAD: u32 = 1;
 const IOWRT: u32 = 2;
 const IOEOF: u32 = 0x10;
+const IOERR: u32 = 0x20;
 const IORW: u32 = 0x80;
 /// FILE._flag and FILE._file: after _ptr, _cnt, _base
 fn flag_off() -> u32 {
@@ -2372,7 +2373,15 @@ impl Stream {
             // (not guest memory: the bytes are read and dropped, as mem::write does)
             return Some(got + f.read_vec(want as usize).len() as u32);
         }
-        Some(got + f.read_into(buf + got, want))
+        // (a host read error: what came before it, as fread stops at an error, and the
+        // stream's error indicator)
+        match f.read_into(buf + got, want) {
+            Ok(k) => Some(got + k),
+            Err(_) => {
+                self.set_error(true);
+                Some(got)
+            }
+        }
     }
     /// Up to `n` characters (fread): chunks of the file, translated in text mode
     fn read(&mut self, n: usize) -> Vec<u8> {
@@ -2456,15 +2465,27 @@ impl Stream {
                 }
                 v.push(x);
             }
-            return f.write_bytes(&v) == v.len() as u32;
+            let ok = f.write_bytes(&v).is_ok();
+            self.set_error(self.error() || !ok);
+            return ok;
         }
-        f.write_bytes(b) == b.len() as u32
+        let ok = f.write_bytes(b).is_ok();
+        self.set_error(self.error() || !ok);
+        ok
     }
     /// The end-of-file indicator, in the guest's FILE too.
     fn set_eof(&mut self, v: bool) {
         self.eof = v;
         let a = self.at + flag_off();
         w32(a, (r32(a) & !IOEOF) | if v { IOEOF } else { 0 });
+    }
+    /// The error indicator (ferror), kept in the guest's FILE._flag as msvcrt does (_IOERR)
+    fn set_error(&mut self, v: bool) {
+        let a = self.at + flag_off();
+        w32(a, (r32(a) & !IOERR) | if v { IOERR } else { 0 });
+    }
+    fn error(&self) -> bool {
+        r32(self.at + flag_off()) & IOERR != 0
     }
 }
 /// fopen's mode -> FILE._flag
@@ -2869,6 +2890,7 @@ fn rewind(c: &mut Ctx) -> u32 {
         s.unget = None;
         s.chunk = None;
         s.set_eof(false);
+        s.set_error(false);
         if let Some(f) = &s.f {
             f.seek(SeekFrom::Start(0));
         }
@@ -2878,8 +2900,9 @@ fn rewind(c: &mut Ctx) -> u32 {
 fn feof(c: &mut Ctx) -> u32 {
     with_file(c.a(0), |s| s.eof as u32).unwrap_or(1)
 }
-fn ferror(_: &mut Ctx) -> u32 {
-    0
+/// ferror: the stream's error indicator (a read or write the host failed; rewind clears it)
+fn ferror(c: &mut Ctx) -> u32 {
+    with_file(c.a(0), |s| u32::from(s.error())).unwrap_or(0)
 }
 fn fflush(_: &mut Ctx) -> u32 {
     0

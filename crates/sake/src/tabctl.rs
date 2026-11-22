@@ -219,10 +219,10 @@ pub(super) fn layout(c: &mut Ctx, h: u32) -> Layout {
     Layout { items, tab_h, rows, default_min }
 }
 
-fn notify(c: &mut Ctx, h: u32, code: i32) -> u32 {
-    let (parent, id) = with(|s| s.wins.get(&h).map_or((0, 0), |w| (w.parent, w.id)));
+fn notify(c: &mut Ctx, h: u32, code: i32) -> Lresult {
+    let (parent, id) = with(|s| s.wins.get(&h).map_or((0, 0), |w| (w.parent, w.ctrl_id())));
     if parent == 0 {
-        return 0;
+        return Lresult::ZERO;
     }
     // NMHDR: hwndFrom, idFrom, code
     let p_own = mem::Scratch::new(24, true);
@@ -231,7 +231,7 @@ fn notify(c: &mut Ctx, h: u32, code: i32) -> u32 {
     mem::wp(p, h);
     mem::wp(p + ps, id);
     w32(p + 2 * ps, code as u32);
-    let r = send(c, parent, 0x4e, id, p);
+    let r = send(c, parent, 0x4e, Wparam::dword(id), Lparam::addr(p));
     drop(p_own);
     r
 }
@@ -293,7 +293,7 @@ fn set_cur_focus(c: &mut Ctx, h: u32, i: i32) {
                 t.sel != i
             });
             if changed {
-                let refused = notify(c, h, TCN_SELCHANGING) != 0;
+                let refused = notify(c, h, TCN_SELCHANGING) != Lresult::ZERO;
                 tab(h, |t| t.sel = i);
                 if !refused {
                     notify(c, h, TCN_SELCHANGE);
@@ -722,7 +722,7 @@ pub(super) fn proc_fn(c: &mut Ctx) -> u32 {
             let (x, y) = ((lp & 0xffff) as i16 as i32, (lp >> 16) as i16 as i32);
             let i = hit_test(c, h, x, y);
             if i != -1 && i != tab(h, |t| t.sel) {
-                if notify(c, h, TCN_SELCHANGING) != 0 {
+                if notify(c, h, TCN_SELCHANGING) != Lresult::ZERO {
                     return 0;
                 }
                 set_cur_sel(h, i);

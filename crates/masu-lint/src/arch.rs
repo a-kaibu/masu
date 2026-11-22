@@ -72,10 +72,17 @@ pub enum Rule {
     PcsgPack,
     WarpSetup,
     RunPlan,
+    MessageWidth,
+    D2dLayout,
+    HandleKey,
+    IoResult,
+    Lifetimes,
+    GdiLockOrder,
+    NotDone,
 }
 
 impl Rule {
-    pub const ALL: [Rule; 55] = [
+    pub const ALL: [Rule; 62] = [
         Rule::BuildOutput,
         Rule::HresultCopy,
         Rule::KomeCopy,
@@ -131,6 +138,13 @@ impl Rule {
         Rule::PcsgPack,
         Rule::WarpSetup,
         Rule::RunPlan,
+        Rule::MessageWidth,
+        Rule::D2dLayout,
+        Rule::HandleKey,
+        Rule::IoResult,
+        Rule::Lifetimes,
+        Rule::GdiLockOrder,
+        Rule::NotDone,
     ];
 
     /// the name a site list and a message use
@@ -191,6 +205,13 @@ impl Rule {
             Rule::PcsgPack => "pcsg-pack",
             Rule::WarpSetup => "warp-setup",
             Rule::RunPlan => "run-plan",
+            Rule::MessageWidth => "message-width",
+            Rule::D2dLayout => "d2d-layout",
+            Rule::HandleKey => "handle-key",
+            Rule::IoResult => "io-result",
+            Rule::Lifetimes => "lifetimes",
+            Rule::GdiLockOrder => "gdi-lock-order",
+            Rule::NotDone => "not-done",
         }
     }
 
@@ -251,6 +272,13 @@ impl Rule {
             Rule::PcsgPack => "hlslc packs a patch constant that is not a tess factor into a taken register's free components as d3dcompiler does (winref d3d11tess: `uint pid : PID` after SV_TessFactor[3] sits at r0.y on Windows; hlslc gave it a register of its own): regress::PCSG_PACK in lower.rs's sig()",
             Rule::WarpSetup => "a Direct3D 11 draw whose pixel shader reads interpolated inputs (or whose last stage writes clip/cull distances) goes through the setup pass, WARP's clipper and planes evaluated in the fragment shader (winref d3d11logic: WebGPU's rasterizer gave 3e9c28f4 where WARP gives 3e9c28f6): expand.rs asks setup_wanted and runs setup_draw, dxwgsl's pixel inputs come from expand::setup::inputs, and setup.rs's WGSL has no fma (a fused multiply-add rounds once where WARP rounds twice) (regress::WARP_SETUP / WARP_SETUP_NOT)",
             Rule::RunPlan => "a test run that ran nothing, or less than it meant to, fails (review 6852be1f: compare.py passed with Windows' answers and an empty sake directory, winetest/run.py passed when the selected test program was missing): run.sh and run-browser.mjs write <out>/.plan/<runner> before running, compare.py fails on no plan, an empty plan, a planned probe without a result and a missing --require-plan, run.py plans every test before sharding and fails on a missing program or an expected test no longer listed (rebuild::RUN_PLAN / RUN_PLAN_NOT)",
+            Rule::GdiLockOrder => "GDI takes its locks in one order, the GDI table, user32, a window surface, never back: a draw op's closure (gdi::draw / draw_src) finds no window, locks no surface and reads no source DC itself, draw_src hands it the source copied before the destination's surface is locked (review 6852be1f: a blit from a window DC found its target with the destination surface held while SetWindowPos resized a surface under user32's lock, and two blits between two windows locked their surfaces in opposite orders) (rebuild::gdi_lock_order)",
+            Rule::NotDone => "An export sake knows but does not implement answers its declared result's failure, from the Win32 metadata (crates/sake/src/returns.txt, written by tools/win32md: HRESULT E_NOTIMPL, NTSTATUS STATUS_NOT_IMPLEMENTED, WIN32_ERROR and SetLastError functions ERROR_CALL_NOT_IMPLEMENTED), typed as api::NotDone (review 6852be1f: 0 for all of them, S_OK / ERROR_SUCCESS / STATUS_SUCCESS with the outputs never written) (rebuild::NOT_DONE / _NOT)",
+            Rule::Lifetimes => "A DLL lives only once its DllMain answered TRUE, a process as long as one of the program's threads runs (review 6852be1f: LoadLibrary answered a DLL whose DllMain said FALSE, and the process ended with its first thread whatever else ran): pe::init_dlls answers Err(InitFailed), load_library a LoadFail (ERROR_DLL_INIT_FAILED) after unloading what it loaded, exit_thread asks crate::lives whether it was the last (rebuild::LIFETIMES / _NOT)",
+            Rule::IoResult => "A file read or write answers what happened, typed: the bytes moved, or files::IoFail (NoAccess for a buffer that is not guest memory, Read/Write for the host) and ReadAt::Eof apart from a failure; CreateFile's sharing check and its entry are one ShareEntry::take under one lock (review 6852be1f: WriteFile from a bad buffer wrote nothing and answered TRUE with the count, a read error was the end of the file, two exclusive opens racing both got in) (rebuild::IO_RESULT / _NOT)",
+            Rule::HandleKey => "A HANDLE finds its object only while it is open, and state kept per object is kept by obj::Key (review 6852be1f: Objs::key also took a closed first handle's number as the object's key, so a closed HANDLE reached an object a duplicate kept; the CREATE_SUSPENDED gate was kept by CreateThread's handle number, so ResumeThread through a duplicate missed it and the thread never started) (rebuild::HANDLE_KEY / _NOT)",
+            Rule::D2dLayout => "D2D's HWND render target reads D2D1_HWND_RENDER_TARGET_PROPERTIES and writes DXGI_SWAP_CHAIN_DESC from the header layouts (abi::layouts, from crates/apitrace/src/layouts.txt), never at x86 offsets by hand (review 6852be1f: pixelSize at +4 and OutputWindow at +44 on x64 too, the three outputs 4 bytes apart so 8-byte pointers overlapped) (rebuild::D2D_LAYOUT / _NOT)",
+            Rule::MessageWidth => "WPARAM, LPARAM, LRESULT and LONG_PTR keep their width (review 6852be1f: PostMessage read them with Ctx::a, the queue held u32, GetWindowLongPtr was GetWindowLong; an x64 wParam 0x1122334455667788 came back as 0x55667788): the entry points read them with Ctx::wparam/lparam/long_ptr and answer with ret_lresult/ret_long_ptr, MSG is written and read from abi::msg_layout, procedures are called through abi::call_wndproc, the LONG_PTR functions do not hand over to the 32-bit ones (rebuild::MESSAGE_WIDTH / _NOT)",
             Rule::HandStd => "what the standard library names since Rust 1.98..1.100 is not written by hand (2026-11-21: 10 toggles, 3 trim_prefix, 136 map_or_default, 13 ok_or, 19 Vec::from_fn replaced): x.toggle(), s.trim_prefix(p), o.map_or_default(f), c.ok_or(e), Vec::from_fn(v.len(), f)",
         }
     }
@@ -312,6 +340,13 @@ impl Rule {
             Rule::PcsgPack => regress::pcsg_pack(tree),
             Rule::WarpSetup => regress::warp_setup(tree),
             Rule::RunPlan => rebuild::needles(tree, &rebuild::RUN_PLAN, &rebuild::RUN_PLAN_NOT),
+            Rule::MessageWidth => rebuild::message_width(tree),
+            Rule::D2dLayout => rebuild::d2d_layout(tree),
+            Rule::HandleKey => rebuild::handle_key(tree),
+            Rule::IoResult => rebuild::io_result(tree),
+            Rule::Lifetimes => rebuild::lifetimes(tree),
+            Rule::GdiLockOrder => rebuild::gdi_lock_order(tree),
+            Rule::NotDone => rebuild::not_done(tree),
         };
         hits.into_iter().map(|(file, line, what)| Finding { rule: self, file, line, what }).collect()
     }

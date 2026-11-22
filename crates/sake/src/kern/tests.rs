@@ -847,7 +847,7 @@ proptest! {
                     // `to` answers what came for it
                     for m in k.take_msgs(to) {
                         if m.send {
-                            k.reply(m.id, v);
+                            k.reply(m.id, u64::from(v));
                         }
                     }
                     for r in k.take_vm(to) {

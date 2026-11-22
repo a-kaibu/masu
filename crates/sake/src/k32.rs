@@ -416,8 +416,11 @@ pub fn exit_thread(code: u32) -> ! {
         }
     });
     crate::kern::with(|k| k.abandon(t.tid));
+    // (the program's last thread ends the process, whichever it is; review 6852be1f: the first
+    // one did, whatever else ran)
+    let last = crate::lives::ends(t.tid);
     // (its windows, queue and hooks: a SendMessage waiting for it returns)
-    if t.tid != crate::process::first_tid(crate::pid()) {
+    if !last {
         crate::user::thread_gone(t.tid);
     }
     obj::signal();
@@ -439,8 +442,8 @@ pub fn exit_thread(code: u32) -> ! {
     crate::affinity::with(|m| m.gone(t.tid));
     // (ExitThread from a DllMain or TLS callback: the loader lock it holds)
     crate::pe::loader_thread_exit();
-    if t.tid == crate::process::first_tid(crate::pid()) {
-        // the main thread: the process
+    if last {
+        // the program's last thread: the process, with its exit code
         // SAFETY: libc::exit has no precondition (the process ends).
         unsafe { libc::exit(code.cast_signed()) }
     }
@@ -453,6 +456,14 @@ pub fn exit_thread(code: u32) -> ! {
     // sound kept ~4 KB of them per thread for ever; review P2-1). Nothing else holds them:
     // its save-state part went above, the crash log's entry goes with the Cpu.
     crate::forget_thread();
+    if t.tid == crate::process::first_tid(crate::pid()) {
+        // (the host's main thread, emscripten's PROXY_TO_PTHREAD main: its pthread_exit ends the
+        // runtime as a return from main does, and the program's other threads with it; it
+        // waits here, its guest thread gone, until the last of them ends the process)
+        loop {
+            std::thread::park();
+        }
+    }
     // SAFETY: pthread_exit has no precondition; this thread's records were released above.
     unsafe { libc::pthread_exit(std::ptr::null_mut()) }
 }
@@ -511,7 +522,7 @@ fn _beginthread(c: &mut Ctx) -> u32 {
     }
     let h = obj::add(Obj::Thread { tid: 0, done: false, code: 0x103 });
     let (start, arg) = crt_start(start, arg);
-    let tid = crate::spawn_gated(start, arg, thread_stack(stack, 0), h, false);
+    let tid = crate::spawn_gated(start, arg, thread_stack(stack, 0), h, None, crate::Lives::Program);
     if tid == 0 {
         // (no thread could be made: -1 and EAGAIN, as the CRT)
         obj::close(h);
@@ -832,8 +843,16 @@ fn K32GetModuleFileNameExW(c: &mut Ctx) -> u32 {
     psapi_name(c, false, true)
 }
 
-/// Threads created suspended wait here: tid -> suspend count.
-static GATE: Mutex<Vec<(u32, u32)>> = Mutex::new(Vec::new());
+/// Threads created suspended wait here until their count is 0: by thread object, so any
+/// handle to it (a DuplicateHandle'd one, the thread's own) finds its entry (review 6852be1f:
+/// the entry was kept by CreateThread's handle number, ResumeThread through a duplicate missed
+/// it and the thread never started; a save state's START waited by the thread's own handle).
+static GATE: Mutex<Vec<(obj::Key, u32)>> = Mutex::new(Vec::new());
+
+/// The thread object a not-yet-started entry of GATE is kept by (None: no such handle)
+fn gate_key(h: u32) -> Option<obj::Key> {
+    obj::key_of(h)
+}
 static GATE_CV: Condvar = Condvar::new();
 
 /// A new thread's stack: CreateThread's size and flags against the program's own reserve.
@@ -851,20 +870,20 @@ fn CreateThread(c: &mut Ctx) -> u32 {
 /// context goes along; a thread another process asked for has none here)
 fn create_thread(start: u32, param: u32, stack: u32, flags: u32, inherit: bool) -> (u32, u32) {
     let h = obj::add(Obj::Thread { tid: 0, done: false, code: 0x103 });
-    let suspended = flags & 4 != 0;
     // a suspended thread is started by its first ResumeThread
+    let gate = if flags & 4 != 0 { gate_key(h) } else { None };
     let stack = thread_stack(stack, flags);
-    if suspended {
-        GATE.locked().push((h, 1));
+    if let Some(k) = gate {
+        GATE.locked().push((k, 1));
     }
     if inherit {
         crate::actctx::inherit(h);
     }
-    let tid = crate::spawn_gated(start, param, stack, h, suspended);
+    let tid = crate::spawn_gated(start, param, stack, h, gate, crate::Lives::Program);
     if tid == 0 {
         // no TEB and stack, or no host thread: NULL and ERROR_NOT_ENOUGH_MEMORY, as Windows
         // (review A-13: this was an abort)
-        GATE.locked().retain(|g| g.0 != h);
+        GATE.locked().retain(|g| Some(g.0) != gate);
         crate::actctx::forget(h);
         obj::close(h);
         last_error(8);
@@ -935,10 +954,10 @@ pub(crate) fn suspend_for_other(tid: u32, suspend: bool) -> Result<u32, u32> {
 }
 /// Thread `tid`'s suspend count one up or down: the count before
 pub(crate) fn suspend_count(tid: u32, suspend: bool) -> Result<u32, u32> {
-    let h = obj::with(|t| t.objs.iter().find(|(_, (o, _))| matches!(o, Obj::Thread { tid: x, .. } if *x == tid)).map(|(&k, _)| k.first_handle()));
-    if let Some(h) = h {
+    let k = obj::with(|t| t.objs.iter().find(|(_, (o, _))| matches!(o, Obj::Thread { tid: x, .. } if *x == tid)).map(|(&k, _)| k));
+    if let Some(k) = k {
         let mut g = GATE.locked();
-        if let Some((_, n)) = g.iter_mut().find(|(x, n)| *x == h && *n > 0) {
+        if let Some((_, n)) = g.iter_mut().find(|(x, n)| *x == k && *n > 0) {
             let old = *n;
             if suspend {
                 *n = (*n).saturating_add(1);
@@ -954,19 +973,20 @@ pub(crate) fn suspend_count(tid: u32, suspend: bool) -> Result<u32, u32> {
 }
 
 /// Blocks a new thread created suspended until ResumeThread.
-pub fn wait_gate(h: u32) {
+/// Waits while thread object `k` is created suspended and not resumed yet.
+pub fn wait_gate(k: obj::Key) {
     let mut g = GATE.locked();
-    while g.iter().any(|&(x, n)| x == h && n > 0) {
+    while g.iter().any(|&(x, n)| x == k && n > 0) {
         g = kome::locks::wait(&GATE_CV, g);
     }
-    g.retain(|&(x, _)| x != h);
+    g.retain(|&(x, _)| x != k);
 }
 
 /// wait_gate for a new thread that will run `start(param)`: it may stand still for a save
 /// state meanwhile (snap.rs START).
-pub fn wait_gate_start(h: u32, start: u32, param: u32) {
+pub fn wait_gate_start(k: obj::Key, start: u32, param: u32) {
     let mut g = GATE.locked();
-    while g.iter().any(|&(x, n)| x == h && n > 0) {
+    while g.iter().any(|&(x, n)| x == k && n > 0) {
         if kura::snap::pausing() {
             drop(g);
             crate::snap::point_start(start, param);
@@ -975,7 +995,7 @@ pub fn wait_gate_start(h: u32, start: u32, param: u32) {
         }
         g = kome::locks::wait(&GATE_CV, g);
     }
-    g.retain(|&(x, _)| x != h);
+    g.retain(|&(x, _)| x != k);
 }
 
 /// Save states: wakes the waits here so that they see the pause.
@@ -1120,10 +1140,10 @@ fn ResumeThread(c: &mut Ctx) -> u32 {
     }) {
         return remote_thread_count(h, pid, false);
     }
-    // a thread created suspended that has not started yet
-    {
+    // a thread created suspended that has not started yet (through any handle to it)
+    if let Some(k) = gate_key(h) {
         let mut g = GATE.locked();
-        if let Some((_, n)) = g.iter_mut().find(|(x, n)| *x == h && *n > 0) {
+        if let Some((_, n)) = g.iter_mut().find(|(x, n)| *x == k && *n > 0) {
             let old = *n;
             *n = (*n).saturating_sub(1);
             drop(g);
@@ -1189,7 +1209,9 @@ fn SuspendThread(c: &mut Ctx) -> u32 {
     }) {
         return remote_thread_count(h, pid, true);
     }
-    if let Some((_, n)) = GATE.locked().iter_mut().find(|(x, n)| *x == h && *n > 0) {
+    if let Some(k) = gate_key(h)
+        && let Some((_, n)) = GATE.locked().iter_mut().find(|(x, n)| *x == k && *n > 0)
+    {
         if *n >= waits::suspend::MAX_COUNT {
             last_error(ERROR_SIGNAL_REFUSED);
             return u32::MAX;
@@ -1305,12 +1327,12 @@ fn TerminateThread(c: &mut Ctx) -> u32 {
     }
     TERMINATE.locked().push((tid, code));
     ANY_TERMINATE.store(true, std::sync::atomic::Ordering::Relaxed);
-    let gated = {
+    let gated = gate_key(h).is_some_and(|k| {
         let mut g = GATE.locked();
-        let had = g.iter().any(|&(x, n)| x == h && n > 0);
-        g.retain(|&(x, _)| x != h);
+        let had = g.iter().any(|&(x, n)| x == k && n > 0);
+        g.retain(|&(x, _)| x != k);
         had
-    };
+    });
     if gated {
         // (it never ran: it is done now, and its host thread goes when the gate opens)
         obj::with(|t| {
@@ -1861,9 +1883,6 @@ fn GetQueuedCompletionStatus(c: &mut Ctx) -> u32 {
 pub fn event_set(h: u32, v: bool) -> u32 {
     if let Some(id) = shared_id(h) {
         let r = crate::kern::with(|k| k.set_event(id, v)).0;
-        if !r {
-            last_error(6);
-        }
         obj::signal();
         return ok(r);
     }
@@ -1882,16 +1901,27 @@ pub fn event_set(h: u32, v: bool) -> u32 {
     }
     ok(r.is_some())
 }
+
+/// SetEvent / ResetEvent: event_set, and for a closed handle or one to another kind of object
+/// ERROR_INVALID_HANDLE (winref handlekey). (sake's own callers, on host threads too, take
+/// event_set's answer alone.)
+fn event_call(h: u32, v: bool) -> u32 {
+    let r = event_set(h, v);
+    if r == 0 {
+        last_error(6);
+    }
+    r
+}
 fn SetEvent(c: &mut Ctx) -> u32 {
-    event_set(c.a(0), true)
+    event_call(c.a(0), true)
 }
 fn ResetEvent(c: &mut Ctx) -> u32 {
-    event_set(c.a(0), false)
+    event_call(c.a(0), false)
 }
 fn PulseEvent(c: &mut Ctx) -> u32 {
-    event_set(c.a(0), true);
+    event_call(c.a(0), true);
     std::thread::yield_now();
-    event_set(c.a(0), false)
+    event_call(c.a(0), false)
 }
 fn CreateMutexA(c: &mut Ctx) -> u32 {
     let tid = crate::cur().tid;
@@ -6735,11 +6765,10 @@ fn load_library_named(c: &mut Ctx, n: &str) -> u32 {
         last_error(87);
         return 0;
     }
-    let r = crate::pe::load_library(c.cpu, n);
-    if r == 0 {
-        last_error(126);
-    }
-    r
+    crate::pe::load_library(c.cpu, n).unwrap_or_else(|e| {
+        last_error(e.code());
+        0
+    })
 }
 fn LoadLibraryA(c: &mut Ctx) -> u32 {
     let n = arg_str(c.a(0), false);
@@ -6868,7 +6897,7 @@ fn ResolveDelayLoadedAPI(c: &mut Ctx) -> u32 {
     let hmod_at = rva(2);
     let mut h = r32(hmod_at);
     if h == 0 {
-        h = crate::pe::load_library(c.cpu, &name);
+        h = crate::pe::load_library(c.cpu, &name).unwrap_or(0);
         w32(hmod_at, h);
     }
     let i = mem::ga(thunk).since(mem::ga(rva(3))) / 4;
@@ -7329,7 +7358,14 @@ fn _lclose(c: &mut Ctx) -> u32 {
     0
 }
 fn _lread(c: &mut Ctx) -> u32 {
-    obj::file(c.a(0)).map_or(0xffff_ffff, |f| f.read_into(c.a(1), c.a(2)))
+    let Some(f) = obj::file(c.a(0)) else {
+        last_error(6);
+        return 0xffff_ffff;
+    };
+    f.read_into(c.a(1), c.a(2)).unwrap_or_else(|e| {
+        last_error(e.code());
+        0xffff_ffff
+    })
 }
 /// _hread(h, buffer, count): _lread with a 32-bit count (the same in Win32)
 fn _hread(c: &mut Ctx) -> u32 {
@@ -7349,8 +7385,12 @@ fn _lwrite(c: &mut Ctx) -> u32 {
         return if f.f.locked().set_len(p).is_ok() { 0 } else { 0xffff_ffff };
     }
     match f.write_from(buf, n) {
-        w if w == n => n,
-        _ => 0xffff_ffff,
+        Ok(w) if w == n => n,
+        Ok(_) => 0xffff_ffff,
+        Err(e) => {
+            last_error(e.code());
+            0xffff_ffff
+        }
     }
 }
 fn _hwrite(c: &mut Ctx) -> u32 {
@@ -7413,9 +7453,15 @@ fn ReadFile(c: &mut Ctx) -> u32 {
         // SAFETY: the closure only reads the host file into the buffer, touching no guest memory;
         // the program handed the buffer to this read (another thread of its writing it meanwhile
         // would race on Windows too).
-        match unsafe { mem::view_mut_unchecked(buf, n, |dst| f.read_at(start, crate::iocp::is_overlapped(h), dst)) }.unwrap_or(Ok(0)) {
+        // (the buffer is guest memory: checked above)
+        match unsafe { mem::view_mut_unchecked(buf, n, |dst| f.read_at(start, crate::iocp::is_overlapped(h), dst)) }.unwrap_or(Err(files::ReadAt::Fail(files::IoFail::NoAccess))) {
             Ok(got) => kome::num::u32_of(got),
-            Err(()) => {
+            Err(files::ReadAt::Fail(e)) => {
+                put32(pread, 0);
+                last_error(e.code());
+                return 0;
+            }
+            Err(files::ReadAt::Eof) => {
                 // (at or past the end: STATUS_END_OF_FILE in the OVERLAPPED, its event set,
                 // and FALSE with ERROR_HANDLE_EOF, the handle synchronous or not)
                 put32(pread, 0);
@@ -7425,7 +7471,14 @@ fn ReadFile(c: &mut Ctx) -> u32 {
             }
         }
     } else {
-        f.read_into(buf, n)
+        match f.read_into(buf, n) {
+            Ok(got) => got,
+            Err(e) => {
+                put32(pread, 0);
+                last_error(e.code());
+                return 0;
+            }
+        }
     };
     put32(pread, got);
     // (done at once: the OVERLAPPED, its event and the handle's completion port)
@@ -7482,18 +7535,26 @@ fn WriteFile(c: &mut Ctx) -> u32 {
     }
     let ov = c.a(4);
     echo_write(&f.path, buf, n);
+    // (review 6852be1f: a buffer that is not guest memory wrote nothing and answered success)
     let w = if ov != 0 {
         let k = mem::ps();
         let start = files::io_start(crate::mem::r32(mem::ga(ov).at(k, 2)), crate::mem::r32(mem::ga(ov).at(k, 2) + 4), true);
-        f.write_at(start, crate::iocp::is_overlapped(h), &mem::bytes(buf, n))
+        mem::try_bytes(buf, n).ok_or(files::IoFail::NoAccess).and_then(|b| f.write_at(start, crate::iocp::is_overlapped(h), &b))
     } else {
         f.write_from(buf, n)
     };
-    put32(pw, w);
-    if w == n {
-        crate::iocp::complete(h, ov, 0, w, true);
+    match w {
+        Ok(w) => {
+            put32(pw, w);
+            crate::iocp::complete(h, ov, 0, w, true);
+            1
+        }
+        Err(e) => {
+            put32(pw, 0);
+            last_error(e.code());
+            0
+        }
     }
-    ok(w == n)
 }
 /// Console output a line at a time (the page logs each write as its own line: 吉里吉里2 writes its
 /// log a character at a time)
@@ -9113,11 +9174,17 @@ fn MapViewOfFile(c: &mut Ctx) -> u32 {
         return 0;
     };
     mem::commit(b, 4);
-    VIEWS.locked().push((b, n.max(1), Some(path)));
     let pos = f.seek(SeekFrom::Current(0)).unwrap_or(0);
     f.seek(SeekFrom::Start(off));
-    f.read_into(b, have);
+    let read = f.read_into(b, have);
     f.seek(SeekFrom::Start(pos));
+    if let Err(e) = read {
+        // (the file could not be read: no view, as a section whose file fails to page in)
+        mem::release(b);
+        last_error(e.code());
+        return 0;
+    }
+    VIEWS.locked().push((b, n.max(1), Some(path)));
     if shared {
         READ_VIEWS.locked().push((key, b, 1));
     }
@@ -9197,7 +9264,9 @@ fn UnmapViewOfFile(c: &mut Ctx) -> u32 {
         }
     };
     if !more {
-        write_back(a, true);
+        // (UnmapViewOfFile succeeds whatever the write-back of its pages comes to: Windows'
+        // lazy writer tells no one; FlushViewOfFile is the call that reports it)
+        let _unreported = write_back(a, true);
         VIEWS.locked().retain(|v| v.0 != a);
         mem::release(a);
     }
@@ -9205,21 +9274,27 @@ fn UnmapViewOfFile(c: &mut Ctx) -> u32 {
 }
 /// Writes a writable file view back to its file (the bytes the view covers, at its offset;
 /// the file position stays); `remove`: the view goes away
-fn write_back(a: u32, remove: bool) {
+fn write_back(a: u32, remove: bool) -> Result<(), files::IoFail> {
     let mut l = WRITE_BACK.locked();
-    let Some(i) = l.iter().position(|v| a >= v.0 && mem::ga(a).since(mem::ga(v.0)) < v.1.max(1)) else { return };
-    let Some(v) = l.get(i).cloned() else { return };
+    let Some(i) = l.iter().position(|v| a >= v.0 && mem::ga(a).since(mem::ga(v.0)) < v.1.max(1)) else { return Ok(()) };
+    let Some(v) = l.get(i).cloned() else { return Ok(()) };
     let (b, n, f, off) = if remove { l.remove(i) } else { v };
     drop(l);
     let pos = f.seek(SeekFrom::Current(0)).unwrap_or(0);
     f.seek(SeekFrom::Start(off));
-    f.write_from(b, n);
+    let w = f.write_from(b, n);
     f.seek(SeekFrom::Start(pos));
+    w.map(drop)
 }
 /// FlushViewOfFile(address, bytes): the view's bytes to its file
 fn FlushViewOfFile(c: &mut Ctx) -> u32 {
-    write_back(c.a(0), false);
-    1
+    match write_back(c.a(0), false) {
+        Ok(()) => 1,
+        Err(e) => {
+            last_error(e.code());
+            0
+        }
+    }
 }
 /// The views of writable file mappings opened with FILE_MAP_WRITE: (base, bytes, file, offset)
 static WRITE_BACK: Mutex<Vec<(u32, u32, std::sync::Arc<files::File>, u64)>> = Mutex::new(Vec::new());
@@ -11389,6 +11464,78 @@ mod thread_fail_tests {
 
 /// Review b07: guest-sized copies fail the call instead of the program; Pdh queries free their
 /// blocks; processor masks for any count.
+/// Review 6852be1f: a thread created suspended waits on its object, not on CreateThread's handle
+/// number: SuspendThread and ResumeThread through any handle to it (a duplicate, after the first
+/// one closed) move the same count, against a model; the closed number reaches nothing.
+#[cfg(test)]
+mod gate_tests {
+    use super::*;
+    use crate::test_guest::{call, enter, guest_thread};
+    use proptest::prelude::*;
+
+    fn count(k: obj::Key) -> Option<u32> {
+        GATE.locked().iter().find(|(x, _)| *x == k).map(|e| e.1)
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(64))]
+        #[test]
+        fn suspend_and_resume_through_any_handle(ops in proptest::collection::vec((0u8..4, 0usize..4), 1..40)) {
+            let _g = enter();
+            guest_thread();
+            let first = obj::add(Obj::Thread { tid: 0, done: false, code: 0x103 });
+            let k = obj::key_of(first).ok_or_else(|| TestCaseError::fail("no key"))?;
+            GATE.locked().push((k, 1));
+            let mut open = vec![first, obj::dup(first), obj::dup(first)];
+            let mut closed = Vec::new();
+            let mut model = 1u32;
+            for (op, i) in ops {
+                let h = open[i % open.len()];
+                match op {
+                    0 => {
+                        let r = call(SuspendThread, &[h]);
+                        prop_assert_eq!(r, model);
+                        model += 1;
+                    }
+                    1 if model > 0 => {
+                        let r = call(ResumeThread, &[h]);
+                        prop_assert_eq!(r, model);
+                        model -= 1;
+                    }
+                    2 if open.len() > 1 => {
+                        prop_assert!(obj::close(h));
+                        open.retain(|&x| x != h);
+                        closed.push(h);
+                    }
+                    _ => {
+                        for &c in &closed {
+                            last_error(0);
+                            prop_assert_eq!(call(ResumeThread, &[c]), u32::MAX, "closed handle {:#x}", c);
+                            prop_assert_eq!(get_last_error(), 6);
+                        }
+                    }
+                }
+                if model > 0 {
+                    prop_assert_eq!(count(k), Some(model));
+                }
+                if model == 0 {
+                    break;
+                }
+            }
+            if model == 0 {
+                // (the gate is open: the thread would start; its wait returns at once)
+                wait_gate(k);
+                prop_assert_eq!(count(k), None);
+            } else {
+                GATE.locked().retain(|(x, _)| *x != k);
+            }
+            for h in open {
+                obj::close(h);
+            }
+        }
+    }
+}
+
 #[cfg(all(test, target_os = "linux", target_arch = "x86_64"))]
 mod review_b07 {
     use super::*;

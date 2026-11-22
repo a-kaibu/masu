@@ -962,6 +962,20 @@ fn canvas_clips(d: &Dc, v: &View, ox: i32, oy: i32, extra: Rect) -> Vec<Rect> {
 /// Runs a draw op on DC `dc`; `f` returns the changed rectangle (view coordinates). It runs once
 /// for each rectangle of a clip region, each time with `Canvas::clip` that rectangle.
 fn draw(dc: u32, mut f: impl FnMut(&Objs, &DcState, &mut Canvas) -> Rect) -> bool {
+    draw_src(dc, 0, |t, s, c, _| f(t, s, c))
+}
+
+/// A blit's source as `draw_src` hands it to its op: the pixels (a memory DC's in place, a
+/// window's copied), the offset of DC coordinates in them, and the source DC's state.
+type Source = (View, i32, i32, DcState);
+
+/// draw for an op that reads DC `src` too (0: none; `dc` itself: none, the op reads its own
+/// canvas). The lock order is the GDI table, then user32 (a window DC's target), then a window
+/// surface, never back: both targets are found and the source's pixels copied before the
+/// destination's surface is locked, and `f` takes no lock of user32 or of a surface (review
+/// 6852be1f: a blit from a window DC found its target with the destination surface held, while
+/// SetWindowPos resized that surface with user32's lock held, and the two threads hung).
+fn draw_src(dc: u32, src: u32, mut f: impl FnMut(&Objs, &DcState, &mut Canvas, Option<&Source>) -> Rect) -> bool {
     let mut flush = None;
     {
         let mut g = objs();
@@ -969,6 +983,8 @@ fn draw(dc: u32, mut f: impl FnMut(&Objs, &DcState, &mut Canvas) -> Rect) -> boo
         let Some(G::Dc(d)) = t.m.get(&dc).filter(|g| !matches!(g, G::Dc(d) if d.disabled)) else { return false };
         let s = d.s;
         let tg = target_of(t, d);
+        let from = if src != 0 && src != dc { source(t, src) } else { None };
+        let from = from.as_ref();
         let org = (s.vp.0 - s.win.0, s.vp.1 - s.win.1);
         match tg {
             Tgt::Bmp(v) => {
@@ -976,24 +992,20 @@ fn draw(dc: u32, mut f: impl FnMut(&Objs, &DcState, &mut Canvas) -> Rect) -> boo
                 let mut c = Canvas { v, ox: org.0, oy: org.1, clip: Rect::default() };
                 for cl in clips {
                     c.clip = cl;
-                    f(t, &s, &mut c);
+                    f(t, &s, &mut c, from);
                 }
             }
             Tgt::Win { surf, top, x, y, clip } => {
                 let mut sg = surf.lock().unwrap_or_else(PoisonError::into_inner);
                 let (w, h) = (sg.w, sg.h);
                 let v = View::surface(&mut sg.px, w, h);
-                // (a source on this same surface reads it from here: locking it again from
-                // the blit, as a window DC copying from another DC of its own top-level does,
-                // hung this thread with the GDI lock held)
-                let _held = Held::set(std::sync::Arc::as_ptr(&surf).cast::<()>() as usize, v.clone());
                 let (ox, oy) = (org.0 + x, org.1 + y);
                 let clips = canvas_clips(d, &v, ox, oy, clip);
                 let mut c = Canvas { v, ox, oy, clip: Rect::default() };
                 let mut r = Rect::default();
                 for cl in clips {
                     c.clip = cl;
-                    r = r.or(&f(t, &s, &mut c).and(&c.clip));
+                    r = r.or(&f(t, &s, &mut c, from).and(&c.clip));
                 }
                 if !r.empty() {
                     flush = Some((top, r));
@@ -1013,70 +1025,29 @@ thread_local! {
 }
 
 thread_local! {
-    /// The window surface this thread's draw holds locked, and its view.
-    static HELD: std::cell::RefCell<Option<(usize, View)>> = const { std::cell::RefCell::new(None) };
     /// The 1-pixel buffer of DCs with nothing to read (one per thread, not one leaked a call).
     static NOTHING: std::cell::RefCell<Vec<u32>> = std::cell::RefCell::new(vec![0]);
 }
-/// Whether this thread's draw holds the window surface at `p` (`Arc::as_ptr`) locked: user32
-/// must not lock it again (resizing it while finding a source DC's target hung the thread).
-pub(crate) fn holds(p: usize) -> bool {
-    HELD.with(|h| h.borrow().as_ref().is_some_and(|x| x.0 == p))
-}
-/// HELD for the time of a draw on a window surface.
-struct Held;
-impl Held {
-    fn set(p: usize, v: View) -> Held {
-        HELD.with(|h| *h.borrow_mut() = Some((p, v)));
-        Held
-    }
-}
-impl Drop for Held {
-    fn drop(&mut self) {
-        HELD.with(|h| *h.borrow_mut() = None);
-    }
-}
 
 /// A copy of a DC's pixels in `r` (device coordinates) as a source for blits; with the
-/// offset of the copy. Memory DCs are used in place.
-fn source(t: &Objs, dc: u32) -> Option<(View, i32, i32, DcState)> {
+/// offset of the copy. Memory DCs are used in place. Called with no surface locked (draw_src
+/// before it locks its destination; GetPixel): it locks the source's surface for the copy.
+fn source(t: &Objs, dc: u32) -> Option<Source> {
     let Some(G::Dc(d)) = t.m.get(&dc) else { return None };
     let s = d.s;
     let org = (s.vp.0 - s.win.0, s.vp.1 - s.win.1);
     match target_of(t, d) {
         Tgt::Bmp(v) => Some((v, org.0, org.1, s)),
         Tgt::Win { surf, x, y, .. } => {
-            // (the surface this thread's draw holds: read from its view, not locked again)
-            let p = std::sync::Arc::as_ptr(&surf).cast::<()>() as usize;
-            let held = HELD.with(|h| h.borrow().as_ref().filter(|x| x.0 == p).map(|x| x.1.clone()));
-            /// what the pixels are read from: the surface, locked, or the view this thread holds
-            enum Pixels<G> {
-                Locked(G),
-                Held(View),
-            }
-            let g = match held {
-                Some(v) => Pixels::Held(v),
-                None => Pixels::Locked(surf.lock().unwrap_or_else(PoisonError::into_inner)),
-            };
-            let (w, h) = match &g {
-                Pixels::Locked(g) => (g.w, g.h),
-                Pixels::Held(v) => (v.w, v.h),
-            };
+            let g = surf.lock().unwrap_or_else(PoisonError::into_inner);
+            let (w, h) = (g.w, g.h);
             // a copy (the blit may draw into the same surface), kept until this thread's
             // source after next: one blit reads two sources at most
             let v = WIN_SOURCES.with(|k| {
                 let mut k = k.borrow_mut();
                 let mut px = if k.len() >= 2 { k.remove(0) } else { Vec::new() };
                 px.clear();
-                match &g {
-                    Pixels::Locked(g) => px.extend_from_slice(&g.px),
-                    Pixels::Held(hv) => {
-                        px.resize((w.max(0) * h.max(0)) as usize, 0);
-                        for y in 0..h {
-                            unsafe { std::ptr::copy_nonoverlapping(hv.row(y), px.as_mut_ptr().add((y * w) as usize).cast::<u8>(), 4 * w as usize) };
-                        }
-                    }
-                }
+                px.extend_from_slice(&g.px);
                 // (the view points into the Vec's buffer, which moving the Vec does not move)
                 let v = View::surface(&mut px, w, h);
                 k.push(px);
@@ -3490,14 +3461,14 @@ fn SetDIBColorTable(c: &mut Ctx) -> u32 {
 fn bit_blt(dst: u32, d: (i32, i32, i32, i32), src: u32, s: (i32, i32, i32, i32), rop: u32) -> u32 {
     let op = (rop >> 16) as u8;
     let has_src = uses_src(op) && src != 0;
-    u32::from(draw(dst, |t, ds, c| {
+    u32::from(draw_src(dst, if has_src { src } else { 0 }, |t, ds, c, from| {
         let pat = pattern(t, ds, ds.brush);
         let dr = c.dev(d.0, d.1);
         let dst_r = (dr.0, dr.1, d.2, d.3);
         if !has_src {
             return blit(c, dst_r, None, op, &pat, 0, 0);
         }
-        let Some((sv, sox, soy, ss)) = (if src == dst { None } else { source(t, src) }) else {
+        let Some((sv, sox, soy, ss)) = (if src == dst { None } else { from.cloned() }) else {
             // the same DC: blit from a copy of its own pixels
             let copy = copy_view(&c.v);
             let (sx, sy) = c.dev(s.0, s.1);
@@ -3539,8 +3510,10 @@ fn TransparentBlt(c: &mut Ctx) -> u32 {
     let (dst, src, key) = (c.a(0), c.a(5), rgb(c.a(10)));
     let d = (c.i(1), c.i(2), c.i(3), c.i(4));
     let s = (c.i(6), c.i(7), c.i(8), c.i(9));
-    u32::from(draw(dst, |t, _, cv| {
-        let Some((sv, sox, soy, _)) = source(t, src) else { return Rect::default() };
+    u32::from(draw_src(dst, src, |_, _, cv, from| {
+        // (the same DC: its own pixels, copied)
+        let own = (src == dst).then(|| copy_view(&cv.v));
+        let Some((sv, sox, soy)) = own.as_ref().map(|o| (o.0.clone(), 0, 0)).or_else(|| from.map(|f| (f.0.clone(), f.1, f.2))) else { return Rect::default() };
         let (dx, dy) = cv.dev(d.0, d.1);
         let r = Rect { l: dx, t: dy, r: dx + d.2, b: dy + d.3 }.and(&cv.clip);
         for y in r.t..r.b {
@@ -3569,8 +3542,17 @@ fn AlphaBlend(c: &mut Ctx) -> u32 {
     let d = (c.i(1), c.i(2), c.i(3), c.i(4));
     let s = (c.i(6), c.i(7), c.i(8), c.i(9));
     let (k, per_pixel) = (bf >> 16 & 255, bf >> 24 & 1 != 0);
-    u32::from(draw(dst, |t, _, cv| {
-        let Some((sv, sox, soy, _)) = source(t, src) else { return Rect::default() };
+    // One DC's rectangles that overlap: FALSE, ERROR_INVALID_PARAMETER, nothing drawn (Wine's
+    // gdi32 bitmap test_GdiAlphaBlend, which Windows passes; one DC maps both alike, so its
+    // logical rectangles overlap as its device ones do)
+    if src == dst && s.0 + s.2 > d.0 && s.0 < d.0 + d.2 && s.1 + s.3 > d.1 && s.1 < d.1 + d.3 {
+        crate::k32::last_error(87);
+        return 0;
+    }
+    u32::from(draw_src(dst, src, |_, _, cv, from| {
+        // (the same DC, apart: its own pixels, copied)
+        let own = (src == dst).then(|| copy_view(&cv.v));
+        let Some((sv, sox, soy)) = own.as_ref().map(|o| (o.0.clone(), 0, 0)).or_else(|| from.map(|f| (f.0.clone(), f.1, f.2))) else { return Rect::default() };
         let (dx, dy) = cv.dev(d.0, d.1);
         let r = Rect { l: dx, t: dy, r: dx + d.2, b: dy + d.3 }.and(&cv.clip);
         if s.2 == d.2 && s.3 == d.3 && sv.bpp == Depth::D32 && cv.v.bpp == Depth::D32 {

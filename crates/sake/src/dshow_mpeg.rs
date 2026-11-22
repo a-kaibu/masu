@@ -1421,7 +1421,9 @@ fn ar_sync_read(c: &mut Ctx) -> u32 {
     // would race on Windows too).
     let Some(got) = (unsafe { mem::view_mut_unchecked(buf, k, |dst| match file.read_at(Some(std::io::SeekFrom::Start(at)), false, dst) {
         Ok(g) => Some(lo32(g)),
-        Err(()) => Some(0),
+        Err(crate::files::ReadAt::Eof) => Some(0),
+        // (the host failed the read: E_UNEXPECTED below, not a short read at the end)
+        Err(crate::files::ReadAt::Fail(_)) => None,
     }) }) else {
         return Hr::Pointer.code();
     };

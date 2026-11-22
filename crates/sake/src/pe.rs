@@ -31,6 +31,9 @@ pub struct Module {
     pub deps: Vec<u32>,
     /// GetModuleHandleEx(PIN): never unloaded
     pub pinned: bool,
+    /// its DllMain(PROCESS_ATTACH) ran and answered TRUE: its unload tells it PROCESS_DETACH
+    /// (false while pending, and for one whose DllMain answered FALSE)
+    pub attached: bool,
 }
 
 /// The 64-bit address an image mapped at `base` (preferring `pref`) has.
@@ -191,6 +194,7 @@ pub fn load_datafile(data: &[u8], path: &str) -> Option<u32> {
         redirected: false,
         deps: Vec::new(),
         pinned: false,
+        attached: false,
     });
     Some(base)
 }
@@ -233,13 +237,9 @@ pub fn free_library(cpu: &mut Cpu, base: u32) -> bool {
 }
 
 fn unload(cpu: &mut Cpu, base: u32) {
-    // (not yet initialized: no DllMain to tell)
-    let fresh = {
-        let mut p = PENDING.locked();
-        let had = p.contains(&base);
-        p.retain(|&b| b != base);
-        had
-    };
+    // (not yet initialized, or its DllMain answered FALSE: no DllMain to tell)
+    PENDING.locked().retain(|&b| b != base);
+    let fresh = !with(base, |m| m.attached || !m.dll).unwrap_or(false);
     // (an exe's entry point is no DllMain)
     let entry = with(base, |m| if m.dll { m.entry } else { 0 }).unwrap_or(0);
     if !fresh {
@@ -724,6 +724,7 @@ pub fn load(data: Vec<u8>, path: &str, resolve: &mut dyn FnMut(&str, Import) -> 
         redirected: false,
         deps: Vec::new(),
         pinned: false,
+        attached: false,
     });
     ldr_add(base);
     // imports (after the module is listed: a DLL importing from itself, or a cycle)
@@ -1165,6 +1166,7 @@ pub fn hle_module(dll: &str) -> u32 {
         redirected: false,
         deps: Vec::new(),
         pinned: false,
+        attached: true,
     });
     drop(_making);
     ldr_add(base);
@@ -1530,19 +1532,18 @@ fn load_dll_file(dll: &str) -> Result<u32, String> {
 }
 
 /// LoadLibrary: an existing module, one of ours, or a DLL file (initialized here).
-pub fn load_library(cpu: &mut Cpu, name: &str) -> u32 {
+pub fn load_library(cpu: &mut Cpu, name: &str) -> Result<u32, LoadFail> {
     let _g = loader_lock();
     let key = api::dll_key(name);
     if let Some((b, path)) = sxs_module(name) {
         if b != 0 && with_mut(b, |m| m.refs += 1).is_some() {
-            return b;
+            return Ok(b);
         }
         if let Ok(b) = load_dll_file(&path) {
             if with_mut(b, |m| m.redirected = true).is_some() {
                 ldr_update(b);
             }
-            init_dlls(cpu);
-            return b;
+            return init_loaded(cpu, b);
         }
     }
     let qualified = name.contains(['\\', '/', ':']);
@@ -1553,7 +1554,7 @@ pub fn load_library(cpu: &mut Cpu, name: &str) -> u32 {
     };
     if let Some(b) = loaded {
         reload_if_freed(b);
-        return b;
+        return Ok(b);
     }
     let file = if qualified { at } else { find_dll_file(name) };
     if api::is_core(name) || (api::is_system(name) && file.is_none()) {
@@ -1571,18 +1572,15 @@ pub fn load_library(cpu: &mut Cpu, name: &str) -> u32 {
         if let Some(p) = crate::actctx::builtin_dll_path(name) && with_mut(b, |m| m.path = p).is_some() {
             ldr_update(b);
         }
-        return b;
+        return if b == 0 { Err(LoadFail::NotFound) } else { Ok(b) };
     }
     match load_dll_file(name) {
-        Ok(b) => {
-            init_dlls(cpu);
-            b
-        }
+        Ok(b) => init_loaded(cpu, b),
         Err(e) => {
             if crate::env_on!("SAKE_TRACE_LOAD") {
                 eprintln!("sake: LoadLibrary({name}): {e}");
             }
-            0
+            Err(LoadFail::NotFound)
         }
     }
 }
@@ -1684,8 +1682,34 @@ fn tls_callbacks(cpu: &mut Cpu, base: u32, reason: u32) {
     }
 }
 
+/// A DLL whose DllMain(PROCESS_ATTACH) answered FALSE: it was told PROCESS_DETACH at once (as
+/// Windows' loader does) and counts as never attached, so its unload tells it nothing more.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct InitFailed(pub u32);
+
+/// Why LoadLibrary gave no module.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum LoadFail {
+    /// no such DLL, or not one that loads (ERROR_MOD_NOT_FOUND)
+    NotFound,
+    /// its DllMain or a dependency's answered FALSE: unloaded again (ERROR_DLL_INIT_FAILED)
+    Init,
+}
+
+impl LoadFail {
+    /// Its Windows error
+    pub fn code(self) -> u32 {
+        match self {
+            LoadFail::NotFound => 126,
+            LoadFail::Init => 1114,
+        }
+    }
+}
+
 /// DllMain(PROCESS_ATTACH) of the DLLs loaded since, and the exe's TLS callbacks the first time.
-pub fn init_dlls(cpu: &mut Cpu) {
+/// Err: one answered FALSE (review 6852be1f: LoadLibrary went on as if it had loaded); the ones
+/// after it stay pending.
+pub fn init_dlls(cpu: &mut Cpu) -> Result<(), InitFailed> {
     let _g = loader_lock();
     static EXE_DONE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
     loop {
@@ -1708,12 +1732,41 @@ pub fn init_dlls(cpu: &mut Cpu) {
             if crate::env_on!("SAKE_TRACE_LOAD") {
                 eprintln!("sake: DllMain of {:#x} {}: {ok}", base, with(base, |m| m.name.clone()).unwrap_or_default());
             }
+            // (a BOOL: only a DLL's DllMain answers; an exe's entry is not called here)
+            if ok == 0 && with(base, |m| m.dll).unwrap_or(false) {
+                crate::call(cpu, entry, &[base, 0, 0]);
+                tls_callbacks(cpu, base, 0);
+                return Err(InitFailed(base));
+            }
         }
+        let _ = with_mut(base, |m| m.attached = true);
     }
     if !EXE_DONE.swap(true, std::sync::atomic::Ordering::Relaxed) {
         let exe = MODULES.r().iter().find(|m| !m.dll).map(|m| m.base);
         if let Some(b) = exe {
             tls_callbacks(cpu, b, 1);
+        }
+    }
+    Ok(())
+}
+
+/// init_dlls for LoadLibrary of `b`: `b` when every DllMain answered TRUE; else the failed
+/// load's reference goes (FreeLibrary: `b` and the DLLs only it brought in are unloaded, those
+/// already attached told PROCESS_DETACH) and LoadFail::Init.
+fn init_loaded(cpu: &mut Cpu, b: u32) -> Result<u32, LoadFail> {
+    match init_dlls(cpu) {
+        Ok(()) => Ok(b),
+        Err(InitFailed(failed)) => {
+            if crate::env_on!("SAKE_TRACE_LOAD") {
+                eprintln!("sake: DllMain(PROCESS_ATTACH) of {failed:#x} failed: unloading {b:#x}");
+            }
+            free_library(cpu, b);
+            // (a DLL the failed one's DllMain could not undo: it was loaded by another
+            // LoadLibrary that is still pending, or by this one as `b` itself)
+            if failed != b && with(failed, |m| !m.attached).unwrap_or(false) {
+                free_library(cpu, failed);
+            }
+            Err(LoadFail::Init)
         }
     }
 }
@@ -1760,6 +1813,7 @@ mod unload_tests {
             redirected: false,
             deps,
             pinned: false,
+            attached: true,
         });
     }
     fn refs(b: u32) -> Option<u32> {
@@ -2064,6 +2118,7 @@ mod path_tests {
             redirected: false,
             deps: Vec::new(),
             pinned: false,
+            attached: false,
         }
     }
 

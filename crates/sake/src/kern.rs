@@ -253,8 +253,9 @@ pub struct XMsg {
     pub to: u32,
     pub hwnd: u32,
     pub msg: u32,
-    pub w: u32,
-    pub l: u32,
+    /// wParam and lParam as the sender had them (64 bits from an x64 sender)
+    pub w: u64,
+    pub l: u64,
     pub data: Option<(u64, Vec<u8>)>,
     pub send: bool,
     /// the sending process (its answers go with it if it ends first)
@@ -281,7 +282,8 @@ pub struct Kern {
     pub dead_seen: u32,
     wins: Vec<KWin>,
     xmsgs: Vec<XMsg>,
-    replies: BTreeMap<u32, u32>,
+    /// sent messages' LRESULTs, all 64 bits (an x64 receiver's whole answer)
+    replies: BTreeMap<u32, u64>,
     /// who asks for each answer not yet taken (replies, vm_replies): a process that ended
     /// takes none of them
     askers: BTreeMap<u32, u32>,
@@ -1046,14 +1048,14 @@ impl Kern {
         mine
     }
     /// A sent message's result.
-    pub fn reply(&mut self, id: u32, r: u32) {
+    pub fn reply(&mut self, id: u32, r: u64) {
         if self.askers.contains_key(&id) {
             self.replies.insert(id, r);
         }
         self.changed();
     }
     /// The result of sent message `id` once there is one (PENDING until then).
-    pub fn take_reply(&mut self, id: u32) -> Result<u32, u32> {
+    pub fn take_reply(&mut self, id: u32) -> Result<u64, u32> {
         let r = self.replies.remove(&id).ok_or(PENDING)?;
         self.askers.remove(&id);
         self.changed();

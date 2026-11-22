@@ -331,7 +331,9 @@ fn dev_activate(c: &mut Ctx) -> u32 {
     // IDirectSound(8) {279afa83-4981-11ce-a521-0020af0be560}, {c50a7e93-f395-4834-9ef6-7fa99de50966}:
     // a DirectSound device on this endpoint, dsound.dll loaded as Windows' does
     if guid_is(iid, IID_DIRECTSOUND) || guid_is(iid, IID_DIRECTSOUND8) {
-        crate::pe::load_library(c.ctx().cpu, "dsound.dll");
+        if let Err(e) = crate::pe::load_library(c.ctx().cpu, "dsound.dll") {
+            return 0x8007_0000 | e.code();
+        }
         if let Some(o) = crate::sound::device() {
             out.put(o);
             return S_OK;
