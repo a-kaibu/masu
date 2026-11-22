@@ -139,10 +139,11 @@ pub enum Var {
     Mbctype,
     Huge,
     Iob,
+    Pioinfo,
 }
 
 impl Var {
-    pub const ALL: [Var; 26] = [Var::AdjustFdiv, Var::Fmode, Var::Commode, Var::Argc, Var::Argv, Var::Wargv, Var::Environ, Var::Wenviron, Var::Initenv, Var::Winitenv, Var::Acmdln, Var::Wcmdln, Var::Osver, Var::Winver, Var::Winmajor, Var::Winminor, Var::MbCurMax, Var::Pctype, Var::Pwctype, Var::Timezone, Var::Daylight, Var::Dstbias, Var::Tzname, Var::Mbctype, Var::Huge, Var::Iob];
+    pub const ALL: [Var; 27] = [Var::AdjustFdiv, Var::Fmode, Var::Commode, Var::Argc, Var::Argv, Var::Wargv, Var::Environ, Var::Wenviron, Var::Initenv, Var::Winitenv, Var::Acmdln, Var::Wcmdln, Var::Osver, Var::Winver, Var::Winmajor, Var::Winminor, Var::MbCurMax, Var::Pctype, Var::Pwctype, Var::Timezone, Var::Daylight, Var::Dstbias, Var::Tzname, Var::Mbctype, Var::Huge, Var::Iob, Var::Pioinfo];
     /// its export name
     pub fn name(self) -> &'static str {
         match self {
@@ -172,6 +173,7 @@ impl Var {
             Var::Mbctype => "_mbctype",
             Var::Huge => "_HUGE",
             Var::Iob => "_iob",
+            Var::Pioinfo => "__pioinfo",
         }
     }
     /// the data export of that name
@@ -197,6 +199,7 @@ pub fn var_at(v: Var) -> u32 {
     }
     let a = match name {
         "_iob" => iob(),
+        "__pioinfo" => io::pioinfo(),
         "_HUGE" => {
             let p = mem::heap_alloc(8, true);
             mem::write(p, &f64::INFINITY.to_le_bytes());
@@ -2594,18 +2597,59 @@ fn rename(c: &mut Ctx) -> u32 {
     if kura::fs::rename(from, crate::files::resolve_new(&to)).is_ok() { 0 } else { set_errno(13); u32::MAX }
 }
 fn fclose(c: &mut Ctx) -> u32 {
-    let fp = c.a(0);
+    if close_stream(c.a(0)) { 0 } else { u32::MAX }
+}
+/// Closes stream `fp` (its descriptor too, past the standard three); whether it was one
+fn close_stream(fp: u32) -> bool {
     let had = FILES.locked().get_or_insert_with(HashMap::default).remove(&fp);
-    if let Some(s) = had {
-        let fd = s.lock().unwrap_or_else(|e| e.into_inner()).fd;
-        if fd > 2 {
-            io::close_fd(fd);
-        }
-        mem::heap_free(fp);
-        0
-    } else {
-        u32::MAX
+    let Some(s) = had else { return false };
+    let fd = s.lock().unwrap_or_else(|e| e.into_inner()).fd;
+    if fd > 2 {
+        io::close_fd(fd);
     }
+    mem::heap_free(fp);
+    true
+}
+/// freopen / _wfreopen (path, mode, stream): the stream's file closed and `path` opened in its
+/// place (the same FILE); NULL, the stream closed, when it can't be opened
+fn reopen(path: &str, mode: &[u8], fp: u32) -> u32 {
+    let Some(old) = FILES.locked().get_or_insert_with(HashMap::default).get(&fp).cloned() else { return 0 };
+    // the old descriptor goes (a standard one too), so the file takes the lowest free one:
+    // freopen of stdout opens descriptor 1, which _dup2 can later point back at the console
+    let old_fd = old.lock().unwrap_or_else(|e| e.into_inner()).fd;
+    io::close_fd(old_fd);
+    let Some(f) = fopen_mode(path, mode) else {
+        FILES.locked().get_or_insert_with(HashMap::default).remove(&fp);
+        mem::heap_free(fp);
+        set_errno(2);
+        return 0;
+    };
+    let f = Arc::new(f);
+    let fd = io::fd_of_file(f.clone());
+    let mut st = Stream::new(fp, Some(f), fd, mode_flag(mode), false);
+    st.text = text_mode(mode);
+    FILES.locked().get_or_insert_with(HashMap::default).insert(fp, Arc::new(Mutex::new(st)));
+    fp
+}
+/// After _dup2 onto `fd`: every stream on it reads and writes what the descriptor now names
+/// (a file, a pipe end, or the console)
+pub(super) fn follow_fd(fd: u32) {
+    let streams: Vec<_> = FILES.locked().get_or_insert_with(HashMap::default).values().cloned().collect();
+    for st in streams {
+        let mut g = st.lock().unwrap_or_else(|e| e.into_inner());
+        if g.fd == fd {
+            g.sync();
+            g.f = io::file_of(fd);
+            g.pipe = io::pipe_of(fd);
+        }
+    }
+}
+fn freopen(c: &mut Ctx) -> u32 {
+    reopen(&a2s(&cstr(c.a(0))), &cstr(c.a(1)), c.a(2))
+}
+fn _wfreopen(c: &mut Ctx) -> u32 {
+    let mode: Vec<u8> = wstr(c.a(1)).iter().map(|&u| kome::num::lo8(u)).collect();
+    reopen(&String::from_utf16_lossy(&wstr(c.a(0))), &mode, c.a(2))
 }
 fn fread(c: &mut Ctx) -> u32 {
     fread_to(c.a(0), c.a(1), c.a(2), c.a(3))
@@ -4452,7 +4496,7 @@ pub fn init() {
         _CIsqrt, _CIsin, _CIcos, _CItan, _CIasin, _CIacos, _CIatan, _CIexp, _CIlog, _CIlog10, _CIsinh, _CIcosh,
         _CItanh, _CIpow, _CIatan2, _CIfmod, _ftol,
         fopen, _wfopen, fclose, fread, fwrite, fseek, ftell, rewind, feof, ferror, fflush, fgetc, ungetc, fgets,
-        fputs, fprintf);
+        fputs, fprintf, freopen, _wfreopen);
     for (alias, f) in [
         ("_strcmpi", _stricmp as crate::api::Handler),
         ("_strdup", _strdup),

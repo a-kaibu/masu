@@ -134,10 +134,14 @@ pub fn crt_read_vec(p: Handle, n: u32) -> Result<Vec<u8>, u32> {
 /// A synchronous write of `n` bytes from `buf` for the C runtime's _write: Ok(bytes), or the
 /// NT status (PIPE_CLOSING: the reader closed).
 pub fn crt_write(p: Handle, buf: u32, n: u32) -> Result<u32, u32> {
+    crt_write_vec(p, &mem::bytes(buf, n))
+}
+/// crt_write of host bytes (a text-mode _write's, LF made CR LF)
+pub fn crt_write_vec(p: Handle, data: &[u8]) -> Result<u32, u32> {
     if !p.write {
         return Err(kern::ACCESS_DENIED);
     }
-    let (e, data) = (p.end, mem::bytes(buf, n));
+    let (e, data) = (p.end, data.to_vec());
     let mut w = kern::Write::default();
     let r = kern::block(None, &|| false, move |k: &mut Kern| k.write(e, &data, &mut w));
     pump();

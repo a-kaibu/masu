@@ -14,6 +14,7 @@ mod ffi {
         pub fn vngpu_canvas_format() -> u32;
         pub fn vngpu_canvas_size(w: u32, h: u32);
         pub fn vngpu_canvas_view() -> Id;
+        #[cfg(any(target_os = "emscripten", test))]
         pub fn vngpu_has_feature(p: *const u8, n: usize) -> i32;
         pub fn vngpu_drop(i: Id);
         pub fn vngpu_destroy(i: Id);
@@ -102,8 +103,16 @@ pub fn canvas_size(w: u32, h: u32) {
 pub fn canvas_view() -> Id {
     unsafe { ffi::vngpu_canvas_view() }
 }
+/// Whether the page's device has WebGPU feature `name`
+#[cfg(any(target_os = "emscripten", test))]
 pub fn has_feature(name: &str) -> bool {
     unsafe { ffi::vngpu_has_feature(name.as_ptr(), name.len()) != 0 }
+}
+/// (a native build that is not kura's own test has no page: other crates' tests reach this
+/// through d3d11's multisample check, and the page's import did not link)
+#[cfg(not(any(target_os = "emscripten", test)))]
+pub fn has_feature(_name: &str) -> bool {
+    false
 }
 /// Forgets object `i` (WebGPU frees it once unused).
 pub fn drop(i: Id) {

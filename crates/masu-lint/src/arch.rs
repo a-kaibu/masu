@@ -621,7 +621,13 @@ fn release_build_only(tree: &Tree) -> Hits {
 }
 
 /// what must stay in place: (file, text, why)
-pub const REQUIRED: [(&str, &str, &str); 42] = [
+pub const REQUIRED: [(&str, &str, &str); 48] = [
+    ("crates/sake/src/crt_io.rs", "    if let Some(d) = get(fd).filter(|d| d.text && !matches!(d.kind, Kind::Std(_))) {\n        return text_read(fd, d, buf, n.min(i32::MAX as u32));", "a text-mode descriptor's _read makes CR LF an LF (it gave the raw bytes: msvcrt:file test_file_write_read; 2026-11-22)"),
+    ("crates/sake/src/crt_io.rs", "    // a stream on `to` (stdout after freopen) now reads and writes what `to` names\n    super::follow_fd(to);", "a stream follows its descriptor through _dup2 (stdout freopen'ed to a file never came back to the console: ucrtbase:file printed nothing; 2026-11-22)"),
+    ("crates/sake/src/crt_io.rs", "fn getwc_of(fp: u32) -> u32 {\n    if !stream_is_text(fp) {", "a binary stream's wide characters are two raw bytes each (msvcrt:file test_fgetwc; 2026-11-22)"),
+    ("crates/sake/src/crt_io.rs", "    if stream_is_text(fp) { wc_bytes(u) } else { Some(u.to_le_bytes().to_vec()) }", "fputwc writes a binary stream's characters raw (msvcrt:file test_fgetwc; 2026-11-22)"),
+    ("crates/sake/src/crt_io.rs", "    if PIOINFO.load(Ordering::Acquire) != 0 {\n        mirror(&mut g);", "msvcrt's __pioinfo follows the descriptor table once a program asked for it (Wine msvcrt:file read NULL and crashed; 2026-11-22)"),
+    ("crates/kura/src/render/gpu.rs", "#[cfg(not(any(target_os = \"emscripten\", test)))]\npub fn has_feature(_name: &str) -> bool {", "a native build without the page answers no WebGPU feature (sake's tests did not link once d3d11 asked; 2026-11-22)"),
     ("crates/sake/src/kern.rs", "        let gone = end.refs.is_empty();\n        self.changed();", "a pipe end's reference count change marks the shared kernel changed (unmarked, the next process's store brought the old count back and a reader never saw EOF; msvcrt:file test_pipes, 2026-11-22)"),
     ("crates/sake/src/iocp.rs", "    let (h, ms, alertable) = if ex { (c.a(0), c.a(3), c.a(4) != 0) } else { (c.a(0) | 1, if c.a(3) != 0 { u32::MAX } else { 0 }, false) };", "GetOverlappedResult is GetOverlappedResultEx(h | 1, ...) as in kernelbase (it looped while the status stayed pending: kernel32:file timed out; 2026-11-22)"),
     ("crates/sake/src/apc.rs", "    if !handles.iter().all(|&h| obj::is_pseudo(h) || obj::waitable(&[h])) {", "an alertable wait on a handle that is no waitable object fails before APCs run (2026-11-22)"),

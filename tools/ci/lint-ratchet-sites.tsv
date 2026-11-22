@@ -1507,7 +1507,6 @@ crates/kura/src/render/gpu.rs	undocumented_unsafe_blocks	unsafe { ffi::vngpu_dra
 crates/kura/src/render/gpu.rs	undocumented_unsafe_blocks	unsafe { ffi::vngpu_draw_indexed(n, inst, first, base, first_inst) }
 crates/kura/src/render/gpu.rs	undocumented_unsafe_blocks	unsafe { ffi::vngpu_drop(i) }
 crates/kura/src/render/gpu.rs	undocumented_unsafe_blocks	unsafe { ffi::vngpu_end_pass() }
-crates/kura/src/render/gpu.rs	undocumented_unsafe_blocks	unsafe { ffi::vngpu_has_feature(name.as_ptr(), name.len()) != 0 }
 crates/kura/src/render/gpu.rs	undocumented_unsafe_blocks	unsafe { ffi::vngpu_on_done(token) }
 crates/kura/src/render/gpu.rs	undocumented_unsafe_blocks	unsafe { ffi::vngpu_pipeline_group_layout(p, i) }
 crates/kura/src/render/gpu.rs	undocumented_unsafe_blocks	unsafe { ffi::vngpu_pipeline_layout(json.as_ptr(), json.len()) }
