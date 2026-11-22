@@ -387,8 +387,9 @@ impl Query {
             }
             Kind::PipelineStatistics => {
                 let mut st = self.stats;
-                // (PSInvocations: the clip pass's pairs of invocations)
-                for (i, c) in [4usize, 5, 6, 7].into_iter().zip(counts.iter().enumerate().map(|(k, &c)| if k == 3 { c.saturating_mul(2) } else { c })) {
+                // (PSInvocations: the clip pass's pairs of invocations, in 32 bits as WARP's
+                // counter, one 32-bit field of its rasterization state: pipeline-stats.md 0)
+                for (i, c) in [4usize, 5, 6, 7].into_iter().zip(counts.iter().enumerate().map(|(k, &c)| if k == 3 { u64::from(kome::num::lo32(c.wrapping_mul(2))) } else { c })) {
                     if let Some(s) = st.get_mut(i) {
                         *s = c;
                     }

@@ -21,7 +21,11 @@
 //! the x of an edge at the row's centre by a fixed-point DDA (slope floor((dx << 42) / dy), the
 //! start plus 2^49 - 1, x = the accumulator >> 50: x0 << 42 the edge's top), clamped to the
 //! drawable columns; rows outside the triangle hold (0x7fff, 0). In each quad row, the quads from
-//! min(the two rows' starts) >> 1 to (max(their ends) + 1) >> 1 (out), 4 each.
+//! min(the two rows' starts) >> 1 to (max(their ends) + 1) >> 1 (out), 4 each. A triangle with a
+//! corner's x at or past ±2^20 (4096 pixels) or 2^21 (8192 rows) or more from its top to its lowest
+//! corner takes WARP's BigEdgeIterator instead: a 96-bit slope (32.64, floor(dx 2^64 / dy)), whose
+//! x is the exact first centre at or right of the edge (ceil((x - 128) / 256) of the edge's x at
+//! the row centre).
 //!
 //! Points: a point inside the clip volume covers the pixel whose centre is in the 1-pixel square
 //! around it (left and top sides in): one quad.
@@ -243,6 +247,23 @@ fn edge_x(t: (i64, i64), b: (i64, i64), yc: i64) -> i64 {
     yc.wrapping_sub(t.1).wrapping_mul(slope).wrapping_add(0x1_ffff_ffff_ffff).wrapping_add(t.0.wrapping_shl(42)) >> 50
 }
 
+/// The x of the edge from `t` to `b` at row centre `yc` by WARP's BigEdgeIterator: exactly the
+/// first pixel whose centre is at or right of it (its 2^-64 slope error never reaches a centre).
+fn big_edge_x(t: (i64, i64), b: (i64, i64), yc: i64) -> i64 {
+    let dy = i128::from(b.1.saturating_sub(t.1).max(1));
+    let num = i128::from(t.0.saturating_sub(128)).saturating_mul(dy).saturating_add(i128::from(yc.saturating_sub(t.1)).saturating_mul(i128::from(b.0.saturating_sub(t.0))));
+    let den = dy.saturating_mul(256);
+    let q = num.div_euclid(den);
+    let up = if num.rem_euclid(den) == 0 { q } else { q.saturating_add(1) };
+    i64::try_from(up).unwrap_or(0)
+}
+
+/// Whether WARP draws the triangle (top corner `t`) with BigEdgeIterator (the module's comment).
+fn big(v: &[(i64, i64); 3], top: i64) -> bool {
+    let low = v.iter().map(|c| c.1).max().unwrap_or(top);
+    v.iter().any(|c| c.0.unsigned_abs() >= 0x10_0000) || low.saturating_sub(top) >= 0x20_0000
+}
+
 /// The low 32 bits of `v` (x86's 32-bit registers).
 fn lo32u(v: i64) -> u32 {
     u32::try_from(v & 0xffff_ffff).unwrap_or(0)
@@ -273,6 +294,7 @@ fn spans(v: &[(i64, i64); 3], r: &Raster) -> u64 {
     if first >= end {
         return 0;
     }
+    let wide = big(v, t.1);
     // (a pixel row's span; a row of the quad rows outside the triangle (0x7fff, 0))
     let row = |j: i64| -> (i64, i64) {
         if j < first || j >= end {
@@ -280,8 +302,9 @@ fn spans(v: &[(i64, i64); 3], r: &Raster) -> u64 {
         }
         let yc = j.saturating_mul(256).saturating_add(128);
         // (an edge ends at the row whose centre is at or below its lower corner)
-        let lx = if l.1 <= rt.1 && yc >= l.1 { edge_x(l, rt, yc) } else { edge_x(t, l, yc) };
-        let rx = if rt.1 < l.1 && yc >= rt.1 { edge_x(rt, l, yc) } else { edge_x(t, rt, yc) };
+        let ex = if wide { big_edge_x } else { edge_x };
+        let lx = if l.1 <= rt.1 && yc >= l.1 { ex(l, rt, yc) } else { ex(t, l, yc) };
+        let rx = if rt.1 < l.1 && yc >= rt.1 { ex(rt, l, yc) } else { ex(t, rt, yc) };
         (lx.max(cl).min(cr), rx.max(cl).min(cr))
     };
     let mut n = 0i64;
@@ -519,6 +542,21 @@ fn ps_edge_x(t: vec2<i32>, b: vec2<i32>, yc: i32) -> i32 {
     acc = d_add(d_add(acc, vec2<u32>(0xffffffffu, 0x1ffffu)), vec2<u32>(0u, bitcast<u32>(t.x) << 10u));
     return bitcast<i32>(acc.y) >> 18u;
 }
+// BigEdgeIterator's x: ceil((x - 128) / 256) of the edge's exact x at yc (big_edge_x), by the
+// floor of the numerator over dy, then that over 256
+fn ps_big_edge_x(t: vec2<i32>, b: vec2<i32>, yc: i32) -> i32 {
+    let dy = u32(max(b.y - t.y, 1));
+    let num = d_add(m64(t.x - 128, i32(dy)), m64(yc - t.y, b.x - t.x));
+    let neg = (num.y >> 31u) != 0u;
+    var a = num;
+    if (neg) { a = d_neg(num); }
+    let qa = d_div(a, dy);
+    let ra = a.x - d_mul(qa, dy).x;
+    var q = bitcast<i32>(qa.x);
+    if (neg) { q = -q - select(0, 1, ra != 0u); }
+    if (ra == 0u) { return (q + 255) >> 8u; }
+    return (q >> 8u) + 1;
+}
 fn ps_shr1(v: i32) -> i32 { return bitcast<i32>(bitcast<u32>(v) >> 1u); }
 // the quads of a fan triangle (culled: 0): WARP's edge table by quad rows (spans)
 fn ps_tri(v0: vec2<i32>, v1: vec2<i32>, v2: vec2<i32>) -> u32 {
@@ -544,18 +582,28 @@ fn ps_tri(v0: vec2<i32>, v1: vec2<i32>, v2: vec2<i32>) -> u32 {
     let first = max((t.y + 127) >> 8u, ct);
     let end = min((max(l.y, rt.y) + 127) >> 8u, cb);
     if (first >= end) { return 0u; }
+    let lim = 0x100000;
+    let wide = max(max(v0.x, v1.x), v2.x) >= lim || min(min(v0.x, v1.x), v2.x) <= -lim || max(max(v0.y, v1.y), v2.y) - t.y >= 0x200000;
     var n = 0i;
     for (var j = first & ~1; j < end; j += 2) {
-        var lo = 0x7fff; var hi = 0;
+        // (each row's (start, end), (0x7fff, 0) outside the triangle, as WARP's edge table: no
+        // other start value, a span clamped to negative columns stays below 0)
+        var lo = 0; var hi = 0;
         for (var k = 0; k < 2; k += 1) {
             let jj = j + k;
-            if (jj < first || jj >= end) { lo = min(lo, 0x7fff); hi = max(hi, 0); continue; }
-            let yc = jj * 256 + 128;
-            var lx: i32; var rx: i32;
-            if (l.y <= rt.y && yc >= l.y) { lx = ps_edge_x(l, rt, yc); } else { lx = ps_edge_x(t, l, yc); }
-            if (rt.y < l.y && yc >= rt.y) { rx = ps_edge_x(rt, l, yc); } else { rx = ps_edge_x(t, rt, yc); }
-            lo = min(lo, min(max(lx, cl), cr));
-            hi = max(hi, min(max(rx, cl), cr));
+            var rs = 0x7fff; var re = 0;
+            if (jj >= first && jj < end) {
+                let yc = jj * 256 + 128;
+                var lx: i32; var rx: i32;
+                var la = t; var lb = l; var ra = t; var rb = rt;
+                if (l.y <= rt.y && yc >= l.y) { la = l; lb = rt; }
+                if (rt.y < l.y && yc >= rt.y) { ra = rt; rb = l; }
+                if (wide) { lx = ps_big_edge_x(la, lb, yc); rx = ps_big_edge_x(ra, rb, yc); }
+                else { lx = ps_edge_x(la, lb, yc); rx = ps_edge_x(ra, rb, yc); }
+                rs = min(max(lx, cl), cr);
+                re = min(max(rx, cl), cr);
+            }
+            if (k == 0) { lo = rs; hi = re; } else { lo = min(lo, rs); hi = max(hi, re); }
         }
         n += ps_shr1(hi + 1) - ps_shr1(lo);
     }
@@ -700,3 +748,7 @@ fn ps_pairs(p: array<vec4<f32>, 3>, n: u32) -> u32 {
     return quads * 2u;
 }
 "#;
+
+#[cfg(test)]
+#[path = "ps_tests.rs"]
+mod tests;

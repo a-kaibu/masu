@@ -38,13 +38,39 @@ fn area2(t: &Tessellation, k: usize) -> f64 {
 
 /// Each triangle wound the same way and their areas adding up to the domain's (a tri's 1/2,
 /// a quad's 1): the domain covered once, no gaps, no overlaps.
+/// Whether triangle `k` (its first index) has two corners at most 2 / 65536 apart: the
+/// reference's 15.16 points next to an edge's middle. PlacePointIn1D special-cases the middle
+/// "since 16 bit fixed math below can't reproduce 0.5 exactly", and the points beside it can land
+/// past it (factor 30.005 fractional_even: 0.5000305, 0.5, 0.4999695 in that order), so the two
+/// triangles there are wound the other way in the reference too, slivers of at most that width.
+fn sliver(t: &Tessellation, k: usize) -> bool {
+    let p = |i: usize| t.indices.get(i).and_then(|&j| t.points.get(us(j))).copied().unwrap_or([0.0; 2]).map(f64::from);
+    let (a, b, c) = (p(k), p(k + 1), p(k + 2));
+    let near = |x: [f64; 2], y: [f64; 2]| (x[0] - y[0]).abs().max((x[1] - y[1]).abs()) <= 2.0 / 65536.0;
+    near(a, b) || near(b, c) || near(c, a)
+}
+
+/// The reference's own sliver (sliver's comment): the edge of factor 30.005 has its points beside
+/// the middle on the wrong sides of it, and the two triangles to them are wound the other way,
+/// while the patch is still covered once.
+#[test]
+fn middle_points_past_the_middle() {
+    let t = tessellate(Partitioning::FractionalEven, Output::TriangleCw, Factors::Quad { edges: [20.992214, 14.804766, 30.005175, 60.035915], inside: [0.0, 0.0] });
+    let v: Vec<f32> = [53usize, 54, 55].iter().map(|&i| t.points[i][1]).collect();
+    assert_eq!(v, [0.5 + 2.0 / 65536.0, 0.5, 0.5 - 2.0 / 65536.0]);
+    let reversed: Vec<usize> = (0..t.indices.len()).step_by(3).filter(|&k| area2(&t, k) < 0.0).collect();
+    assert!(reversed.iter().all(|&k| sliver(&t, k)), "{reversed:?}");
+    assert_eq!(reversed.len(), 2);
+    covers(&t, 1.0, Output::TriangleCw).unwrap();
+}
+
 fn covers(t: &Tessellation, domain_area: f64, out: Output) -> Result<(), String> {
     let mut sum = 0.0;
     for k in (0..t.indices.len()).step_by(3) {
         let a = area2(t, k) / 2.0;
         // (Direct3D's u, v axes: a clockwise triangle has a positive area in them)
         let a = if out == Output::TriangleCw { a } else { -a };
-        if a < -1e-9 {
+        if a < -1e-9 && !sliver(t, k) {
             return Err(format!("triangle {} wound the other way ({a})", k / 3));
         }
         sum += a;
@@ -343,3 +369,4 @@ fn golden_patches() {
     s.push_str(&format!("sweep {:016x}\n", h.get()));
     kome::golden::check(concat!(env!("CARGO_MANIFEST_DIR"), "/src/d3d11/tess_golden.txt"), &s);
 }
+

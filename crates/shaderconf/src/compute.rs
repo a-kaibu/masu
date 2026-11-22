@@ -195,6 +195,7 @@ pub fn cases() -> Result<String, String> {
         string(&ours)
     ));
     out.extend(buffer_cases()?);
+    out.extend(ps_cases());
     Ok(format!("[\n{}\n]\n", out.join(",\n")))
 }
 
@@ -331,4 +332,118 @@ mod tests {
         let s = super::cases().unwrap();
         assert_eq!(s.matches("\"dispatch\"").count(), 11);
     }
+}
+
+/// A xorshift generator for the primitives of [`ps_cases`] (fixed seeds: the same cases each run).
+struct Rng(u32);
+
+impl Rng {
+    fn next(&mut self) -> u32 {
+        let mut x = self.0;
+        x ^= x << 13;
+        x ^= x >> 17;
+        x ^= x << 5;
+        self.0 = x;
+        x
+    }
+
+    /// A float in [lo, hi), on a grid of 1/64 a quarter of the time (ties on pixel centres and
+    /// edges)
+    fn f(&mut self, lo: f32, hi: f32) -> f32 {
+        let u = kome::num::to_f32(self.next() >> 8) / 16_777_216.0;
+        let v = lo + (hi - lo) * u;
+        if self.next() % 4 == 0 { (v * 64.0).round() / 64.0 } else { v }
+    }
+
+    /// A clip-space position: mostly inside the volume, sometimes outside planes, now and then
+    /// behind the eye or on w = 0
+    fn pos(&mut self) -> [f32; 4] {
+        let w = match self.next() % 16 {
+            0 => -self.f(0.1, 2.0),
+            1 => 0.0,
+            _ => self.f(0.25, 3.0),
+        };
+        let span = if self.next() % 3 == 0 { 3.0 } else { 1.1 };
+        let a = w.abs().max(0.25) * span;
+        [self.f(-a, a), self.f(-a, a), self.f(-0.5 * w.abs(), 1.5 * w.abs()), w]
+    }
+}
+
+/// PSInvocations' WGSL (dxwgsl expand::ps::WGSL, the clip pass's ps_pairs) against its Rust rule
+/// (ps::invocations, the one checked against Windows' WARP counts: winref d3d11gs) on random
+/// points, lines and triangles under several rasterizer states: every primitive's pairs the same.
+/// The clip pass is the one counting on the page; the Rust rule alone is what the tests know.
+fn ps_cases() -> Vec<String> {
+    use dxwgsl::expand::{ps, xd, B_XD, XD_VECS};
+    // (viewport x, y, w, h, min depth, max depth; target; scissor; cull, ccw, depth clip)
+    let states: [([f32; 6], Option<(u32, u32)>, Option<[i32; 4]>, ps::Cull, bool, bool); 7] = [
+        ([0.0, 0.0, 64.0, 64.0, 0.0, 1.0], Some((64, 64)), None, ps::Cull::None, false, true),
+        ([0.0, 0.0, 640.0, 480.0, 0.0, 1.0], Some((640, 480)), None, ps::Cull::Back, false, true),
+        ([10.5, 3.25, 100.0, 61.0, 0.0, 1.0], Some((128, 96)), Some([20, 8, 90, 50]), ps::Cull::Front, true, false),
+        ([-30.0, -20.0, 200.0, 150.0, 0.0, 1.0], Some((96, 80)), None, ps::Cull::Back, true, true),
+        ([0.0, 0.0, 4096.0, 4096.0, 0.0, 1.0], Some((4096, 4096)), None, ps::Cull::None, false, false),
+        // (corners past 4096 pixels: WARP's BigEdgeIterator)
+        ([-9000.0, -9000.0, 16384.0, 16384.0, 0.0, 1.0], Some((16384, 16384)), None, ps::Cull::None, false, true),
+        // (a viewport wholly outside the target: no pixel can be drawn)
+        ([-20000.0, -9000.0, 16384.0, 16384.0, 0.0, 1.0], Some((16384, 16384)), None, ps::Cull::Back, false, true),
+    ];
+    const N: u32 = 1536;
+    let mut out = Vec::new();
+    for (k, &(vp, target, scissor, cull, ccw, dc)) in states.iter().enumerate() {
+        let r = ps::Raster { viewport: [vp[0], vp[1], vp[2], vp[3]], cull, front_ccw: ccw, depth_clip: dc, rect: ps::rect(&vp, target, scissor) };
+        let mut xw = vec![0u32; kome::num::to_usize(XD_VECS).saturating_mul(4)];
+        let mut put = |at: usize, v: u32| {
+            if let Some(w) = xw.get_mut(at) {
+                *w = v;
+            }
+        };
+        for (i, v) in vp.iter().take(4).enumerate() {
+            put(xd::VIEWPORT.wrapping_add(i), v.to_bits());
+        }
+        put(xd::RASTER, cull.word() | u32::from(ccw) << 2 | u32::from(dc) << 3 | 1 << 4);
+        for (i, v) in r.rect.iter().enumerate() {
+            put(xd::RECT.wrapping_add(i), v.cast_unsigned());
+        }
+        let mut rng = Rng(0x9e37_79b9 ^ kome::num::u32_of(k).wrapping_mul(0x85eb_ca6b) | 1);
+        let (mut prims, mut want) = (Vec::new(), Vec::new());
+        for i in 0..N {
+            // (a third each points, lines, triangles; a point or line repeated in its unused words)
+            let n = i.wrapping_rem(3).wrapping_add(1);
+            let p = [rng.pos(), rng.pos(), rng.pos()];
+            let used = p.get(..kome::num::to_usize(n)).unwrap_or(&p);
+            // (WARP's counter is 32 bits: the page's pairs times 2 in u32)
+            want.push(kome::num::lo32(ps::invocations(used, &r)));
+            for v in p {
+                prims.extend(v.map(f32::to_bits));
+            }
+            prims.extend([n, 0, 0, 0]);
+        }
+        let mut m = String::new();
+        m.push_str(&format!("@group(0) @binding({B_XD}) var<uniform> xd: array<vec4<u32>, {XD_VECS}>;\n"));
+        m.push_str("fn xw(i: u32) -> u32 { return xd[i / 4u][i % 4u]; }\n");
+        for (name, w) in xd::NAMED {
+            m.push_str(&format!("const XD_{name} = {w}u;\n"));
+        }
+        m.push_str(ps::WGSL);
+        m.push_str(&format!(
+            "@group(0) @binding(1) var<storage, read_write> prims: array<vec4<u32>>;\n@group(0) @binding(2) var<storage, read_write> pairs: array<u32>;\n\
+             @compute @workgroup_size(64) fn main(@builtin(global_invocation_id) g: vec3<u32>) {{\n  let i = g.x;\n  if (i >= {N}u) {{ return; }}\n\
+               let p = array<vec4<f32>, 3>(bitcast<vec4<f32>>(prims[i * 4u]), bitcast<vec4<f32>>(prims[i * 4u + 1u]), bitcast<vec4<f32>>(prims[i * 4u + 2u]));\n\
+               pairs[i] = ps_pairs(p, prims[i * 4u + 3u].x) * 2u;\n}}\n"
+        ));
+        let b = [
+            format!(r#"{{"binding":{B_XD},"uniform":[{}]}}"#, list(&xw)),
+            format!(r#"{{"binding":1,"buffer":{{"words":[{}]}}}}"#, list(&prims)),
+            format!(r#"{{"binding":2,"buffer":{{"words":[{}]}}}}"#, list(&vec![0u32; kome::num::to_usize(N)])),
+        ];
+        out.push(format!(
+            r#"{{"name":{},"dispatch":[{},1,1],"out":[2],"want":[{}],"variants":[{{"name":"masu","wgsl":{}}}],"bindings":[{}]}}"#,
+            string(&format!("PSInvocations: ps_pairs (WGSL) = ps::invocations (Rust), state {k}")),
+            N.div_ceil(64),
+            list(&words_bytes(&want)),
+            string(&m),
+            b.join(",")
+        ));
+    }
+    out
 }

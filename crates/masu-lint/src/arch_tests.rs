@@ -162,6 +162,11 @@ fn fixture(r: Rule) -> Fixture {
             good: &[("crates/sake/src/crt.rs", "fn puts(s: &str) { crate::k32::console_write(s); eprintln!(\"sake: puts\"); }\n// eprint!( in a comment\n")],
             mutate: ("crates/sake/src/crt.rs", |t| Some(t.replacen("crate::k32::console_write(&a2s(&s));", "eprint!(\"{}\", a2s(&s));", 1))),
         },
+        Rule::KnownDiffs => Fixture {
+            bad: &[("tests/winref/known.txt", "# a gap\nd3d11copy-* ^(want|got) +options logic_op \n")],
+            good: &[("tests/winref/known.txt", "# only comments\n\n   # and blanks\n")],
+            mutate: ("tests/winref/known.txt", |t| Some(format!("{t}d3d11-* ^(want|got) +made up \n"))),
+        },
         Rule::LoadEveryLevel => Fixture {
             bad: &[("crates/dxwgsl/src/wgsl.rs", "fn load() { let tv = format!(\"t{t}\"); }\n// format!(\"tl{t}\") + bv.l{t}.x in a comment\n")],
             good: &[("crates/dxwgsl/src/wgsl.rs", "fn load() { let tv = format!(\"tl{t}\"); let a = format!(\"{lv} + bv.l{t}.x\"); }\n")],

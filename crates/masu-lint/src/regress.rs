@@ -202,14 +202,19 @@ pub(super) fn clear_rounding(tree: &Tree) -> Hits {
 /// the clip pass, the query that reads its counters, a line's count by the region WARP's line
 /// rasterizer visits and a triangle's by its edge table's spans (2026-11-21: lines were counted
 /// by the quads they light, winref d3d11gs 128 for Windows' 228; triangles by the quads with a
-/// covered centre, 3764 for 3772)
-const PS_SITES: [(&str, &str, &str); 6] = [
+/// covered centre, 3764 for 3772; the WGSL's quad rows started from (0x7fff, 0) where the edge
+/// table has none, which only shaderconf's ps_cases, the WGSL run against the Rust rule, showed)
+const PS_SITES: [(&str, &str, &str); 10] = [
     ("crates/dxwgsl/src/wgsl/expand.rs", "ps_pairs(p,", "the clip pass does not add ps_pairs(p, ..) to the counters"),
     ("crates/kura/src/d3d11/query.rs", "c::PS_PAIRS", "PIPELINE_STATISTICS does not read c::PS_PAIRS"),
     ("crates/dxwgsl/src/wgsl/ps.rs", "line_visits(snap(", "a line's invocations are not line_visits (the quads WARP visits)"),
     ("crates/dxwgsl/src/wgsl/ps.rs", "return ps_line_visits(ps_snap(", "the clip pass does not count a line by ps_line_visits"),
     ("crates/dxwgsl/src/wgsl/ps.rs", "spans(&v, r)", "a triangle's invocations are not its edge table's spans (spans)"),
     ("crates/dxwgsl/src/wgsl/ps.rs", "lx = ps_edge_x(", "the clip pass does not count a triangle by WARP's edge DDA (ps_edge_x)"),
+    ("crates/dxwgsl/src/wgsl/ps.rs", "if wide { big_edge_x }", "a far triangle is not counted by BigEdgeIterator's exact x (big_edge_x)"),
+    ("crates/dxwgsl/src/wgsl/ps.rs", "lx = ps_big_edge_x(", "the clip pass does not count a far triangle by BigEdgeIterator (ps_big_edge_x)"),
+    ("crates/dxwgsl/src/wgsl/ps.rs", "#[path = \"ps_tests.rs\"]", "the spans are no longer checked against the geometric reference (ps_tests.rs)"),
+    ("crates/shaderconf/src/compute.rs", "out.extend(ps_cases());", "the clip pass's WGSL is no longer run against the Rust rule on WebGPU (shaderconf ps_cases)"),
 ];
 
 /// PSInvocations not taken from the clip pass's pairs, or a line's not from its visited quads
@@ -309,6 +314,26 @@ pub(super) fn console_lines(tree: &Tree) -> Hits {
             if code.contains("eprint!(") {
                 out.push((f.clone(), n.saturating_add(1), "eprint!: the program's console goes through k32::console_write".to_owned()));
             }
+        }
+    }
+    out
+}
+
+// --- known-diffs -----------------------------------------------------------------------------
+
+/// winref's list of the differences from Windows compare.py lets pass
+const KNOWN_TXT: &str = "tests/winref/known.txt";
+
+/// Every pattern line of tests/winref/known.txt (not its comments): each one a difference from
+/// Windows kept, so each one a site with its why in arch-lint-sites.tsv; a line added there
+/// hides a new difference (2026-11-21: LogicOp).
+pub(super) fn known_diffs(tree: &Tree) -> Hits {
+    let f = Rel::new(KNOWN_TXT);
+    let mut out = Hits::new();
+    for (n, l) in tree.text(&f).lines().enumerate() {
+        let t = l.trim();
+        if !t.is_empty() && !t.starts_with('#') {
+            out.push((f.clone(), n.saturating_add(1), "a difference from Windows let pass: make the behavior Windows', then drop the line".to_owned()));
         }
     }
     out
