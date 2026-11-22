@@ -280,7 +280,7 @@ pub(super) fn logic_ops(tree: &Tree) -> Hits {
 
 /// 8-bit SNORM render targets (2026-11-22: kura dropped every clear of and draw to them,
 /// WebGPU rendering to no SNORM format)
-const SNORM_SITES: [(&str, &str, &str); 23] = [
+const SNORM_SITES: [(&str, &str, &str); 26] = [
     ("crates/kura/src/d3d11/mod.rs", "logic::snorm_ms_page(fmt, dim, layers, mips, samples, bind)", "a multisampled SNORM texture is not its SINT twin on the page (WebGPU multisamples no SNORM format: 4x SNORM would be one sample)"),
     ("crates/kura/src/d3d11/logic.rs", "Some(blend) if ms && !sample_rate && blend.reads_dst() => Store::SnormStash { blend, mark },", "a multisampled SNORM blend that reads its target under a pixel-rate shader is not done per sample in the resolve pass"),
     ("crates/kura/src/d3d11/logic.rs", "gpu::SNORM_RESOLVE, tex, copy, stash, mark_tex, mask", "an SNORM stash's draw has no resolve pass after it"),
@@ -303,6 +303,9 @@ const SNORM_SITES: [(&str, &str, &str); 23] = [
     ("crates/dxwgsl/src/snorm.rs", "const SN_LOAD = array<u32, 256>(", "the shader's SNORM load divides (WGSL's division is not exact: the blend's last bit differs from WARP's); it reads load()'s table"),
     ("crates/dxwgsl/src/wgsl.rs", "\"let sn_k = sn_clamp(sn_kv);\"", "an SNORM blend's constant is not clamped to -1..1 in the shader (WARP blends 1.5 as 1; winref d3d11snorm)"),
     ("crates/kura/src/d3d11/mod.rs", "and_then(dxwgsl::snorm::Blend::of).is_some_and(|b| b.takes()))?;", "CreateBlendState takes MIN / MAX with a dual-source factor (WARP: E_INVALIDARG; winref d3d11snorm)"),
+    ("crates/dxwgsl/src/snorm.rs", "f32::from(b.max(-127)) * RESOLVE_RCP", "ResolveSubresource of SNORM reads its samples as the quotient, not WARP's product with the f32 nearest 1/127 (winref d3d11snorm's seed rows: 20 of 960 differ)"),
+    ("crates/dxwgsl/src/snorm.rs", "s = s + sn_r(vec4<f32>(b) * bitcast<f32>(0x{rcp:08x}u),", "the resolve pass's SNORM samples are not WARP's product with 1/127, kept from fusing with the sum"),
+    ("crates/kura/src/d3d11/clear.rs", "trunc_u32(f64::from((v.clamp(0.0, 1.0) * max).round_ties_even()))", "a UNORM clear is not rounded from the f32 product (WARP clears 0.5 / 255's nearest f32 to 0; winref d3d11snorm)"),
     ("crates/dxwgsl/src/snorm.rs", "#[path = \"snorm_tests.rs\"]", "the SNORM conversions and blend are no longer checked against WARP's answers (snorm_tests.rs)"),
 ];
 
