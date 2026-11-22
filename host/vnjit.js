@@ -25,8 +25,11 @@ addToLibrary({
   },
 
   vnvm_jit_init__deps: ['$VNJIT'],
-  vnvm_jit_init__sig: 'vppi',
-  vnvm_jit_init: (ptr, len, slots) => {
+  vnvm_jit_init__sig: 'vppip',
+  // `pages`: the page marks (crates/kura/src/jit.rs fault_store), the "pages" global every
+  // translated module imports (koji::jit::PAGES): a saved module made with the page checks
+  // reads this run's marks
+  vnvm_jit_init: (ptr, len, slots, pages) => {
     ptr >>>= 0;
     VNJIT.slots = slots >>> 0;
     const bytes = HEAPU8.slice(ptr, ptr + len);
@@ -44,6 +47,7 @@ addToLibrary({
       x87: wasmExports.vnhost_jit_x87,
       callmiss: wasmExports.vnhost_jit_callmiss,
       table: VNJIT.table,
+      pages: pages >>> 0,
     };
   },
 
