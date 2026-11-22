@@ -207,7 +207,27 @@ pub struct Batch {
     mems: Vec<usize>,
 }
 
+/// What a readback reads: a texture's pixels (READBACK) or a buffer's bytes (READ_BUFFER).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Read {
+    Pixels,
+    Buffer,
+}
+
 impl Batch {
+    /// A readback of `args` (the command's words after its id): the queue gives it its id, the
+    /// one its answer comes with.
+    pub fn readback(&mut self, what: Read, args: &[u32]) -> Readback {
+        let req = Readback::issue();
+        let op = match what {
+            Read::Pixels => READBACK,
+            Read::Buffer => READ_BUFFER,
+        };
+        self.cmds.extend_from_slice(&[op, req.word()]);
+        self.cmds.extend_from_slice(args);
+        req
+    }
+
     pub fn cmd(&mut self, words: &[u32]) {
         if matches!(words.first(), Some(&PRESENT) | Some(&PRESENT_FLIP)) {
             crate::display::presented();
@@ -327,17 +347,17 @@ fn queue(g: &mut Option<Queue>) -> &mut Queue {
 }
 
 /// A readback request's id as the page answers it (vnhost_d3d9_readback_done). Issued only by
-/// [`Readback::new`]: every API (D3D9 devices, D3D11, GL) sends its readbacks through this one
+/// the queue, with the command it is the answer of ([`Batch::readback`]): every API (D3D9 devices, D3D11, GL) sends its readbacks through this one
 /// queue and its one set of finished ids, so the queue numbers them; a number per device (D3D9's
 /// `readbacks`) or per API (D3D11's 0x4000_0000 | n beside GL's page ids from 0x4000_0000) made
 /// two outstanding requests share one, and one's answer let the other go on before its pixels
 /// came (review of 6852be1).
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(PartialEq, Eq, Debug)]
 pub struct Readback(u32);
 
 impl Readback {
     /// The next id (never 0, which the page's commands never carry).
-    pub fn new() -> Self {
+    fn issue() -> Self {
         static NEXT: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(1);
         loop {
             let n = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -347,7 +367,7 @@ impl Readback {
         }
     }
     /// The word the READBACK / READ_BUFFER command carries.
-    pub fn word(self) -> u32 {
+    fn word(&self) -> u32 {
         self.0
     }
     /// Tests: the id a command written by hand carries (each test keeps its own range).
@@ -375,7 +395,7 @@ thread_local! {
 #[cfg(test)]
 #[test]
 fn readback_ids_are_never_shared() {
-    let ids: Vec<Vec<Readback>> = std::thread::scope(|s| (0..8).map(|_| s.spawn(|| (0..20_000).map(|_| Readback::new()).collect::<Vec<_>>())).collect::<Vec<_>>().into_iter().map(|h| h.join().unwrap_or_default()).collect());
+    let ids: Vec<Vec<Readback>> = std::thread::scope(|s| (0..8).map(|_| s.spawn(|| (0..20_000).map(|_| Readback::issue()).collect::<Vec<_>>())).collect::<Vec<_>>().into_iter().map(|h| h.join().unwrap_or_default()).collect());
     let all: std::collections::HashSet<u32> = ids.iter().flatten().map(|r| r.word()).collect();
     assert_eq!(all.len(), 8 * 20_000);
     assert!(!all.contains(&0));

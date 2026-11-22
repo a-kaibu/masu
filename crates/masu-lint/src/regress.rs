@@ -339,7 +339,7 @@ pub(super) fn snorm_targets(tree: &Tree) -> Hits {
 
 /// What the review of kura at 6852be1 found wrong, fixed (2026-11-22), each by its spelling in
 /// the code (comments left out): (file, text it must hold, what is wrong without it).
-pub(super) const REVIEW_6852BE1_HAS: [(&str, &str, &str); 29] = [
+pub(super) const REVIEW_6852BE1_HAS: [(&str, &str, &str); 36] = [
     ("crates/kura/src/d3d11/hazards.rs", "out.extend(st.so.iter()", "stream output targets are not outputs: a vertex buffer of one stays bound (D3D11 unbinds it)"),
     ("crates/kura/src/d3d11/hazards.rs", "for vb in st.vbs.iter_mut()", "the vertex buffers checked are not all 32 slots"),
     ("crates/kura/src/d3d11/op.rs", "if let Uavs::Set { start, views, counts } = uavs {", "OMSetRenderTargetsAndUnorderedAccessViews with KEEP render targets does not resolve its new UAVs"),
@@ -364,15 +364,22 @@ pub(super) const REVIEW_6852BE1_HAS: [(&str, &str, &str); 29] = [
     ("crates/kura/src/jit.rs", ".is_some_and(|e| e.pages.runs_now())", "saved translations are not taken by what they were made with (with the page checks on, none is used)"),
     ("host/vnjit.js", "pages: pages >>> 0,", "the modules' \"pages\" global is not given the page marks of this run"),
     ("crates/kura/src/d3d11/mod.rs", "let dev = d.new_obj(IF_DEVICE, Data::Device(Dev { level, ..Dev::NONE }));", "D3D11CreateDevice gives back a device made before, not one of its own"),
-    ("crates/kura/src/d3d11/mod.rs", "d.enter(this);", "a call runs on the device last made, not on the device of the object it is called on"),
+    ("crates/kura/src/d3d11/mod.rs", "d.enter(own);", "a call runs on the device last made, not on the device of the object it is called on"),
     ("crates/kura/src/d3d11/mod.rs", "    Context(Box<Imm>),", "the immediate context's state is not the context's own (one state for every device)"),
     ("crates/kura/src/gl/mod.rs", "g.objs = g.groups.remove(&c.group).unwrap_or_default();", "a GL call sees every context's objects, not its share group's"),
     ("crates/kura/src/gl/mod.rs", "pub extern \"C\" fn vngl_share_lists(", "wglShareLists does nothing (every context sharing everything)"),
     ("crates/sake/src/gl.rs", "(\"wglShareLists\", wglShareLists),", "wglShareLists answers TRUE without sharing"),
+    ("crates/kura/src/gl/mod.rs", "Fbos::Core => c.fbos.get(&f.name),", "GL 3.0 / ARB framebuffers are the share group's, not each context's own"),
+    ("crates/kura/src/gl/mod.rs", "bind_fbo(Fbos::Ext, target, f)", "EXT_framebuffer_object's framebuffers are each context's own, not the share group's"),
+    ("crates/kura/src/d3d11/mod.rs", "let alias = d.new_obj(iface, Data::Opened(id));", "OpenSharedResource on another device gives back the other device's object"),
+    ("crates/kura/src/d3d9/mod.rs", "let mine = std::mem::replace(&mut self.d8, std::mem::take(&mut next.d8));", "Direct3D 8 shader and state block handles are one table for every device"),
+    ("crates/kura/src/d3d9/gpu.rs", "pub fn readback(&mut self, what: Read, args: &[u32]) -> Readback {", "a readback's id made apart from the command it answers"),
+    ("crates/kura/src/d3d9/gpu.rs", "    fn issue() -> Self {", "readback ids anyone can make, not only the queue"),
+    ("crates/kura/src/d3d11/mod.rs", "    pub content: crate::content::Content,", "where a D3D11 buffer's newest bytes are kept as flags that can say two things at once"),
 ];
 
 /// (file, text it must not hold, what is wrong with it)
-pub(super) const REVIEW_6852BE1_NOT: [(&str, &str, &str); 15] = [
+pub(super) const REVIEW_6852BE1_NOT: [(&str, &str, &str); 17] = [
     ("crates/kura/src/d3d11/hazards.rs", "0..16", "a fixed slot count: the slots past it are not checked"),
     ("crates/kura/src/d3d11/hazards.rs", "0..128", "a fixed slot count: the slots past it are not checked"),
     ("crates/kura/src/jit.rs", "SHARED_BYTES", "a byte count of the shared cache apart from what the map holds"),
@@ -388,6 +395,8 @@ pub(super) const REVIEW_6852BE1_NOT: [(&str, &str, &str); 15] = [
     ("crates/kura/src/d3d11/mod.rs", "made_by: HashMap<u32, u32>", "which device made a child kept apart from the child (one device per process, the others its side-faces)"),
     ("crates/kura/src/d3d11/mod.rs", "if d.device == 0 {", "a device made only when there is none yet"),
     ("crates/kura/src/gl/mod.rs", "fn vngl_context_create(_share: u32)", "the share context of a new context not looked at"),
+    ("crates/kura/src/d3d9/d3d8.rs", "let old = std::mem::take(&mut d.d8);", "a new Direct3D 8 device takes the handles of the device before"),
+    ("crates/kura/src/d3d11/expand.rs", "b.newest = ", "a buffer's newest copy set by hand, not by its versions"),
 ];
 
 /// a fix of the review of 6852be1 taken back

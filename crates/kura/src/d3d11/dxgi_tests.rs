@@ -44,7 +44,7 @@ fn factory(riid: u32) -> u32 {
     rd1(o)
 }
 fn refs(a: u32) -> u32 {
-    with(|d| d.objs[&d.id_of(a)].refs)
+    with(|d| d.objs[&d.own_id(a)].refs)
 }
 /// GetDesc1's Description and Flags
 fn desc1(ad: u32) -> (String, u32, u32, u32) {
@@ -296,10 +296,11 @@ fn adapter_enumeration_model() {
 /// (Unity then sees it as its own and draws the reader's textures with it), multithread
 /// protected through ID3D10Multithread.
 /// D3D11_CREATE_DEVICE_VIDEO_SUPPORT (#227): with the program's device in use, another device
-/// object of it (Unity's VideoPlayer tells its decoder's textures from its own by the device,
-/// and then opens them through their shared handles); random textures made on it: a shared one
+/// (Unity's VideoPlayer tells its decoder's textures from its own by the device, and then opens
+/// them through their shared handles); random textures made on it: a shared one
 /// (MISC_SHARED, SHARED_KEYEDMUTEX, SHARED_NTHANDLE) has a handle that OpenSharedResource(1) on
-/// the first device opens as the very texture, any other none, and made-up handles open nothing.
+/// the first device opens as an object of its own for the texture (its own device's: the very
+/// texture), any other none, and made-up handles open nothing.
 #[test]
 fn video_support_device_is_made() {
     let _g = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
@@ -351,11 +352,27 @@ fn video_support_device_is_made() {
             let open = [28, 48][r.below(2)];
             put(o, &[0xdead]);
             if shared {
+                // (on another device: an object of that device's, the same texture to all else)
                 let before = refs(t);
                 assert_eq!(call1(m(IF_DEVICE, open), &[main, h, tex2d, o]), 0);
+                let opened = rd1(o);
+                assert_ne!(opened, t);
+                assert_eq!(refs(t), before);
+                assert_eq!(refs(opened), 1);
+                let dv = mem(2);
+                assert_eq!(call1(m(IF_TEX2D, 3), &[opened, dv]), 0);
+                assert_eq!(rd1(dv), main);
+                call1(m(IF_DEVICE, 2), &[main]);
+                let (d1, d2) = (mem(11), mem(11));
+                call1(m(IF_TEX2D, 10), &[t, d1]);
+                call1(m(IF_TEX2D, 10), &[opened, d2]);
+                assert_eq!((0..11).map(|i| rd1(d1 + 4 * i)).collect::<Vec<_>>(), (0..11).map(|i| rd1(d2 + 4 * i)).collect::<Vec<_>>());
+                // (and on its own device, the texture itself)
+                assert_eq!(call1(m(IF_DEVICE, open), &[video, h, tex2d, o]), 0);
                 assert_eq!(rd1(o), t);
                 assert_eq!(refs(t), before + 1);
                 call1(m(IF_TEX2D, 2), &[rd1(o)]);
+                assert_eq!(call1(m(IF_TEX2D, 2), &[opened]), 0);
             }
             for bad in [0, 1, h.wrapping_add(0x1000), 0x4000_0000 + 0xfff_ffff] {
                 if bad != h || !shared {

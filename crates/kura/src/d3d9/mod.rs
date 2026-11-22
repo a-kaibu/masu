@@ -158,6 +158,8 @@ pub struct D3d {
     pub counts: HashMap<u32, u32>,
     /// the call being run is a Direct3D 8 one: new objects get the Direct3D 8 vtables
     pub v8: bool,
+    /// the Direct3D 8 shader and state block handles of `dev` (each device has its own: a
+    /// parked one keeps them in `Device::d8`)
     pub d8: d3d8::State,
     /// the page's lost devices seen (render::lost_gen): one more, and what is kept here goes up
     /// again (device::after_lost)
@@ -226,7 +228,15 @@ impl D3d {
         }
         let Some(i) = self.parked.iter().position(|d| d.obj == dev) else { return };
         let next = self.parked.remove(i);
-        if let Some(cur) = self.dev.replace(next) {
+        self.install(next);
+    }
+
+    /// Makes `next` the device the calls go to, the one before waiting in `parked`, each with
+    /// its own Direct3D 8 handles.
+    pub fn install(&mut self, mut next: Box<device::Device>) {
+        let mine = std::mem::replace(&mut self.d8, std::mem::take(&mut next.d8));
+        if let Some(mut cur) = self.dev.replace(next) {
+            cur.d8 = mine;
             self.parked.push(cur);
         }
     }
@@ -327,10 +337,16 @@ impl D3d {
                 // (the device the calls went to, or one waiting: the others stay as they are,
                 // KiriKiri Z releases a small window's device while its main one draws on)
                 if let Some(dev) = self.dev.take_if(|dev| dev.obj == id) {
+                    let d8 = std::mem::take(&mut self.d8);
+                    d3d8::release_handles(self, d8);
                     dev.release_all(self);
                     self.dev = self.parked.pop();
+                    if let Some(next) = self.dev.as_mut() {
+                        self.d8 = std::mem::take(&mut next.d8);
+                    }
                 } else if let Some(i) = self.parked.iter().position(|dev| dev.obj == id) {
-                    let dev = self.parked.remove(i);
+                    let mut dev = self.parked.remove(i);
+                    d3d8::release_handles(self, std::mem::take(&mut dev.d8));
                     // (release_all works on `dev` alone, not on the active device)
                     dev.release_all(self);
                 }

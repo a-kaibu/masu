@@ -222,27 +222,14 @@ pub struct Buffer {
     pub mem: u32,
     /// page buffer with the current contents (0: none yet)
     pub gpu: u32,
-    /// the guest wrote since `gpu` was made
-    pub dirty: bool,
+    /// which of `mem` and `gpu` holds the newest bytes (an upload before the page reads them,
+    /// a readback before the guest does: expand::pull)
+    pub content: crate::content::Content,
     /// every write since the last upload was through a Map NO_OVERWRITE (bytes no draw before
     /// reads: only the changed ones go up, in place)
     pub stream: bool,
     /// a dynamic buffer's bytes as last uploaded (what `stream` uploads are diffed against)
     pub shadow: Vec<u8>,
-    /// which copy holds the bytes: `mem`, or `gpu` once stream output wrote it (expand::pull
-    /// reads it back; only a readback that came makes `mem` the newest again)
-    pub newest: Newest,
-}
-
-/// Where a buffer's newest bytes are (Buffer::newest). A readback that failed leaves `Page`:
-/// the next pull asks again (a bool cleared whatever the readback's answer lost them for good,
-/// review of 6852be1).
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum Newest {
-    /// the guest's memory (`mem`)
-    Guest,
-    /// the page's buffer (`gpu`): stream output wrote it since
-    Page,
 }
 
 pub struct Texture {
@@ -412,6 +399,10 @@ pub enum Data {
     /// an unordered access view of a buffer
     BufferUav(BufferUav),
     Other,
+    /// a shared resource another device opened (OpenSharedResource): an object of that
+    /// device's, of its own references, private data and GetDevice, for resource `.0` (kept)
+    /// in everything else
+    Opened(u32),
 }
 
 /// An unordered access view of a buffer: its range and flags (D3D11_BUFFER_UAV_FLAG RAW 1,
@@ -698,7 +689,7 @@ impl D11 {
             Data::Device(_) => this,
             Data::SwapChain(s) => s.device,
             Data::Factory | Data::Adapter(_) | Data::Output => return,
-            Data::Context(_) | Data::Buffer(_) | Data::Texture(_) | Data::View(_) | Data::Shader(_) | Data::Layout(_) | Data::State(_) | Data::Query(_) | Data::Deferred(_) | Data::CmdList(_) | Data::CtxState(_) | Data::BufferUav(_) | Data::Other => o.dev,
+            Data::Context(_) | Data::Buffer(_) | Data::Texture(_) | Data::View(_) | Data::Shader(_) | Data::Layout(_) | Data::State(_) | Data::Query(_) | Data::Deferred(_) | Data::CmdList(_) | Data::CtxState(_) | Data::BufferUav(_) | Data::Other | Data::Opened(_) => o.dev,
         };
         if let Some(Data::Device(v)) = self.objs.get(&dev).map(|o| &o.data) {
             (self.device, self.context) = (dev, v.context);
@@ -750,7 +741,17 @@ impl D11 {
         a
     }
 
+    /// The object at `addr` as an argument: a resource another device opened is the resource.
     fn id_of(&self, addr: u32) -> u32 {
+        let id = self.own_id(addr);
+        match self.objs.get(&id).map(|o| &o.data) {
+            Some(Data::Opened(of)) => *of,
+            Some(_) | None => id,
+        }
+    }
+
+    /// The object at `addr` itself (an opened resource's own object: `Data::Opened`).
+    fn own_id(&self, addr: u32) -> u32 {
         if addr == 0 {
             return 0;
         }
@@ -931,6 +932,9 @@ impl D11 {
                 unbind_state(self, &c.st);
                 self.unbind(c.st_owner);
             }
+            Data::Opened(of) => {
+                self.unbind(of);
+            }
             Data::Factory | Data::Adapter(_) | Data::Output | Data::Layout(_) | Data::State(_) | Data::CtxState(_) | Data::Other => {}
             Data::BufferUav(u) => {
                 self.unbind(u.buf);
@@ -1025,15 +1029,23 @@ pub unsafe fn call(id: u32, args: *const u32, calls: *const HostCalls) -> u32 {
             }
             _ => {
                 let (iface, m) = (id >> 8, id & 0xff);
-                let this = d.id_of(a(0));
-                d.enter(this);
+                let own = d.own_id(a(0));
+                d.enter(own);
+                // (an opened resource answers for itself what any object does, what a device
+                // child and a DXGI object do of their own — GetDevice, private data,
+                // GetParent — and is its resource for the rest)
+                let mine = match iface {
+                    IF_DXGIRES | IF_SURFACE => (3..=7).contains(&m),
+                    _ => (3..=6).contains(&m),
+                };
+                let this = if mine { own } else { d.id_of(a(0)) };
                 let r = if this == 0 {
                     E_INVALIDARG
                 } else {
                     match m {
-                        0 => query_interface(d, this, iface, a(1), a(2)),
-                        1 => d.add_ref(this),
-                        2 => d.release(this),
+                        0 => query_interface(d, own, iface, a(1), a(2)),
+                        1 => d.add_ref(own),
+                        2 => d.release(own),
                         _ => method(d, iface, m, this, args, &mut after),
                     }
                 };
@@ -1089,7 +1101,8 @@ unsafe fn query_interface(d: &mut D11, id: u32, iface: u32, riid: u32, out: u32)
     // (a resource's IDXGIObject, IDXGIDeviceSubObject and IDXGIResource are one face, its
     // IDXGISurface another, only for a texture of one level and one layer (1D or 2D))
     if matches!(primary, IF_BUFFER | IF_TEX1D | IF_TEX2D | IF_TEX3D) {
-        let surface = matches!(d.objs.get(&id).map(|o| &o.data), Some(Data::Texture(t)) if t.mips == 1 && t.layers == 1 && t.dim != 3);
+        let res = d.id_of(d.addr_of(id));
+        let surface = matches!(d.objs.get(&res).map(|o| &o.data), Some(Data::Texture(t)) if t.mips == 1 && t.layers == 1 && t.dim != 3);
         let want = match first {
             0xaec22fb8 | 0x3d3e0379 | 0x035f3ab4 => IF_DXGIRES,
             0xcafcb56c | 0x4ae63092 | 0xaba496dd if surface => IF_SURFACE,
@@ -1612,9 +1625,8 @@ fn after_lost(d: &mut D11) {
     for id in ids {
         match d.objs.get_mut(&id).map(|o| &mut o.data) {
             Some(Data::Buffer(b)) if b.gpu != 0 => {
-                b.dirty = true;
+                b.content.page_lost();
                 b.stream = false;
-                b.newest = Newest::Guest;
             }
             Some(Data::Texture(t)) if t.gpu != 0 && !t.bits.is_empty() => {
                 let mut subs: Vec<(u32, Vec<u8>)> = t.bits.iter().map(|(&k, v)| (k, v.clone())).collect();
@@ -2299,7 +2311,7 @@ unsafe fn device_call(d: &mut D11, m: u32, this: u32, a: &dyn Fn(usize) -> u32) 
             if a(2) != 0 {
                 std::ptr::copy_nonoverlapping(gc::<u8>(rdp(a(2), 0)), gp::<u8>(mem), us(size));
             }
-            let o = d.new_obj(IF_BUFFER, Data::Buffer(Buffer { size, usage, bind, cpu, misc, stride, mem, gpu: 0, dirty: true, stream: false, shadow: Vec::new(), newest: Newest::Guest }));
+            let o = d.new_obj(IF_BUFFER, Data::Buffer(Buffer { size, usage, bind, cpu, misc, stride, mem, gpu: 0, content: crate::content::Content::new(), stream: false, shadow: Vec::new() }));
             if d.trace && size <= 256 {
                 let f: Vec<f32> = (0..size / 4).map(|i| *(gc::<f32>(mem + 4 * i))).collect();
                 eprintln!("d3d11: new buffer {o} bind {bind:#x} usage {usage} = {f:?}");
@@ -2544,8 +2556,8 @@ unsafe fn device_call(d: &mut D11, m: u32, this: u32, a: &dyn Fn(usize) -> u32) 
         26 => E_INVALIDARG,
         27 => deferred::create(d, a(1), a(2)),
         28 | 48 => {
-            // OpenSharedResource(handle, riid, out), OpenSharedResource1: the texture itself, the
-            // one object whichever device opens it (its GetDevice: the device that made it)
+            // OpenSharedResource(handle, riid, out), OpenSharedResource1: on the device that
+            // made it, the texture itself; on another, an object of that device's for it
             if a(3) == 0 {
                 return E_INVALIDARG;
             }
@@ -2553,8 +2565,18 @@ unsafe fn device_call(d: &mut D11, m: u32, this: u32, a: &dyn Fn(usize) -> u32) 
             let id = a(1).wrapping_sub(SHARED_BASE);
             match d.objs.get(&id) {
                 Some(o) if a(1) >= SHARED_BASE && matches!(&o.data, Data::Texture(t) if t.misc & 0x902 != 0) => {
-                    let iface = o.iface;
-                    query_interface(d, id, iface, a(2), a(3))
+                    let (iface, dev) = (o.iface, o.dev);
+                    if dev == d.device {
+                        return query_interface(d, id, iface, a(2), a(3));
+                    }
+                    // (it keeps the resource alive, not counted among the resource's references)
+                    d.bind(id);
+                    let alias = d.new_obj(iface, Data::Opened(id));
+                    let alias = d.own_id(alias);
+                    // SAFETY: a(2) and a(3), the guest's riid and out pointer (checked above)
+                    let r = unsafe { query_interface(d, alias, iface, a(2), a(3)) };
+                    d.release(alias);
+                    r
                 }
                 _ => E_INVALIDARG,
             }
@@ -2981,10 +3003,8 @@ unsafe fn nv12_pull(d: &mut D11, id: u32) {
         std::ptr::write_bytes(gp::<u8>(tmp), 0, us(size));
         let mut reqs = Vec::new();
         for (g, gw, gh, at) in [(luma_gpu, w, h, tmp), (chroma_gpu, w / 2, h / 2, tmp + pitch * h)] {
-            let req = gpu::Readback::new();
-            let c = [gpu::READBACK, req.word(), g, l << 16, 0, 0, gw, gh, at, pitch];
-            gpu::record(|q| q.cmd(&c));
-            reqs.push(req);
+            let c = [g, l << 16, 0, 0, gw, gh, at, pitch];
+            reqs.push(gpu::record(|q| q.readback(gpu::Read::Pixels, &c)));
         }
         for req in reqs {
             gpu::wait_readback(req);
@@ -3555,7 +3575,7 @@ unsafe fn clear_buffer_view(d: &mut D11, buf: u32, fmt: u32, offset: u32, bytes:
         // SAFETY: inside the buffer's guest memory (`end` is at most its size); the caller's contract
         unsafe { *gp::<u8>(p.wrapping_add(lo32(k))) = *byte };
     }
-    b.dirty = true;
+    b.content.guest_wrote();
 }
 
 /// A clear of a render target or unordered access view of a texture by its texels: each of
@@ -3630,7 +3650,7 @@ unsafe fn map(d: &mut D11, res: u32, sub: u32, ty: u32, out: u32, dxgi: bool, af
     // (what stream output wrote, back first: but for WRITE_DISCARD, whose bytes are new)
     if ty == 4 {
         if let Some(Data::Buffer(b)) = d.objs.get_mut(&id).map(|o| &mut o.data) {
-            b.newest = Newest::Guest;
+            b.content.guest_wrote();
         }
     } else {
         expand::pull(d, id);
@@ -3638,8 +3658,8 @@ unsafe fn map(d: &mut D11, res: u32, sub: u32, ty: u32, out: u32, dxgi: bool, af
     let r = match d.objs.get_mut(&id).map(|o| &mut o.data) {
         Some(Data::Buffer(b)) => {
             // (D3D11_MAP_WRITE_NO_OVERWRITE: 5)
-            b.stream = ty == 5 && (b.stream || !b.dirty);
-            b.dirty = true;
+            b.stream = ty == 5 && (b.stream || !b.content.upload_needed());
+            b.content.guest_wrote();
             put_mapped(out, b.mem, b.size, b.size, dxgi);
             S_OK
         }
@@ -3689,10 +3709,8 @@ unsafe fn map(d: &mut D11, res: u32, sub: u32, ty: u32, out: u32, dxgi: bool, af
                 let (_, layer, ..) = sub_size(t, sub);
                 if ty != 4 && holds_bits(t) && !keeps_bits(t) && !t.clean.contains(&sub) && !(fresh && t.pristine) {
                     for z in 0..depth {
-                        let req = gpu::Readback::new();
                         let (g, l) = (t.gpu, level | (layer + z) << 16);
-                        gpu::record(|q| q.cmd(&[gpu::READBACK, req.word(), g, l, 0, 0, lw, lh, mem + z * pitch * rows, pitch]));
-                        reqs.push(req);
+                        reqs.push(gpu::record(|q| q.readback(gpu::Read::Pixels, &[g, l, 0, 0, lw, lh, mem + z * pitch * rows, pitch])));
                     }
                 } else if ty != 4 && !t.clean.contains(&sub) {
                     match t.bits.get(&sub) {
@@ -3763,7 +3781,7 @@ unsafe fn update_subresource(d: &mut D11, id: u32, sub: u32, b: Option<[u32; 6]>
             if x1 > x0 && let Some(src) = data.get(..us(x1 - x0)) {
                 // SAFETY: the buffer's guest memory from x0, x1 - x0 bytes inside it (x1 <= size)
                 unsafe { std::ptr::copy(src.as_ptr(), gp::<u8>(buf.mem + x0), src.len()) };
-                buf.dirty = true;
+                buf.content.guest_wrote();
                 buf.stream = false;
                 if d.trace && buf.size <= 256 {
                     let f: Vec<f32> = (0..buf.size / 4).map(|i| *(gc::<f32>(buf.mem + 4 * i))).collect();
@@ -3943,7 +3961,7 @@ unsafe fn copy_structure_count(d: &mut D11, dst: u32, at: u32, v: u32) {
             if let Some(Data::Buffer(b)) = d.objs.get_mut(&dst).map(|o| &mut o.data) {
                 // SAFETY: inside the buffer's guest memory (`fits`)
                 unsafe { wr(b.mem.wrapping_add(at), 0, c) };
-                b.dirty = true;
+                b.content.guest_wrote();
             }
         }
         // (shaders counted on the page: the copy is the page's, the buffer's bytes read back
@@ -3952,7 +3970,7 @@ unsafe fn copy_structure_count(d: &mut D11, dst: u32, at: u32, v: u32) {
             let g = buffer_gpu(d, dst);
             gpu::record(|q| q.cmd(&[gpu::COPY_BUFFER, page, 0, g, at, 4]));
             if let Some(Data::Buffer(b)) = d.objs.get_mut(&dst).map(|o| &mut o.data) {
-                b.newest = Newest::Page;
+                b.content.page_wrote();
             }
         }
     }
@@ -3967,7 +3985,7 @@ unsafe fn copy_resource(d: &mut D11, di: u32, si: u32) {
         (Some(Data::Buffer(a)), Some(Data::Buffer(b))) => {
             std::ptr::copy(gc::<u8>(b.mem), gp::<u8>(a.mem), us(a.size.min(b.size)));
             if let Some(Data::Buffer(a)) = d.objs.get_mut(&di).map(|o| &mut o.data) {
-                a.dirty = true;
+                a.content.guest_wrote();
                 a.stream = false;
             }
         }
@@ -4046,7 +4064,7 @@ unsafe fn copy_region(d: &mut D11, di: u32, dsub: u32, at: [u32; 3], si: u32, ss
             let n = s1.min(b.size).saturating_sub(s0).min(a.size.saturating_sub(x));
             std::ptr::copy(gc::<u8>(b.mem + s0), gp::<u8>(a.mem + x), us(n));
             if let Some(Data::Buffer(a)) = d.objs.get_mut(&di).map(|o| &mut o.data) {
-                a.dirty = true;
+                a.content.guest_wrote();
                 a.stream = false;
             }
         }
@@ -4203,9 +4221,8 @@ unsafe fn source_bytes(d: &mut D11, id: u32, sub: u32, b: [u32; 6]) -> Option<u3
         }
         for z in 0..depth {
             std::ptr::write_bytes(gp::<u8>(tmp), 0, us(n));
-            let req = gpu::Readback::new();
-            let c = [gpu::READBACK, req.word(), g, level | (layer + z0 + z) << 16, x0, y0, w, h, tmp, pp];
-            gpu::record(|q| q.cmd(&c));
+            let c = [g, level | (layer + z0 + z) << 16, x0, y0, w, h, tmp, pp];
+            let req = gpu::record(|q| q.readback(gpu::Read::Pixels, &c));
             gpu::wait_readback(req);
             let page = std::slice::from_raw_parts(gc::<u8>(tmp), us(n));
             if let Some(b) = format::from_page(t.fmt, page, w, h) {
@@ -4220,10 +4237,8 @@ unsafe fn source_bytes(d: &mut D11, id: u32, sub: u32, b: [u32; 6]) -> Option<u3
     }
     let mut reqs = Vec::new();
     for z in 0..depth {
-        let req = gpu::Readback::new();
-        let c = [gpu::READBACK, req.word(), g, level | (layer + z0 + z) << 16, x0, y0, w, h, mem + z * pitch * rows, pitch];
-        gpu::record(|q| q.cmd(&c));
-        reqs.push(req);
+        let c = [g, level | (layer + z0 + z) << 16, x0, y0, w, h, mem + z * pitch * rows, pitch];
+        reqs.push(gpu::record(|q| q.readback(gpu::Read::Pixels, &c)));
     }
     for req in reqs {
         gpu::wait_readback(req);
@@ -4356,13 +4371,13 @@ fn blend_factor(b: u32, alpha: bool) -> Factor {
 /// The page buffer with `id`'s current contents (made when the guest wrote it).
 fn buffer_gpu(d: &mut D11, id: u32) -> u32 {
     let Some(Data::Buffer(b)) = d.objs.get_mut(&id).map(|o| &mut o.data) else { return 0 };
-    if b.dirty || b.gpu == 0 {
+    if b.content.upload_needed() || b.gpu == 0 {
         // (written in place: the page moves it to a new GPU buffer when draws before use it)
         let made = b.gpu;
         let g = if made != 0 { made } else { page_id() };
         let (mem, size) = (b.mem, b.size);
         b.gpu = g;
-        b.dirty = false;
+        b.content.uploaded();
         let bytes = unsafe { std::slice::from_raw_parts(gc::<u8>(mem), us(size)) };
         if made != 0 && b.stream && b.shadow.len() == bytes.len() {
             // (ANGLE streams each draw's vertices into a big dynamic buffer: uploading all of it
@@ -5062,7 +5077,7 @@ unsafe fn draw_with(d: &mut D11, st: &State, indexed: bool, count: u32, instance
     // and with other bytes written around it (0: unknown)
     // (a buffer stream output wrote: the page's bytes are not the guest's, unknown)
     let mem = |id: u32| match d.objs.get(&id).map(|o| &o.data) {
-        Some(Data::Buffer(b)) if b.newest == Newest::Guest => Some((b.mem, b.size)),
+        Some(Data::Buffer(b)) if b.content.guest_current() => Some((b.mem, b.size)),
         _ => None,
     };
     let mut known = count <= 4096 && store.is_none();
@@ -5254,7 +5269,7 @@ fn buffer_view_binding(d: &mut D11, st: &State, stage: usize, bi: u32) -> ([u32;
     let g = buffer_gpu(d, buf);
     if rw && let Some(Data::Buffer(b)) = d.objs.get_mut(&buf).map(|o| &mut o.data) {
         // (the shader may write it: the page's bytes are the buffer's from now on)
-        b.newest = Newest::Page;
+        b.content.page_wrote();
     }
     let at = off & !255;
     // (`at` is `off` with its low 8 bits cleared: never above it)

@@ -469,6 +469,9 @@ pub struct Device {
     pub shown: Vec<Shown>,
     /// IDirect3DDevice9Ex: Set/GetGPUThreadPriority's (-7..=7, 0 at first)
     pub gpu_priority: i32,
+    /// its Direct3D 8 shader and state block handles, while another device is the one the calls
+    /// go to (the calls' own device keeps them in `D3d::d8`: `D3d::install`)
+    pub d8: super::d3d8::State,
     /// IDirect3DDevice9Ex: Set/GetMaximumFrameLatency's (3 at first: Wine's tests of Windows,
     /// d3d9ex.c test_frame_latency)
     pub max_latency: u32,
@@ -1443,6 +1446,7 @@ unsafe fn create_device(d: &mut D3d, d3d: u32, ty: u32, focus: u32, behavior: u3
         recording: None,
         batch_target: None,
         gpu_priority: 0,
+        d8: Default::default(),
         max_latency: 3,
         pipelines: HashMap::default(),
         shaders: HashMap::new(),
@@ -1478,9 +1482,7 @@ unsafe fn create_device(d: &mut D3d, d3d: u32, ty: u32, focus: u32, behavior: u3
     });
     let _ = dev.new_gpu();
     // (another device of the program waits: its calls switch back to it, `D3d::activate`)
-    if let Some(cur) = d.dev.replace(dev) {
-        d.parked.push(cur);
-    }
+    d.install(dev);
     reset_buffers(d);
     // (always: in every run's log, a game's picture starts here)
     eprintln!("sake: d3d9 CreateDevice hwnd {hwnd:#x} {}x{} fmt {} depth {}/{} windowed {} behavior {behavior:#x}", p[0], p[1], p[2], p[9], p[10], p[8]);
@@ -3256,9 +3258,7 @@ fn readback_as(d: &mut D3d, gpu: u32, level: u32, x: u32, y: u32, w: u32, h: u32
 fn readback(d: &mut D3d, gpu: u32, level: u32, x: u32, y: u32, w: u32, h: u32, mem: u32, pitch: u32) -> Option<gpu::Readback> {
     // (None: no device, no readback made)
     d.dev.as_ref()?;
-    let req = gpu::Readback::new();
-    gpu::record(|b| b.cmd(&[gpu::READBACK, req.word(), gpu, level, x, y, w, h, mem, pitch]));
-    Some(req)
+    Some(gpu::record(|b| b.readback(gpu::Read::Pixels, &[gpu, level, x, y, w, h, mem, pitch])))
 }
 
 unsafe fn unlock_surface(d: &mut D3d, s: u32) -> u32 {
@@ -4443,10 +4443,9 @@ unsafe fn front_buffer_data(d: &mut D3d, after: &mut After, chain: Option<(u32, 
     if x1 <= x0 || y1 <= y0 {
         return S_OK;
     }
-    let req = gpu::Readback::new();
     let at = mem + y0.cast_unsigned() * pitch + x0.cast_unsigned() * 4;
     let (sx, sy) = ((x0 - client[0]).cast_unsigned(), (y0 - client[1]).cast_unsigned());
-    gpu::record(|b| b.cmd(&[gpu::READBACK, req.word(), kept, 0, sx, sy, (x1 - x0).cast_unsigned(), (y1 - y0).cast_unsigned(), at, pitch]));
+    let req = gpu::record(|b| b.readback(gpu::Read::Pixels, &[kept, 0, sx, sy, (x1 - x0).cast_unsigned(), (y1 - y0).cast_unsigned(), at, pitch]));
     *after = After::Readback(req);
     S_OK
 }

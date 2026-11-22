@@ -256,8 +256,7 @@ pub fn fill_of(d: &mut D11, buf: u32) -> Option<u32> {
     let c = counters(d);
     // (guest memory: what the page writes into; not after the wait gave up)
     let dst = d.guest_alloc(4);
-    let req = gpu::Readback::new();
-    gpu::record(|q| q.cmd(&[gpu::READ_BUFFER, req.word(), c, word_at(s), 4, dst]));
+    let req = gpu::record(|q| q.readback(gpu::Read::Buffer, &[c, word_at(s), 4, dst]));
     // SAFETY: the 4 bytes just allocated, written by the page once the readback is done
     let fill = gpu::wait_readback(req).then(|| unsafe { rd(dst, 0) });
     d.guest_free(dst);
@@ -268,19 +267,19 @@ pub fn fill_of(d: &mut D11, buf: u32) -> Option<u32> {
 /// anything on the guest's side reads or changes them.
 pub fn pull(d: &mut D11, id: u32) {
     let Some(Data::Buffer(b)) = d.objs.get(&id).map(|o| &o.data) else { return };
-    if b.newest == super::Newest::Guest || b.gpu == 0 || b.mem == 0 {
+    if b.gpu == 0 || b.mem == 0 {
         return;
     }
+    let Some(asked) = b.content.readback() else { return };
     let (g, mem, size) = (b.gpu, b.mem, b.size);
-    let req = gpu::Readback::new();
     let words = size & !3;
-    gpu::record(|q| q.cmd(&[gpu::READ_BUFFER, req.word(), g, 0, words, mem]));
+    let req = gpu::record(|q| q.readback(gpu::Read::Buffer, &[g, 0, words, mem]));
     if !gpu::wait_readback(req) {
         // (the page's bytes stay the newest: asked for again at the next read)
         return;
     }
     if let Some(Data::Buffer(b)) = d.objs.get_mut(&id).map(|o| &mut o.data) {
-        b.newest = super::Newest::Guest;
+        b.content.read_back(asked);
         if b.usage == 2 {
             b.shadow.clear();
             // SAFETY: the buffer's guest memory, `size` bytes
@@ -833,7 +832,7 @@ pub unsafe fn run(d: &mut D11, st: &State, indexed: bool, count: u32, instances:
                         put(&mut sx, x::xd::SO_SIZE, us(k), size);
                         over.push(store(x::B_SO.saturating_add(k), g, true));
                         if let Some(Data::Buffer(b)) = d.objs.get_mut(&buf).map(|o| &mut o.data) {
-                            b.newest = super::Newest::Page;
+                            b.content.page_wrote();
                         }
                     }
                     None => {
@@ -991,8 +990,7 @@ fn read_back(d: &mut D11, buf: u32, words: u32) -> Option<Vec<u32>> {
     if dst == 0 {
         return None;
     }
-    let req = gpu::Readback::new();
-    gpu::record(|q| q.cmd(&[gpu::READ_BUFFER, req.word(), buf, 0, bytes, dst]));
+    let req = gpu::record(|q| q.readback(gpu::Read::Buffer, &[buf, 0, bytes, dst]));
     // SAFETY: word i of the `bytes` just allocated, written by the page once the readback is
     // done
     let v = gpu::wait_readback(req).then(|| (0..us(words)).map(|i| unsafe { rd(dst, i) }).collect());
