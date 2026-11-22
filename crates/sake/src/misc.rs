@@ -1456,7 +1456,7 @@ fn ver_node(key: &str, value: &[u8], text: bool, children: &[Vec<u8>]) -> Vec<u8
     v[4..6].copy_from_slice(&(text as u16).to_le_bytes());
     v
 }
-fn system_version_info(file: &str) -> Vec<u8> {
+pub(crate) fn system_version_info(file: &str) -> Vec<u8> {
     let w = |s: &str| -> Vec<u8> { s.encode_utf16().chain([0]).flat_map(|u| u.to_le_bytes()).collect() };
     // VS_FIXEDFILEINFO, version 6.1.7601.17514
     let mut fixed = Vec::new();

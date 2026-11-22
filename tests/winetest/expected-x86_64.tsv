@@ -9,7 +9,7 @@ advapi32:eventlog	ok	0	508
 advapi32:lsa	ok	0	77
 advapi32:perf	ok	0	101
 advapi32:registry	crash	528	0
-advapi32:security	fail	10	22
+advapi32:security	crash	681	22
 advapi32:service	crash	354	0
 avifil32:api	crash	48	0
 bcrypt:bcrypt	crash	5	0
@@ -22,14 +22,14 @@ comctl32:edit	crash	131300	0
 comctl32:header	fail	297	418
 comctl32:imagelist	crash	295	0
 comctl32:ipaddress	fail	48	59
-comctl32:listbox	fail	329	3746
+comctl32:listbox	fail	539	2992
 comctl32:listview	crash	352	0
 comctl32:misc	timeout	159	0
 comctl32:monthcal	fail	290	485
 comctl32:mru	fail	16	32
 comctl32:pager	fail	549	708
 comctl32:progress	fail	219	308
-comctl32:propsheet	fail	211	259
+comctl32:propsheet	timeout	1	0
 comctl32:rebar	fail	15	21
 comctl32:static	crash	75	0
 comctl32:status	fail	340	519
@@ -41,7 +41,7 @@ comctl32:toolbar	fail	609	1089
 comctl32:tooltips	fail	511	923
 comctl32:trackbar	crash	106	0
 comctl32:treeview	crash	223	0
-comctl32:updown	fail	127	599
+comctl32:updown	fail	145	525
 crypt32:base64	ok	0	4113
 crypt32:cert	crash	61	0
 crypt32:chain	crash	21	0
@@ -97,7 +97,7 @@ dnsapi:service	ok	0	15
 dsound:capture	crash	1	0
 dsound:ds3d	crash	14	0
 dsound:ds3d8	crash	14	0
-dsound:dsound	fail	64	341
+dsound:dsound	fail	1057	3821
 dsound:dsound8	crash	897	0
 dsound:duplex	crash	2	0
 dsound:propset	fail	3	12
@@ -111,7 +111,7 @@ gdi32:brush	fail	575	699
 gdi32:clipping	fail	28	129
 gdi32:dc	crash	17	0
 gdi32:dib	fail	5214	2369682
-gdi32:font	fail	750	68643
+gdi32:font	fail	838	69328
 gdi32:gdiobj	crash	5	0
 gdi32:generated	ok	0	0
 gdi32:icm	fail	27	53
@@ -142,7 +142,7 @@ kernel32:change	fail	103	316
 kernel32:codepage	fail	263134	394741
 kernel32:comm	fail	763	8842
 kernel32:console	fail	2	4
-kernel32:debugger	fail	5	1128
+kernel32:debugger	fail	24	1219
 kernel32:directory	fail	27	104
 kernel32:drive	fail	13	129
 kernel32:environ	fail	96	454
@@ -161,7 +161,7 @@ kernel32:power	fail	2	3
 kernel32:process	timeout	745	279
 kernel32:profile	fail	149	570
 kernel32:resource	crash	26	0
-kernel32:sync	ok	0	363991
+kernel32:sync	crash	0	0
 kernel32:thread	fail	1	1026
 kernel32:time	fail	99	2249
 kernel32:timer	ok	0	4
@@ -175,7 +175,7 @@ kernelbase:path	fail	2090	4007
 kernelbase:process	crash	65	0
 kernelbase:security	crash	3	0
 kernelbase:sync	fail	2	68
-mfplat:mfplat	crash	1	0
+mfplat:mfplat	timeout	7	9
 mmdevapi:capture	ok	0	1
 mmdevapi:dependency	fail	1	7
 mmdevapi:mmdevenum	ok	0	42
@@ -183,9 +183,9 @@ mmdevapi:propstore	ok	0	41
 mmdevapi:render	ok	0	4996
 mmdevapi:spatialaudio	ok	0	3
 mpr:mpr	fail	32	327
-msacm32:msacm	fail	102	337
+msacm32:msacm	fail	133	390
 msdmo:msdmo	ok	0	46
-msvcp140:msvcp140	ok	0	1642
+msvcp140:msvcp140	fail	1	1642
 msvcp60:ios	crash	45	0
 msvcp60:string	crash	39	0
 msvcp90:ios	crash	71	0
@@ -198,7 +198,7 @@ msvcrt:cpp	crash	10	0
 msvcrt:data	fail	6	17
 msvcrt:dir	fail	61	367
 msvcrt:environ	crash	6	0
-msvcrt:file	ok	0	1
+msvcrt:file	fail	219	1228
 msvcrt:heap	ok	0	1125
 msvcrt:locale	fail	44	144
 msvcrt:misc	fail	382	563
@@ -274,10 +274,10 @@ quartz:filesource	crash	1	0
 quartz:filtergraph	crash	31	0
 quartz:filtermapper	crash	1	0
 quartz:memallocator	crash	41	0
-quartz:mpegaudio	ok	0	0
+quartz:mpegaudio	crash	1	0
 quartz:mpeglayer3	ok	0	0
-quartz:mpegsplit	ok	0	0
-quartz:mpegvideo	ok	0	0
+quartz:mpegsplit	crash	3	0
+quartz:mpegvideo	crash	0	0
 quartz:passthrough	crash	2	0
 quartz:systemclock	crash	1	0
 quartz:videorenderer	crash	1	0
@@ -323,7 +323,7 @@ shlwapi:clist	fail	43	99
 shlwapi:clsid	fail	59	119
 shlwapi:generated	ok	0	0
 shlwapi:istream	crash	1275	0
-shlwapi:ordinal	ok	0	1
+shlwapi:ordinal	crash	30	1
 shlwapi:path	fail	66267	66844
 shlwapi:shreg	fail	34	58
 shlwapi:string	crash	16751	0
@@ -332,10 +332,10 @@ shlwapi:url	fail	13188	93379
 ucrtbase:cpp	crash	8	0
 ucrtbase:environ	fail	19	89
 ucrtbase:file	fail	32	59
-ucrtbase:misc	ok	0	2
+ucrtbase:misc	timeout	0	2
 ucrtbase:printf	fail	228	1942
 ucrtbase:scanf	fail	19	381
-ucrtbase:string	fail	79	787267
+ucrtbase:string	crash	24	0
 ucrtbase:thread	fail	6	60
 user32:broadcast	fail	20	32
 user32:class	crash	75	0
@@ -343,7 +343,7 @@ user32:clipboard	fail	637	54829
 user32:combo	crash	185	0
 user32:cursoricon	timeout	790	0
 user32:dce	ok	0	204
-user32:dde	ok	0	24
+user32:dde	crash	75	24
 user32:dialog	crash	50	0
 user32:edit	crash	131446	0
 user32:generated	ok	0	0
@@ -386,7 +386,7 @@ windowscodecs:wmpformat	ok	0	0
 winmm:capture	fail	7	13
 winmm:generated	ok	0	0
 winmm:joystick	fail	1	2
-winmm:mci	fail	336	588
+winmm:mci	fail	498	587
 winmm:mcicda	fail	108	111
 winmm:midi	fail	5	9
 winmm:mixer	ok	0	56
