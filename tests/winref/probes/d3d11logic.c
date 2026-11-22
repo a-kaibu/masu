@@ -10,7 +10,8 @@
  *  - which formats CheckFeatureSupport(FORMAT_SUPPORT2) gives OUTPUT_MERGER_LOGIC_OP;
  *  - every op on targets of formats without it (UNORM, UNORM_SRGB, SNORM, SINT, FLOAT,
  *    B8G8R8A8, R11G11B10, R16_UNORM): what the output merger writes there;
- *  - four 4x multisampled R32_UINT targets, every sample read back through Texture2DMS: a full and a partly covered triangle, the pixel shader's SV_Position,
+ *  - two 4x multisampled R16G16B16A16_UINT targets (4 words, each in two channels), every
+ *    sample read back through Texture2DMS: a full and a partly covered triangle, the pixel shader's SV_Position,
  *    an interpolated value and SV_Coverage under XOR over 0 (against no logic op: whether the
  *    shader still runs once a pixel), the blend sample mask, a sample-rate shader
  *    (SV_SampleIndex), and PSInvocations and a pixel shader's own count of its invocations.
@@ -46,17 +47,18 @@ static const char *SRC =
     "float4 vs_half(uint id : SV_VertexID) : SV_Position { return float4(id == 2 ? 1.0 : -1.0, id == 1 ? 1.0 : -1.0, 0.5, 1); }\n"
     "struct VI { float4 p : SV_Position; float t : T; };\n"
     "VI vs_attr(uint id : SV_VertexID) { VI o; o.p = float4(id == 2 ? 1.0 : -1.0, id == 1 ? 1.0 : -1.0, 0.5, 1); o.t = o.p.x * 0.37 + o.p.y * 0.11 + 0.5; return o; }\n"
-    /* the 4x cases write 4 R32_UINT targets (WebGPU multisamples no 64- or 128-bit format) */
-    "struct O4 { uint a : SV_Target0; uint b : SV_Target1; uint c : SV_Target2; uint d : SV_Target3; };\n"
-    "O4 o4(uint4 v) { O4 o; o.a = v.x; o.b = v.y; o.c = v.z; o.d = v.w; return o; }\n"
-    "O4 ps_const(float4 p : SV_Position) { return o4(src); }\n"
-    "O4 ps_attr(VI i, uint c : SV_Coverage) { return o4(uint4(asuint(i.p.x), asuint(i.p.y), asuint(i.t), c)); }\n"
-    "O4 ps_sample(float4 p : SV_Position, uint s : SV_SampleIndex) { return o4(src ^ s); }\n"
-    "RWByteAddressBuffer cnt : register(u4);\n"
-    "O4 ps_count(float4 p : SV_Position) { uint o; cnt.InterlockedAdd(0, 1, o); return o4(src); }\n"
-    /* sample (x % 4) of pixel (x / 4, y) of the 4 multisampled targets */
-    "Texture2DMS<uint> m0 : register(t0); Texture2DMS<uint> m1 : register(t1); Texture2DMS<uint> m2 : register(t2); Texture2DMS<uint> m3 : register(t3);\n"
-    "uint4 ps_read(float4 p : SV_Position) : SV_Target { uint x = (uint)p.x; int2 q = int2(x / 4, (int)p.y); uint k = x % 4; return uint4(m0.Load(q, k), m1.Load(q, k), m2.Load(q, k), m3.Load(q, k)); }\n";
+    /* the 4x cases write 2 R16G16B16A16_UINT targets (WebGPU multisamples no 32-bit integer
+     * format): 4 words, each in two channels */
+    "struct O2w { uint4 a : SV_Target0; uint4 b : SV_Target1; };\n"
+    "O2w o2w(uint4 v) { O2w o; o.a = uint4(v.x & 0xffff, v.x >> 16, v.y & 0xffff, v.y >> 16); o.b = uint4(v.z & 0xffff, v.z >> 16, v.w & 0xffff, v.w >> 16); return o; }\n"
+    "O2w ps_const(float4 p : SV_Position) { return o2w(src); }\n"
+    "O2w ps_attr(VI i, uint c : SV_Coverage) { return o2w(uint4(asuint(i.p.x), asuint(i.p.y), asuint(i.t), c)); }\n"
+    "O2w ps_sample(float4 p : SV_Position, uint s : SV_SampleIndex) { return o2w(src ^ (s * 0x10001)); }\n"
+    "RWByteAddressBuffer cnt : register(u2);\n"
+    "O2w ps_count(float4 p : SV_Position) { uint o; cnt.InterlockedAdd(0, 1, o); return o2w(src); }\n"
+    /* sample (x % 4) of pixel (x / 4, y) of the 2 multisampled targets, as 4 words */
+    "Texture2DMS<uint4> m0 : register(t0); Texture2DMS<uint4> m1 : register(t1);\n"
+    "uint4 ps_read(float4 p : SV_Position) : SV_Target { uint x = (uint)p.x; int2 q = int2(x / 4, (int)p.y); uint k = x % 4; uint4 a = m0.Load(q, k), b = m1.Load(q, k); return uint4(a.x | a.y << 16, a.z | a.w << 16, b.x | b.y << 16, b.z | b.w << 16); }\n";
 
 static ID3DBlob *compile(const char *entry, const char *target) {
     ID3DBlob *b = NULL, *err = NULL;
@@ -410,13 +412,13 @@ int main(void) {
         ID3D11DeviceContext_PSSetShader(ctx, ps, NULL, 0);
     }
 
-    puts("four 4x multisampled R32_UINT targets (each pixel: its 4 samples, the 4 targets' words each)");
+    puts("two 4x multisampled R16G16B16A16_UINT targets (each pixel: its 4 samples, 4 words each: channels 0|1 2|3 of each target)");
     {
-        D3D11_TEXTURE2D_DESC md = { W, H, 1, 1, DXGI_FORMAT_R32_UINT, { 4, 0 }, D3D11_USAGE_DEFAULT, D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE, 0, 0 };
-        ID3D11Texture2D *mt[4];
-        ID3D11RenderTargetView *mv[4];
-        ID3D11ShaderResourceView *ms[4];
-        for (int i = 0; i < 4; i++) {
+        D3D11_TEXTURE2D_DESC md = { W, H, 1, 1, DXGI_FORMAT_R16G16B16A16_UINT, { 4, 0 }, D3D11_USAGE_DEFAULT, D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE, 0, 0 };
+        ID3D11Texture2D *mt[2];
+        ID3D11RenderTargetView *mv[2];
+        ID3D11ShaderResourceView *ms[2];
+        for (int i = 0; i < 2; i++) {
             if (FAILED(ID3D11Device_CreateTexture2D(dev, &md, NULL, &mt[i]))) { puts("  no 4x target"); puts("done"); return 0; }
             ID3D11Device_CreateRenderTargetView(dev, (ID3D11Resource *)mt[i], NULL, &mv[i]);
             ID3D11Device_CreateShaderResourceView(dev, (ID3D11Resource *)mt[i], NULL, &ms[i]);
@@ -468,7 +470,7 @@ int main(void) {
         D3D11_QUERY_DESC qd = { D3D11_QUERY_PIPELINE_STATISTICS, 0 };
         ID3D11Query *q;
         ID3D11Device_CreateQuery(dev, &qd, &q);
-        static const float clear[4] = { 90.0f, 15360.0f, 74565.0f, 7.0f };
+        static const float clear[2][4] = { { 90.0f, 15360.0f, 7456.0f, 7.0f }, { 1.0f, 65535.0f, 4660.0f, 32768.0f } };
         static const UINT ms_src[4] = { 0x0ff000ff, 0x00ff00ff, 0xf0f0f0f0, 0x80000001 };
         static const struct { const char *name; int vs; int ps; BOOL logic; D3D11_LOGIC_OP op; UINT mask; int all; } mc[] = {
             /* vs: 0 full, 1 half, 2 attr; ps: 0 ps, 1 ps_attr, 2 ps_sample, 3 ps_count */
@@ -490,16 +492,16 @@ int main(void) {
         ID3D11PixelShader *pss[4] = { ps_const, ps_attr, ps_sample, ps_count };
         for (int c = 0; c < (int)(sizeof mc / sizeof mc[0]); c++) {
             BOOL over0 = strstr(mc[c].name, "over 0") != NULL;
-            for (int i = 0; i < 4; i++) {
-                float cv[4] = { over0 ? 0.0f : clear[i], 0, 0, 0 };
-                ID3D11DeviceContext_ClearRenderTargetView(ctx, mv[i], cv);
+            for (int i = 0; i < 2; i++) {
+                static const float cz[4] = { 0, 0, 0, 0 };
+                ID3D11DeviceContext_ClearRenderTargetView(ctx, mv[i], over0 ? cz : clear[i]);
             }
             static const UINT zc[4] = { 0, 0, 0, 0 };
             ID3D11DeviceContext_ClearUnorderedAccessViewUint(ctx, cuav, zc);
             constants(ms_src, NULL, NULL);
             D3D11_VIEWPORT v = { 0, 0, W, H, 0, 1 };
             ID3D11DeviceContext_RSSetViewports(ctx, 1, &v);
-            ID3D11DeviceContext_OMSetRenderTargetsAndUnorderedAccessViews(ctx, 4, mv, NULL, 4, 1, &cuav, NULL);
+            ID3D11DeviceContext_OMSetRenderTargetsAndUnorderedAccessViews(ctx, 2, mv, NULL, 2, 1, &cuav, NULL);
             ID3D11DeviceContext_VSSetShader(ctx, vss[mc[c].vs], NULL, 0);
             ID3D11DeviceContext_PSSetShader(ctx, pss[mc[c].ps], NULL, 0);
             ID3D11BlendState *b = blend(FALSE, 0, mc[c].logic, mc[c].op, 0xf);
@@ -525,10 +527,10 @@ int main(void) {
             ID3D11DeviceContext_RSSetViewports(ctx, 1, &rv);
             ID3D11DeviceContext_VSSetShader(ctx, vs_full, NULL, 0);
             ID3D11DeviceContext_PSSetShader(ctx, ps_read, NULL, 0);
-            ID3D11DeviceContext_PSSetShaderResources(ctx, 0, 4, ms);
+            ID3D11DeviceContext_PSSetShaderResources(ctx, 0, 2, ms);
             ID3D11DeviceContext_Draw(ctx, 3, 0);
-            ID3D11ShaderResourceView *none[4] = { NULL, NULL, NULL, NULL };
-            ID3D11DeviceContext_PSSetShaderResources(ctx, 0, 4, none);
+            ID3D11ShaderResourceView *none[2] = { NULL, NULL };
+            ID3D11DeviceContext_PSSetShaderResources(ctx, 0, 2, none);
             printf("  %s: ps invocations %llu, counted %u\n", mc[c].name, (unsigned long long)st.PSInvocations, count);
             if (strncmp(mc[c].name, "counted", 7) == 0) continue;
             for (int y = 0; y < H; y++) {
