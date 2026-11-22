@@ -1,0 +1,19 @@
+[package]
+name = "jit32tv"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "Translation validation of koji's 32-bit JIT: the wasm it generates for short integer sequences, executed symbolically, against x86's semantics written apart, decided by Z3"
+
+# (its own workspace, as tools/jit32test)
+[workspace]
+
+[dependencies]
+koji = { path = "../../crates/koji" }
+iced-x86 = { version = "1.21", default-features = false, features = ["std", "decoder", "instr_info", "encoder", "code_asm", "op_code_info", "fast_fmt"] }
+wasmparser = "0.263"
+
+[lints.rust]
+# (Rust 1.99: `&x as *const T` / `&mut x as *mut T` makes a reference first, with its aliasing
+# rules: write `&raw const x` / `&raw mut x`, or Box::as_ptr)
+raw_borrows_via_references = "warn"

@@ -683,7 +683,7 @@ fn release_build_only(tree: &Tree) -> Hits {
 }
 
 /// what must stay in place: (file, text, why)
-pub const REQUIRED: [(&str, &str, &str); 52] = [
+pub const REQUIRED: [(&str, &str, &str); 55] = [
     ("crates/sake/src/files.rs", "        if self.shared != 0 && let Ok(p) = self.g.stream_position() {\n            let id = self.shared;\n            crate::kern::with(|k| k.set_file_pos(id, p));", "a file handle processes share keeps its file pointer in the kernel (the child's write did not move the parent's tell: msvcrt:file test_file_inherit; 2026-11-22)"),
     ("crates/sake/src/process.rs", "        Obj::File(f) => f.share().map(|id| KRef::File { id }),", "an inheritable file handle reaches the child (2026-11-22)"),
     ("crates/sake/src/k32.rs", "    // (lpSecurityAttributes's bInheritHandle: a child CreateProcess starts gets it)\n    sa_inherit(c.a(3), h)", "CreateFile honours bInheritHandle (msvcrt:file test_stdout_handle's file never reached the child; 2026-11-22)"),
@@ -735,6 +735,9 @@ pub const REQUIRED: [(&str, &str, &str); 52] = [
     (API, "pub type NoReturn = fn(&mut Ctx) -> !;", "noreturn! registers only handlers that do not come back: the type is the check (2026-11-21)"),
     (".github/workflows/ci.yml", "run: tools/ci/own-workspaces.sh", "every Cargo workspace of its own (fuzz harnesses, JIT tools) is compiled on every push (review e18bf44: three were broken and nothing said so)"),
     (".cargo/mutants.toml", "copy_vcs = true", "cargo-mutants' copy keeps .git: masu-lint lists the tracked files with git (without it the baseline failed and no mutant ran; review e18bf44)"),
+    (".github/workflows/formal.yml", "run: formal/jit32tv.sh", "koji's 32-bit translations are validated against x86's semantics by Z3 on every push (2026-11-22)"),
+    ("formal/jit32tv.sh", "--expect ../../formal/jit32tv-undecided.txt", "the cases jit32tv leaves undecided are exactly the listed ones: a new one fails, and so does one decided now (2026-11-22)"),
+    ("tools/jit32tv/src/main.rs", "koji::jit::translate_region(", "jit32tv checks the wasm koji itself generates for the region, not a model of the translator (2026-11-22)"),
     (".github/workflows/ci.yml", "cargo test --workspace --release", "masu-lint's own tests (each rule and each ratchet lint fires on its regression) run on every push"),
 ];
 
