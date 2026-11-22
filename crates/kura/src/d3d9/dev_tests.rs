@@ -247,6 +247,8 @@ fn d3d9_answers_as_the_golden() {
             "D16_LOCKABLE" => f::D16_LOCKABLE, "D32F_LOCKABLE" => f::D32F_LOCKABLE, "D24X4S4" => f::D24X4S4, "D24FS8" => f::D24FS8,
             "A8" => f::A8, "A8L8" => f::A8L8, "A1R5G5B5" => f::A1R5G5B5, "A8B8G8R8" => f::A8B8G8R8, "G16R16" => f::G16R16, "R32F" => f::R32F,
             "A32B32G32R32F" => f::A32B32G32R32F, "V8U8" => f::V8U8, "X8B8G8R8" => f::X8B8G8R8,
+            "A4R4G4B4" => f::A4R4G4B4, "X4R4G4B4" => f::X4R4G4B4, "A2B10G10R10" => f::A2B10G10R10, "A16B16G16R16" => f::A16B16G16R16,
+            "R16F" => f::R16F, "G16R16F" => f::G16R16F, "G32R32F" => f::G32R32F,
             other => panic!("format {other}"),
         }
     };

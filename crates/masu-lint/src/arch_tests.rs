@@ -193,6 +193,17 @@ fn fixture(r: Rule) -> Fixture {
             ],
             mutate: ("crates/kura/src/d3d9/device.rs", |t| Some(t.replace("0x0876_086f", "0x0876_087f"))),
         },
+        Rule::D3d9DevFormats => Fixture {
+            bad: &[
+                ("tests/winref/probes/d3d9dev.c", "static const struct { D3DFORMAT f; const char *n; } fm[] = { { D3DFMT_L8, \"L8\" }, { (D3DFORMAT)MAKEFOURCC('N', 'V', '1', '2'), \"NV12\" } };\n"),
+                ("crates/kura/src/d3d9/dev_tests.rs", "let named = |n: &str| match n { \"L8\" => f::L8, other => panic!() };\n"),
+            ],
+            good: &[
+                ("tests/winref/probes/d3d9dev.c", "static const struct { D3DFORMAT f; const char *n; } fm[] = { { D3DFMT_L8, \"L8\" }, { (D3DFORMAT)MAKEFOURCC('N', 'V', '1', '2'), \"NV12\" } };\n"),
+                ("crates/kura/src/d3d9/dev_tests.rs", "let named = |n: &str| match n { \"L8\" => f::L8, \"NV12\" => nv12, other => panic!() };\n"),
+            ],
+            mutate: ("crates/kura/src/d3d9/dev_tests.rs", |t| Some(t.replace("\"G32R32F\" => f::G32R32F,", ""))),
+        },
         Rule::ConsoleLines => Fixture {
             bad: &[("crates/sake/src/crt.rs", "fn puts(s: &str) { eprint!(\"{s}\"); }\n")],
             good: &[("crates/sake/src/crt.rs", "fn puts(s: &str) { crate::k32::console_write(s); eprintln!(\"sake: puts\"); }\n// eprint!( in a comment\n")],

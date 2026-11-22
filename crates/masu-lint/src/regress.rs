@@ -443,6 +443,31 @@ pub(super) fn d3d9_status(tree: &Tree) -> Hits {
     out
 }
 
+// --- d3d9dev-formats --------------------------------------------------------------------------
+
+/// the probe and the test that reads its golden
+const D3D9DEV_PROBE: &str = "tests/winref/probes/d3d9dev.c";
+const D3D9DEV_TEST: &str = "crates/kura/src/d3d9/dev_tests.rs";
+
+static D3D9DEV_ROW: LazyLock<Option<Regex>> = LazyLock::new(|| rx(r#"\{\s*(?:D3DFMT_[A-Z0-9_]+|\(D3DFORMAT\)MAKEFOURCC\([^)]*\))\s*,\s*"([A-Za-z0-9_]+)"\s*\}"#));
+
+/// a format of the d3d9dev probe's table that d3d9_answers_as_the_golden has no name for
+pub(super) fn d3d9dev_formats(tree: &Tree) -> Hits {
+    let mut out = Hits::new();
+    let Some(re) = D3D9DEV_ROW.as_ref() else { return out };
+    let (probe, test) = (Rel::new(D3D9DEV_PROBE), Rel::new(D3D9DEV_TEST));
+    let named = tree.text(&test);
+    let text = tree.text(&probe);
+    for c in re.captures_iter(&text) {
+        let Some(n) = c.get(1) else { continue };
+        if !named.contains(&format!("\"{}\" =>", n.as_str())) {
+            let line = crate::code::line_of(&text, n.start());
+            out.push((probe.clone(), line, format!("d3d9dev asks {} but {D3D9DEV_TEST}'s d3d9_answers_as_the_golden has no \"{}\" => arm", n.as_str(), n.as_str())));
+        }
+    }
+    out
+}
+
 // --- console-lines ---------------------------------------------------------------------------
 
 /// The program's console output written straight to stderr (`eprint!`) instead of through
