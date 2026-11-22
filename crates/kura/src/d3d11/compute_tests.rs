@@ -127,7 +127,7 @@ impl Dev {
         self.req += 1;
         let rb = mem(64);
         gpu::record(|b| b.cmd(&[gpu::READBACK, self.req, g, 0, 0, 0, 8, 8, rb, 32]));
-        assert!(gpu::wait_readback(self.req));
+        assert!(gpu::wait_readback(gpu::Readback::of_word(self.req)));
         (0..64).map(|i| rd1(rb + 4 * i)).collect()
     }
     fn done(self) {

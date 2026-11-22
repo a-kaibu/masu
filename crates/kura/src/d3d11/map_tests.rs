@@ -234,7 +234,7 @@ fn run(seed: u64) {
                 reads += 1;
                 let req = 0x5000_0000 + reads;
                 gpu::record(|b| b.cmd(&[gpu::READBACK, req, gpus[i], 0, 0, 0, 16, 16, rb, 64]));
-                assert!(gpu::wait_readback(req));
+                assert!(gpu::wait_readback(gpu::Readback::of_word(req)));
                 (t.op, t.ret, t.obs) = ("GpuRead", hr(0), cells(true, rb, 64, [0, 0, 4, 4]));
             }
         }

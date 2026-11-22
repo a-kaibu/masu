@@ -173,9 +173,9 @@ pub enum After {
     None,
     /// (to window `.0`)
     Present(u32),
-    Readback(u32),
+    Readback(gpu::Readback),
     /// a readback into `staging` (the page's texels) that becomes `fmt`'s at `dst`
-    ReadbackAs { req: u32, staging: u32, fmt: u32, w: u32, h: u32, dst: u32, pitch: u32 },
+    ReadbackAs { req: gpu::Readback, staging: u32, fmt: u32, w: u32, h: u32, dst: u32, pitch: u32 },
 }
 
 impl D3d {

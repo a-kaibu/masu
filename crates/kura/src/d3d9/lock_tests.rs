@@ -117,7 +117,7 @@ fn gpu_cells(s: &Surf, n: &mut u32) -> Vec<i64> {
     *n += 1;
     let req = 0x4000_0000 + *n;
     gpu::record(|b| b.cmd(&[gpu::READBACK, req, s.gpu, 0, 0, 0, s.w, s.h, dst, pitch]));
-    assert!(gpu::wait_readback(req));
+    assert!(gpu::wait_readback(gpu::Readback::of_word(req)));
     if std::env::var_os("MASU_LOCK_DUMP").is_some() {
         for y in 0..s.h.min(16) {
             let row: Vec<String> = (0..s.w.min(16)).map(|x| format!("{:08x}", unsafe { *((dst + y * pitch + x * 4) as *const u32) })).collect();
