@@ -1523,3 +1523,32 @@ fn tessellation_passes_of_the_d3d11tess_probe() {
     assert!(expand::HsOut::of(&d).is_err());
     assert!(expand::tess_decl(&vs).is_err());
 }
+
+/// The setup of winref d3d11interp's draws (dxwgsl::expand::setup): the setup pass of the
+/// vertex shader's store and of the geometry shader's, the store's vertex shader and every pixel
+/// shader of the probe drawn from it, at 1 and 4 samples, are valid WGSL.
+#[test]
+fn setup_of_the_d3d11interp_probe() {
+    use dxwgsl::expand::{self, setup, Store};
+    let src = probe_hlsl(include_str!("../../../tests/winref/probes/d3d11interp.c"));
+    let vs = compile(&src, "vs", "vs_5_0");
+    let vsc = compile(&src, "vs_clip", "vs_5_0");
+    let gs = compile(&src, "gs", "gs_5_0");
+    let pss = ["ps_lin", "ps_nop", "ps_cen", "ps_nopcen", "ps_smp", "ps_nopsmp", "ps_flat", "ps_pos", "ps_possmp", "ps_poscen", "ps_clip"];
+    for name in pss {
+        let ps = compile(&src, name, "ps_5_0");
+        let layout = setup::Layout::of(&ps).unwrap_or_else(|e| panic!("{name}: {e}"));
+        for samples in [1, 4] {
+            valid(&dxwgsl::translate_setup(&ps, &[], &[], samples).unwrap_or_else(|e| panic!("{name}: {e}")).code);
+        }
+        valid(&setup::setup_vertex(layout.stride()).code);
+        for v in [&vs, &vsc] {
+            let osgn = dxwgsl::signature(v, true);
+            let store = Store::Vertex { regs: expand::store_regs(&osgn, 0), corners: 3 };
+            valid(&setup::setup_pass(&store, &osgn, Some(&ps)).unwrap_or_else(|e| panic!("{name}: {e}")).code);
+        }
+        let d = expand::gs_decl(&gs).unwrap();
+        let store = Store::Geometry { decl: d, stream: 0, regs: expand::gs_regs(&gs) };
+        valid(&setup::setup_pass(&store, &dxwgsl::signature(&gs, true), Some(&ps)).unwrap_or_else(|e| panic!("{name}: {e}")).code);
+    }
+}

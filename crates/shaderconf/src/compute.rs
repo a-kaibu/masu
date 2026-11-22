@@ -196,6 +196,7 @@ pub fn cases() -> Result<String, String> {
     ));
     out.extend(buffer_cases()?);
     out.extend(ps_cases());
+    out.extend(setup_cases()?);
     Ok(format!("[\n{}\n]\n", out.join(",\n")))
 }
 
@@ -447,4 +448,145 @@ fn ps_cases() -> Vec<String> {
         ));
     }
     out
+}
+
+/// The setup pass's WGSL (dxwgsl expand::setup::setup_pass) against its Rust rule
+/// (setup::triangle, the one held to Windows' WARP: winref d3d11logic, d3d11interp) on random
+/// triangles (inside, across planes, behind the eye, a clip distance below 0) under several
+/// rasterizer states: every slot's words the same, bit for bit.
+fn setup_cases() -> Result<Vec<String>, String> {
+    use dxwgsl::expand::{ps, setup, xd, Store, B_PRIMS, B_VOUT, B_XD, XD_VECS};
+    let src = "struct V { float4 p : SV_Position; float4 a : A; float4 b : B; uint2 k : K; float c : SV_ClipDistance0; };\n\
+        V vs(uint id : SV_VertexID) { V o = (V)0; o.p = float4(id, 0, 0, 1); return o; }\n\
+        float4 ps(float4 p : SV_Position, linear float4 a : A, noperspective float3 b : B, nointerpolation uint2 k : K, float c : SV_ClipDistance0) : SV_Target { return p + a + b.xyzz + k.xyxy + c; }";
+    let vs = hlslc::compile(src, &[], &mut |_, _| None, "vs", "vs_5_0", 0).map_err(|e| format!("setup vs: {e}"))?;
+    let psc = hlslc::compile(src, &[], &mut |_, _| None, "ps", "ps_5_0", 0).map_err(|e| format!("setup ps: {e}"))?;
+    let osgn = dxwgsl::signature(&vs, true);
+    let regs = dxwgsl::expand::store_regs(&osgn, 0);
+    let store = Store::Vertex { regs, corners: 3 };
+    let layout = setup::Layout::of(&psc)?;
+    let wgsl = setup::setup_pass(&store, &osgn, Some(&psc))?;
+    let stride = layout.stride();
+    let reg_of = |name: &str| osgn.iter().find(|e| e.name.eq_ignore_ascii_case(name)).map_or(0, |e| e.reg);
+    let (rp, rc) = (reg_of("SV_Position"), reg_of("SV_ClipDistance"));
+    let slots = setup::slots(1);
+    let modes: Vec<setup::Mode> = layout.inputs.iter().map(|i| i.mode).collect();
+    let states: [([f32; 6], ps::Cull, bool, bool); 4] = [
+        ([0.0, 0.0, 64.0, 64.0, 0.0, 1.0], ps::Cull::None, false, true),
+        ([0.0, 0.0, 640.0, 480.0, 0.25, 0.75], ps::Cull::Back, false, true),
+        ([10.5, 3.25, 100.0, 61.0, 0.0, 1.0], ps::Cull::Front, true, false),
+        ([-30.0, -20.0, 200.0, 150.0, 1.0, 0.0], ps::Cull::None, true, true),
+    ];
+    const N: u32 = 512;
+    let mut out = Vec::new();
+    for (k, &(vp, cull, ccw, dc)) in states.iter().enumerate() {
+        let r = setup::Raster { viewport: vp, cull, front_ccw: ccw, depth_clip: dc };
+        let mut xw = vec![0u32; kome::num::to_usize(XD_VECS).saturating_mul(4)];
+        let mut put = |at: usize, v: u32| {
+            if let Some(w) = xw.get_mut(at) {
+                *w = v;
+            }
+        };
+        for (i, v) in vp.iter().take(4).enumerate() {
+            put(xd::VIEWPORT.wrapping_add(i), v.to_bits());
+        }
+        put(xd::DEPTH, vp[4].to_bits());
+        put(xd::DEPTH.wrapping_add(1), vp[5].to_bits());
+        put(xd::RASTER, cull.word() | u32::from(ccw) << 2 | u32::from(dc) << 3 | 1 << 4);
+        put(xd::ITEMS, N);
+        let mut rng = Rng(0x2545_f491 ^ kome::num::u32_of(k).wrapping_mul(0x9e37_79b9) | 1);
+        let mut vout = vec![0u32; kome::num::to_usize(N.saturating_mul(3).saturating_mul(regs).saturating_mul(4))];
+        let mut want = vec![0u32; kome::num::to_usize(N.saturating_mul(slots).saturating_mul(stride).saturating_mul(4))];
+        for t in 0..N {
+            let mut corners: [setup::Corner; 3] = Default::default();
+            for (c, corner) in corners.iter_mut().enumerate() {
+                let e = t.saturating_mul(3).saturating_add(kome::num::u32_of(c));
+                let mut pos = rng.pos();
+                // (a third of the triangles well inside: what most draws are)
+                if t % 3 == 0 {
+                    pos = [rng.f(-0.9, 0.9), rng.f(-0.9, 0.9), rng.f(0.0, 1.0), rng.f(0.5, 2.0)];
+                    pos = [pos[0] * pos[3], pos[1] * pos[3], pos[2] * pos[3], pos[3]];
+                }
+                let dist = if t % 5 == 0 { rng.f(-1.0, 1.0) } else { 1.0 };
+                let mut words = vec![0u32; kome::num::to_usize(regs.saturating_mul(4))];
+                let mut set = |r: u32, comp: u32, v: u32| {
+                    if let Some(w) = words.get_mut(kome::num::to_usize(r.saturating_mul(4).saturating_add(comp))) {
+                        *w = v;
+                    }
+                };
+                for (q, v) in (0u32..).zip(pos) {
+                    set(rp, q, v.to_bits());
+                }
+                set(rc, 0, dist.to_bits());
+                corner.pos = pos;
+                corner.clip = vec![dist];
+                for inp in &layout.inputs {
+                    let f = osgn.iter().find(|f| f.sysval == if inp.sysval == 2 { 2 } else { 0 } && dxwgsl::signature(&psc, false).iter().any(|e| e.reg == inp.reg && e.name.eq_ignore_ascii_case(&f.name)));
+                    for comp in 0..4u32 {
+                        let v = if inp.mode == setup::Mode::Constant { rng.next() } else { rng.f(-100.0, 100.0).to_bits() };
+                        let v = match f {
+                            Some(_) if inp.sysval == 2 => if comp == 0 { dist.to_bits() } else { 0 },
+                            Some(f) => {
+                                set(f.reg, comp, v);
+                                v
+                            }
+                            None => 0,
+                        };
+                        corner.attrs.push(v);
+                    }
+                }
+                let at = kome::num::to_usize(e.saturating_mul(regs).saturating_mul(4));
+                if let Some(d) = vout.get_mut(at..at.saturating_add(words.len())) {
+                    d.copy_from_slice(&words);
+                }
+            }
+            for (f, fan) in (0u32..).zip(setup::triangle(&corners, &modes, &r)) {
+                let base = kome::num::to_usize(t.saturating_mul(slots).saturating_add(f).saturating_mul(stride).saturating_mul(4));
+                let mut put = |vec: u32, comp: u32, v: u32| {
+                    if let Some(w) = want.get_mut(base.saturating_add(kome::num::to_usize(vec.saturating_mul(4).saturating_add(comp)))) {
+                        *w = v;
+                    }
+                };
+                for (c, p) in (0u32..).zip(fan.pos) {
+                    for (q, v) in (0u32..).zip(p) {
+                        put(c, q, v.to_bits());
+                    }
+                }
+                for (vec, pl) in [(3u32, fan.rhw), (4, fan.z)] {
+                    put(vec, 0, pl.gx.to_bits());
+                    put(vec, 1, pl.gy.to_bits());
+                    put(vec, 2, pl.c.to_bits());
+                }
+                for (i, inp) in (0u32..).zip(&layout.inputs) {
+                    for comp in 0..4u32 {
+                        if inp.mask >> comp & 1 == 0 {
+                            continue;
+                        }
+                        let pl = fan.attrs.get(kome::num::to_usize(i.saturating_mul(4).saturating_add(comp))).copied().unwrap_or_default();
+                        let o = setup::HEADER.saturating_add(i.saturating_mul(3));
+                        put(o, comp, pl.gx.to_bits());
+                        put(o.saturating_add(1), comp, pl.gy.to_bits());
+                        put(o.saturating_add(2), comp, pl.c.to_bits());
+                    }
+                }
+            }
+        }
+        let prims: Vec<u32> = (0..N.saturating_mul(3)).collect();
+        let b = [
+            format!(r#"{{"binding":{B_XD},"uniform":[{}]}}"#, list(&xw)),
+            format!(r#"{{"binding":{B_VOUT},"buffer":{{"words":[{}]}}}}"#, list(&vout)),
+            format!(r#"{{"binding":{B_PRIMS},"buffer":{{"words":[{}]}}}}"#, list(&prims)),
+            format!(r#"{{"binding":{},"buffer":{{"words":[{}]}}}}"#, setup::B_SETUP, list(&vec![0u32; want.len()])),
+        ];
+        out.push(format!(
+            r#"{{"name":{},"dispatch":[{},1,1],"out":[{}],"want":[{}],"variants":[{{"name":"masu","wgsl":{}}}],"bindings":[{}]}}"#,
+            string(&format!("setup pass (WGSL) = setup::triangle (Rust), state {k}")),
+            N.div_ceil(64),
+            setup::B_SETUP,
+            list(&words_bytes(&want)),
+            string(&wgsl.code),
+            b.join(",")
+        ));
+    }
+    Ok(out)
 }

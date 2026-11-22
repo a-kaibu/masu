@@ -4414,7 +4414,9 @@ unsafe fn source_bytes(d: &mut D11, id: u32, sub: u32, b: [u32; 6]) -> Option<u3
 /// A shader's page shader and bindings (translated on first use; vertex shaders per pixel shader).
 /// `samplers`: a pixel shader's (those with BORDER or MIRROR_ONCE addressing: the shader does it;
 /// those with a point mip filter: the shader rounds explicit levels)
-fn shader_for(d: &mut D11, sh: u32, ps: u32, sprite: Option<f32>, samplers: &[u32], logic: &[dxwgsl::logic::Logic]) -> Option<(u32, Vec<(u32, dxwgsl::Binding)>)> {
+/// `setup`: a pixel shader drawn from a setup store (expand.rs), over targets of that many
+/// samples a pixel.
+fn shader_for(d: &mut D11, sh: u32, ps: u32, sprite: Option<f32>, samplers: &[u32], logic: &[dxwgsl::logic::Logic], setup: Option<u32>) -> Option<(u32, Vec<(u32, dxwgsl::Binding)>)> {
     let mut addr = Vec::new();
     if matches!(d.objs.get(&sh).map(|o| &o.data), Some(Data::Shader(s)) if s.pixel) {
         for (n, &id) in samplers.iter().enumerate() {
@@ -4431,7 +4433,7 @@ fn shader_for(d: &mut D11, sh: u32, ps: u32, sprite: Option<f32>, samplers: &[u3
     }
     // (point sprite variants of a vertex shader: the pixel shader's id with the top bit set)
     let Some(Data::Shader(s)) = d.objs.get(&sh).map(|o| &o.data) else { return None };
-    let key = (if s.pixel { 0 } else if sprite.is_some() { ps | 0x8000_0000 } else { ps }, addr, if s.pixel { logic.to_vec() } else { Vec::new() });
+    let key = (if s.pixel { setup.unwrap_or(0) } else if sprite.is_some() { ps | 0x8000_0000 } else { ps }, addr, if s.pixel { logic.to_vec() } else { Vec::new() });
     if let Some(r) = s.wgsl.get(&key) {
         return r.clone();
     }
@@ -4444,6 +4446,7 @@ fn shader_for(d: &mut D11, sh: u32, ps: u32, sprite: Option<f32>, samplers: &[u3
     let Some(Data::Shader(s)) = d.objs.get_mut(&sh).map(|o| &mut o.data) else { return None };
     let w = match sprite {
         Some(max) if !s.pixel => dxwgsl::translate_point_sprite(&s.code, ps_code.as_deref(), max),
+        _ if s.pixel && let Some(samples) = setup => dxwgsl::translate_setup(&s.code, &key.1, &key.2, samples),
         _ if s.pixel && !key.2.is_empty() => dxwgsl::translate_logic(&s.code, &key.1, &key.2),
         _ => dxwgsl::translate_addr(&s.code, s.pixel, if s.pixel { None } else { ps_code.as_deref() }, &key.1),
     };
@@ -4762,7 +4765,7 @@ unsafe fn draw_with(d: &mut D11, st: &State, indexed: bool, count: u32, instance
     let (count, instances, start, first_instance) = if sprite.is_some() { (6, count, 0, start) } else { (count, instances, start, first_instance) };
     let shaders = match store {
         Some(sd) => Some(sd.vs.clone()),
-        None => shader_for(d, st.vs, st.ps, sprite, &[], &[]),
+        None => shader_for(d, st.vs, st.ps, sprite, &[], &[], None),
     };
     let Some((vs, vb)) = shaders else { return };
     if trace2() {
@@ -4811,7 +4814,10 @@ unsafe fn draw_with(d: &mut D11, st: &State, indexed: bool, count: u32, instance
         _ => false,
     };
     let (logic_ops, logic_kept) = blend.as_ref().map_or_default(|b| logic::targets(b, &formats, &multisampled, sample_rate));
-    let ps = if st.ps != 0 { shader_for(d, st.ps, 0, None, &st.samplers[1], &logic_ops) } else { None };
+    // (a setup store's draw: the pixel shader evaluates its inputs from the store's planes,
+    // at the samples of its targets)
+    let setup = store.and_then(|sd| sd.setup).map(|_| if multisampled.iter().any(|&m| m) || target_texture(d, st.dsv).is_some_and(|t| t.3 && crate::render::d3d::page_multisamples(t.6)) { 4 } else { 1 });
+    let ps = if st.ps != 0 { shader_for(d, st.ps, 0, None, &st.samplers[1], &logic_ops, setup) } else { None };
     let depth = view_target(d, st.dsv);
     let depth_fmt = depth.and_then(|_| match d.objs.get(&st.dsv).map(|o| &o.data) {
         Some(Data::View(v)) => match d.objs.get(&v.res).map(|o| &o.data) {
@@ -5019,7 +5025,10 @@ unsafe fn draw_with(d: &mut D11, st: &State, indexed: bool, count: u32, instance
     // (the copies of the targets with logic ops that read them: the pixel shader's LogicDst)
     let copies: Vec<logic::Copy> = logic_ops.iter().filter(|l| l.reads_copy()).filter_map(|l| logic::copy_of(d, st.rtvs.get(us(l.target)).copied().unwrap_or(0), l)).collect();
     // (a stash's copy is the resolve's, not the shader's)
-    let ps_over: Vec<[u32; 8]> = copies.iter().filter(|c| !stashed.iter().any(|l| c.entry[0] == dxwgsl::logic::LOGIC_DST.saturating_add(l.target))).map(|c| c.entry).collect();
+    let mut ps_over: Vec<[u32; 8]> = copies.iter().filter(|c| !stashed.iter().any(|l| c.entry[0] == dxwgsl::logic::LOGIC_DST.saturating_add(l.target))).map(|c| c.entry).collect();
+    if let Some(e) = store.and_then(|sd| sd.setup) {
+        ps_over.push(e);
+    }
     let stash = logic::stash_of(d, &st.rtvs, &colors, [dt, dl, dly], &stashed, &masks, &copies);
     for (stage, binds) in [(0usize, &vb), (1usize, &ps.as_ref().map_or_default(|p| p.1.clone()))] {
         let entries = bind_entries(d, st, stage, binds, if stage == 0 { &over } else { &ps_over }, &mut cbs_read);

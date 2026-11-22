@@ -113,6 +113,8 @@ enum Key {
     Clip { src: u32, stream: u32, corners: u32 },
     Hull { hs: u32, vs: u32 },
     Domain { ds: u32, hs: u32 },
+    Setup { src: u32, stream: u32, ps: u32 },
+    SetupVertex { stride: u32 },
 }
 
 /// A page shader and what it binds.
@@ -129,9 +131,11 @@ pub struct Gpu {
     free: Vec<u32>,
     /// 256 bytes of zeros (a binding nothing is bound to)
     zero: u32,
-    /// vout, gout, glist, gcount, hcp, hpc, dout, dlist: (page buffer, bytes), made bigger
-    /// when a draw needs it
-    scratch: [(u32, u32); 8],
+    /// vout, gout, glist, gcount, hcp, hpc, dout, dlist, setup: (page buffer, bytes), made
+    /// bigger when a draw needs it
+    scratch: [(u32, u32); 9],
+    /// pixel shaders' setup layouts (setup.rs), by shader object (None: not translatable)
+    layouts: HashMap<u32, Option<x::setup::Layout>>,
     shaders: HashMap<Key, Option<PageShader>>,
     /// PIPELINE_STATISTICS queries open (their ids): draws count the clipper's work
     pub open: Vec<u32>,
@@ -147,6 +151,10 @@ const HCP: usize = 4;
 const HPC: usize = 5;
 const DOUT: usize = 6;
 const DLIST: usize = 7;
+/// the setup pass's slots (setup.rs)
+const SETUP: usize = 8;
+/// The most bytes a setup store holds: a draw of more primitives is set up and drawn in pieces.
+const SETUP_BYTES: u32 = 32 << 20;
 
 /// The page buffer of the counters and the fill table (made, zeros, the first time).
 pub fn counters(d: &mut D11) -> u32 {
@@ -284,6 +292,7 @@ pub fn pull(d: &mut D11, id: u32) {
 /// destroys them on the page).
 pub fn forget_shader(d: &mut D11, id: u32) -> Vec<u32> {
     let mut gone = Vec::new();
+    d.expand.layouts.remove(&id);
     d.expand.shaders.retain(|k, v| {
         let of = match k {
             Key::Vertex { vs, .. } => *vs == id,
@@ -292,6 +301,8 @@ pub fn forget_shader(d: &mut D11, id: u32) -> Vec<u32> {
             Key::Clip { src, .. } => *src == id,
             Key::Hull { hs, vs } => *hs == id || *vs == id,
             Key::Domain { ds, hs } => *ds == id || *hs == id,
+            Key::Setup { src, ps, .. } => *src == id || *ps == id,
+            Key::SetupVertex { .. } => false,
         };
         if of && let Some((m, _)) = v {
             gone.push(*m);
@@ -635,7 +646,8 @@ pub unsafe fn run(d: &mut D11, st: &State, indexed: bool, count: u32, instances:
         Tess::Off => None,
         Tess::On(s) => Some(s),
     };
-    if gs_code.is_none() && so.is_none() && !stats && ts.is_none() {
+    let wants_setup = setup_wanted(d, st);
+    if gs_code.is_none() && so.is_none() && !stats && ts.is_none() && !wants_setup {
         return After::Draw;
     }
     // (tessellating: the tessellator's primitives, after the hull and domain shader passes)
@@ -853,7 +865,17 @@ pub unsafe fn run(d: &mut D11, st: &State, indexed: bool, count: u32, instances:
             pass(d, st, 0, &csh, &over, Some(slots));
         }
     }
-    // 5. drawn
+    // 5. drawn: through the setup (setup.rs) when the pixel shader reads interpolated inputs
+    if wants_setup && let Some(r) = raster {
+        let (stv, osgn, slots) = store_of(r);
+        if stv.corners() == 3 {
+            let entries = store_entries();
+            match setup_draw(d, st, &stv, &osgn, src, r, slots, &xw, &entries) {
+                SetupDone::Drawn => return After::Done,
+                SetupDone::Not => {}
+            }
+        }
+    }
     match (&gs_decl, raster) {
         (_, None) => After::Done,
         (None, Some(_)) if ts.is_none() => After::Draw,
@@ -875,7 +897,7 @@ pub unsafe fn run(d: &mut D11, st: &State, indexed: bool, count: u32, instances:
                 2 => 1,
                 _ => 3,
             };
-            let sd = StoreDraw { vs: vsh, over: vec![store_entry(x::B_VOUT, vout, false), store_entry(x::B_PRIMS, dlist, false)], topo, count: slots.saturating_mul(corners) };
+            let sd = StoreDraw { vs: vsh, over: vec![store_entry(x::B_VOUT, vout, false), store_entry(x::B_PRIMS, dlist, false)], topo, count: slots.saturating_mul(corners), setup: None };
             // SAFETY: run's own contract (a store draw reads no guest memory of its own)
             unsafe { draw_with(d, st, false, sd.count, 1, 0, 0, 0, None, Some(&sd)) };
             After::Done
@@ -893,7 +915,7 @@ pub unsafe fn run(d: &mut D11, st: &State, indexed: bool, count: u32, instances:
             };
             let Some((_, _, gout, glist, gcount)) = &gs_decl else { return After::Done };
             let over = vec![store_entry(x::B_GOUT, *gout, false), store_entry(x::B_GLIST, *glist, false), store_entry(x::B_GCOUNT, *gcount, false)];
-            let sd = StoreDraw { vs: vsh, over, topo, count: slots.saturating_mul(corners) };
+            let sd = StoreDraw { vs: vsh, over, topo, count: slots.saturating_mul(corners), setup: None };
             // SAFETY: run's own contract (a store draw reads no guest memory of its own)
             unsafe { draw_with(d, st, false, sd.count, 1, 0, 0, 0, None, Some(&sd)) };
             After::Done
@@ -987,6 +1009,9 @@ fn raster_words(d: &D11, st: &State, w: &mut [u32; x::xd::WORDS]) {
     for (k, v) in vp.iter().take(4).enumerate() {
         put(w, x::xd::VIEWPORT, k, v.to_bits());
     }
+    for (k, v) in vp.iter().skip(4).take(2).enumerate() {
+        put(w, x::xd::DEPTH, k, v.to_bits());
+    }
     let r = state_desc(d, st.raster).cloned().unwrap_or_else(|| vec![3, 3, 0, 0, 0, 0, 1, 0, 0, 0]);
     let at = |i: usize| r.get(i).copied().unwrap_or(0);
     let cull = x::ps::Cull::of(at(1)).unwrap_or(x::ps::Cull::Back);
@@ -1004,6 +1029,83 @@ pub struct StoreDraw {
     pub over: Vec<[u32; 8]>,
     pub topo: u32,
     pub count: u32,
+    /// a setup store's draw: the pixel shader's entry of the store (setup.rs)
+    pub setup: Option<[u32; 8]>,
+}
+
+/// What [`setup_draw`] did.
+enum SetupDone {
+    Drawn,
+    /// nothing: the draw goes on as it would without the setup
+    Not,
+}
+
+/// The pixel shader's setup layout (made the first time).
+fn layout_of(d: &mut D11, ps: u32) -> Option<x::setup::Layout> {
+    if let Some(l) = d.expand.layouts.get(&ps) {
+        return l.clone();
+    }
+    let l = code_of(d, ps).map(x::setup::Layout::of).and_then(|r| r.map_err(|e| eprintln!("d3d11: setup of pixel shader {ps}: {e}")).ok());
+    d.expand.layouts.insert(ps, l.clone());
+    l
+}
+
+/// Whether the draw's triangles go through the setup: a pixel shader that reads inputs WARP
+/// interpolates (setup.rs), triangles filled solid, or clip or cull distances from the vertex
+/// shader (WebGPU's pipeline clips against none).
+fn setup_wanted(d: &mut D11, st: &State) -> bool {
+    let r = state_desc(d, st.raster).cloned().unwrap_or_else(|| vec![3, 3, 0, 0, 0, 0, 1, 0, 0, 0]);
+    if Fill::of(r.first().copied().unwrap_or(3)) != Fill::Solid {
+        return false;
+    }
+    // (the stage whose outputs are rasterized: the geometry, domain or vertex shader)
+    let last = [st.shaders[0], st.shaders[2], st.vs].into_iter().find(|&s| s != 0).unwrap_or(0);
+    let distances = code_of(d, last).is_some_and(|c| dxwgsl::signature(c, true).iter().any(|e| matches!(e.sysval, 2 | 3)));
+    distances || (st.ps != 0 && layout_of(d, st.ps).is_some_and(|l| l.needed()))
+}
+
+/// The setup pass over the store's list triangles and the draw of their fan triangles, in pieces
+/// of at most SETUP_BYTES of slots.
+#[allow(clippy::too_many_arguments)]
+fn setup_draw(d: &mut D11, st: &State, stv: &Store, osgn: &[dxwgsl::dxbc::SigElement], src: u32, stream: u32, slots: u32, xw: &[u32; x::xd::WORDS], entries: &[Over]) -> SetupDone {
+    // (no pixel shader: the clip distances' planes alone)
+    let ps_code = code_of(d, st.ps).map(<[u8]>::to_vec);
+    let layout = match &ps_code {
+        Some(c) => match x::setup::Layout::of(c) {
+            Ok(l) => l,
+            Err(_) => return SetupDone::Not,
+        },
+        None => x::setup::Layout::default(),
+    };
+    let stride = layout.stride();
+    let user = osgn.iter().filter(|e| e.stream == stream && e.sysval == 2).map(|e| e.mask.count_ones()).sum::<u32>();
+    let per = x::setup::slots(user);
+    let ps_obj = st.ps;
+    let (stc, oc, pc) = (stv.clone(), osgn.to_vec(), ps_code.clone());
+    let Some(sh) = shader(d, Key::Setup { src, stream, ps: ps_obj }, move |_| x::setup::setup_pass(&stc, &oc, pc.as_deref())) else { return SetupDone::Not };
+    let Some(vsh) = shader(d, Key::SetupVertex { stride }, move |_| Ok(x::setup::setup_vertex(stride))) else { return SetupDone::Not };
+    let slot_bytes = per.saturating_mul(stride).saturating_mul(16).max(1);
+    let chunk = (SETUP_BYTES / slot_bytes).max(1);
+    let mut sx = *xw;
+    raster_words(d, st, &mut sx);
+    let mut first = 0u32;
+    while first < slots {
+        let n = (slots - first).min(chunk);
+        let sbuf = scratch(d, SETUP, n.saturating_mul(slot_bytes));
+        put(&mut sx, x::xd::ITEMS, 0, n);
+        put(&mut sx, x::xd::FIRST, 0, first);
+        let mut over = vec![xd(&sx), store(x::setup::B_SETUP, sbuf, true)];
+        over.extend(entries.iter().map(|e| match e {
+            Over::Entry(e) => Over::Entry(*e),
+            Over::Data { binding, kind, bytes } => Over::Data { binding: *binding, kind: *kind, bytes: bytes.clone() },
+        }));
+        pass(d, st, 0, &sh, &over, Some(n));
+        let sd = StoreDraw { vs: vsh.clone(), over: vec![store_entry(x::setup::B_SETUP, sbuf, false)], topo: 3, count: n.saturating_mul(per).saturating_mul(3), setup: Some(store_entry(x::setup::B_SETUP, sbuf, false)) };
+        // SAFETY: a store draw reads no guest memory of its own
+        unsafe { draw_with(d, st, false, sd.count, 1, 0, 0, 0, None, Some(&sd)) };
+        first = first.saturating_add(n);
+    }
+    SetupDone::Drawn
 }
 
 /// The vertex buffers the vertex pass reads: input slots (buffer, stride, offset, size) by xd

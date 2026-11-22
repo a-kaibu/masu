@@ -707,3 +707,37 @@ pub(super) fn pcsg_pack(tree: &Tree) -> Hits {
     }
     out
 }
+
+// --- warp-setup ------------------------------------------------------------------------------
+
+/// Direct3D 11's interpolated pixel shader inputs as WARP makes them (its clipper, snap and
+/// planes in a compute pass, the planes evaluated per fragment; winref d3d11logic, d3d11interp):
+/// (file, what its code outside the tests says).
+pub const WARP_SETUP: [(&str, &str); 4] = [
+    ("crates/kura/src/d3d11/expand.rs", "setup_wanted(d, st)"),
+    ("crates/kura/src/d3d11/expand.rs", "setup_draw(d, st, "),
+    ("crates/dxwgsl/src/wgsl.rs", "expand::setup::inputs("),
+    ("crates/dxwgsl/src/wgsl/setup.rs", "fn sx_plane("),
+];
+
+/// What WARP_SETUP's files must not say: a fused multiply-add in the setup's WGSL (one rounding
+/// where WARP's plane equations round after the multiply and after the add).
+pub const WARP_SETUP_NOT: [(&str, &str); 2] = [("crates/dxwgsl/src/wgsl/setup.rs", "fma("), ("crates/dxwgsl/src/wgsl/setup.rs", "mul_add(")];
+
+/// Each of WARP_SETUP missing from its file's code, each of WARP_SETUP_NOT in it.
+pub(super) fn warp_setup(tree: &Tree) -> Hits {
+    let mut out = Hits::new();
+    for (file, want) in WARP_SETUP {
+        let f = Rel::new(file);
+        if !product_code(tree, &f).contains(want) {
+            out.push((f, 1, format!("no `{want}` in the code: interpolated inputs left to WebGPU's rasterizer, not WARP's setup")));
+        }
+    }
+    for (file, bad) in WARP_SETUP_NOT {
+        let f = Rel::new(file);
+        if product_code(tree, &f).contains(bad) {
+            out.push((f, 1, format!("`{bad}` in the setup: one rounding where WARP rounds the product and the sum each")));
+        }
+    }
+    out
+}

@@ -379,3 +379,31 @@ proptest! {
         }
     }
 }
+
+/// A pixel shader reading a linearly interpolated input: the draw goes through the vertex pass,
+/// the setup pass (WARP's clipper and planes, dxwgsl setup.rs) and one draw of the fan triangles
+/// whose fragments evaluate the planes, every pass's bindings as the model checks them.
+#[test]
+fn interpolated_inputs_through_the_setup_pass() {
+    let _g = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+    let (dev, ctx) = device();
+    let o = mem(2);
+    let vs = hlslc::compile(SO_VS, &[], &mut |_, _| None, "main", "vs_4_0", 0).expect("vs");
+    let (p, n) = code(&vs);
+    assert_eq!(dc(dev, 12, &[p, n, 0, o]), 0);
+    cc(ctx, 11, &[made(rd1(o)), 0, 0]);
+    let ps = hlslc::compile("float4 main(float4 p : SV_Position, float4 c : COL) : SV_Target { return c; }", &[], &mut |_, _| None, "main", "ps_4_0", 0).expect("ps");
+    let (p, n) = code(&ps);
+    assert_eq!(dc(dev, 15, &[p, n, 0, o]), 0);
+    cc(ctx, 9, &[made(rd1(o)), 0, 0]);
+    cc(ctx, 24, &[5]);
+    let calls = |k: &str| crate::render::model::with(|m| m.calls.get(k).copied().unwrap_or(0));
+    let (dispatches, draws) = (calls("dispatch"), calls("draw"));
+    cc(ctx, 13, &[4, 0]);
+    crate::d3d9::gpu::flush();
+    crate::d3d9::gpu::pump();
+    no_model_errors();
+    // (the vertex pass, the setup pass, the fan triangles drawn)
+    assert_eq!((calls("dispatch") - dispatches, calls("draw") - draws), (2, 1));
+    release_all();
+}

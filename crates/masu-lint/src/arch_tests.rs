@@ -566,6 +566,19 @@ fn fixture(r: Rule) -> Fixture {
             good: &[("crates/hlslc/src/lower.rs", "fn sig() { let packed = pc_slot(list, n); let mask = Lane::mask(n) << at; }\n")],
             mutate: ("crates/hlslc/src/lower.rs", |t| Some(t.replace("pc_slot(list, n)", "None::<(u32, u8)>"))),
         },
+        Rule::WarpSetup => Fixture {
+            bad: &[
+                ("crates/kura/src/d3d11/expand.rs", "// setup_wanted(d, st) setup_draw(d, st, \nfn draw() {}\n"),
+                ("crates/dxwgsl/src/wgsl.rs", "fn inputs() { let a = \"@location(0) @interpolate(linear) v0: vec4<f32>\"; }\n"),
+                ("crates/dxwgsl/src/wgsl/setup.rs", "fn sx_plane() {}\nconst W: &str = \"let g = fma(d10, dy20, d20 * dy01);\";\n"),
+            ],
+            good: &[
+                ("crates/kura/src/d3d11/expand.rs", "fn draw(d: &mut D11, st: &State) { let w = setup_wanted(d, st); setup_draw(d, st, &stv); }\n"),
+                ("crates/dxwgsl/src/wgsl.rs", "fn ps() { expand::setup::inputs(code, samples); }\n"),
+                ("crates/dxwgsl/src/wgsl/setup.rs", "const W: &str = \"fn sx_plane(a0: f32) -> vec3<f32> { let g = d10 * dy20 + d20 * dy01; }\";\n"),
+            ],
+            mutate: ("crates/kura/src/d3d11/expand.rs", |t| Some(t.replace("let wants_setup = setup_wanted(d, st);", "let wants_setup = false;"))),
+        },
         Rule::OutEscape => Fixture {
             bad: &[
                 ("crates/sake/src/k32.rs", "fn f(c: &mut Ctx) { mem::w32(c.out::<0>().lock_word().key(), 0); }\n"),
