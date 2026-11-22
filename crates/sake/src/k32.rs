@@ -6735,11 +6735,13 @@ fn load_library_named(c: &mut Ctx, n: &str) -> u32 {
         last_error(87);
         return 0;
     }
-    let r = crate::pe::load_library(c.cpu, n);
-    if r == 0 {
-        last_error(126);
+    match crate::pe::load_library_searching(c.cpu, n, &crate::pe::LoadSearch::default()) {
+        Ok(b) => b,
+        Err(why) => {
+            last_error(why.error());
+            0
+        }
     }
-    r
 }
 fn LoadLibraryA(c: &mut Ctx) -> u32 {
     let n = arg_str(c.a(0), false);
@@ -6755,10 +6757,27 @@ fn LoadLibraryW(c: &mut Ctx) -> u32 {
 /// resource)
 fn load_library_ex(c: &mut Ctx, wide: bool) -> u32 {
     let (name, flags) = (c.a(0), c.a(2));
-    if flags & 0x62 == 0 {
-        return if wide { LoadLibraryW(c) } else { LoadLibraryA(c) };
-    }
     let n = arg_str(name, wide);
+    if flags & 0x62 == 0 {
+        // (the search the flags ask for, or SetDefaultDllDirectories' with none: LdrGetDllPath's
+        // folders for this name; they were dropped by a plain LoadLibrary, review b5dacf4 2.1)
+        if n.is_empty() {
+            last_error(87);
+            return 0;
+        }
+        if let Err(status) = crate::dllpath::dll_folders(Some(&n), flags) {
+            last_error(crate::nt::dos_error(status));
+            return 0;
+        }
+        let search = crate::pe::LoadSearch { module: Some(n.clone()), flags, missing: crate::pe::OnMissing::Fails };
+        return match crate::pe::load_library_searching(c.cpu, &n, &search) {
+            Ok(b) => b,
+            Err(why) => {
+                last_error(why.error());
+                0
+            }
+        };
+    }
     if n.is_empty() {
         last_error(87);
         return 0;
@@ -6791,16 +6810,12 @@ fn load_library_ex(c: &mut Ctx, wide: bool) -> u32 {
 fn LoadLibraryExA(c: &mut Ctx) -> u32 {
     load_library_ex(c, false)
 }
-/// SetDllDirectory(path): one folder searched after the exe's (NULL or "": none again)
+/// SetDllDirectory(path): one folder searched after the exe's, in place of the current one ("":
+/// none in its place; NULL: the default search again)
 fn set_dll_directory(c: &mut Ctx, wide: bool) -> u32 {
-    let mut dirs = crate::pe::DLL_DIRS.locked();
-    dirs.clear();
-    if c.a(0) != 0 {
-        let d = crate::files::full_path(arg_str(c.a(0), wide).trim_end_matches(['\\', '/']));
-        if !d.is_empty() {
-            dirs.push(d);
-        }
-    }
+    // ("": no current folder and none in its place; NULL: the default search)
+    let dir = (c.a(0) != 0).then(|| arg_str(c.a(0), wide)).map(|d| if d.is_empty() { d } else { crate::files::full_path(d.trim_end_matches(['\\', '/'])) });
+    crate::dllpath::set_dll_directory(dir);
     1
 }
 fn SetDllDirectoryA(c: &mut Ctx) -> u32 {
@@ -8185,11 +8200,11 @@ pub(crate) fn rmdir(name: &str) -> u32 {
         last_error(267); // ERROR_DIRECTORY
         return 0;
     }
-    if kura::fs::read_dir(&h).is_ok_and(|mut d| d.next().is_some()) {
+    if crate::shortname::read_dir(&h).is_ok_and(|mut d| d.next().is_some()) {
         last_error(145); // ERROR_DIR_NOT_EMPTY
         return 0;
     }
-    ok(kura::fs::remove_dir(h).is_ok())
+    ok(crate::shortname::remove_dir(h).is_ok())
 }
 fn RemoveDirectoryA(c: &mut Ctx) -> u32 {
     rmdir(&arg_str(c.a(0), false))
@@ -9929,7 +9944,7 @@ fn SearchTreeForFile(c: &mut Ctx) -> u32 {
     let base = name.rsplit(['\\', '/']).next().unwrap_or(&name).to_lowercase();
     fn walk(host: &std::path::Path, guest: &str, base: &str, depth: u32) -> Option<String> {
         let mut dirs = Vec::new();
-        for e in kura::fs::read_dir(host).ok()?.flatten() {
+        for e in crate::shortname::read_dir(host).ok()?.flatten() {
             let n = e.file_name().to_string_lossy().into_owned();
             let g = format!("{}\\{n}", guest.trim_end_matches('\\'));
             if crate::files::is_dir(e.path()) {

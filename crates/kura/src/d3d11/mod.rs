@@ -4703,6 +4703,107 @@ impl Fill {
     }
 }
 
+/// The primitives the page's render pipeline assembles (CREATE_PIPELINE2's and DRAW2's code)
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum PageTopo {
+    Points,
+    Lines,
+    LineStrip,
+    Triangles,
+    TriangleStrip,
+}
+
+impl PageTopo {
+    pub(crate) fn code(self) -> u32 {
+        match self {
+            PageTopo::Points => 0,
+            PageTopo::Lines => 1,
+            PageTopo::LineStrip => 2,
+            PageTopo::Triangles => 3,
+            PageTopo::TriangleStrip => 4,
+        }
+    }
+
+    pub(crate) fn of_code(c: u32) -> Option<PageTopo> {
+        [PageTopo::Points, PageTopo::Lines, PageTopo::LineStrip, PageTopo::Triangles, PageTopo::TriangleStrip].into_iter().find(|t| t.code() == c)
+    }
+
+    /// D3D11_PRIMITIVE_TOPOLOGY's list and strip topologies (adjacency and patch lists are
+    /// none of them: expand.rs takes those)
+    fn of_d3d(t: u32) -> Option<PageTopo> {
+        t.checked_sub(1).and_then(PageTopo::of_code)
+    }
+
+    pub(crate) fn strip(self) -> bool {
+        match self {
+            PageTopo::LineStrip | PageTopo::TriangleStrip => true,
+            PageTopo::Points | PageTopo::Lines | PageTopo::Triangles => false,
+        }
+    }
+
+    fn triangles(self) -> bool {
+        match self {
+            PageTopo::Triangles | PageTopo::TriangleStrip => true,
+            PageTopo::Points | PageTopo::Lines | PageTopo::LineStrip => false,
+        }
+    }
+}
+
+/// The indices a draw is drawn with
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum Indices {
+    /// the draw's own: the bound index buffer's, or the vertex numbers of a draw without one
+    Draw,
+    /// a list made for it, from 0 (a wireframe's edges, an adjacency topology's corners)
+    Made(Vec<u32>),
+}
+
+/// How a draw goes to the page: what its indices are and what they make, decided once (review
+/// b5dacf4 3.1: an adjacency list's own indices were taken for a wireframe's edges, as lines,
+/// where a logic op draws each primitive by itself)
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct DrawPlan {
+    pub(crate) topo: PageTopo,
+    pub(crate) fill: Fill,
+    pub(crate) indices: Indices,
+}
+
+/// DrawPlan::of's answer
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum Planned {
+    Ready(DrawPlan),
+    /// wireframe triangles of the draw's own indices: their edges, as lines (`strip`: of a
+    /// triangle strip), read from the index buffer
+    EdgesOfTheDraw { strip: bool },
+}
+
+impl DrawPlan {
+    /// The plan of a draw assembling `assembled` (None: no list or strip topology), with an
+    /// adjacency topology's corners (`adjacent`: their list, and whether they are lines), at
+    /// `fill`: a wireframe of triangles is their edges as lines (FillMode WIREFRAME, #64; a
+    /// geometry shader's store's too, its vertices a list from 0: review e18bf44), point
+    /// sprites always solid. None: nothing to draw (no topology, or an adjacency topology with
+    /// no primitive).
+    pub(crate) fn of(assembled: Option<PageTopo>, adjacent: Option<(Vec<u32>, bool)>, fill: Fill, sprite: bool, store: bool, count: u32) -> Option<Planned> {
+        let (topo, made) = match adjacent {
+            // (no primitive whole: nothing reaches the rasterizer)
+            Some((list, _)) if list.is_empty() => return None,
+            Some((list, true)) => (PageTopo::Lines, Some(list)),
+            Some((list, false)) => (PageTopo::Triangles, Some(list)),
+            None => (assembled?, None),
+        };
+        let wired = fill == Fill::Wireframe && topo.triangles() && !sprite;
+        let lines = |idx: &[u32], strip: bool| DrawPlan { topo: PageTopo::Lines, fill: Fill::Wireframe, indices: Indices::Made(triangle_edges(idx, strip, None)) };
+        Some(match (made, wired) {
+            (Some(list), true) => Planned::Ready(lines(&list, false)),
+            (Some(list), false) => Planned::Ready(DrawPlan { topo, fill: Fill::Solid, indices: Indices::Made(list) }),
+            (None, true) if store => Planned::Ready(lines(&(0..count).collect::<Vec<u32>>(), topo == PageTopo::TriangleStrip)),
+            (None, true) => Planned::EdgesOfTheDraw { strip: topo == PageTopo::TriangleStrip },
+            (None, false) => Planned::Ready(DrawPlan { topo, fill: Fill::Solid, indices: Indices::Draw }),
+        })
+    }
+}
+
 /// A render pipeline as the page makes it: CREATE_PIPELINE2's description, and the fill mode
 /// it was made for (a solid draw's pipeline never stands for a wireframe one: review e18bf44).
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
@@ -4917,52 +5018,62 @@ unsafe fn draw_with(d: &mut D11, st: &State, indexed: bool, count: u32, instance
     }
     let ds = state_desc(d, st.depth).cloned();
     let rs = state_desc(d, st.raster).cloned();
-    let topo = match st.topology {
-        _ if sprite.is_some() => 3,
-        _ if store.is_some() => store.map_or(3, |sd| sd.topo),
-        1 => 0,
-        2 => 1,
-        3 => 2,
-        4 => 3,
-        5 => 4,
-        _ => 3,
-    };
     let r = rs.unwrap_or_else(|| vec![3, 3, 0, 0, 0, 0, 1, 0, 0, 0]);
     // an adjacency topology without a geometry shader: the primitives' own corners, a list of
     // its own indices (winref d3d11gs "triangle list adjacency of 6": the triangle of vertices
     // 0 2 4, culled)
     let adjacent = if sprite.is_none() && store.is_none() { expand::adjacency_list(d, st, indexed, count, start) } else { None };
-    let topo = match &adjacent {
-        Some((_, true)) => 1,
-        Some((_, false)) => 3,
-        None => topo,
+    let assembled = match (sprite, store) {
+        (Some(_), _) => Some(PageTopo::Triangles),
+        (None, Some(sd)) => PageTopo::of_code(sd.topo),
+        (None, None) => PageTopo::of_d3d(st.topology),
     };
-    // FillMode WIREFRAME (2) of triangles: their edges as a line list of its own indices (#64),
-    // a geometry shader's output's too (its store's vertices: a list, review e18bf44)
     let fill = Fill::of(r.first().copied().unwrap_or(3));
-    let wired = fill == Fill::Wireframe && matches!(topo, 3 | 4) && sprite.is_none();
-    // (the draw's own indices: the edges, or the adjacency topology's list)
-    let wire = match adjacent {
-        Some((list, _)) if wired => Some(triangle_edges(&list, false, None)),
-        Some((list, _)) => Some(list),
-        None if wired && store.is_some() => Some(triangle_edges(&(0..count).collect::<Vec<u32>>(), topo == 4, None)),
-        None if wired => {
+    let plan = match DrawPlan::of(assembled, adjacent, fill, sprite.is_some(), store.is_some(), count) {
+        Some(Planned::Ready(p)) => p,
+        Some(Planned::EdgesOfTheDraw { strip }) => {
             if indexed {
                 expand::pull(d, st.ib.0);
             }
             // SAFETY: draw_with's own contract (the index buffer's guest memory is mapped)
-            unsafe { wire_edges(d, st, indexed, count, start, topo == 4) }
+            match unsafe { wire_edges(d, st, indexed, count, start, strip) } {
+                Some(e) => DrawPlan { topo: PageTopo::Lines, fill: Fill::Wireframe, indices: Indices::Made(e) },
+                // (wireframe triangles whose edges could not be read (an index buffer too
+                // short): drawn as nothing, never as filled triangles)
+                None => return,
+            }
         }
-        None => None,
+        None => return,
     };
-    // (wireframe triangles whose edges could not be read (an index buffer too short): drawn
-    // as nothing, never as filled triangles)
-    if wired && wire.is_none() {
-        return;
-    }
-    let fill = if wired { Fill::Wireframe } else { Fill::Solid };
-    let topo = if wired { 1 } else { topo };
-    let strip = if wire.is_none() && indexed && matches!(topo, 2 | 4) { if st.ib.1 == 42 { 2 } else { 1 } } else { 0 };
+    let fill = plan.fill;
+    let topo = plan.topo.code();
+    let wire = match &plan.indices {
+        Indices::Made(v) => Some(v),
+        Indices::Draw => None,
+    };
+    let strip = if wire.is_none() && indexed && plan.topo.strip() { if st.ib.1 == 42 { 2 } else { 1 } } else { 0 };
+    // (the copies of the targets with logic ops that read them: the pixel shader's LogicDst)
+    let copies: Vec<logic::Copy> = logic_ops.iter().filter(|l| l.reads_copy()).filter_map(|l| logic::copy_of(d, st.rtvs.get(us(l.target)).copied().unwrap_or(0), l, &twins)).collect();
+    // (with them, each primitive is a draw of its own: a draw with none draws nothing)
+    let prims = if copies.is_empty() {
+        Vec::new()
+    } else {
+        let cuts = if strip != 0 {
+            // SAFETY: draw_with's own contract (the bound index buffer's guest memory is mapped)
+            unsafe { logic::cuts(d, st, start, count) }
+        } else {
+            Vec::new()
+        };
+        let drawn = match &plan.indices {
+            Indices::Made(v) => lo32(v.len()),
+            Indices::Draw => count,
+        };
+        let prims = logic::primitives(plan.topo, drawn, &cuts);
+        if prims.is_empty() {
+            return;
+        }
+        prims
+    };
     let mut key = vec![vs, ps.as_ref().map_or(0, |p| p.0), topo, strip];
     // rasterizer: cull, front ccw, depth bias, slope, clamp
     // (front ccw in bit 0, DepthClipEnable off in bit 1)
@@ -5070,8 +5181,6 @@ unsafe fn draw_with(d: &mut D11, st: &State, indexed: bool, count: u32, instance
     if sprite.is_some() {
         over.push(sprite_entry(d, st));
     }
-    // (the copies of the targets with logic ops that read them: the pixel shader's LogicDst)
-    let copies: Vec<logic::Copy> = logic_ops.iter().filter(|l| l.reads_copy()).filter_map(|l| logic::copy_of(d, st.rtvs.get(us(l.target)).copied().unwrap_or(0), l, &twins)).collect();
     // (an SNORM target's blend constant: the blend state's BlendFactor)
     let constant = logic_ops.iter().any(|l| matches!(l.store, dxwgsl::logic::Store::Snorm(Some(b)) if b.reads_constant()));
     if constant {
@@ -5166,15 +5275,9 @@ unsafe fn draw_with(d: &mut D11, st: &State, indexed: bool, count: u32, instance
             }
         });
     } else {
-        let topo = if wire.is_some() { 1 } else { topo };
-        let cuts = if strip != 0 {
-            // SAFETY: draw_with's own contract (the bound index buffer's guest memory is mapped)
-            unsafe { logic::cuts(d, st, start, count) }
-        } else {
-            Vec::new()
-        };
-        let flip = pipeline_of(d, PipelineKey { fill, desc: flipped });
-        logic::split(&w, &copies, stash.as_ref(), &twins, topo, &cuts, flip);
+        // (the flipped pipeline only for a strip's odd triangles)
+        let flip = if prims.iter().any(|p| p.odd) { pipeline_of(d, PipelineKey { fill, desc: flipped }) } else { 0 };
+        logic::split(&w, &copies, stash.as_ref(), &twins, &prims, flip);
         if stash.is_some() {
             // (the page's targets are the stash's now)
             d.targets = None;

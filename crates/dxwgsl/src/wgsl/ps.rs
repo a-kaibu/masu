@@ -127,8 +127,9 @@ fn distances(p: &[f32; 4], depth_clip: bool) -> [f32; 6] {
 }
 
 /// WARP's interpolation from the inside value `a` toward the outside `b` (dIn, dOut the
-/// distances): `(f32(b - a) * dIn) / f32(dIn - dOut) + a` in double, rounded once.
-pub(super) fn lerp(a: f32, b: f32, d_in: f32, den: f32) -> f32 {
+/// distances): `(f32(b - a) * dIn) / f32(dIn - dOut) + a` in double (the product exact, the
+/// quotient and the sum each rounded to a double), then to f32.
+pub fn lerp(a: f32, b: f32, d_in: f32, den: f32) -> f32 {
     to_f32(f64::from(b - a) * f64::from(d_in) / f64::from(den) + f64::from(a))
 }
 
@@ -423,6 +424,10 @@ pub fn invocations(p: &[[f32; 4]], r: &Raster) -> u64 {
 /// ps_pairs(p: array<vec4<f32>, 3>, n: u32) -> u32`, invocations / 2. The 64-bit
 /// products of the 1/256-unit coordinates are pairs of u32 (m64); the double-precision
 /// interpolation is f32 pairs (Dekker's products and Knuth's sums: 48 bits, one rounding to f32).
+/// The statement every entry point that takes WGSL's functions starts with: ps_k from the raster
+/// word's bit 31 (never set), the 0 ps_r keeps products apart with.
+pub const ENTRY: &str = "    ps_k = xw(XD_RASTER) & 0x80000000u;\n";
+
 pub const WGSL: &str = r#"
 fn m64(a: i32, b: i32) -> vec2<u32> {
     let ua = u32(abs(a));
@@ -448,28 +453,187 @@ fn s64(a: i32, b: i32, c: i32, d: i32) -> i32 {
     if (hi == 0u && lo == 0u) { return 0; }
     return 1;
 }
-fn split2(a: f32) -> vec2<f32> {
-    let c = 4097.0f * a;
-    let hi = c - (c - a);
-    return vec2<f32>(hi, a - hi);
+// 64-bit unsigned words as (low, high), for lerp2's double
+fn lp_add(a: vec2<u32>, b: vec2<u32>) -> vec2<u32> {
+    let lo = a.x + b.x;
+    return vec2<u32>(lo, a.y + b.y + select(0u, 1u, lo < a.x));
 }
-// a * b as p + e exactly
-fn prod2(a: f32, b: f32) -> vec2<f32> {
-    let p = a * b;
-    let x = split2(a);
-    let y = split2(b);
-    return vec2<f32>(p, ((x.x * y.x - p) + x.x * y.y + x.y * y.x) + x.y * y.y);
+fn lp_sub(a: vec2<u32>, b: vec2<u32>) -> vec2<u32> {
+    return vec2<u32>(a.x - b.x, a.y - b.y - select(0u, 1u, a.x < b.x));
 }
-// WARP's (f32(b - a) * dIn) / den + a, in double, rounded once
+fn lp_lt(a: vec2<u32>, b: vec2<u32>) -> bool { return a.y < b.y || (a.y == b.y && a.x < b.x); }
+fn lp_len(v: vec2<u32>) -> u32 { return select(32u - countLeadingZeros(v.x), 64u - countLeadingZeros(v.y), v.y != 0u); }
+fn lp_shl(v: vec2<u32>, n: u32) -> vec2<u32> {
+    if (n == 0u) { return v; }
+    if (n >= 64u) { return vec2<u32>(0u, 0u); }
+    if (n >= 32u) { return vec2<u32>(0u, v.x << (n - 32u)); }
+    return vec2<u32>(v.x << n, (v.y << n) | (v.x >> (32u - n)));
+}
+// v >> n, and whether a 1 was shifted out
+fn lp_shr(v: vec2<u32>, n: u32) -> vec3<u32> {
+    if (n == 0u) { return vec3<u32>(v, 0u); }
+    if (n >= 64u) { return vec3<u32>(0u, 0u, select(0u, 1u, v.x != 0u || v.y != 0u)); }
+    if (n >= 32u) {
+        let k = n - 32u;
+        let out = v.x != 0u || (k > 0u && (v.y & ((1u << k) - 1u)) != 0u);
+        return vec3<u32>(v.y >> k, 0u, select(0u, 1u, out));
+    }
+    return vec3<u32>((v.x >> n) | (v.y << (32u - n)), v.y >> n, select(0u, 1u, (v.x & ((1u << n) - 1u)) != 0u));
+}
+// v >> n (n >= 1) rounded to nearest even, st: ones below v
+fn lp_rne(v: vec2<u32>, n: u32, st: bool) -> vec2<u32> {
+    let t = lp_shr(v, n - 1u);
+    let m = lp_shr(t.xy, 1u).xy;
+    if ((t.x & 1u) == 1u && (st || t.z != 0u || (m.x & 1u) == 1u)) { return lp_add(m, vec2<u32>(1u, 0u)); }
+    return m;
+}
+fn lp_mul32(a: u32, b: u32) -> vec2<u32> {
+    let al = a & 0xffffu; let ah = a >> 16u; let bl = b & 0xffffu; let bh = b >> 16u;
+    let ll = al * bl; let lh = al * bh; let hl = ah * bl; let hh = ah * bh;
+    let mid = lh + hl;
+    let lo = ll + (mid << 16u);
+    return vec2<u32>(lo, hh + (mid >> 16u) + select(0u, 0x10000u, mid < lh) + select(0u, 1u, lo < ll));
+}
+// a finite nonzero f32 as m * 2^(e - 23), m in [2^23, 2^24)
+fn lp_unpack(u: u32) -> vec2<i32> {
+    let x = (u >> 23u) & 0xffu;
+    let m = u & 0x7fffffu;
+    if (x == 0u) { let sh = countLeadingZeros(m) - 8u; return vec2<i32>(i32(m << sh), -126 - i32(sh)); }
+    return vec2<i32>(i32(m | 0x800000u), i32(x) - 127);
+}
+fn lp_nan(u: u32) -> bool { return (u & 0x7fffffffu) > 0x7f800000u; }
+fn lp_inf(u: u32) -> bool { return (u & 0x7fffffffu) == 0x7f800000u; }
+fn lp_zero(u: u32) -> bool { return (u & 0x7fffffffu) == 0u; }
+// a double as m * 2^k (m in [2^52, 2^53), 0 for a zero) and its sign bit
+struct Lp { m: vec2<u32>, k: i32, s: u32 }
+// a finite nonzero f32's
+fn lp_of(u: u32) -> Lp {
+    let p = lp_unpack(u);
+    return Lp(lp_shl(vec2<u32>(u32(p.x), 0u), 29u), p.y - 52, u & 0x80000000u);
+}
+// x + y (both not zero) rounded to a double: aligned with 8 guard bits, a bit shifted out kept in
+// the lowest; an exact zero as m 0, its sign +
+fn lp_sum(x: Lp, y: Lp) -> Lp {
+    let x_big = x.k > y.k || (x.k == y.k && !lp_lt(x.m, y.m));
+    var b = y; var l = x;
+    if (x_big) { b = x; l = y; }
+    let bg = lp_shl(b.m, 8u);
+    let t = lp_shr(lp_shl(l.m, 8u), u32(min(b.k - l.k, 64)));
+    let lg = vec2<u32>(t.x | t.z, t.y);
+    var sum = select(lp_sub(bg, lg), lp_add(bg, lg), b.s == l.s);
+    if (sum.x == 0u && sum.y == 0u) { return Lp(sum, 0, 0u); }
+    // (normalized to [2^60, 2^61))
+    var k = b.k - 8;
+    let sl = lp_len(sum);
+    if (sl == 62u) { let h = lp_shr(sum, 1u); sum = vec2<u32>(h.x | h.z, h.y); k = k + 1; }
+    else if (sl < 61u) { sum = lp_shl(sum, 61u - sl); k = k - i32(61u - sl); }
+    var m = lp_rne(sum, 8u, false);
+    k = k + 8;
+    if (m.y == 0x200000u) { m = vec2<u32>(0u, 0x100000u); k = k + 1; }
+    return Lp(m, k, b.s);
+}
+// a double (not zero) rounded to f32's bits: the highest bit's exponent e; a subnormal's smallest
+// place is m's bit -97 - e, from 55 on the value is under a quarter of it
+fn lp_f32(v: Lp) -> u32 {
+    let e = v.k + 52;
+    if (e > 127) { return v.s | 0x7f800000u; }
+    if (e >= -126) {
+        var m = lp_rne(v.m, 29u, false).x;
+        var be = e + 127;
+        if (m == 0x1000000u) { m = 0x800000u; be = be + 1; }
+        if (be >= 255) { return v.s | 0x7f800000u; }
+        return v.s | (u32(be) << 23u) | (m & 0x7fffffu);
+    }
+    let sh = u32(-97 - e);
+    if (sh >= 55u) { return v.s; }
+    return v.s | lp_rne(v.m, sh, false).x;
+}
+// f32 b - a as IEEE gives it (x86's NaNs), subnormals kept: WGSL's own may flush them. A sum of
+// two f32s rounded to a double and then to f32 is the sum rounded once (53 >= 2 * 24 + 2).
+fn lp_minus(ub: u32, ua: u32) -> u32 {
+    let dnan = (ua & 0u) | 0xffc00000u;
+    if (lp_nan(ub)) { return ub | 0x400000u; }
+    if (lp_nan(ua)) { return ua | 0x400000u; }
+    let na = ua ^ 0x80000000u;
+    if (lp_inf(ub)) { return select(ub, dnan, lp_inf(ua) && na != ub); }
+    if (lp_inf(ua)) { return na; }
+    if (lp_zero(ua)) { return select(ub, ub & na, lp_zero(ub)); }
+    if (lp_zero(ub)) { return na; }
+    let s = lp_sum(lp_of(ub), lp_of(na));
+    if (s.m.x == 0u && s.m.y == 0u) { return ua & 0u; }
+    return lp_f32(s);
+}
+// WARP's (f32(b - a) * dIn) / den + a, in double (the processor's: x86's default NaN 0xffc00000,
+// a NaN operand's own quieted, the first of two), each double operation rounded to nearest even,
+// then to f32: the product exactly (24 x 24 bits), the quotient's 58 bits by long division and
+// its rest, the sum by lp_sum; a double neither overflows nor leaves the normal
+// range here (|quotient| in [2^-426, 2^405])
 fn lerp2(a: f32, b: f32, din: f32, den: f32) -> f32 {
-    let pr = prod2(b - a, din);
-    let q = pr.x / den;
-    let qd = prod2(q, den);
-    let ql = (((pr.x - qd.x) - qd.y) + pr.y) / den;
-    let s = q + a;
-    let bb = s - q;
-    let e = (q - (s - bb)) + (a - bb);
-    return s + (e + ql);
+    let ua = bitcast<u32>(a);
+    let ux = lp_minus(bitcast<u32>(b), ua);
+    let ud = bitcast<u32>(din);
+    let un = bitcast<u32>(den);
+    // (the default NaN from the operands' bits: a constant NaN is no WGSL value)
+    let dnan = (ux & 0u) | 0xffc00000u;
+    // the product's kind: 0 finite and not zero, 1 zero, 2 infinite, 3 NaN (bits nb)
+    var k = 0u; var nb = 0u;
+    if (lp_nan(ux)) { k = 3u; nb = ux; }
+    else if (lp_nan(ud)) { k = 3u; nb = ud; }
+    else if ((lp_inf(ux) && lp_zero(ud)) || (lp_inf(ud) && lp_zero(ux))) { k = 3u; nb = dnan; }
+    else if (lp_inf(ux) || lp_inf(ud)) { k = 2u; }
+    else if (lp_zero(ux) || lp_zero(ud)) { k = 1u; }
+    let sq = (ux ^ ud ^ un) & 0x80000000u;
+    // the quotient's
+    var kq = 0u;
+    if (k == 3u) { kq = 3u; }
+    else if (lp_nan(un)) { kq = 3u; nb = un; }
+    else if ((k == 2u && lp_inf(un)) || (k == 1u && lp_zero(un))) { kq = 3u; nb = dnan; }
+    else if (k == 2u || lp_zero(un)) { kq = 2u; }
+    else if (k == 1u || lp_inf(un)) { kq = 1u; }
+    if (kq == 3u) { return bitcast<f32>(nb | 0x400000u); }
+    if (lp_nan(ua)) { return bitcast<f32>(ua | 0x400000u); }
+    let sa = ua & 0x80000000u;
+    if (kq == 2u) {
+        if (lp_inf(ua) && sa != sq) { return bitcast<f32>(dnan); }
+        return bitcast<f32>(sq | 0x7f800000u);
+    }
+    if (lp_inf(ua)) { return a; }
+    if (kq == 1u) {
+        if (lp_zero(ua)) { return bitcast<f32>(sq & sa); }
+        return a;
+    }
+    // the quotient: floor(P * 2^33 / mn) in [2^55, 2^58), the rest's sticky
+    let px = lp_unpack(ux); let pd = lp_unpack(ud); let pn = lp_unpack(un);
+    let pp = lp_mul32(u32(px.x), u32(pd.x));
+    let mn = u32(pn.x);
+    var rem = 0u;
+    var q = vec2<u32>(0u, 0u);
+    for (var i = 0u; i < 81u; i += 1u) {
+        let j = 80u - i;
+        var bit = 0u;
+        if (j >= 33u) { let pb = j - 33u; bit = select((pp.x >> pb) & 1u, (pp.y >> (pb - 32u)) & 1u, pb >= 32u); }
+        rem = (rem << 1u) | bit;
+        q = lp_shl(q, 1u);
+        if (rem >= mn) { rem = rem - mn; q.x = q.x | 1u; }
+    }
+    // the double quotient: md * 2^kd, md in [2^52, 2^53)
+    let ql = lp_len(q);
+    var md = lp_rne(q, ql - 53u, rem != 0u);
+    var kd = px.y + pd.y - pn.y - 56 + i32(ql - 53u);
+    if (md.y == 0x200000u) { md = vec2<u32>(0u, 0x100000u); kd = kd + 1; }
+    // the double sum with a
+    if (lp_zero(ua)) { return bitcast<f32>(lp_f32(Lp(md, kd, sq))); }
+    let s = lp_sum(Lp(md, kd, sq), lp_of(ua));
+    if (s.m.x == 0u && s.m.y == 0u) { return bitcast<f32>(ua & 0u); }
+    return bitcast<f32>(lp_f32(s));
+}
+
+// lerp2 for each of four components, in a loop whose count the compiler does not know (ps_k is 0
+// at run time): one copy of lerp2's division where the four would be four
+fn lerp4(a: vec4<f32>, b: vec4<f32>, din: f32, den: f32) -> vec4<f32> {
+    var r = a;
+    for (var c = 0u; c < 4u + (ps_k >> 31u); c += 1u) { r[c] = lerp2(a[c], b[c], din, den); }
+    return r;
 }
 fn ps_dist(p: vec4<f32>, k: u32, dc: bool) -> f32 {
     switch k {
@@ -486,16 +650,22 @@ fn cvt_ss(v: f32) -> i32 {
     if (!(v < 2147483648.0f && v >= -2147483648.0f)) { return i32(-2147483647) - 1; }
     return i32(round(v));
 }
+// a product through ps_r is rounded on its own: ps_k is a 0 no compiler can see (each entry
+// point sets it from the raster word's bit 31, never set), so it is never fused with the add
+// taking it (WARP rounds both; WGSL leaves contraction to the implementation)
+var<private> ps_k = 0u;
+fn ps_r(v: f32) -> f32 { return bitcast<f32>(bitcast<u32>(v) | ps_k); }
+fn ps_r4(v: vec4<f32>) -> vec4<f32> { return bitcast<vec4<f32>>(bitcast<vec4<u32>>(v) | vec4<u32>(ps_k)); }
 fn ps_snap(p: vec4<f32>, new_pt: bool) -> vec2<i32> {
     let w = select(p.w, 1.17549435e-38f, 1.17549435e-38f > p.w);
     var x = p.x;
     var y = p.y;
     if (new_pt) { x = min(max(x, -w), w); y = min(max(y, -w), w); }
-    let rhw = 1.0f / w;
+    let rhw = ps_div(1.0f, w);
     let vx = bitcast<f32>(xw(XD_VIEWPORT)); let vy = bitcast<f32>(xw(XD_VIEWPORT + 1u));
     let vw = bitcast<f32>(xw(XD_VIEWPORT + 2u)); let vh = bitcast<f32>(xw(XD_VIEWPORT + 3u));
-    let sx = vw * 0.5f; let ox = vw * 0.5f + vx; let sy = -vh * 0.5f; let oy = vh * 0.5f + vy;
-    return vec2<i32>(cvt_ss((rhw * x * sx + ox) * 256.0f), cvt_ss((rhw * y * sy + oy) * 256.0f));
+    let sx = vw * 0.5f; let ox = ps_r(vw * 0.5f) + vx; let sy = -vh * 0.5f; let oy = ps_r(vh * 0.5f) + vy;
+    return vec2<i32>(cvt_ss(ps_r((ps_r(rhw * x * sx) + ox) * 256.0f)), cvt_ss(ps_r((ps_r(rhw * y * sy) + oy) * 256.0f)));
 }
 fn ps_rect(k: u32) -> i32 { return bitcast<i32>(xw(XD_RECT + k)); }
 // 64-bit two's complement integers as (low, high) u32 pairs: WARP's triangle DDA
@@ -614,8 +784,8 @@ fn ps_half(v: i32) -> i32 { return bitcast<i32>(bitcast<u32>(v) >> 1u); }
 fn ps_near(v: f32) -> i32 { return i32(round(v)); }
 fn ps_line_visits(a: vec2<i32>, b: vec2<i32>) -> u32 {
     if (all(a == b)) { return 0u; }
-    let e = 1.0f / 256.0f;
-    let x0 = f32(a.x) * e; let y0 = f32(a.y) * e; let x1 = f32(b.x) * e; let y1 = f32(b.y) * e;
+    let e = 0.00390625f;
+    let x0 = ps_r(f32(a.x) * e); let y0 = ps_r(f32(a.y) * e); let x1 = ps_r(f32(b.x) * e); let y1 = ps_r(f32(b.y) * e);
     let ya = i32(floor(y0 - 0.5f)); let yb = i32(floor(y1 - 0.5f));
     let row0 = (min(ya, yb) - 2) / 2;
     let row1 = ps_half(max(ya, yb) + 3);
@@ -625,18 +795,18 @@ fn ps_line_visits(a: vec2<i32>, b: vec2<i32>) -> u32 {
     let col1 = ((i32(ceil(hi)) + 1) & ~1) + 2;
     let dy = y1 - y0;
     var slope = 0.0f; var icpt = x0;
-    if (dy != 0.0f) { slope = (x1 - x0) / dy; icpt = x0 - slope * y0; }
+    if (dy != 0.0f) { slope = ps_div(x1 - x0, dy); icpt = x0 - ps_r(slope * y0); }
     let c0 = max(col0, ps_rect(0u)); let c1 = min(col1, ps_rect(2u));
     let q0 = max(row0, ps_half(ps_rect(1u)));
     let q1 = min(row1, ps_half(ps_rect(3u) + 1));
     if (q1 <= q0) { return 0u; }
     var xa = f32(c0); var xb = f32(c1);
     if (slope != 0.0f) {
-        let u = f32(q0 * 2 - 2) * slope + icpt;
-        let v = f32(q0 * 2 + 2) * slope + icpt;
+        let u = ps_r(f32(q0 * 2 - 2) * slope) + icpt;
+        let v = ps_r(f32(q0 * 2 + 2) * slope) + icpt;
         xa = min(u, v); xb = max(u, v);
     }
-    let step = slope * 2.0f;
+    let step = ps_r(slope * 2.0f);
     var n = 0u;
     for (var q = q0; q < q1; q += 1) {
         let fa = ps_near(xa);
@@ -671,8 +841,8 @@ fn ps_pairs(p: array<vec4<f32>, 3>, n: u32) -> u32 {
             let so = 0.0f > ds;
             let eo = 0.0f > de;
             if (so && eo) { return 0u; }
-            if (so) { s = vec4<f32>(lerp2(e.x, s.x, de, de - ds), lerp2(e.y, s.y, de, de - ds), lerp2(e.z, s.z, de, de - ds), lerp2(e.w, s.w, de, de - ds)); sn = true; }
-            if (eo) { e = vec4<f32>(lerp2(s.x, e.x, ds, ds - de), lerp2(s.y, e.y, ds, ds - de), lerp2(s.z, e.z, ds, ds - de), lerp2(s.w, e.w, ds, ds - de)); en = true; }
+            if (so) { s = lerp4(e, s, de, de - ds); sn = true; }
+            if (eo) { e = lerp4(s, e, ds, ds - de); en = true; }
         }
         return ps_line_visits(ps_snap(s, sn), ps_snap(e, en));
     }
@@ -728,7 +898,7 @@ fn ps_pairs(p: array<vec4<f32>, 3>, n: u32) -> u32 {
                 let den = din - pd[b_out][k];
                 let a = pp[a_in];
                 let b = pp[b_out];
-                qp[o] = vec4<f32>(lerp2(a.x, b.x, din, den), lerp2(a.y, b.y, din, den), lerp2(a.z, b.z, din, den), lerp2(a.w, b.w, din, den));
+                qp[o] = lerp4(a, b, din, den);
                 for (var q = 0u; q < 6u; q += 1u) {
                     qd[o][q] = select(pd[a_in][q], lerp2(pd[a_in][q], pd[b_out][q], din, den), q > k && ((or_ >> q) & 1u) != 0u);
                 }
@@ -748,6 +918,73 @@ fn ps_pairs(p: array<vec4<f32>, 3>, n: u32) -> u32 {
     return quads * 2u;
 }
 "#;
+
+/// ps_div, IEEE 754 division in WGSL (the setup pass, the clip pass and a setup pixel shader
+/// take it beside WGSL).
+pub const DIV: &str = r#"
+// a / b rounded to nearest even as IEEE 754 divides (WGSL's division may be off by 2.5 ULP; WARP's
+// is the processor's): the mantissas' long division, the round bit and the rest's sticky, gradual
+// underflow; NaN, infinities and zeros as IEEE gives them
+fn ps_div(a: f32, b: f32) -> f32 {
+    let ua = bitcast<u32>(a);
+    let ub = bitcast<u32>(b);
+    let sign = (ua ^ ub) & 0x80000000u;
+    let xa = (ua >> 23u) & 0xffu;
+    let xb = (ub >> 23u) & 0xffu;
+    var ma = ua & 0x7fffffu;
+    var mb = ub & 0x7fffffu;
+    let nan_a = xa == 0xffu && ma != 0u;
+    let nan_b = xb == 0xffu && mb != 0u;
+    if (nan_a) { return bitcast<f32>(ua | 0x400000u); }
+    if (nan_b) { return bitcast<f32>(ub | 0x400000u); }
+    let inf_a = xa == 0xffu;
+    let inf_b = xb == 0xffu;
+    let zero_a = xa == 0u && ma == 0u;
+    let zero_b = xb == 0u && mb == 0u;
+    // (the default NaN from the operands' bits: a constant NaN is no WGSL value)
+    if ((inf_a && inf_b) || (zero_a && zero_b)) { return bitcast<f32>((ua & 0u) | 0xffc00000u); }
+    if (inf_a || zero_b) { return bitcast<f32>(sign | 0x7f800000u); }
+    if (inf_b || zero_a) { return bitcast<f32>(sign); }
+    // (normalized: the mantissas with their leading 1 at bit 23, the exponents unbiased)
+    var ea = i32(xa) - 127;
+    var eb = i32(xb) - 127;
+    if (xa == 0u) { let sh = countLeadingZeros(ma) - 8u; ma = ma << sh; ea = -126 - i32(sh); } else { ma = ma | 0x800000u; }
+    if (xb == 0u) { let sh = countLeadingZeros(mb) - 8u; mb = mb << sh; eb = -126 - i32(sh); } else { mb = mb | 0x800000u; }
+    var e = ea - eb;
+    var rem = ma;
+    if (rem < mb) { rem = rem << 1u; e = e - 1; }
+    // 26 quotient bits: the 24 of the mantissa, then the round bit and one more
+    var q = 0u;
+    for (var i = 0u; i < 26u; i += 1u) {
+        q = q << 1u;
+        if (rem >= mb) { rem = rem - mb; q = q | 1u; }
+        rem = rem << 1u;
+    }
+    var sticky = rem != 0u;
+    var be = e + 127;
+    // (below the normal range: shifted to the subnormal mantissa's place, the bits out sticky)
+    if (be <= 0) {
+        let more = u32(1 - be);
+        // (q is in [2^25, 2^26) and the smallest subnormal is q's bit more + 2: from more = 25 on
+        // the value is under a quarter of it, a zero; a u32 shifts by 31 at most)
+        if (more >= 26u) { return bitcast<f32>(sign); }
+        sticky = sticky || (q & ((1u << more) - 1u)) != 0u;
+        q = q >> more;
+        be = 0;
+    }
+    var m = q >> 2u;
+    let round = (q >> 1u) & 1u;
+    if (round == 1u && (sticky || (q & 1u) != 0u || (m & 1u) == 1u)) { m = m + 1u; }
+    if (be > 0) {
+        if (m >= 0x1000000u) { m = m >> 1u; be = be + 1; }
+        if (be >= 255) { return bitcast<f32>(sign | 0x7f800000u); }
+        return bitcast<f32>(sign | (u32(be) << 23u) | (m & 0x7fffffu));
+    }
+    // a subnormal (or the smallest normal its rounding reaches): the mantissa is the bits
+    return bitcast<f32>(sign | m);
+}
+"#;
+
 
 #[cfg(test)]
 #[path = "ps_tests.rs"]

@@ -371,7 +371,6 @@ user32:DM_REPOSITION	fail	4	42
 user32:DestroyCursorIcon	fail	3	13
 user32:DrawIconEx	ok	0	11
 user32:DrawText	fail	446	1081
-user32:EmptyClipboard	fail	3	23
 user32:EnumDisplaySettings	ok	0	40
 user32:GW_ENABLEDPOPUP	fail	8	10
 user32:GetDCEx	fail	13	130

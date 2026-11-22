@@ -93,6 +93,34 @@ impl From<std::fs::Metadata> for Metadata {
     }
 }
 
+/// A name a directory gained or lost, for the one watcher of names (sake's 8.3 names: NTFS
+/// gives a long name its short one when the name is made and frees it when the name goes)
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Named<'a> {
+    /// a file or directory made under this path (a rename's new name too)
+    Made(&'a str),
+    /// the name removed (a rename's old name, a file a rename replaced)
+    Gone(&'a str),
+}
+
+static NAMES: std::sync::OnceLock<fn(Named)> = std::sync::OnceLock::new();
+
+/// Calls `f` after each name made or removed through this module (the first watcher stays)
+pub fn watch_names(f: fn(Named)) {
+    let _ = NAMES.set(f);
+}
+
+fn named(e: Named) {
+    if let Some(f) = NAMES.get() {
+        f(e);
+    }
+}
+
+/// Whether anything (file, directory, link) has the name `p`
+fn there(p: &str) -> bool {
+    symlink_metadata(p).is_ok()
+}
+
 pub fn metadata<P: AsRef<Path>>(p: P) -> io::Result<Metadata> {
     match vfs::info_at(&path_str(p.as_ref()), true) {
         At::Ours(r) => r.map(Metadata::from).map_err(os),
@@ -179,10 +207,13 @@ pub fn copy<P: AsRef<Path>, Q: AsRef<Path>>(from: P, to: Q) -> io::Result<u64> {
 }
 
 pub fn create_dir<P: AsRef<Path>>(p: P) -> io::Result<()> {
-    match vfs::mkdir_at(&path_str(p.as_ref())) {
+    let at = path_str(p.as_ref());
+    match vfs::mkdir_at(&at) {
         At::Ours(r) => r.map_err(os),
         At::Outside(h) => std::fs::create_dir(h),
-    }
+    }?;
+    named(Named::Made(&at));
+    Ok(())
 }
 
 pub fn create_dir_all<P: AsRef<Path>>(p: P) -> io::Result<()> {
@@ -204,17 +235,23 @@ pub fn create_dir_all<P: AsRef<Path>>(p: P) -> io::Result<()> {
 }
 
 pub fn remove_file<P: AsRef<Path>>(p: P) -> io::Result<()> {
-    match vfs::remove_at(&path_str(p.as_ref()), false) {
+    let at = path_str(p.as_ref());
+    match vfs::remove_at(&at, false) {
         At::Ours(r) => r.map_err(os),
         At::Outside(h) => std::fs::remove_file(h),
-    }
+    }?;
+    named(Named::Gone(&at));
+    Ok(())
 }
 
 pub fn remove_dir<P: AsRef<Path>>(p: P) -> io::Result<()> {
-    match vfs::remove_at(&path_str(p.as_ref()), true) {
+    let at = path_str(p.as_ref());
+    match vfs::remove_at(&at, true) {
         At::Ours(r) => r.map_err(os),
         At::Outside(h) => std::fs::remove_dir(h),
-    }
+    }?;
+    named(Named::Gone(&at));
+    Ok(())
 }
 
 /// A second name `to` of file `from` (std::fs::hard_link) outside the trees mounted here; in
@@ -224,7 +261,9 @@ pub fn hard_link<P: AsRef<Path>, Q: AsRef<Path>>(from: P, to: Q) -> io::Result<(
     match (vfs::info_at(&a, true), vfs::info_at(&b, true)) {
         (At::Outside(ha), At::Outside(hb)) => host_link(Path::new(&ha), Path::new(&hb)),
         _ => Err(io::ErrorKind::Unsupported.into()),
-    }
+    }?;
+    named(Named::Made(&b));
+    Ok(())
 }
 
 #[cfg(not(target_os = "emscripten"))]
@@ -250,10 +289,19 @@ fn host_link(a: &Path, b: &Path) -> io::Result<()> {
 
 pub fn rename<P: AsRef<Path>, Q: AsRef<Path>>(from: P, to: Q) -> io::Result<()> {
     let (a, b) = (path_str(from.as_ref()), path_str(to.as_ref()));
+    let replaced = a != b && there(&b);
     match vfs::rename_at(&a, &b) {
         At::Ours(r) => r.map_err(os),
-        At::Outside(_) => std::fs::rename(a, b),
+        At::Outside(_) => std::fs::rename(&a, &b),
+    }?;
+    if a != b {
+        named(Named::Gone(&a));
+        if replaced {
+            named(Named::Gone(&b));
+        }
+        named(Named::Made(&b));
     }
+    Ok(())
 }
 
 /// The real name of `name` in directory `dir` when only its case differs (no listing of the
@@ -371,7 +419,17 @@ impl OpenOptions {
         if self.create_new {
             flags |= libc::O_EXCL;
         }
-        match vfs::open_handle(&path_str(p.as_ref()), flags, 0o644) {
+        let at = path_str(p.as_ref());
+        let made = (self.create || self.create_new) && !there(&at);
+        let f = self.open_at(&at, flags)?;
+        if made {
+            named(Named::Made(&at));
+        }
+        Ok(f)
+    }
+
+    fn open_at(&self, at: &str, flags: c_int) -> io::Result<File> {
+        match vfs::open_handle(at, flags, 0o644) {
             At::Ours(r) => r.map(|h| File(Inner::Vfs(h))).map_err(os),
             At::Outside(h) => std::fs::OpenOptions::new()
                 .read(self.read)

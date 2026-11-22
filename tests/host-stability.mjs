@@ -106,12 +106,14 @@ test("vnjit: no slot past koji's TABLE_SLOTS is handed out, however much room th
       assert.equal(j.VNJIT.used, used);
     }
   }
-  // (and init takes the bound from kura: vnvm_jit_init(ptr, len, slots))
+  // (and init takes the bound from kura, and the page marks every module imports as "pages":
+  // vnvm_jit_init(ptr, len, slots, pages))
   const vnjit = read("vnjit.js");
-  assert.match(vnjit, /vnvm_jit_init: \(ptr, len, slots\) =>/);
+  assert.match(vnjit, /vnvm_jit_init: \(ptr, len, slots, pages\) =>/);
+  assert.match(vnjit, /pages: pages >>> 0,/);
   assert.doesNotMatch(vnjit, /1 << 20/);
   const kura = readFileSync(new URL("../crates/kura/src/jit.rs", import.meta.url), "utf8");
-  assert.match(kura, /vnvm_jit_init\(d\.as_ptr\(\), d\.len\(\), jit::TABLE_SLOTS\)/);
+  assert.match(kura, /vnvm_jit_init\(d\.as_ptr\(\), d\.len\(\), jit::TABLE_SLOTS, fault_store\(\)\.as_ptr\(\)\)/);
 });
 
 // ---- host/pre.js (each instance as emscripten's MODULARIZE has it: its own function scope, the

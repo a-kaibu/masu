@@ -51,9 +51,9 @@ const GOOD_RUN_PLAN: Files = &[
     ("tests/winref/run.sh", "{ echo \"# run.sh\"; } > \"$OUT/.plan/$runner\"\n"),
     ("tests/winref/run-browser.mjs", "writeFileSync(join(outDir, \".plan\", runner), text);\n"),
     ("tests/winref/compare.py", "plan_errors = plan.problems(plans, required, got)\nsys.exit(1 if failed or plan_errors else 0)\n"),
-    ("tests/winetest/run.py", "all_jobs, unplanned = plan(listed, sel, expected, explicit)\nif not os.path.isfile(win_path):\n            raise FileNotFoundError(win_path)\nall_jobs, not_adopted, missing = adopt(all_jobs, read_tsv(win_path))\nunplanned += missing\nif unplanned:\n    return 1\n"),
+    ("tests/winetest/run.py", "all_jobs, unplanned = plan(listed, sel, expected, explicit)\nif not os.path.isfile(win_path):\n            raise FileNotFoundError(win_path)\nall_jobs, not_adopted, missing = adopt(all_jobs, read_tsv(win_path))\nunplanned += missing\nresults[k], judged[k] = combine(rs)\nif unplanned:\n    return 1\n"),
     (".github/workflows/winref.yml", "run: compare.py --require-plan node --require-plan browser-0of4\n"),
-    (".github/workflows/conformance.yml", "run: python tests/winetest/run.py --suite rostests --native --arch i386\n"),
+    (".github/workflows/conformance.yml", "run: python tests/winetest/run.py --suite rostests --native --repeat 3 --arch i386\n"),
 ];
 
 fn fixture(r: Rule) -> Fixture {
@@ -177,8 +177,8 @@ fn fixture(r: Rule) -> Fixture {
                 ("crates/kura/src/vfs.rs", "fn with<R>(f: impl FnOnce(&mut Fs) -> R) -> R { f(fs) }\n"),
             ],
             good: &[
-                ("crates/kura/src/jit.rs", "struct SharedCache { map: M, bytes: usize }\nfn init() { vnvm_jit_init(p, n, jit::TABLE_SLOTS); }\n"),
-                ("crates/kura/src/vfs.rs", "fn change<R: Refused>(f: F) -> R { r }\nfn h_read() { x.allows(Use::Read, false)?; }\n"),
+                ("crates/kura/src/jit.rs", "struct SharedCache { map: M, bytes: usize }\nfn init() { vnvm_jit_init(p, n, jit::TABLE_SLOTS); }\nlet i = es.filter(|&i| s.entries.get(i).is_some_and(|e| e.pages.runs_now())).max();\n"),
+                ("crates/kura/src/vfs.rs", "fn change<R: Refused>(f: F) -> R { r }\nfn h_read() { x.allows(Use::Read, false)?; }\nfn load() { fs.base = fs.entries(); }\n"),
             ],
             mutate: ("crates/kura/src/vfs/shared.rs", |t| Some(t.replace("fs.undo();", "fs.undo = None;"))),
         },
@@ -627,6 +627,8 @@ fn fixture(r: Rule) -> Fixture {
                 ("tests/winetest/run.py", "        if not os.path.exists(exe):\n            print(f\"missing {exe}\", file=sys.stderr)\n            continue\n"),
                 ("tests/winetest/run.py", "windows = read_tsv(win_path) if os.path.exists(win_path) else {}\n"),
                 ("tests/winetest/run.py", "def report(path):\n    with open(path, \"w\") as f:\n        f.write(msg)\n"),
+                ("tests/winetest/run.py", "for k, rs in runs.items():\n    results[k] = rs[-1]\n"),
+                (".github/workflows/conformance.yml", "run: python tests/winetest/run.py --suite rostests --native --arch i386\n"),
             ],
             good: GOOD_RUN_PLAN,
             mutate: ("tests/winref/compare.py", |t| Some(t.replace("sys.exit(1 if failed or plan_errors else 0)", "sys.exit(1 if failed else 0)"))),
@@ -643,6 +645,58 @@ fn fixture(r: Rule) -> Fixture {
                 ("crates/dxwgsl/src/wgsl/setup.rs", "const W: &str = \"fn sx_plane(a0: f32) -> vec3<f32> { let g = d10 * dy20 + d20 * dy01; }\";\n"),
             ],
             mutate: ("crates/kura/src/d3d11/expand.rs", |t| Some(t.replace("let wants_setup = setup_wanted(d, st);", "let wants_setup = false;"))),
+        },
+        Rule::DllSearch => Fixture {
+            bad: &[
+                ("crates/sake/src/pe.rs", "pub static DLL_DIRS: Mutex<Vec<String>> = Mutex::new(Vec::new());\nfn find_dll_file(dll: &str) {\n    let mut dirs = vec![exe_dir];\n    dirs.extend(crate::dllpath::user_dirs().into_iter().rev());\n    dirs.push(crate::files::cwd().trim_end_matches('\\\\').to_string());\n    dirs.push(\"C:\\\\windows\\\\system32\".into());\n}\n// for d in search.folders() image_resolver(search.of_dependency(&win))\n"),
+                ("crates/sake/src/k32.rs", "fn load_library_ex(c: &mut Ctx) -> u32 { if flags & 0x62 == 0 { return LoadLibraryW(c); } 0 }\n#[cfg(test)]\nmod t { fn f() { crate::pe::LoadSearch { module: Some(n.clone()), flags, missing: crate::pe::OnMissing::Fails }; } }\n"),
+            ],
+            good: &[
+                ("crates/sake/src/pe.rs", "impl LoadSearch { fn folders(&self) -> Vec<String> { crate::dllpath::dll_folders(self.module.as_deref(), self.flags).unwrap_or_else(|_| Vec::new()) } }\nfn find_dll_file(dll: &str, search: &LoadSearch) { for d in search.folders().iter() {} }\nfn load_dll_file() { load(data, &win, &mut image_resolver(search.of_dependency(&win))); }\n"),
+                ("crates/sake/src/k32.rs", "#[cfg(test)]\nmod early { fn f() { let s = \"}\"; } }\nfn load_library_ex(c: &mut Ctx) -> u32 { let search = crate::pe::LoadSearch { module: Some(n.clone()), flags, missing: crate::pe::OnMissing::Fails }; }\n"),
+            ],
+            mutate: ("crates/sake/src/pe.rs", |t| Some(t.replace("image_resolver(search.of_dependency(&win))", "image_resolver(LoadSearch::default())"))),
+        },
+        Rule::MissingImportFails => Fixture {
+            bad: &[
+                ("crates/sake/src/pe.rs", "fn resolve_import_with() { Err(e) => { eprintln!(\"sake: import from {dll}: {e}\"); return api::export(dll, &name); } }\n// note_missing(match e { note_missing(LoadFailure::NoProc) ABANDONED.locked().push(base)\n"),
+                ("crates/sake/src/k32.rs", "fn load_library_named(c: &mut Ctx, n: &str) -> u32 { let r = crate::pe::load_library(c.cpu, n); if r == 0 { last_error(126); } r }\n#[cfg(test)]\nmod t { fn f() { last_error(why.error()); } }\n"),
+            ],
+            good: &[
+                ("crates/sake/src/pe.rs", "fn resolve_import_with() { note_missing(match e { DllError::Failed(why) => why, DllError::NotThere(_) => LoadFailure::NotFound }); note_missing(LoadFailure::NoProc); }\nfn load_dll_file() { ABANDONED.locked().push(base); }\nfn load_library_searching() { match r { Err(DllError::Failed(why)) => Err(abandon(cpu, why)), } }\n"),
+                ("crates/sake/src/k32.rs", "fn load_library_named(c: &mut Ctx, n: &str) -> u32 { match crate::pe::load_library_searching(c.cpu, n, &s) { Err(why) => { last_error(why.error()); 0 } } }\n"),
+            ],
+            mutate: ("crates/sake/src/pe.rs", |t| Some(t.replace("ABANDONED.locked().push(base)", "drop(base)"))),
+        },
+        Rule::DrawPlan => Fixture {
+            bad: &[
+                ("crates/kura/src/d3d11/mod.rs", "fn draw_with() {\n    let topo = match st.topology { 1 => 0, _ => 3 };\n    let topo = if wire.is_some() { 1 } else { topo };\n}\n// DrawPlan::of(assembled, adjacent, fill, sprite.is_some(), store.is_some(), count) logic::primitives(plan.topo, drawn, &cuts)\n"),
+                ("crates/kura/src/d3d11/logic.rs", "pub fn primitives(topo: u32, n: u32, cuts: &[u32]) -> Vec<Prim> { Vec::new() }\n"),
+            ],
+            good: &[
+                ("crates/kura/src/d3d11/mod.rs", "fn draw_with() {\n    let plan = match DrawPlan::of(assembled, adjacent, fill, sprite.is_some(), store.is_some(), count) { _ => return };\n    let prims = logic::primitives(plan.topo, drawn, &cuts);\n}\n#[cfg(test)]\nmod t { fn f() { let topo = match st.topology { _ => 3 }; } }\n"),
+                ("crates/kura/src/d3d11/logic.rs", "pub fn primitives(topo: super::PageTopo, n: u32, cuts: &[u32]) -> Vec<Prim> { match topo { PageTopo::Points => Vec::new() } }\n"),
+            ],
+            mutate: ("crates/kura/src/d3d11/mod.rs", |t| Some(t.replace("logic::primitives(plan.topo, drawn, &cuts)", "logic::primitives(PageTopo::Lines, count, &cuts)"))),
+        },
+        Rule::FullPathOneRule => Fixture {
+            bad: &[("crates/sake/src/files.rs", "pub fn full_path(p: &str) -> String {\n    // crate::fullpath::process_env_full(&w, 0xfffe)\n    full_path_trim(p, true)\n}\n")],
+            good: &[("crates/sake/src/files.rs", "pub fn full_path(p: &str) -> String { match FullMode::of(p) { FullMode::Win32 => win32_full(p), FullMode::Literal => full_path_trim(p, true) } }\nfn win32_full(p: &str) -> String { let t = crate::fullpath::process_env_full(&w, 0xfffe).text(); }\n")],
+            mutate: ("crates/sake/src/files.rs", |t| Some(t.replace("FullMode::Win32 => win32_full(p)", "FullMode::Win32 => full_path_trim(p, true)"))),
+        },
+        Rule::ShortNameTable => Fixture {
+            bad: &[
+                ("crates/kura/src/fs.rs", "pub fn remove_file(p: &Path) -> io::Result<()> { vfs::remove_at(&at, false) }\n"),
+                ("crates/sake/src/shortname.rs", "pub fn of_dir(host_dir: &str) { let names = kura::fs::read_dir(host_dir); assign(&names) }\n"),
+                ("crates/sake/src/k32.rs", "fn RemoveDirectoryW(c: &mut Ctx) -> u32 { if kura::fs::read_dir(&h).is_ok_and(|mut d| d.next().is_some()) { return 0; } ok(kura::fs::remove_dir(&h).is_ok()) }\n"),
+            ],
+            good: &[
+                ("crates/kura/src/fs.rs", "fn create_dir() { named(Named::Made(&at)); }\nfn remove_file() { named(Named::Gone(&at)); }\nfn rename() { named(Named::Gone(&a)); named(Named::Made(&b)); }\n"),
+                ("crates/sake/src/shortname.rs", "pub fn watch() { kura::fs::watch_names(on_named); }\npub fn of_dir(host_dir: &str) { let mut t = read_table(host_dir); for e in kura::fs::read_dir(host_dir) {} }\n"),
+                ("crates/sake/src/files.rs", "fn c_root() -> String { crate::shortname::watch(); c }\n"),
+                ("crates/sake/src/k32.rs", "fn RemoveDirectoryW(c: &mut Ctx) -> u32 { ok(crate::shortname::remove_dir(&h).is_ok()) }\n#[cfg(test)]\nmod tests { fn t() { kura::fs::read_dir(\"/x\"); } }\n"),
+            ],
+            mutate: ("crates/sake/src/misc.rs", |t| Some(t.replacen("crate::shortname::read_dir(", "kura::fs::read_dir(", 1))),
         },
         Rule::OutEscape => Fixture {
             bad: &[
