@@ -442,7 +442,7 @@ pub fn dos_to_nt(p: &[u16], env: &Env, exists: &dyn Fn(&[u16]) -> bool) -> Resul
 }
 
 /// The process's dos_to_nt: the device's directory looked up in the guest's files
-fn process_dos_to_nt(p: &[u16]) -> Result<NtPath, u32> {
+pub fn process_dos_to_nt(p: &[u16]) -> Result<NtPath, u32> {
     let exists = |d: &[u16]| {
         let s = String::from_utf16_lossy(d);
         crate::files::resolve(&crate::files::full_path(&s)).is_some_and(|h| kura::fs::metadata(h).is_ok())

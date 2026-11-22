@@ -601,7 +601,13 @@ fn release_build_only(tree: &Tree) -> Hits {
 }
 
 /// what must stay in place: (file, text, why)
-pub const REQUIRED: [(&str, &str, &str); 29] = [
+pub const REQUIRED: [(&str, &str, &str); 35] = [
+    ("crates/sake/src/files.rs", "    let w = admin_share(&w).unwrap_or(w);", "\\\\SAKE\\C$\\x is this machine's C:\\x (GetLongPathName of a UNC path to the guest's own drive found nothing; 2026-11-22)"),
+    ("crates/sake/src/files.rs", "    resolve_found(w).or_else(|| crate::sysdll::make(w))", "system32 holds a file for each DLL sake implements, as Windows does (CopyFile and NtOpenFile of kernel32.dll found none; 2026-11-22)"),
+    ("crates/sake/src/k32.rs", "    if path == 0 && !own_path && let Some(w) = crate::actctx::redirect_file(&n) {", "SearchPath with no path first redirects the name through the activation context (RtlDosSearchPath_Ustr flag 1; it searched only the folders; 2026-11-22)"),
+    ("crates/sake/src/k32.rs", "    crate::dllpath::search_path().split(';').filter(|d| !d.is_empty()).map(|d| if d == \".\" { files::cwd() } else { d.to_string() }).collect()", "SearchPath's folders are RtlGetSearchPath's: one order for both (2026-11-22)"),
+    ("crates/sake/src/k32.rs", "    if files::is_dir(&f) && files::resolve(&files::cwd()).is_some_and(|cwd| cwd == f || cwd.starts_with(&format!(\"{}/\", f.trim_end_matches('/')))) {", "the current directory and its parents cannot be moved: ERROR_SHARING_VIOLATION (it moved; 2026-11-22)"),
+    ("crates/sake/src/nt.rs", "                w.splice(0..0, \"\\\\\\\\?\\\\\".encode_utf16());", "an NT name is literal: \\??\\C:\\x.dll  (trailing spaces) is no x.dll (it was trimmed as a DOS name; 2026-11-22)"),
     (".github/workflows/ci.yml", "pack::tests::adding_a_small_game_takes_the_store_lock_file", "masu add runs on Windows itself: the store's lock opened a directory there and failed (review e18bf44)"),
     ("crates/sake/src/api.rs", "if is_crt(dll) { &[\"msvcrt\"] }", "a CRT's exports fall back to msvcrt's only: ucrtbase!strtol resolved to ntdll's own CRT, which takes no 0x prefix alone (review e18bf44)"),
     ("crates/sake/src/files.rs", "        let found = kura::fs::name_nocase(&at, comp).or_else(|| crate::shortname::long_of(&at, comp))?;", "a path component may be an entry's 8.3 short name (PROGRA~1), as on NTFS (opening by short name failed; 2026-11-21)"),
