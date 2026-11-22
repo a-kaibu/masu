@@ -1319,6 +1319,8 @@ fn find_dll_file(dll: &str) -> Option<(String, String)> {
     let exe_dir = MODULES.r().iter().find(|m| !m.dll).map(|m| m.path.rsplit_once('\\').map_or_default(|x| x.0.to_string()));
     let mut dirs: Vec<String> = exe_dir.into_iter().collect();
     dirs.extend(DLL_DIRS.locked().iter().cloned());
+    // (AddDllDirectory's, newest first)
+    dirs.extend(crate::dllpath::user_dirs().into_iter().rev());
     dirs.push(crate::files::cwd().trim_end_matches('\\').to_string());
     // the folders of DLLs loaded by path (LOAD_WITH_ALTERED_SEARCH_PATH finds their dependencies there)
     for m in MODULES.r().iter().filter(|m| m.dll && !m.hle) {
@@ -2023,7 +2025,7 @@ fn LdrFindEntryForAddress(c: &mut crate::api::Ctx) -> u32 {
 }
 /// RtlImageNtHeader(base): its IMAGE_NT_HEADERS, or NULL when it is not a PE image
 #[allow(non_snake_case)]
-fn RtlImageNtHeader(c: &mut crate::api::Ctx) -> u32 {
+pub(crate) fn RtlImageNtHeader(c: &mut crate::api::Ctx) -> u32 {
     let b = c.a(0);
     if b == 0 || mem::accessible(b, 64, false, true) < 64 || r16(b) != 0x5a4d {
         return 0;

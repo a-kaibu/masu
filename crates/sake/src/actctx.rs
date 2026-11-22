@@ -2468,10 +2468,16 @@ fn RtlFindActivationContextSectionGuid(c: &mut Ctx) -> u32 {
 /// The DLL a LoadLibrary of `name` (a bare file name) loads in the active context: the
 /// redirected file of the assembly that lists it, when it is there.
 pub fn redirect_dll(name: &str) -> Option<String> {
-    if name.contains('\\') || name.contains('/') {
+    redirect_file(&name.rsplit_once('.').map_or(format!("{name}.dll"), |_| name.to_string()))
+}
+
+/// RtlDosApplyFileIsolationRedirection_Ustr of a bare file name `base` (its extension already
+/// applied): the file of the assembly of the active (else the process default) context that
+/// lists it, whether or not that file is there (SearchPath answers it as found)
+pub fn redirect_file(base: &str) -> Option<String> {
+    if base.contains('\\') || base.contains('/') {
         return None;
     }
-    let base = name.rsplit_once('.').map_or(format!("{name}.dll"), |_| name.to_string());
     let key = Key::Str(w16s(&base));
     for h in [active(), process_default()] {
         if !valid(h) {

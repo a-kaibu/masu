@@ -7952,6 +7952,13 @@ fn file_attrs(name: &str) -> u32 {
     if crate::env_on!("SAKE_TRACE_FILES") {
         eprintln!("sake: GetFileAttributes({name})");
     }
+    // (a name RtlDosPathNameToNtPathName_U refuses, one over MAX_PATH without \\?\:
+    // ERROR_PATH_NOT_FOUND before any lookup)
+    let w: Vec<u16> = name.encode_utf16().collect();
+    if crate::fullpath::process_dos_to_nt(&w).is_err() {
+        last_error(3);
+        return 0xffff_ffff;
+    }
     match files::resolve(name).and_then(|h| kura::fs::metadata(&h).ok().map(|m| (h, m))) {
         Some((h, m)) => files::attrs_of(&h, &m),
         // (system32's DLLs that we implement are there: Siglus checks that kernel32.dll is,
@@ -7965,13 +7972,10 @@ fn file_attrs(name: &str) -> u32 {
 }
 /// The times FindFirstFile gives system32's DLLs that sake implements (2019-12-07 09:09:00 UTC,
 /// as Windows 10's files carry)
-const SYSTEM_DLL_TIME: u64 = 132_201_833_400_000_000;
+const SYSTEM_DLL_TIME: u64 = crate::sysdll::TIME;
 /// C:\windows\system32\<a DLL we implement> (or SysWOW64\, Sysnative\: files::wow64_system)
 fn is_system_dll_path(name: &str) -> bool {
-    let full = files::wow64_system(&files::full_path(name)).to_ascii_lowercase();
-    full.strip_prefix("c:\\windows\\system32\\")
-        .and_then(|n| n.strip_suffix(".dll"))
-        .is_some_and(|d| !d.contains('\\') && crate::api::is_system(d))
+    crate::sysdll::name(name).is_some()
 }
 fn GetFileAttributesA(c: &mut Ctx) -> u32 {
     let name = arg_str(c.a(0), false);
@@ -8138,6 +8142,12 @@ fn mv(from: &str, to: &str, replace: bool) -> u32 {
     };
     if let Some(e) = bad_dir_name(to) {
         last_error(e);
+        return 0;
+    }
+    // (the current directory and its parents are open without FILE_SHARE_DELETE: PEB's CURDIR
+    // handle; MoveFileEx opens the source for DELETE first)
+    if files::is_dir(&f) && files::resolve(&files::cwd()).is_some_and(|cwd| cwd == f || cwd.starts_with(&format!("{}/", f.trim_end_matches('/')))) {
+        last_error(32);
         return 0;
     }
     let t = files::resolve(to);
@@ -8383,6 +8393,12 @@ fn long_short(src: &[u16], short: bool) -> Option<Vec<u16>> {
     let lead = |b: u8| crate::text::is_lead(b);
     let is_short = |x: &[u16]| crate::longshort::is_short_name(x, &crate::text::w2a(x), &lead);
     let find = |q: &[u16]| {
+        // (FindFirstFileExW: a name RtlDosPathNameToNtPathName_U refuses, one over MAX_PATH
+        // without \\?\, is ERROR_PATH_NOT_FOUND)
+        if crate::fullpath::process_dos_to_nt(q).is_err() {
+            last_error(3);
+            return None;
+        }
         let qs = String::from_utf16_lossy(q);
         let hit = files::find(&qs).and_then(|f| {
             f.entries.first().map(|(n, _)| {
@@ -8821,41 +8837,39 @@ fn search_path(c: &mut Ctx, wide: bool) -> u32 {
     } else {
         search_dirs()
     };
+    // (RtlDosSearchPath_Ustr: with no path given, flag 1 first redirects a relative name through
+    // the activation context, KEY_NOT_FOUND going on to the search)
+    if path == 0 && !own_path && let Some(w) = crate::actctx::redirect_file(&n) {
+        return search_found(&w, buf, cap, part, wide);
+    }
     let names: Vec<String> = if own_path { vec![given, n] } else { vec![n] };
     for (d, n) in dirs.iter().filter(|d| own_path || !d.is_empty()).flat_map(|d| names.iter().map(move |n| (d, n))) {
         let w = files::full_path(&if own_path { n.clone() } else { format!("{}\\{n}", d.trim_end_matches('\\')) });
         if files::resolve(&w).is_some() || is_system_dll_path(&w) {
-            let r = ret_str(buf, cap, &w, wide);
-            if !part.is_null() {
-                let dir = w.get(..w.rfind('\\').map_or(0, |i| i.saturating_add(1))).unwrap_or_default();
-                let off = kome::num::u32_of(if wide { dir.encode_utf16().count().saturating_mul(2) } else { crate::text::s2a(dir).len() });
-                // (pointer-sized; only when the name fitted)
-                if r < cap {
-                    part.put((mem::ga(buf) + off).get());
-                }
-            }
-            return r;
+            return search_found(&w, buf, cap, part, wide);
         }
     }
     last_error(2);
     0
 }
+/// SearchPath's answer `w`: the path, its file part's address when it fitted
+fn search_found(w: &str, buf: u32, cap: u32, part: crate::api::Out, wide: bool) -> u32 {
+    let r = ret_str(buf, cap, w, wide);
+    if !part.is_null() {
+        let dir = w.get(..w.rfind('\\').map_or(0, |i| i.saturating_add(1))).unwrap_or_default();
+        let off = kome::num::u32_of(if wide { dir.encode_utf16().count().saturating_mul(2) } else { crate::text::s2a(dir).len() });
+        // (pointer-sized; only when the name fitted)
+        if r < cap {
+            part.put((mem::ga(buf) + off).get());
+        }
+    }
+    r
+}
 /// Where a bare file name is looked for (SearchPath with no path, OpenFile): the exe's folder,
 /// the current one, system32, windows, then PATH
 fn search_dirs() -> Vec<String> {
-    let exe = crate::pe::MODULES.r().iter().find(|m| !m.dll).map_or_default(|m| m.path.clone());
-    let exe_dir = exe.rsplit_once('\\').map_or_default(|(d, _)| d.to_string());
-    let safe = SEARCH_PATH_MODE.load(Ordering::Relaxed) & 1 != 0;
-    let mut v = vec![exe_dir];
-    if !safe {
-        v.push(files::cwd());
-    }
-    v.extend(["C:\\windows\\system32".into(), "C:\\windows\\system".into(), "C:\\windows".into()]);
-    if safe {
-        v.push(files::cwd());
-    }
-    v.extend(env_get("PATH").unwrap_or_default().split(';').filter(|d| !d.is_empty()).map(String::from));
-    v
+    // (RtlGetSearchPath's folders; "." is the current one)
+    crate::dllpath::search_path().split(';').filter(|d| !d.is_empty()).map(|d| if d == "." { files::cwd() } else { d.to_string() }).collect()
 }
 /// RtlpSearchPathMode (0: the current directory before the system ones)
 static SEARCH_PATH_MODE: AtomicU32 = AtomicU32::new(0);
@@ -8874,6 +8888,10 @@ pub fn set_search_path_mode(flags: u32) -> u32 {
     SEARCH_PATH_MODE.store(flags, Ordering::Relaxed);
     0
 }
+/// RtlpSearchPathMode
+pub(crate) fn search_path_mode() -> u32 {
+    SEARCH_PATH_MODE.load(Ordering::Relaxed)
+}
 fn SetSearchPathMode(c: &mut Ctx) -> u32 {
     match set_search_path_mode(c.a(0)) {
         0 => 1,
@@ -8885,7 +8903,7 @@ fn SetSearchPathMode(c: &mut Ctx) -> u32 {
 }
 /// NeedCurrentDirectoryForExePath(name): a name with a '\', or no
 /// NoDefaultCurrentDirectoryInExePath variable at all (BasepIsCurDirAllowedForPlainExeNames)
-fn need_cur_dir(name: &[u16]) -> u32 {
+pub(crate) fn need_cur_dir(name: &[u16]) -> u32 {
     u32::from(name.contains(&0x5c) || env_get("NoDefaultCurrentDirectoryInExePath").is_none())
 }
 fn NeedCurrentDirectoryForExePathW(c: &mut Ctx) -> u32 {

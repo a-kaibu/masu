@@ -109,6 +109,8 @@ pub mod fullpath;
 pub mod ntname;
 pub mod tmpname;
 pub mod longshort;
+pub mod dllpath;
+pub mod sysdll;
 pub mod shortname;
 pub mod gdi;
 pub mod gdi_geom;
@@ -1111,6 +1113,7 @@ pub fn main(exe: &str, args: &[String]) -> ! {
     curdir::init();
     ntpath::init();
     fullpath::init();
+    dllpath::init();
     security::init();
     lsa::init();
     actctx::init();
