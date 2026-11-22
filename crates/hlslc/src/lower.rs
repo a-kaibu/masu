@@ -1731,7 +1731,13 @@ impl<'a> L<'a> {
                 &mut self.inputs
             };
             let depth = name == "SV_Depth";
-            let reg = if name == "SV_Target" {
+            // (a patch constant that is not a tess factor goes into the free components after
+            // the first register's taken ones that hold it whole, as d3dcompiler packs the
+            // PCSG: winref d3d11tess, `uint pid : PID` after SV_TessFactor[3] at r0.y)
+            let packed = if self.sig_patch && sysval == SysVal::Undefined { pc_slot(list, n) } else { None };
+            let reg = if let Some((r, _)) = packed {
+                r
+            } else if name == "SV_Target" {
                 index
             } else {
                 list.iter().filter(|e| !e.depth && e.name != "SV_Target" && e.stream == stream).map(|e| e.reg.saturating_add(1)).max().unwrap_or(0).max(
@@ -1755,7 +1761,8 @@ impl<'a> L<'a> {
                 }
             };
             let ct = if sysval == SysVal::IsFrontFace { sm4::CompType::Uint } else { ctype(b) };
-            list.push(SigEl { name: name.clone(), index, sysval, ctype: ct, reg, mask: Lane::mask(n), interp, depth, stream });
+            let at = packed.map_or(0, |(_, a)| a);
+            list.push(SigEl { name: name.clone(), index, sysval, ctype: ct, reg, mask: Lane::mask(n) << at, interp, depth, stream });
             let f = if depth {
                 RegF::Depth
             } else if output {
@@ -1765,7 +1772,7 @@ impl<'a> L<'a> {
             } else {
                 RegF::Input(reg)
             };
-            for c in Lane::first(n) {
+            for c in Lane::ALL.into_iter().skip(usize::from(at)).take(n) {
                 out.push(C::R(Reg { f, rel: None }, c));
             }
             k += n;
@@ -4126,4 +4133,18 @@ impl<'a> L<'a> {
 /// Whether a component is storage an assignment may write: a temp, an output, an indexable temp.
 fn writable(c: &C) -> bool {
     matches!(c, C::R(Reg { f: RegF::Temp(_) | RegF::Output(_) | RegF::X(..) | RegF::Depth, .. }, _))
+}
+
+/// Where d3dcompiler packs a patch constant of `n` components among the PCSG's elements so far:
+/// the first register with `n` free components after its highest taken one (register, first
+/// component), None for a register of its own.
+fn pc_slot(list: &[SigEl], n: usize) -> Option<(u32, u8)> {
+    let mut regs: Vec<u32> = list.iter().map(|e| e.reg).collect();
+    regs.sort_unstable();
+    regs.dedup();
+    regs.into_iter().find_map(|r| {
+        let taken = list.iter().filter(|e| e.reg == r).fold(0u8, |m, e| m | e.mask);
+        let at = u8::try_from(8u32.saturating_sub(taken.leading_zeros())).unwrap_or(4);
+        (usize::from(at).saturating_add(n) <= 4).then_some((r, at))
+    })
 }

@@ -179,10 +179,11 @@ fn tessellated_draws_on_the_page() {
     assert_eq!(drawn(35, hs, 0, 0, None).0, 0);
     assert_eq!(drawn(36, hs, ds, 0, None).0, 0);
     assert_eq!(drawn(35, hs, quad_ds, 0, None).0, 0);
-    // (factors 0: both patches culled after the hull shader pass)
-    assert_eq!(drawn(35, hs, ds, 0, None), (2, 0, 2, 0));
-    // (factors 2: the domain shader pass, the clipper's pass, the store drawn)
+    // (factors 0: both patches culled after the hull shader pass; the model reads back no
+    // shader's output, so the patch constants are given)
     let pcr = us(s.decl.pc_regs());
+    assert_eq!(drawn(35, hs, ds, 0, Some(vec![0; 2 * pcr * 4])), (2, 0, 2, 0));
+    // (factors 2: the domain shader pass, the clipper's pass, the store drawn)
     let mut words = vec![0u32; 2 * pcr * 4];
     for k in 0..2 {
         for &(_, r, c) in &s.decl.factors {

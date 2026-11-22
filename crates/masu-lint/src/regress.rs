@@ -650,3 +650,22 @@ pub(super) fn nan_min_max(tree: &Tree) -> Hits {
     }
     out
 }
+
+// --- pcsg-pack -------------------------------------------------------------------------------
+
+/// hlslc packs a patch constant that is not a tess factor into the free components of a
+/// register already taken (d3dcompiler's PCSG, winref d3d11tess: PID at r0.y): (file, what its
+/// code outside the tests says).
+pub const PCSG_PACK: [(&str, &str); 2] = [("crates/hlslc/src/lower.rs", "pc_slot(list, n)"), ("crates/hlslc/src/lower.rs", "Lane::mask(n) << at")];
+
+/// Each of PCSG_PACK missing from its file's code.
+pub(super) fn pcsg_pack(tree: &Tree) -> Hits {
+    let mut out = Hits::new();
+    for (file, want) in PCSG_PACK {
+        let f = Rel::new(file);
+        if !product_code(tree, &f).contains(want) {
+            out.push((f, 1, format!("no `{want}` in the code: patch constants each in a register of their own, not packed as d3dcompiler packs them")));
+        }
+    }
+    out
+}

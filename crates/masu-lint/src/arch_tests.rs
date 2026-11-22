@@ -556,6 +556,11 @@ fn fixture(r: Rule) -> Fixture {
             ],
             mutate: ("crates/dxwgsl/src/wgsl.rs", |t| Some(t.replace("format!(\"d3d_min({}, {})\"", "format!(\"min({}, {})\""))),
         },
+        Rule::PcsgPack => Fixture {
+            bad: &[("crates/hlslc/src/lower.rs", "// pc_slot(list, n) Lane::mask(n) << at\nfn sig() { let reg = 0; let mask = Lane::mask(n); }\n")],
+            good: &[("crates/hlslc/src/lower.rs", "fn sig() { let packed = pc_slot(list, n); let mask = Lane::mask(n) << at; }\n")],
+            mutate: ("crates/hlslc/src/lower.rs", |t| Some(t.replace("pc_slot(list, n)", "None::<(u32, u8)>"))),
+        },
         Rule::OutEscape => Fixture {
             bad: &[
                 ("crates/sake/src/k32.rs", "fn f(c: &mut Ctx) { mem::w32(c.out::<0>().lock_word().key(), 0); }\n"),

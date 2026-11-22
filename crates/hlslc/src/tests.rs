@@ -1414,7 +1414,9 @@ fn hull_and_domain_shaders_of_the_d3d11tess_probe() {
         };
         let got: Vec<u32> = pc.iter().filter(|e| e.name != "PID").map(|e| e.sysval).collect();
         assert_eq!(got, want, "{entry}: {pc:?}");
-        assert!(pc.iter().any(|e| e.name == "PID"), "{entry}");
+        // (PID packed into r0.y beside SV_TessFactor[0], as d3dcompiler's PCSG has it: winref
+        // d3d11tess)
+        assert!(pc.get(1).is_some_and(|e| e.name == "PID" && e.reg == 0 && e.mask == 2), "{entry}: {pc:?}");
         assert_eq!(dxwgsl::signature(&code, true).iter().map(|e| e.name.as_str()).collect::<Vec<_>>(), ["ID", "C"], "{entry}");
     }
     for (entry, domain, cps) in [("ds_tri", 2, 3), ("ds_tri_one", 2, 1), ("ds_quad", 3, 4), ("ds_line", 1, 2)] {

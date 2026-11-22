@@ -1468,11 +1468,18 @@ pub fn finish(mut s: Shader) -> Result<Vec<u8>, String> {
         if s.gs.is_some() && s.major >= 5 { (*b"OSG5", signature5(&s.outputs)) } else { (*b"OSGN", signature(&s.outputs, true, s.d3d10)) },
     ];
     // (the patch constants: a hull shader's outputs, a domain shader's inputs)
+    // (in register order, then component, as d3dcompiler lists them: winref d3d11tess, PID at
+    // r0.y second)
+    let by_reg = |p: &[SigEl]| {
+        let mut v = p.to_vec();
+        v.sort_by_key(|e| (e.reg, e.mask.trailing_zeros()));
+        v
+    };
     if let Some(h) = &s.hs {
-        chunks.push((*b"PCSG", signature(&h.patch, true, false)));
+        chunks.push((*b"PCSG", signature(&by_reg(&h.patch), true, false)));
     }
     if let Some(d) = &s.ds {
-        chunks.insert(2, (*b"PCSG", signature(&d.patch, false, false)));
+        chunks.insert(2, (*b"PCSG", signature(&by_reg(&d.patch), false, false)));
     }
     chunks.push((if s.major >= 5 { *b"SHEX" } else { *b"SHDR" }, shdr));
     Ok(container(&chunks))
