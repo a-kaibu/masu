@@ -1,6 +1,6 @@
 //! A translation is a function of its context and the guest's bytes (jit::TranslationContext,
 //! koji redesign stage 2): translations made while another thread flips the modes (the page
-//! checks, the MXCSR flag checks, hoisting, the loop slots) come out the same bytes every time
+//! checks, the MXCSR flag checks, hoisting, the loop slots, the SSA runs) come out the same bytes every time
 //! for each context they record. None is part one mode, part another, which is what reading the
 //! statics where they were used gave. Its own test binary: it sets the statics.
 mod golden;
@@ -59,6 +59,7 @@ fn same_context_same_bytes_while_the_modes_flip() {
                 jit::MX_EXACT.store(i & 2 != 0, Relaxed);
                 jit::HOIST.store(i & 4 == 0, Relaxed);
                 jit::SLOTS_MAX.store(if i & 8 != 0 { 4 } else { 0 }, Relaxed);
+                jit::SSA.store(i & 16 != 0, Relaxed);
                 i = i.wrapping_add(1);
                 std::hint::spin_loop();
             }

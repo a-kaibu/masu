@@ -1230,7 +1230,7 @@ fn rflags_emitted(line: &str) -> bool {
 /// each line of the JIT emitting RflagsBits.
 /// The statics koji's translations are made under (jit::context): only TranslationContext::now
 /// reads them, in context.rs
-pub const JIT_MODES: [&str; 18] = ["MX_EXACT", "MX_SWITCH", "PAGE_CHECK", "NOCHECK", "LAYOUT", "PROFILE", "COUNT", "HOIST", "SLOTS_MAX", "FN_ENTRIES", "FN", "FN64", "STRUCTURED", "DEBUG_CHECK", "DEBUG_ALL_REGS", "DEBUG_NO_SIDE", "MEMCOUNT", "PROBES"];
+pub const JIT_MODES: [&str; 19] = ["SSA", "MX_EXACT", "MX_SWITCH", "PAGE_CHECK", "NOCHECK", "LAYOUT", "PROFILE", "COUNT", "HOIST", "SLOTS_MAX", "FN_ENTRIES", "FN", "FN64", "STRUCTURED", "DEBUG_CHECK", "DEBUG_ALL_REGS", "DEBUG_NO_SIDE", "MEMCOUNT", "PROBES"];
 
 /// The functions that read them (a free call: a method of the context is the context's)
 pub const JIT_MODE_READS: [&str; 3] = ["mx_exact()", "page_check()", "Pages::now()"];
@@ -1266,6 +1266,52 @@ pub(super) fn jit_context(tree: &Tree) -> Hits {
         for (k, l) in product_code(tree, &f).lines().enumerate() {
             if let Some(n) = mode_read(l) {
                 out.push((f.clone(), k.saturating_add(1), format!("`{n}` read while translating: the translation's TranslationContext has it (read once, when it began)")));
+            }
+        }
+    }
+    out
+}
+
+/// The budget statics jit32test varies: koji::jit::<static>.store(mode.<field> (see
+/// Rule::JitBudgetHarness)
+pub const JIT_BUDGET_HARNESS: [(&str, &str); 3] = [("SSA", "mode.ssa"), ("HOIST", "mode.hoist"), ("SLOTS_MAX", "mode.slots")];
+
+/// Budget statics jit32test leaves as they are, and why
+pub const JIT_BUDGET_UNVARIED: [(&str, &str); 1] = [("FN_ENTRIES", "function mode's entry blocks: kura's, the only setting jit32test's function mode runs")];
+
+/// The statics TranslationContext::now reads into its Budget
+fn budget_statics(context: &str) -> Vec<String> {
+    let Some(at) = context.find("budget: Budget {") else { return Vec::new() };
+    let body = &context[at..];
+    let body = &body[..body.find('}').unwrap_or(body.len())];
+    body.match_indices("super::").filter_map(|(k, _)| {
+        let rest = &body[k + "super::".len()..];
+        let end = rest.find(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))?;
+        rest[end..].starts_with(".load(").then(|| rest[..end].to_string())
+    }).collect()
+}
+
+/// Each budget static set by jit32test from its Mode, or named unvaried (Rule::JitBudgetHarness)
+pub(super) fn jit_budget_harness(tree: &Tree) -> Hits {
+    let mut out = Hits::new();
+    let ctx = Rel::new("crates/koji/src/jit/context.rs");
+    let harness = Rel::new("tools/jit32test/src/main.rs");
+    let statics = budget_statics(&product_code(tree, &ctx));
+    if statics.is_empty() {
+        out.push((ctx.clone(), 1, "no `budget: Budget {` reading its statics (super::X.load) in TranslationContext::now".into()));
+    }
+    let t = product_code(tree, &harness);
+    for n in &statics {
+        if JIT_BUDGET_UNVARIED.iter().any(|(u, _)| u == n) {
+            continue;
+        }
+        match JIT_BUDGET_HARNESS.iter().find(|(h, _)| h == n) {
+            None => out.push((ctx.clone(), 1, format!("budget static `{n}` neither varied by jit32test (JIT_BUDGET_HARNESS) nor named unvaried (JIT_BUDGET_UNVARIED)"))),
+            Some((_, field)) => {
+                let want = format!("koji::jit::{n}.store({field}");
+                if !t.contains(&want) {
+                    out.push((harness.clone(), 1, format!("no `{want}`: jit32test translates with `{n}` as it found it, never the other way")));
+                }
             }
         }
     }

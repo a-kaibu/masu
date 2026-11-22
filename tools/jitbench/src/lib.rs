@@ -134,7 +134,7 @@ pub extern "C" fn jb_buf() -> u32 {
 /// the interpreter alone (no translations): the reference run
 static NOJIT: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
-/// Knobs (koji's statics): 0 FN, 1 HOIST, 2 MEMCOUNT, 3 MX_EXACT, 4 the interpreter alone
+/// Knobs (koji's statics): 0 FN, 1 HOIST, 2 MEMCOUNT, 3 MX_EXACT, 4 the interpreter alone, 5 SSA
 #[unsafe(no_mangle)]
 pub extern "C" fn jb_set(knob: u32, v: u32) {
     let on = v != 0;
@@ -144,6 +144,7 @@ pub extern "C" fn jb_set(knob: u32, v: u32) {
         1 => jit::HOIST.store(on, Relaxed),
         2 => jit::wasm::MEMCOUNT.store(on, Relaxed),
         3 => jit::MX_EXACT.store(on, Relaxed),
+        5 => jit::SSA.store(on, Relaxed),
         _ => {}
     }
 }

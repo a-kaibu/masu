@@ -129,6 +129,76 @@ static NO_MMX: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::ne
 static NO_X87: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 /// One random instruction or a few (into `a`)
+/// 2..12 register-only integer instructions (what koji's SSA runs take: MOV, LEA, the ALU ops,
+/// INC/DEC, NOT/NEG, shifts by an immediate, some by 0 or 32 which it leaves; ESP read, never
+/// written), then at times what reads their CF or flags (ADC, SBB, SETcc, CMOVcc)
+fn register_run(rng: &mut Rng, a: &mut CodeAssembler) -> Result<(), IcedError> {
+    let g32 = |rng: &mut Rng| rng.pick(&R32);
+    let gs32 = |rng: &mut Rng| rng.pick(&S32);
+    let scale = |rng: &mut Rng| rng.pick(&[1, 2, 4, 8]);
+    for _ in 0..2 + rng.below(11) {
+        let d = g32(rng);
+        let imm = rng.imm32();
+        match rng.below(16) {
+            0 => a.mov(d, gs32(rng))?,
+            1 => a.mov(d, rng.imm32())?,
+            2 => a.lea(d, dword_ptr(gs32(rng) + g32(rng) * scale(rng) + rng.imm32()))?,
+            3 => a.lea(d, dword_ptr(gs32(rng) + rng.pick(&[0, 1, -1, 0x7fff_ffff])))?,
+            4 => a.add(d, gs32(rng))?,
+            5 => a.sub(d, rng.pick(&[0, 1, -1, imm]))?,
+            // (an operand with itself: x ^ x and x - x fold to 0, x | x and x & x do not)
+            6 => match rng.below(5) {
+                0 => a.and(d, gs32(rng))?,
+                1 => a.or(d, rng.imm32())?,
+                2 => a.or(d, d)?,
+                3 => a.and(d, d)?,
+                _ => a.xor(d, d)?,
+            },
+            7 => a.xor(d, gs32(rng))?,
+            8 => a.cmp(d, rng.pick(&[0, 1, -1, imm]))?,
+            9 => a.test(d, gs32(rng))?,
+            10 => a.inc(d)?,
+            11 => a.dec(d)?,
+            12 => a.not(d)?,
+            13 => a.neg(d)?,
+            14 => match rng.below(3) {
+                0 => a.shl(d, rng.pick(&[0u32, 1, 5, 31, 32, 33]))?,
+                1 => a.shr(d, rng.pick(&[0u32, 1, 7, 31, 32]))?,
+                _ => a.sar(d, rng.pick(&[1u32, 13, 31, 32, 63]))?,
+            },
+            _ => a.sub(d, d)?,
+        }
+    }
+    // (at times what INC/DEC carry over: the CF of an ADD, SUB, CMP, NEG, logic op before them)
+    if rng.below(3) == 0 {
+        let d = g32(rng);
+        match rng.below(5) {
+            0 => a.add(d, gs32(rng))?,
+            1 => a.sub(d, rng.imm32())?,
+            2 => a.cmp(d, gs32(rng))?,
+            3 => a.neg(d)?,
+            _ => a.and(d, gs32(rng))?,
+        }
+        if rng.below(2) == 0 {
+            a.mov(g32(rng), gs32(rng))?;
+        }
+        if rng.below(2) == 0 {
+            a.inc(g32(rng))?;
+        } else {
+            a.dec(g32(rng))?;
+        }
+    }
+    match rng.below(6) {
+        0 => a.adc(g32(rng), gs32(rng))?,
+        1 => a.sbb(g32(rng), rng.imm32())?,
+        2 => a.setb(rng.pick(&R8))?,
+        3 => a.cmovle(g32(rng), gs32(rng))?,
+        4 => a.seto(rng.pick(&R8))?,
+        _ => {}
+    }
+    Ok(())
+}
+
 fn random_ins(rng: &mut Rng, a: &mut CodeAssembler) -> Result<(), IcedError> {
     let g32 = |rng: &mut Rng| rng.pick(&R32);
     let gs32 = |rng: &mut Rng| rng.pick(&S32);
@@ -794,7 +864,9 @@ fn structure(rng: &mut Rng, body: Vec<Vec<Instruction>>, subs: Vec<Vec<Vec<Instr
 /// Instructions for one random item
 fn item(rng: &mut Rng) -> Vec<Instruction> {
     let mut a = CodeAssembler::new(32).unwrap();
-    match random_ins(rng, &mut a) {
+    // (one in 12: a run koji::jit::SSA lowers whole)
+    let made = if rng.below(12) == 0 { register_run(rng, &mut a) } else { random_ins(rng, &mut a) };
+    match made {
         Ok(()) => a.take_instructions(),
         Err(_) => Vec::new(),
     }
@@ -1444,6 +1516,17 @@ struct Mode {
     /// (with `fresh`) another program, from this seed, put at the same address and translated
     /// first: its translations, entered, must find the code changed (Cpu::jit_stale)
     stale: u64,
+    /// register-only runs lowered from their SSA (koji::jit::SSA)
+    ssa: bool,
+}
+
+/// Whether a test runs with koji::jit::SSA: JSSA=0 or 1 for every test, else `pick`
+fn ssa_or(pick: bool) -> bool {
+    match std::env::var("JSSA").as_deref() {
+        Ok("0") => false,
+        Ok("1") => true,
+        _ => pick,
+    }
 }
 
 /// The JIT's MXCSR flag mode switched (a step read the flags): translations are dropped.
@@ -1875,6 +1958,7 @@ fn run_case(engine: &Engine, dispatch: &Module, memory: &SharedMemory, base: usi
     koji::jit::HOIST.store(mode.hoist, Relaxed);
     koji::jit::SLOTS_MAX.store(mode.slots, Relaxed);
     koji::jit::FN.store(mode.fns, Relaxed);
+    koji::jit::SSA.store(mode.ssa, Relaxed);
     FRESH.store(mode.fresh, Relaxed);
     let mut jit = Jit::new(engine, dispatch, memory, base, mode);
     if mode.stale != 0 {
@@ -2006,7 +2090,7 @@ fn main() {
         }
         for fns in [false, true] {
             for blocks in [1, 2, koji::jit::MAX_BLOCKS] {
-                let mode = Mode { fns, blocks, hoist: true, slots: 0, pre: false, exact: !name.starts_with("mx "), fresh: false, stale: 0 };
+                let mode = Mode { fns, blocks, hoist: true, slots: 0, pre: false, exact: !name.starts_with("mx "), fresh: false, stale: 0, ssa: ssa_or(blocks != 2) };
                 let data = random_data(&mut rng);
                 let mut cpu0 = initial(&mut rng);
                 if name.starts_with("x87 root") {
@@ -2035,6 +2119,7 @@ fn main() {
             exact: rng.below(3) != 0,
             fresh: false,
             stale: 0,
+            ssa: ssa_or(t % 2 == 0),
         };
         let fresh = rng.below(4) == 0;
         let mode = Mode { fresh, stale: if fresh && rng.below(2) == 0 { rng.next() | 1 } else { 0 }, ..mode };
@@ -2101,7 +2186,7 @@ fn test_setup() -> (Engine, SharedMemory, Module, usize) {
 }
 
 #[cfg(test)]
-const TEST_MODE: Mode = Mode { fns: false, blocks: 1, hoist: true, slots: 0, pre: false, exact: true, fresh: false, stale: 0 };
+const TEST_MODE: Mode = Mode { fns: false, blocks: 1, hoist: true, slots: 0, pre: false, exact: true, fresh: false, stale: 0, ssa: false };
 
 /// A region that jumps to itself never comes back to run's step limit: the fuel ends it, an
 /// error, not a hang.

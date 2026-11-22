@@ -36,9 +36,10 @@ the CPU slowed 4 times by CDP (JB_THROTTLE), the page cross-origin isolated on a
 origin served by Playwright.
 
 Knobs: `fn` (function mode, 1 by default as kura), `hoist`, `memcount` (MASU_JIT_MEMCOUNT),
-`mxexact`, `nojit` (the interpreter alone). Environment: JB_HOT (hot runs, 7), JB_SCALE,
+`mxexact`, `nojit` (the interpreter alone), `ssa` (koji::jit::SSA, MASU_JIT_SSA). Environment: JB_HOT (hot runs, 7), JB_SCALE,
 JB_DUMP=dir (each translated module as dir/NNN.wasm), JB_SWAP=dir (dir/NNN.wasm loaded in a
-module's place: experiments on what V8 is given).
+module's place: experiments on what V8 is given), JB_KNOBS_A / JB_KNOBS_B (ab.mjs: one side's
+knobs, e.g. one build with `JB_KNOBS_A=ssa=0 JB_KNOBS_B=ssa=1`).
 
 Columns of ab.mjs: hot ms (each round's median of the hot runs, then the median over rounds),
 cold ms (the first run: the interpreter's warm-up, translation and V8's compile) and its p95

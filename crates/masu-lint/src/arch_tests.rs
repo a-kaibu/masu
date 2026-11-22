@@ -823,6 +823,17 @@ fn fixture(r: Rule) -> Fixture {
             ],
             mutate: ("crates/koji/src/jit/mod.rs", |t| Some(t.replace("let prot = self.tc.page_check();", "let prot = page_check();"))),
         },
+        Rule::JitBudgetHarness => Fixture {
+            bad: &[
+                ("crates/koji/src/jit/context.rs", "fn now() { let t = Tc { budget: Budget { hoist: super::HOIST.load(Relaxed), ssa: super::SSA.load(Relaxed), wide: super::WIDE.load(Relaxed) }, }; }\n"),
+                ("tools/jit32test/src/main.rs", "fn run_case() { koji::jit::HOIST.store(mode.hoist, Relaxed); }\n"),
+            ],
+            good: &[
+                ("crates/koji/src/jit/context.rs", "fn now() { let t = Tc { budget: Budget { hoist: super::HOIST.load(Relaxed), ssa: super::SSA.load(Relaxed), fn_entries: super::FN_ENTRIES.load(Relaxed) }, }; }\n"),
+                ("tools/jit32test/src/main.rs", "fn run_case() { koji::jit::HOIST.store(mode.hoist, Relaxed); koji::jit::SSA.store(mode.ssa, Relaxed); }\n"),
+            ],
+            mutate: ("tools/jit32test/src/main.rs", |t| Some(t.replace("koji::jit::SSA.store(mode.ssa, Relaxed);", ""))),
+        },
         Rule::DllSearch => Fixture {
             bad: &[
                 ("crates/sake/src/pe.rs", "pub static DLL_DIRS: Mutex<Vec<String>> = Mutex::new(Vec::new());\nfn find_dll_file(dll: &str) {\n    let mut dirs = vec![exe_dir];\n    dirs.extend(crate::dllpath::user_dirs().into_iter().rev());\n    dirs.push(crate::files::cwd().trim_end_matches('\\\\').to_string());\n    dirs.push(\"C:\\\\windows\\\\system32\".into());\n}\n// for d in search.folders() image_resolver(search.of_dependency(&win))\n"),

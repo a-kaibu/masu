@@ -2,7 +2,7 @@
 // run(bytes of jitbench.wasm, options) gives one result per program: the cold run (warm-up,
 // translation, V8's compile), the hot runs, the translator's and V8's times, module bytes, the
 // interpreter's share, the checksum.
-//   options: only (program names), knobs ("fn=1,hoist=0"), hot (runs), scale,
+//   options: only (program names), knobs ("fn=1,hoist=0,ssa=1"), hot (runs), scale,
 //   module(bytes, index) -> bytes: each translated module as it is loaded (dump, swap)
 export function run(rtBytes, { only = '', knobs = '', hot: HOT = 7, scale: SCALE = 1, module = (b) => b, memoryMb = () => 0 } = {}) {
   const memory = new WebAssembly.Memory({ initial: 0x9000_0000 / 65536, maximum: 65535, shared: true });
@@ -43,7 +43,7 @@ export function run(rtBytes, { only = '', knobs = '', hot: HOT = 7, scale: SCALE
     const bytes = new Uint8Array(memory.buffer, ex.jb_buf() >>> 0, n).slice();
     dispatch = new WebAssembly.Instance(new WebAssembly.Module(bytes), { env: { memory, table } }).exports.f0;
   }
-  const knob = { fn: 0, hoist: 1, memcount: 2, mxexact: 3, nojit: 4 };
+  const knob = { fn: 0, hoist: 1, memcount: 2, mxexact: 3, nojit: 4, ssa: 5 };
   ex.jb_set(0, 1); // function mode, as kura
   for (const kv of knobs.split(',').filter(Boolean)) {
     const [k, v] = kv.split('=');

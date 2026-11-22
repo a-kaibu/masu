@@ -442,3 +442,40 @@ and read by the Remat heads, the flag predictions, loop bodies and function entr
 The generated code is the same bytes as before (golden_jit unchanged, jitbench's modules the
 same size); node, 7 rounds, hot time B/A 0.98-1.00, translation time within the noise (a cold
 run's ±15%).
+
+## The small SSA: register-only runs (2026-11-22)
+
+`jit/ssa.rs` (on by default; `MASU_JIT_SSA=0` off; jitbench knob `ssa`): a run of a block's
+register-only 32-bit integer instructions (MOV, LEA, ADD SUB AND OR XOR CMP TEST, INC DEC, NOT
+NEG, SHL SHR SAR by an immediate non-zero mod 32; ESP read, never written; two or more, never
+the block's last, at most 32 and N_T temporaries) becomes values: each register a node, the
+status flags the last flag writer's lazy record. Constants fold, `x ^ x` and `x - x` are 0,
+equal nodes are one. It lowers to what the instructions one by one leave: the changed registers
+in their locals, the lazy record in L_OP/L_FA.. only where the flags are live after the run, an
+INC/DEC's CF from the flag writer before it in the run (else the run ends before it). A run has
+no memory access and no exit, so the exit contract holds at its ends as for the instructions one
+by one; a pending Remat CMP/TEST is done before it where one of it needs it.
+
+`fits` gives each instruction a `Step` and `Run::add` matches the steps exhaustively: what
+`fits` lets in, `add` lowers. Tests: jit32test runs half its programs with SSA on (`JSSA=0/1`
+for all), with register runs of their own (also ADD/SUB/CMP/NEG/AND, INC/DEC, then ADC/SBB/SETcc
+reading their CF); breaking the carry, SAR or the folding fails it (3, 9 and 10 of 300).
+golden_jit hashes both: `jit.txt` (off, unchanged) and `jit_ssa.txt`. context_snapshot flips
+SSA too. masu-lint jit-budget-harness: each budget static is varied by jit32test.
+
+A/B, one build, `JB_KNOBS_A=ssa=0 JB_KNOBS_B=ssa=1`, 9 rounds (B/A):
+
+| program | wasm bytes | hot node | hot Android-like | translate Android-like |
+|---|---:|---:|---:|---:|
+| crc32 | 0.981 | 0.998 | 0.996 | 1.005 |
+| bigadd | 0.993 | 0.998 | 0.959 | 0.852 |
+| calls | 0.993 | 1.009 | 0.987 | 0.913 |
+| vm | 0.991 | 0.953 | 0.991 | 0.993 |
+| sse_int | 0.988 | 0.998 | 1.006 | 1.026 |
+| x87_dot | 0.997 | 0.993 | 0.985 | 0.992 |
+| sort | 0.986 | 0.842 | 1.059 (15 rounds: 1.006) | 1.154 (0.984) |
+| flags_mem | 0.965 | 0.956 | 0.985 (15 rounds: 1.015) | 1.028 |
+
+Same sums, interpreter steps and exits; peak memory the same. The gain is the size (0.3-3.5%):
+V8 already shares what a block computes twice, so hot time is within the noise (±5%). What
+the SSA is for next is crossing blocks (the flags and values a loop carries) and SIMD (stage 4).

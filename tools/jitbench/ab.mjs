@@ -2,15 +2,17 @@
 // (JB_BROWSER=1: a new Chromium as an Android phone, browser.mjs):
 //   node ab.mjs A.wasm B.wasm [rounds] [programs] [knobs]
 // Prints a markdown table: medians over rounds (hot: each round's median of JB_HOT runs; cold
-// p95: over the rounds, the first run's tail as at a scene change), B/A.
+// p95: over the rounds, the first run's tail as at a scene change), B/A. JB_KNOBS_A / JB_KNOBS_B:
+// knobs for one side (after the shared ones: one build, a knob off against on).
 import { execFileSync } from 'node:child_process';
 import { runInBrowser } from './browser.mjs';
 
-const [, , a, b, rounds = '5', only = '', knobs = ''] = process.argv;
+const [, , a, b, rounds = '5', only = '', shared = ''] = process.argv;
 const node = process.execPath;
 const runs = { A: [], B: [] };
 for (let r = 0; r < Number(rounds); r++) {
   for (const [k, w] of r % 2 ? [['B', b], ['A', a]] : [['A', a], ['B', b]]) {
+    const knobs = [shared, process.env[`JB_KNOBS_${k}`] ?? ''].filter(Boolean).join(',');
     if (process.env.JB_BROWSER) {
       runs[k].push(await runInBrowser(w, { only, knobs, hot: Number(process.env.JB_HOT ?? 7), scale: Number(process.env.JB_SCALE ?? 1), throttle: Number(process.env.JB_THROTTLE ?? 4) }));
     } else {

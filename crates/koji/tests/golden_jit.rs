@@ -65,6 +65,14 @@ fn translate(t: Tr, n: usize) -> u64 {
 
 #[test]
 fn jit_golden() {
+    // (the generator instruction by instruction, and with the SSA runs: jit::ssa)
+    for (ssa, file) in [(false, "jit.txt"), (true, "jit_ssa.txt")] {
+        jit::SSA.store(ssa, std::sync::atomic::Ordering::Relaxed);
+        golden_of(file);
+    }
+}
+
+fn golden_of(file: &str) {
     let show = std::env::var("MASU_GOLDEN_GROUP").ok().and_then(|s| s.parse::<usize>().ok());
     let mut lines = Vec::new();
     for t in TRS {
@@ -80,5 +88,5 @@ fn jit_golden() {
             lines.push(format!("{t:?}/{g} {:016x}", h.0));
         }
     }
-    check("jit.txt", &lines);
+    check(file, &lines);
 }
