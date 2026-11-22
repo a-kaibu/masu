@@ -109,6 +109,11 @@ fn fixture(r: Rule) -> Fixture {
             ],
             mutate: (".github/workflows/bench.yml", |t| Some(t.replace("          ASKED: ${{ inputs.groups }}", "          GROUPS: ${{ inputs.groups }}"))),
         },
+        Rule::CrtStartup => Fixture {
+            bad: &[("crates/sake/src/crt.rs", "fn init() {\n    reg!(malloc, free);\n}\n")],
+            good: &[("crates/sake/src/crt.rs", "fn init() {\n    reg!(__C_specific_handler, __dllonexit, __getmainargs, __initenv, __iob_func, __lconv_init, __p__commode, __p__fmode, __set_app_type, __setusermatherr, _acmdln, _amsg_exit, _cexit, _commode, _fmode, _fpreset, _initterm, _iob, _lock, _onexit, _strdup, _unlock, abort, atoi, calloc, exit, fflush, fprintf, free, fwrite, malloc, memcpy, memmove, memset, setvbuf, signal, sprintf, strcmp, strcpy, strlen, strncmp, strrchr, vfprintf, wcscat, wcscmp, wcscpy);\n    implement(\"msvcrt\", \"_swprintf\", swprintf);\n}\n")],
+            mutate: ("crates/sake/src/crt.rs", |t| Some(t.replace("_statusfp, _fpreset,", "_statusfp,"))),
+        },
         Rule::NtdllOwnCrt => Fixture {
             bad: &[("crates/sake/src/ntcrt.rs", "pub fn init() {\n    let d = \"ntdll\";\n    implement(d, \"towlower\", towlower_h);\n}\n")],
             good: &[(
@@ -597,6 +602,7 @@ fn fixture(r: Rule) -> Fixture {
                 ("tests/winref/compare.py", "        if not os.path.isdir(os.path.join(got, probe)):\n            continue  # (not run: a filtered run.sh)\n    sys.exit(1 if failed else 0)\n"),
                 ("tests/winetest/run.py", "        if not os.path.exists(exe):\n            print(f\"missing {exe}\", file=sys.stderr)\n            continue\n"),
                 ("tests/winetest/run.py", "windows = read_tsv(win_path) if os.path.exists(win_path) else {}\n"),
+                ("tests/winetest/run.py", "def report(path):\n    with open(path, \"w\") as f:\n        f.write(msg)\n"),
             ],
             good: GOOD_RUN_PLAN,
             mutate: ("tests/winref/compare.py", |t| Some(t.replace("sys.exit(1 if failed or plan_errors else 0)", "sys.exit(1 if failed else 0)"))),

@@ -590,6 +590,19 @@ fn _clearfp(c: &mut Ctx) -> u32 {
     }
     s
 }
+/// The floating-point unit as the CRT starts it: on x86 FNINIT, then the CRT's control word
+/// (_CW_DEFAULT 0x27f: 53-bit precision, every exception masked); MXCSR's power-on value
+/// (0x1f80: every exception masked, round to nearest, no flags, no DAZ/FTZ) on both. mingw's
+/// startup code calls it before main (ReactOS's apitests, tests/rostests).
+fn _fpreset(c: &mut Ctx) -> u32 {
+    if !mem::x64() {
+        c.cpu.fpu = koji::Fpu::default();
+        c.cpu.fpu.cw = 0x027f;
+    }
+    koji::jit::mx_read(0);
+    c.cpu.mxcsr = 0x1f80;
+    0
+}
 fn _purecall(_: &mut Ctx) -> ! {
     eprintln!("sake: pure virtual call");
     unsafe { libc::exit(3) }
@@ -4463,6 +4476,8 @@ pub fn init() {
     reg!(_get_stream_buffer_pointers);
     reg!(fgetpos, fsetpos, ___lc_collate_cp_func);
     implement("msvcrt", "_fsopen", fopen);
+    // (msvcrt.dll's _swprintf is its swprintf: no count, ISO swprintf came with msvcr80)
+    implement("msvcrt", "_swprintf", swprintf);
     implement("msvcrt", "_wfsopen", _wfopen);
     reg!(_aligned_malloc, _aligned_free, _aligned_realloc, _aligned_msize, _aligned_offset_malloc, _aligned_offset_realloc, _mkdir, _wmkdir);
     reg!(fread_s, _time64, _splitpath, _wsplitpath, _splitpath_s, _wsplitpath_s);
@@ -4481,7 +4496,7 @@ pub fn init() {
     reg!(_initterm, _initterm_e, _onexit, atexit, __dllonexit, __getmainargs, __set_app_type,
         __p__fmode, __p__commode, __p___argc, __p___argv, __p___wargv, __p__wcmdln, __p__wenviron, __wgetmainargs,
         __p__environ, __p___initenv, __p__acmdln,
-        __p___mb_cur_max, ___mb_cur_max_func, __pctype_func, _controlfp, _control87, _clearfp, _statusfp,
+        __p___mb_cur_max, ___mb_cur_max_func, __pctype_func, _controlfp, _control87, _clearfp, _statusfp, _fpreset,
         _XcptFilter, signal, _lock, _unlock, _errno, __doserrno,
         malloc, calloc, realloc, _recalloc, free, _msize,
         memcpy, memmove, memset, memcmp, memchr, strlen, strcpy, strncpy, strcat, strncat, strcmp, strncmp,

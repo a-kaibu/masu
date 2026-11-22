@@ -15,6 +15,7 @@ pub use foresee as predict;
 pub mod trace;
 #[cfg(test)]
 mod replay;
+mod saves;
 mod shared;
 mod undo;
 
@@ -121,32 +122,12 @@ struct Fs {
     dirt: shared::Dirt,
     /// what the operation under way changed, while the namespace is shared (vfs/undo.rs)
     undo: Option<undo::Undo>,
+    /// every name as the store gave it, before the saves were put back: what they are told
+    /// against (vfs/saves.rs)
+    base: BTreeMap<String, saves::Entry>,
 }
 
 static FS: Mutex<Option<Fs>> = Mutex::new(None);
-
-/// Records as `Fs::export` makes them.
-fn parse_records(mut b: &[u8]) -> Vec<(String, Vec<u8>, i64)> {
-    let mut files = Vec::new();
-    // (a record cut short ends them: split by what is there, no sum that wraps on wasm32 for
-    // a length near 4 GiB)
-    while let Some((file, rest)) = record(b) {
-        files.push(file);
-        b = rest;
-    }
-    files
-}
-
-/// The first record of `b` and what follows it: u32 path length, path, i64 mtime, u32 size,
-/// data.
-fn record(b: &[u8]) -> Option<((String, Vec<u8>, i64), &[u8])> {
-    let (n, b) = b.split_first_chunk::<4>()?;
-    let (path, b) = b.split_at_checked(usize::try_from(u32::from_le_bytes(*n)).ok()?)?;
-    let (mtime, b) = b.split_first_chunk::<8>()?;
-    let (size, b) = b.split_first_chunk::<4>()?;
-    let (data, b) = b.split_at_checked(usize::try_from(u32::from_le_bytes(*size)).ok()?)?;
-    Some(((String::from_utf8_lossy(path).into_owned(), data.to_vec(), i64::from_le_bytes(*mtime)), b))
-}
 
 /// The page: the files written under each of `roots` (":"-separated paths) as records (see
 /// `Fs::export`), in a malloc'ed buffer the caller frees; its length goes to `len`.
@@ -202,16 +183,15 @@ pub unsafe extern "C" fn vnhost_vfs_export(roots: *const c_char, len: *mut size_
     };
     let _shared = shared::Guard::enter(fs);
     let roots: Vec<String> = roots.split(':').filter(|r| !r.is_empty()).map(clean).collect();
-    let size: usize = roots.iter().map(|r| fs.export_size(r)).sum();
+    let saved = fs.saved(&roots);
+    let size = Fs::saved_size(&saved);
     let p = libc::malloc(size.max(1)) as *mut u8;
     *len = 0;
     if p.is_null() {
         return p;
     }
     let mut out = Sink { p, at: 0, cap: size };
-    for r in &roots {
-        fs.export_into(r, &mut out);
-    }
+    Fs::write_saved(&saved, &mut out);
     *len = out.at;
     p
 }
@@ -228,9 +208,8 @@ pub unsafe extern "C" fn vnhost_vfs_list(roots: *const c_char, len: *mut size_t)
         let mut g = FS.lock().unwrap_or_else(|e| e.into_inner());
         if let Some(fs) = g.as_mut() {
             let _shared = shared::Guard::enter(fs);
-            for r in roots.split(':').filter(|r| !r.is_empty()) {
-                fs.list(&clean(r), &mut out);
-            }
+            let roots: Vec<String> = roots.split(':').filter(|r| !r.is_empty()).map(clean).collect();
+            fs.list(&roots, &mut out);
         }
     }
     *len = out.len();
@@ -500,10 +479,11 @@ impl Fs {
             }
             fs.mounts.push((at, root));
         }
-        // saved games the page put back (see web/src/saves.ts)
+        // saved games the page put back (see web/src/saves.ts), told against the store's names
+        fs.base = fs.entries();
         if let Some(blob) = fetch("@saves") {
-            for (path, data, mtime) in parse_records(&blob) {
-                fs.put_file(&path, data, mtime);
+            for r in saves::parse_records(&blob) {
+                fs.put_back(r);
             }
         }
         fs
@@ -558,54 +538,20 @@ impl Fs {
         }
     }
 
-    /// The files written here (in memory) under `path`, as records: path length (u32), path,
-    /// mtime (i64), size (u32), bytes; little-endian.
-    /// The written files under PATH (PATH itself when it is one), each once.
-    fn written(&self, path: &str, f: &mut dyn FnMut(&str, i64, &crate::pages::Pages)) {
-        let Some((at, rel)) = self.split_mount(path) else { return };
-        let Some(ino) = self.walk(at, rel) else { return };
-        let mut todo = vec![(ino, path.trim_end_matches('/').to_string())];
-        while let Some((ino, p)) = todo.pop() {
-            let Some(n) = self.node(ino) else { continue };
-            match &n.data {
-                Data::Dir(ch) => todo.extend(ch.iter().map(|(name, &i)| (i, format!("{p}/{name}")))),
-                Data::File(Content::Upper(v)) => f(&p, n.mtime, v),
-                _ => {}
-            }
-        }
-    }
-
+    /// The saves records of what changed under `path` (vfs/saves.rs).
     #[cfg(test)]
     fn export(&self, path: &str, out: &mut Vec<u8>) {
-        self.export_into(path, out);
+        Fs::write_saved(&self.saved(&[path.to_owned()]), out);
     }
 
-    /// The saves records of the written files under PATH: path length (u32), path, mtime (i64),
-    /// data length (u32), data.
-    fn export_into(&self, path: &str, out: &mut dyn Out) {
-        self.written(path, &mut |p, mtime, v| {
-            out.put(&(p.len() as u32).to_le_bytes());
-            out.put(p.as_bytes());
-            out.put(&mtime.to_le_bytes());
-            out.put(&(v.len() as u32).to_le_bytes());
-            v.for_each(|b| out.put(b));
-        });
-    }
-
-    /// export_into's byte count.
-    fn export_size(&self, path: &str) -> usize {
-        let mut n = 0;
-        self.written(path, &mut |p, _, v| n += 16 + p.len() + v.len() as usize);
-        n
-    }
-
-    /// Path length (u32), path and size (u64) of each written file under PATH.
-    fn list(&self, path: &str, out: &mut Vec<u8>) {
-        self.written(path, &mut |p, _, v| {
-            out.extend_from_slice(&(p.len() as u32).to_le_bytes());
-            out.extend_from_slice(p.as_bytes());
-            out.extend_from_slice(&v.len().to_le_bytes());
-        });
+    /// Path length (u32), path and size (u64: a file in memory's, 0 for the other records) of
+    /// each record of the saves under `roots`: what the page picks from before exporting.
+    fn list(&self, roots: &[String], out: &mut Vec<u8>) {
+        for s in self.saved(roots) {
+            out.extend_from_slice(&u32::try_from(s.path().len()).unwrap_or(u32::MAX).to_le_bytes());
+            out.extend_from_slice(s.path().as_bytes());
+            out.extend_from_slice(&s.len().to_le_bytes());
+        }
     }
 
     fn load_tree(&mut self, root: Ino, tsv: &str) {
@@ -3783,6 +3729,7 @@ mod proptests {
         let mut fs = Fs { next_handle: 1, ..Default::default() };
         let root = fs.add(Data::Dir(BTreeMap::new()), 0o755, 0);
         fs.mounts.push(("/".into(), root));
+        fs.base = fs.entries();
         (fs, root)
     }
 
@@ -3806,49 +3753,61 @@ mod proptests {
                 fs.put_file(&format!("/save/{p}"), data.clone(), *mtime);
                 want.insert(format!("/save/{p}"), (data.clone(), *mtime));
             }
+            let files_of = |b: &[u8]| -> Vec<(String, (Vec<u8>, i64))> {
+                saves::parse_records(b).into_iter().filter_map(|r| match r { saves::Record::File { path, data, mtime } => Some((path, (data, mtime))), _ => None }).collect()
+            };
             let mut out = Vec::new();
             fs.export("/save", &mut out);
-            let got: BTreeMap<String, (Vec<u8>, i64)> = parse_records(&out).into_iter().map(|(p, d, m)| (p, (d, m))).collect();
-            prop_assert_eq!(got.len(), parse_records(&out).len(), "a path exported twice");
-            prop_assert_eq!(out.len(), fs.export_size("/save"));
-            // the list names the same files with their sizes, and exporting just those paths
-            // gives the same records
+            let got: BTreeMap<String, (Vec<u8>, i64)> = files_of(&out).into_iter().collect();
+            prop_assert_eq!(got.len(), files_of(&out).len(), "a path exported twice");
+            prop_assert_eq!(&got, &want);
+            let saved = fs.saved(&["/save".to_owned()]);
+            prop_assert_eq!(out.len(), Fs::saved_size(&saved));
+            // the list names the same records (the files with their sizes), and exporting just
+            // those paths gives the same records
             let mut list = Vec::new();
-            fs.list("/save", &mut list);
+            fs.list(&["/save".to_owned()], &mut list);
             let listed = parse_list(&list);
-            prop_assert_eq!(listed.iter().map(|(p, n)| (p.clone(), *n)).collect::<BTreeMap<_, _>>(),
-                want.iter().map(|(p, (d, _))| (p.clone(), d.len() as u64)).collect::<BTreeMap<_, _>>());
+            let sizes: BTreeMap<String, u64> = listed.iter().filter(|(p, _)| want.contains_key(p)).map(|(p, n)| (p.clone(), *n)).collect();
+            prop_assert_eq!(sizes, want.iter().map(|(p, (d, _))| (p.clone(), d.len() as u64)).collect::<BTreeMap<_, _>>());
+            let paths: Vec<String> = listed.iter().map(|(p, _)| p.clone()).collect();
             let mut one = Vec::new();
-            for (p, _) in &listed {
-                fs.export(p, &mut one);
-            }
-            let again: BTreeMap<String, (Vec<u8>, i64)> = parse_records(&one).into_iter().map(|(p, d, m)| (p, (d, m))).collect();
-            prop_assert_eq!(again, want);
-            // a buffer of export_size bytes takes it all, and never more
+            Fs::write_saved(&fs.saved(&paths), &mut one);
+            prop_assert_eq!(&one, &out);
+            // a buffer of saved_size bytes takes it all, and never more
             let mut buf = vec![0u8; out.len()];
             let mut sink = Sink { p: buf.as_mut_ptr(), at: 0, cap: buf.len() };
-            fs.export_into("/save", &mut sink);
+            Fs::write_saved(&saved, &mut sink);
             prop_assert_eq!(sink.at, out.len());
             prop_assert_eq!(&buf, &out);
             let mut short = vec![0u8; out.len() / 2];
             let mut sink = Sink { p: short.as_mut_ptr(), at: 0, cap: short.len() };
-            fs.export_into("/save", &mut sink);
+            Fs::write_saved(&saved, &mut sink);
             prop_assert_eq!(sink.at, short.len());
             prop_assert_eq!(&short[..], &out[..short.len()]);
+            // and put back into the namespace as the store gave it, they make the same one
+            let (mut back, _) = mounted();
+            for r in saves::parse_records(&out) { back.put_back(r); }
+            let mut again = Vec::new();
+            back.export("/save", &mut again);
+            prop_assert_eq!(again, out);
         }
 
         /// A truncated or corrupt saves blob gives some of its files, never a panic.
         #[test]
         fn saves_blob_any_bytes(b in vec(any::<u8>(), 0..200), cut in any::<prop::sample::Index>()) {
-            let _ = parse_records(&b);
+            let _ = saves::parse_records(&b);
             let (mut fs, _) = mounted();
             fs.put_file("/s/a", b.clone(), 1);
             let mut out = Vec::new();
             fs.export("/s", &mut out);
+            // (the directory /s, then the file)
+            let all = saves::parse_records(&out).len();
+            prop_assert_eq!(all, 2);
             let n = cut.index(out.len() + 1);
-            let got = parse_records(&out[..n]);
-            prop_assert!(got.len() <= 1);
-            prop_assert_eq!(got.len() == 1, n == out.len());
+            let got = saves::parse_records(&out[..n]);
+            prop_assert!(got.len() <= all);
+            prop_assert_eq!(got.len() == all, n == out.len());
         }
 
         /// clean(): absolute, no "." / ".." / empty parts, and a fixed point.
@@ -3948,6 +3907,153 @@ mod proptests {
     /// MoveFile of a directory, RemoveDirectory of it, then a handle on its old parent closed:
     /// the parent was freed while still named (its links were not moved) and the next node
     /// took its inode (review b04).
+    /// The store's tree of the saves tests: files from the store in folders, an empty folder,
+    /// a link (chunks named by what they are: the saves carry their names, never their bytes).
+    fn saves_tree() -> String {
+        format!("{}\nd\t755\t1\ta\nf\t644\t2\ta/x\t5\t01010101010101010101010101010101:5\nf\t600\t3\ta/y\t3\t:3\nd\t755\t4\tb\nd\t700\t5\tb/c\nf\t644\t6\tb/z\t7\t02020202020202020202020202020202:7\nl\t777\t7\tb/l\t../a/x\n", crate::tree_list::Header { avg: 64 })
+    }
+
+    /// The namespace `tsv` gives, mounted at "/" and "/m", with its names as `base`.
+    fn store_tree(tsv: &str) -> Fs {
+        let mut fs = Fs { next_handle: 1, ..Default::default() };
+        let root = fs.add(Data::Dir(BTreeMap::new()), 0o755, 0);
+        let m = fs.add(Data::Dir(BTreeMap::new()), 0o755, 0);
+        fs.load_tree(root, tsv);
+        if let Some(Data::Dir(ch)) = fs.data_mut(root) {
+            ch.insert("m".into(), m);
+        }
+        if let Some(n) = fs.node_mut(root) {
+            n.nlink += 1;
+        }
+        fs.mounts.push(("/".into(), root));
+        fs.mounts.push(("/m".into(), m));
+        fs.base = fs.entries();
+        fs
+    }
+
+    /// What every name is, by path: what a namespace put back from the saves must be.
+    fn names(fs: &Fs) -> BTreeMap<String, String> {
+        let mut out = BTreeMap::new();
+        fs.each_under_for_tests("/", &mut |p, n| {
+            let what = match &n.data {
+                Data::Dir(_) => "dir".to_owned(),
+                Data::Link(t) => format!("link {t}"),
+                Data::File(Content::Lower { size, chunks, .. }) => format!("store {size} {chunks:?}"),
+                Data::File(Content::Upper(v)) => format!("memory {:?}", v.to_vec()),
+            };
+            out.insert(p.to_owned(), format!("{what} mode {:o} mtime {}", n.mode, n.mtime));
+        });
+        out
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(200))]
+        /// Whatever a game does to the store's files (deletes, renames over each other and into
+        /// folders, folders made and taken away, files written), the saves of "/" put back into
+        /// the store's tree make the namespace it left, name for name (review of 6852be1 §1: a
+        /// deleted or renamed store file came back).
+        #[test]
+        fn saves_put_back_what_was_deleted_and_renamed(ops in prop::collection::vec(save_op(), 1..30)) {
+            let _g = super::tests::TEST_FS.lock().unwrap_or_else(|e| e.into_inner());
+            *FS.lock().unwrap_or_else(|e| e.into_inner()) = Some(store_tree(&saves_tree()));
+            for o in &ops {
+                match o {
+                    SaveOp::Mkdir(p) => { let _ = mkdir_at(p); }
+                    SaveOp::Rmdir(p) => { let _ = remove_at(p, true); }
+                    SaveOp::Unlink(p) => { let _ = remove_at(p, false); }
+                    SaveOp::Rename(a, b) => { let _ = rename_at(a, b); }
+                    SaveOp::Write(p, d) => {
+                        if let At::Ours(Ok(h)) = open_handle(p, libc::O_CREAT | libc::O_WRONLY, 0o644) {
+                            let _ = h_write(h, d);
+                            release(h).unwrap();
+                        }
+                    }
+                }
+            }
+            let (left, blob) = look(|fs| {
+                let mut b = Vec::new();
+                fs.export("/", &mut b);
+                (names(fs), b)
+            });
+            let mut back = store_tree(&saves_tree());
+            for r in saves::parse_records(&blob) { back.put_back(r); }
+            prop_assert_eq!(names(&back), left, "{:?}", ops);
+            // (nothing changed: no records at all)
+            let fresh = store_tree(&saves_tree());
+            let mut none = Vec::new();
+            fresh.export("/", &mut none);
+            prop_assert!(none.is_empty());
+        }
+    }
+
+    #[derive(Clone, Debug)]
+    enum SaveOp {
+        Mkdir(String),
+        Rmdir(String),
+        Unlink(String),
+        Rename(String, String),
+        Write(String, Vec<u8>),
+    }
+
+    fn save_op() -> impl Strategy<Value = SaveOp> {
+        let path = || prop::collection::vec(prop::sample::select(vec!["a", "b", "c", "x", "y", "z", "l"]), 1..4).prop_map(|v| format!("/{}", v.join("/")));
+        prop_oneof![
+            1 => path().prop_map(SaveOp::Mkdir),
+            1 => path().prop_map(SaveOp::Rmdir),
+            2 => path().prop_map(SaveOp::Unlink),
+            3 => (path(), path()).prop_map(|(a, b)| SaveOp::Rename(a, b)),
+            1 => (path(), prop::collection::vec(any::<u8>(), 0..6)).prop_map(|(p, d)| SaveOp::Write(p, d)),
+        ]
+    }
+
+    /// Every kind of record, as kura writes them (testdata/saves/records.hex): the page's
+    /// reader (web/src/file-records.test.ts) reads the same bytes, record for record.
+    #[test]
+    fn saves_records_as_the_page_reads_them() {
+        let mut fs = store_tree(&saves_tree());
+        let root = fs.mount_at("/").unwrap();
+        let (a, b) = (fs.walk(root, "a").unwrap(), fs.walk(root, "b").unwrap());
+        fs.unlink_name(b, "z");
+        let x = fs.walk(root, "a/x").unwrap();
+        if let Some(Data::Dir(ch)) = fs.data_mut(a) { ch.remove("x"); }
+        if let Some(Data::Dir(ch)) = fs.data_mut(b) { ch.insert("x2".into(), x); }
+        let made = fs.mkdir_p(root, "new/dir");
+        for d in [fs.walk(root, "new").unwrap(), made] { if let Some(n) = fs.meta_mut(d) { n.mtime = 8; } }
+        fs.put_file("/b/c/save.dat", b"saved".to_vec(), 9);
+        let save = fs.walk(root, "b/c/save.dat").unwrap();
+        if let Some(n) = fs.meta_mut(save) { n.mode = 0o600; }
+        let mut blob = Vec::new();
+        fs.export("/", &mut blob);
+        let mut got = String::new();
+        for r in saves::parse_records(&blob) {
+            let kind = match &r { saves::Record::File { .. } => "file", saves::Record::Gone { .. } => "gone", saves::Record::Put { .. } => "put", saves::Record::Mode { .. } => "mode" };
+            got += &format!("{kind} {}\n", r.path());
+        }
+        let hex: String = blob.iter().map(|b| format!("{b:02x}")).collect();
+        got += &hex;
+        got += "\n";
+        kome::golden::check(concat!(env!("CARGO_MANIFEST_DIR"), "/../../testdata/saves/records.hex"), &got);
+    }
+
+    /// A newer tree at a name the saves took away: the newer file stays (a gone name takes away
+    /// only what the store had there), and an unchanged one goes.
+    #[test]
+    fn a_gone_name_takes_away_only_what_it_was() {
+        let mut fs = store_tree(&saves_tree());
+        let a = fs.walk(fs.mount_at("/").unwrap(), "a").unwrap();
+        let b = fs.walk(fs.mount_at("/").unwrap(), "b").unwrap();
+        fs.unlink_name(a, "x");
+        fs.unlink_name(b, "z");
+        let mut blob = Vec::new();
+        fs.export("/", &mut blob);
+        let newer = saves_tree().replace("01010101010101010101010101010101:5", "03030303030303030303030303030303:5");
+        let mut back = store_tree(&newer);
+        for r in saves::parse_records(&blob) { back.put_back(r); }
+        let root = back.mount_at("/").unwrap();
+        assert!(back.walk(root, "a/x").is_some(), "the newer a/x was taken away");
+        assert!(back.walk(root, "b/z").is_none(), "b/z came back");
+    }
+
     #[test]
     fn moved_directories_keep_their_parents() {
         let _g = fresh_tree();
@@ -4185,13 +4291,13 @@ mod proptests {
         for n in [u32::MAX, u32::MAX - 15, u32::MAX - 3, 0x8000_0000] {
             let mut b = n.to_le_bytes().to_vec();
             b.extend([0u8; 40]);
-            assert!(parse_records(&b).is_empty());
+            assert!(saves::parse_records(&b).is_empty());
         }
         let mut b = 1u32.to_le_bytes().to_vec();
         b.push(b'x');
         b.extend(0i64.to_le_bytes());
         b.extend((u32::MAX - 20).to_le_bytes());
         b.extend([0u8; 30]);
-        assert!(parse_records(&b).is_empty());
+        assert!(saves::parse_records(&b).is_empty());
     }
 }

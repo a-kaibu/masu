@@ -9652,6 +9652,22 @@ fn RtlFillMemory(c: &mut Ctx) -> u32 {
     mem::fill(c.a(0), c.a(1), kome::num::lo8(c.a(2)));
     0
 }
+/// RtlCompareMemory(a, b, length): how many bytes from the start are equal (all of length when
+/// none differs)
+fn RtlCompareMemory(c: &mut Ctx) -> u32 {
+    let n = c.a(2);
+    let (x, y) = (mem::bytes(c.a(0), n), mem::bytes(c.a(1), n));
+    let same = x.iter().zip(&y).take_while(|(p, q)| p == q).count();
+    u32::try_from(same).unwrap_or(n)
+}
+/// RtlCompareMemoryUlong(source, length, pattern): the bytes of the leading ULONGs equal to
+/// pattern; length is taken in whole ULONGs, its last 1-3 bytes never compared (Wine's ntdll
+/// tests, test_RtlCompareMemoryUlong: length 5 answers 4)
+fn RtlCompareMemoryUlong(c: &mut Ctx) -> u32 {
+    let (src, whole, pattern) = (c.a(0), c.a(1) & !3, c.a(2));
+    let same = (0..whole).step_by(4).take_while(|&o| mem::r32(src.wrapping_add(o)) == pattern).count();
+    u32::try_from(same).ok().and_then(|w| w.checked_mul(4)).unwrap_or(whole)
+}
 fn InitializeSListHead(c: &mut Ctx) -> u32 {
     mem::fill(c.a(0), if mem::x64() { 16 } else { 8 }, 0);
     0
@@ -10212,7 +10228,7 @@ pub fn init() {
     implement("ntdll", "RtlInitializeSListHead", InitializeSListHead);
     implement("ntdll", "RtlInterlockedPushListSList", InterlockedPushListSList);
     implement("ntdll", "RtlInterlockedPushListSListEx", InterlockedPushListSListEx);
-    reg!("ntdll"; RtlZeroMemory, RtlMoveMemory, RtlFillMemory, RtlAllocateHeap, RtlFreeHeap, RtlEnterCriticalSection,
+    reg!("ntdll"; RtlCompareMemory, RtlCompareMemoryUlong, RtlZeroMemory, RtlMoveMemory, RtlFillMemory, RtlAllocateHeap, RtlFreeHeap, RtlEnterCriticalSection,
         RtlLeaveCriticalSection, InitializeSRWLock, AcquireSRWLockExclusive, AcquireSRWLockShared,
         ReleaseSRWLockExclusive, ReleaseSRWLockShared, TryAcquireSRWLockExclusive, TryAcquireSRWLockShared,
         InitializeConditionVariable, SleepConditionVariableSRW, SleepConditionVariableCS, WakeConditionVariable,

@@ -1,0 +1,8 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc f0e8a343fb70ae51ce31c574a5211a0f5bde12ffe931587dfaa39c6932485ec7 # shrinks to ops = [Unlink("/a/x")]
+cc 65a948abbd4b95b4955e8de63ccf9cac845d660b0d4a58a43b53ae1dd371898f # shrinks to ops = [Rename("/a", "/c")]
