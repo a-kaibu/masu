@@ -160,6 +160,17 @@ fn fixture(r: Rule) -> Fixture {
             good: &[("crates/kura/src/d3d11/mod.rs", "fn options() {\n    for k in 0..10 {}\n    let s = dxwgsl::translate_logic(c, a, l);\n    let (o, k) = logic::targets(b, f, m, r);\n    let r = dxwgsl::sample_rate(c) && page_multisamples(p);\n    logic::split(&w, &copies, stash.as_ref(), topo, &cuts, flip);\n}\n")],
             mutate: ("crates/kura/src/d3d11/mod.rs", |t| Some(t.replace("for k in 0..10 {", "for k in 1..10 {"))),
         },
+        Rule::Review6852be1 => Fixture {
+            bad: &[
+                ("crates/kura/src/jit.rs", "static SHARED_BYTES: AtomicUsize = AtomicUsize::new(0);\n// struct SharedCache named in a comment, jit::TABLE_SLOTS too\n"),
+                ("crates/kura/src/vfs.rs", "fn with<R>(f: impl FnOnce(&mut Fs) -> R) -> R { f(fs) }\n"),
+            ],
+            good: &[
+                ("crates/kura/src/jit.rs", "struct SharedCache { map: M, bytes: usize }\nfn init() { vnvm_jit_init(p, n, jit::TABLE_SLOTS); }\n"),
+                ("crates/kura/src/vfs.rs", "fn change<R: Refused>(f: F) -> R { r }\nfn h_read() { x.allows(Use::Read, false)?; }\n"),
+            ],
+            mutate: ("crates/kura/src/vfs/shared.rs", |t| Some(t.replace("fs.undo();", "fs.undo = None;"))),
+        },
         Rule::D3d9Status => Fixture {
             bad: &[
                 ("crates/kura/src/d3d9/device.rs", "const D3DOK_NOAUTOGEN: u32 = 0x0876_087f;\n"),
@@ -748,6 +759,22 @@ fn bash_drops_an_assignment_to_groups() {
         assert_ne!(String::from_utf8_lossy(&o.stdout).trim(), "gdi");
     }
     assert_eq!(regress::special_sets("A=1\nGROUPS=2\n  export SECONDS=3 # x\n# RANDOM=4\nX_UID=5\n", false), vec![(2, "GROUPS".to_owned()), (3, "SECONDS".to_owned())]);
+}
+
+#[test]
+fn each_fix_of_the_review_of_6852be1_is_found_taken_back() {
+    let real = real_tree();
+    assert!(regress::review_6852be1(&real).is_empty(), "{:?}", regress::review_6852be1(&real));
+    for (file, needle, _) in regress::REVIEW_6852BE1_HAS {
+        let f = Rel::new(file);
+        let t = Tree::with(&real, &f, Some(real.text(&f).replace(needle, "")));
+        assert!(!regress::review_6852be1(&t).is_empty(), "{file}: {needle:?} taken away is not found");
+    }
+    for (file, needle, _) in regress::REVIEW_6852BE1_NOT {
+        let f = Rel::new(file);
+        let t = Tree::with(&real, &f, Some(format!("{}\nfn back() {{ {needle} }}\n", real.text(&f))));
+        assert!(!regress::review_6852be1(&t).is_empty(), "{file}: {needle:?} put back is not found");
+    }
 }
 
 #[test]

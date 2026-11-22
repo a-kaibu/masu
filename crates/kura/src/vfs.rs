@@ -16,6 +16,7 @@ pub mod trace;
 #[cfg(test)]
 mod replay;
 mod shared;
+mod undo;
 
 /// fuzz/fuzz_targets/vfs_journal.rs: processes sharing a namespace through the journal (vfs/shared/sim.rs).
 #[doc(hidden)]
@@ -26,6 +27,7 @@ pub fn fuzz_journal(data: &[u8]) {
 type Ino = u32;
 type Hash = [u8; 16];
 
+#[derive(Clone)]
 enum Content {
     /// From the store; `None` chunks are all zero.
     Lower { size: u64, chunks: Arc<Vec<Option<Hash>>>, starts: Arc<Vec<u64>> },
@@ -52,12 +54,14 @@ impl Layout {
     }
 }
 
+#[derive(Clone)]
 enum Data {
     Dir(BTreeMap<String, Ino>),
     File(Content),
     Link(String),
 }
 
+#[derive(Clone)]
 struct Node {
     data: Data,
     /// permission bits only
@@ -67,6 +71,7 @@ struct Node {
     open_refs: u32,
 }
 
+#[derive(Clone)]
 struct Handle {
     ino: Ino,
     pos: u64,
@@ -114,6 +119,8 @@ struct Fs {
     shared: shared::Synced,
     /// the nodes changed since it was last published there
     dirt: shared::Dirt,
+    /// what the operation under way changed, while the namespace is shared (vfs/undo.rs)
+    undo: Option<undo::Undo>,
 }
 
 static FS: Mutex<Option<Fs>> = Mutex::new(None);
@@ -261,7 +268,8 @@ impl Out for Vec<u8> {
     }
 }
 
-fn with<R>(f: impl FnOnce(&mut Fs) -> R) -> R {
+/// The file system, loaded the first time.
+fn loaded() -> std::sync::MutexGuard<'static, Option<Fs>> {
     let mut g = FS.lock().unwrap_or_else(|e| e.into_inner());
     if g.is_none() {
         // Loaded without the lock: loading may wait on the network (a tree list; a dropped
@@ -276,19 +284,62 @@ fn with<R>(f: impl FnOnce(&mut Fs) -> R) -> R {
         }
         g = FS.lock().unwrap_or_else(|e| e.into_inner());
     }
+    g
+}
+
+/// What an operation that changes the namespace answers when its change could not be published
+/// to the other processes and was taken back (vfs/undo.rs): ENOSPC, as a full disk. Only these
+/// results can carry it: an operation answering anything else is not a change ([`look`], [`local`]).
+trait Refused {
+    fn refused() -> Self;
+}
+impl<T> Refused for Result<T, c_int> {
+    fn refused() -> Self {
+        Err(libc::ENOSPC)
+    }
+}
+impl<T> Refused for At<T> {
+    fn refused() -> Self {
+        At::Ours(Err(libc::ENOSPC))
+    }
+}
+
+/// An operation that may change the namespace: done whole, published to the other processes
+/// sharing it, or not done at all (`R::refused()`).
+fn change<R: Refused>(f: impl FnOnce(&mut Fs) -> R) -> R {
+    let mut g = loaded();
     // (loaded above; gone again only if another thread took it away meanwhile: loaded here)
     let fs = g.get_or_insert_with(Fs::load);
     let shared = shared::Guard::enter(fs);
     let result = f(fs);
-    shared.publish(fs);
-    result
+    if shared.publish(fs) { result } else { R::refused() }
+}
+
+/// An operation that only reads the namespace (what the other processes changed, taken in).
+fn look<R>(f: impl FnOnce(&Fs) -> R) -> R {
+    let mut g = loaded();
+    let fs = g.get_or_insert_with(Fs::load);
+    let _shared = shared::Guard::enter(fs);
+    f(fs)
+}
+
+/// An operation that reads the namespace and changes this process's own handles (an offset, a
+/// handle closed here only): nothing the others share.
+fn local<R>(f: impl FnOnce(&Fs, &mut HashMap<u32, Handle>) -> R) -> R {
+    let mut g = loaded();
+    let fs = g.get_or_insert_with(Fs::load);
+    let _shared = shared::Guard::enter(fs);
+    let mut handles = std::mem::take(&mut fs.handles);
+    let r = f(fs, &mut handles);
+    fs.handles = handles;
+    r
 }
 
 /// Before the first child process starts: from here on the processes share one namespace
 /// (each with its own handles and offsets; vfs/shared.rs). A single process never pays for it.
 pub fn share() {
-    if shared::enable() {
-        with(|_| ());
+    if shared::enable() && let Err(e) = change(|_| Ok::<(), c_int>(())) {
+        eprintln!("kura: the file system did not fit the shared buffer (errno {e})");
     }
 }
 
@@ -617,8 +668,10 @@ impl Fs {
     fn add(&mut self, data: Data, mode: u32, mtime: i64) -> Ino {
         CHANGES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let n = Node { nlink: if matches!(data, Data::Dir(_)) { 2 } else { 1 }, data, mode, mtime, open_refs: 0 };
+        self.keep_free();
         let i = match self.free.pop() {
             Some(i) => {
+                self.keep_whole(i);
                 self.nodes[i as usize] = Some(n);
                 i
             }
@@ -636,6 +689,7 @@ impl Fs {
     }
     fn node_mut(&mut self, ino: Ino) -> Option<&mut Node> {
         CHANGES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        self.keep_whole(ino);
         self.dirt.whole(ino);
         self.nodes.get_mut(ino as usize)?.as_mut()
     }
@@ -643,16 +697,26 @@ impl Fs {
     /// changed go to `dirt.bytes`): the processes then share only that.
     fn meta_mut(&mut self, ino: Ino) -> Option<&mut Node> {
         CHANGES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        self.keep_meta(ino);
         self.dirt.meta(ino);
         self.nodes.get_mut(ino as usize)?.as_mut()
     }
     fn data_mut(&mut self, ino: Ino) -> Option<&mut Data> {
         Some(&mut self.node_mut(ino)?.data)
     }
-    /// What a node holds, for a change that says itself which bytes of a file in memory changed
-    /// (`dirt.bytes`) or that it changed only the size (write_at, set_size).
-    fn upper_mut(&mut self, ino: Ino) -> Option<&mut Data> {
+    /// A node whose count of open handles changes (an open, a close): the processes then share
+    /// only that.
+    fn refs_mut(&mut self, ino: Ino) -> Option<&mut Node> {
         CHANGES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        self.keep_meta(ino);
+        self.dirt.refs(ino);
+        self.nodes.get_mut(ino as usize)?.as_mut()
+    }
+    /// What a node holds, for a change of bytes `off..end` of a file in memory (or of its length
+    /// from `off`: `end` u64::MAX) that says itself which bytes changed (`dirt.bytes`).
+    fn upper_mut(&mut self, ino: Ino, off: u64, end: u64) -> Option<&mut Data> {
+        CHANGES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        self.keep_bytes(ino, off, end);
         Some(&mut self.nodes.get_mut(ino as usize)?.as_mut()?.data)
     }
 
@@ -735,10 +799,10 @@ impl Fs {
     fn new_handle(&mut self, ino: Ino, flags: c_int) -> u32 {
         let id = self.next_handle;
         self.next_handle += 1;
+        self.keep_handle(id);
         self.handles.insert(id, Handle { ino, pos: 0, flags });
-        if let Some(Some(n)) = self.nodes.get_mut(ino as usize) {
+        if self.node(ino).is_some() && let Some(n) = self.refs_mut(ino) {
             n.open_refs += 1;
-            self.dirt.refs(ino);
         }
         id
     }
@@ -770,7 +834,9 @@ impl Fs {
     fn gc(&mut self, ino: Ino) {
         let linked = self.node(ino).is_some_and(|n| n.nlink > 0 && !(matches!(n.data, Data::Dir(_)) && n.nlink < 2));
         if !linked && self.node(ino).is_none_or(|n| n.open_refs == 0) && let Some(slot @ Some(_)) = self.nodes.get_mut(ino as usize) {
-            *slot = None;
+            let n = slot.take();
+            self.keep_taken(ino, n);
+            self.keep_free();
             self.free.push(ino);
             self.dirt.whole(ino);
         }
@@ -1408,7 +1474,7 @@ fn hinted(ino: Ino, l: &Layout, chunks: &[Option<Hash>], i: usize, first: bool) 
     }
     if first && first_hint(ino, u32::MAX) {
         let dir = path.rsplit_once('/').map_or("/", |(d, _)| if d.is_empty() { "/" } else { d });
-        let near: Vec<Hash> = with(|fs| {
+        let near: Vec<Hash> = look(|fs| {
             let Ok(Found::Node { ino: d, .. }) = fs.resolve(dir, true) else { return Vec::new() };
             let Some(Data::Dir(ch)) = fs.node(d).map(|n| &n.data) else { return Vec::new() };
             let lower = |f: Ino| match fs.node(f).map(|n| &n.data) {
@@ -1446,7 +1512,7 @@ static BOOTED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::ne
 /// The chunks of the store's files every start of a game reads (hints::boot_chunks), not those
 /// on the device.
 fn booted() -> Vec<Hash> {
-    let files: Vec<(String, u64, std::sync::Arc<Vec<Option<Hash>>>, Vec<u64>)> = with(|fs| {
+    let files: Vec<(String, u64, std::sync::Arc<Vec<Option<Hash>>>, Vec<u64>)> = look(|fs| {
         let mut v = Vec::new();
         for n in fs.nodes.iter().flatten() {
             if let Data::Dir(ch) = &n.data {
@@ -1648,7 +1714,7 @@ fn predicted(ino: Ino, off: u64, len: u64) -> Vec<Hash> {
     };
     if !files {
         let mut names = HashMap::new();
-        with(|fs| {
+        look(|fs| {
             for n in fs.nodes.iter().flatten() {
                 if let Data::Dir(ch) = &n.data {
                     for (nm, &f) in ch {
@@ -1727,7 +1793,7 @@ fn predicted(ino: Ino, off: u64, len: u64) -> Vec<Hash> {
             if let Some(l) = from_table(&key) {
                 lists.push(l);
             } else if script {
-                let size = with(|fs| match fs.node(ino).map(|n| &n.data) {
+                let size = look(|fs| match fs.node(ino).map(|n| &n.data) {
                     Some(Data::File(Content::Lower { size, .. })) => *size,
                     _ => 0,
                 });
@@ -1754,7 +1820,7 @@ fn predicted(ino: Ino, off: u64, len: u64) -> Vec<Hash> {
         };
         for t in targets {
             // (its chunks, and its bytes: nothing past SIBLING_MAX, a voice or a picture)
-            let (hs, n): (Vec<Hash>, u64) = with(|fs| {
+            let (hs, n): (Vec<Hash>, u64) = look(|fs| {
                 let lower = |f: Ino| match fs.node(f).map(|n| &n.data) {
                     Some(Data::File(Content::Lower { size, chunks, starts })) => Some((Layout { size: *size, starts: starts.clone() }, chunks.clone())),
                     _ => None,
@@ -1843,7 +1909,7 @@ fn lookup(fs: &Fs, ino: Ino, buf: &mut [u8], off: u64) -> Result<Result<(Layout,
 
 /// Reads file content at `off` (the lock is not held while chunks are fetched).
 fn read_at(ino: Ino, buf: &mut [u8], off: u64) -> Result<usize, c_int> {
-    let lower = with(|fs| lookup(fs, ino, buf, off))?;
+    let lower = look(|fs| lookup(fs, ino, buf, off))?;
     read_lower(ino, buf, off, lower)
 }
 
@@ -1945,7 +2011,7 @@ const COPY_UP_NOTE: u64 = 16 << 20;
 /// Turns a file from the store into one in memory, before it is written: its first `keep`
 /// bytes (the rest is cut, as set_size does: truncating is not a copy of the whole).
 fn copy_up(ino: Ino, keep: u64) -> Result<(), c_int> {
-    let size = with(|fs| match fs.node(ino).map(|n| &n.data) {
+    let size = look(|fs| match fs.node(ino).map(|n| &n.data) {
         Some(Data::File(Content::Lower { size, .. })) => Some(*size),
         _ => None,
     });
@@ -1972,12 +2038,12 @@ fn copy_up(ino: Ino, keep: u64) -> Result<(), c_int> {
         at += n as u64;
     }
     v.set_len(size).map_err(|crate::pages::TooLong| libc::ENOSPC)?;
-    with(|fs| {
+    change(|fs| {
         if let Some(Data::File(c @ Content::Lower { .. })) = fs.data_mut(ino) {
             *c = Content::Upper(v);
         }
-    });
-    Ok(())
+        Ok(())
+    })
 }
 
 /// The most bytes a file in memory holds: what a Vec can (isize::MAX: 2 GiB less one on wasm32).
@@ -1992,19 +2058,19 @@ fn upper_end(off: u64, len: usize, max: usize) -> Result<usize, c_int> {
 
 fn write_at(ino: Ino, data: &[u8], off: u64) -> Result<usize, c_int> {
     copy_up(ino, u64::MAX)?;
-    with(|fs| fs.write_upper(ino, data, off))
+    change(|fs| fs.write_upper(ino, data, off))
 }
 
 fn set_size(ino: Ino, size: u64) -> Result<(), c_int> {
     copy_up(ino, size)?;
-    with(|fs| fs.set_upper_size(ino, size))
+    change(|fs| fs.set_upper_size(ino, size))
 }
 
 impl Fs {
     /// write_at to a file in memory
     fn write_upper(&mut self, ino: Ino, data: &[u8], off: u64) -> Result<usize, c_int> {
-        let Some(Data::File(Content::Upper(v))) = self.upper_mut(ino) else { return Err(libc::EBADF) };
         let end = upper_end(off, data.len(), UPPER_MAX)?;
+        let Some(Data::File(Content::Upper(v))) = self.upper_mut(ino, off, off.saturating_add(u64::try_from(data.len()).unwrap_or(u64::MAX))) else { return Err(libc::EBADF) };
         if data.is_empty() {
             // (as WriteFile and pwrite: nothing written, the file as it was)
             return Ok(0);
@@ -2020,9 +2086,10 @@ impl Fs {
     }
     /// set_size of a file in memory
     fn set_upper_size(&mut self, ino: Ino, size: u64) -> Result<(), c_int> {
-        match self.upper_mut(ino) {
+        let cut = size;
+        let size = upper_end(size, 0, UPPER_MAX)?;
+        match self.upper_mut(ino, cut, u64::MAX) {
             Some(Data::File(Content::Upper(v))) => {
-                let size = upper_end(size, 0, UPPER_MAX)?;
                 let old = v.len() as usize;
                 // (pages hold what was written: a SetEndOfFile far out costs nothing)
                 v.set_len(size as u64).map_err(|crate::pages::TooLong| libc::ENOSPC)?;
@@ -2090,8 +2157,8 @@ pub(crate) fn clean(p: &str) -> String {
 }
 
 /// What `p` resolves to, as `f` makes of it (a missing name: ENOENT).
-fn at<T>(p: &str, follow: bool, f: impl FnOnce(&mut Fs, Ino) -> Result<T, c_int>) -> At<T> {
-    with(|fs| match fs.resolve(p, follow) {
+fn at<T>(p: &str, follow: bool, f: impl FnOnce(&Fs, Ino) -> Result<T, c_int>) -> At<T> {
+    look(|fs| match fs.resolve(p, follow) {
         Err(e) => At::Ours(Err(e)),
         Ok(Found::Outside(p)) => At::Outside(p),
         Ok(Found::Missing { .. }) => At::Ours(Err(libc::ENOENT)),
@@ -2141,7 +2208,7 @@ fn same_nocase(k: &str, name: &str, lc: &str) -> bool {
 /// freed, maybe reused, inode.
 pub(crate) fn open_handle(p: &str, flags: c_int, mode: u32) -> At<u32> {
     let follow = flags & libc::O_NOFOLLOW == 0;
-    let opened = with(|fs| {
+    let opened = change(|fs| {
         let (ino, path) = match fs.resolve(p, follow) {
             Err(e) => return At::Ours(Err(e)),
             Ok(Found::Outside(p)) => return At::Outside(p),
@@ -2182,8 +2249,10 @@ pub(crate) fn open_handle(p: &str, flags: c_int, mode: u32) -> At<u32> {
     };
     // (truncating may copy from the store: outside the lock, the handle holds the node)
     if file && flags & libc::O_TRUNC != 0 && flags & libc::O_ACCMODE != libc::O_RDONLY && let Err(e) = set_size(ino, 0) {
-        release(h);
-        return At::Ours(Err(e));
+        // (closed whatever the answer; the error told is the truncate's)
+        match release(h) {
+            Ok(()) | Err(_) => return At::Ours(Err(e)),
+        }
     }
     if let (true, Some(path)) = (file, &path) {
         note_name(ino, path);
@@ -2191,16 +2260,25 @@ pub(crate) fn open_handle(p: &str, flags: c_int, mode: u32) -> At<u32> {
     At::Ours(Ok(h))
 }
 
-/// Closes a handle.
-pub(crate) fn release(h: u32) {
-    with(|fs| fs.close_handle(h))
+/// Closes a handle. It is closed whatever the answer, as close(2) and CloseHandle close it: when
+/// the close could not be published (ENOSPC) the file stays counted open, here and for the
+/// others alike, and goes with the namespace.
+pub(crate) fn release(h: u32) -> Result<(), c_int> {
+    let r = change(|fs| {
+        fs.close_handle(h);
+        Ok(())
+    });
+    if r.is_err() {
+        local(|_, hs| hs.remove(&h));
+    }
+    r
 }
 impl Fs {
     fn close_handle(&mut self, h: u32) {
+        self.keep_handle(h);
         if let Some(handle) = self.handles.remove(&h) {
-            if let Some(Some(n)) = self.nodes.get_mut(handle.ino as usize) {
+            if self.node(handle.ino).is_some() && let Some(n) = self.refs_mut(handle.ino) {
                 n.open_refs = n.open_refs.saturating_sub(1);
-                self.dirt.refs(handle.ino);
             }
             self.gc(handle.ino);
         }
@@ -2208,7 +2286,7 @@ impl Fs {
 }
 
 pub(crate) fn mkdir_at(p: &str) -> At<()> {
-    with(|fs| match fs.resolve(p, false) {
+    change(|fs| match fs.resolve(p, false) {
         Err(e) => At::Ours(Err(e)),
         Ok(Found::Outside(p)) => At::Outside(p),
         Ok(Found::Node { .. }) => At::Ours(Err(libc::EEXIST)),
@@ -2229,7 +2307,7 @@ pub(crate) fn mkdir_at(p: &str) -> At<()> {
 pub(crate) fn remove_at(p: &str, dir: bool) -> At<()> {
     let Some((parent_path, name)) = p.rsplit_once('/') else { return At::Ours(Err(libc::EINVAL)) };
     let parent_path = if parent_path.is_empty() { "/" } else { parent_path };
-    with(|fs| {
+    change(|fs| {
         let parent = match fs.resolve(parent_path, true) {
             Err(e) => return At::Ours(Err(e)),
             Ok(Found::Outside(_)) => return At::Outside(p.to_string()),
@@ -2262,7 +2340,7 @@ pub(crate) fn remove_at(p: &str, dir: bool) -> At<()> {
 
 /// Outside: both paths are (one inside and one outside: EXDEV).
 pub(crate) fn rename_at(a: &str, b: &str) -> At<()> {
-    with(|fs| {
+    change(|fs| {
         let src = fs.resolve(a, false);
         let dst = fs.resolve(b, false);
         let (src_ino, sp, sn) = match src {
@@ -2353,16 +2431,16 @@ pub(crate) fn rename_at(a: &str, b: &str) -> At<()> {
 // handles
 
 pub(crate) fn h_info(h: u32) -> Option<Info> {
-    with(|fs| fs.handles.get(&h).and_then(|x| fs.info(x.ino).ok()))
+    look(|fs| fs.handles.get(&h).and_then(|x| fs.info(x.ino).ok()))
 }
 
 fn handle(h: u32) -> Option<(Ino, u64, c_int)> {
-    with(|fs| fs.handles.get(&h).map(|x| (x.ino, x.pos, x.flags)))
+    look(|fs| fs.handles.get(&h).map(|x| (x.ino, x.pos, x.flags)))
 }
 
 /// Handle `h`'s inode, position and flags, when it was opened for `u` (`sizes`: a size change).
 fn handle_for(h: u32, u: Use, sizes: bool) -> Result<(Ino, u64, c_int), c_int> {
-    with(|fs| {
+    look(|fs| {
         let x = fs.handles.get(&h).ok_or(libc::EBADF)?;
         x.allows(u, sizes)?;
         Ok((x.ino, x.pos, x.flags))
@@ -2370,8 +2448,8 @@ fn handle_for(h: u32, u: Use, sizes: bool) -> Result<(Ino, u64, c_int), c_int> {
 }
 
 fn set_pos(h: u32, pos: u64) {
-    with(|fs| {
-        if let Some(x) = fs.handles.get_mut(&h) {
+    local(|_, hs| {
+        if let Some(x) = hs.get_mut(&h) {
             x.pos = pos;
         }
     })
@@ -2379,7 +2457,7 @@ fn set_pos(h: u32, pos: u64) {
 
 pub(crate) fn h_read(h: u32, buf: &mut [u8]) -> Result<usize, c_int> {
     // (the handle and its file's content in one lock)
-    let (ino, pos, lower) = with(|fs| {
+    let (ino, pos, lower) = look(|fs| {
         let x = fs.handles.get(&h).ok_or(libc::EBADF)?;
         let (ino, pos) = (x.ino, x.pos);
         x.allows(Use::Read, false)?;
@@ -2397,7 +2475,7 @@ pub(crate) fn h_read(h: u32, buf: &mut [u8]) -> Result<usize, c_int> {
 /// threads, without waiting for them (a movie's next seconds: kura::video).
 pub(crate) fn h_prefetch(h: u32, off: u64, len: u64) {
     let Some((ino, _, _)) = handle(h) else { return };
-    let want = with(|fs| match fs.node(ino).map(|n| &n.data) {
+    let want = look(|fs| match fs.node(ino).map(|n| &n.data) {
         Some(Data::File(Content::Lower { size, chunks, starts })) => {
             let l = Layout { size: *size, starts: starts.clone() };
             let end = off.saturating_add(len).min(l.size);
@@ -2412,15 +2490,15 @@ pub(crate) fn h_prefetch(h: u32, off: u64, len: u64) {
 
 pub(crate) fn h_write(h: u32, data: &[u8]) -> Result<usize, c_int> {
     let (ino, pos, flags) = handle_for(h, Use::Write, false)?;
-    let at = if flags & libc::O_APPEND != 0 { with(|fs| fs.file_size(ino)) } else { pos };
+    let at = if flags & libc::O_APPEND != 0 { look(|fs| fs.file_size(ino)) } else { pos };
     let n = write_at(ino, data, at)?;
     set_pos(h, at + n as u64);
     Ok(n)
 }
 
 pub(crate) fn h_seek(h: u32, off: i64, whence: c_int) -> Result<u64, c_int> {
-    with(|fs| {
-        let x = fs.handles.get(&h).ok_or(libc::EBADF)?;
+    local(|fs, hs| {
+        let x = hs.get(&h).ok_or(libc::EBADF)?;
         let base = match whence {
             libc::SEEK_SET => 0,
             libc::SEEK_CUR => x.pos as i64,
@@ -2431,7 +2509,7 @@ pub(crate) fn h_seek(h: u32, off: i64, whence: c_int) -> Result<u64, c_int> {
         if new < 0 {
             return Err(libc::EINVAL);
         }
-        fs.handles.get_mut(&h).ok_or(libc::EBADF)?.pos = new as u64;
+        hs.get_mut(&h).ok_or(libc::EBADF)?.pos = new as u64;
         Ok(new as u64)
     })
 }
@@ -3023,7 +3101,7 @@ pub(crate) mod tests {
             assert_eq!(&b2[..n2], &model[at..(at + b2.len()).min(model.len())]);
         }
         wait_fetchers();
-        release(fd);
+        release(fd).unwrap();
         *LAST_END.locked() = None;
     }
 
@@ -3100,7 +3178,7 @@ pub(crate) mod tests {
             println!("BENCH vfs {what}: {:.0} ns per read ({n} reads)", t.elapsed().as_nanos() as f64 / n as f64);
         }
         wait();
-        release(fd);
+        release(fd).unwrap();
         *LAST_END.locked() = None;
     }
 
@@ -3142,7 +3220,7 @@ pub(crate) mod tests {
             let ino = handle(fd).unwrap().0;
             let mut b = [0u8; 8];
             assert_eq!(read_at(ino, &mut b, off), Ok(8));
-            release(fd);
+            release(fd).unwrap();
             std::mem::take(&mut *HINTS.locked())
         };
         // (a voice: the next voices of its folder (all of them here), not itself nor those before it)
@@ -3193,7 +3271,7 @@ pub(crate) mod tests {
             let ino = handle(fd).unwrap().0;
             let mut b = [0u8; 8];
             assert_eq!(read_at(ino, &mut b, off), Ok(8));
-            release(fd);
+            release(fd).unwrap();
             std::mem::take(&mut *HINTS.locked())
         };
         let got = read("/game.exe", 0);
@@ -3268,7 +3346,7 @@ pub(crate) mod tests {
         let ino = |p: &str| {
             let At::Ours(Ok(fd)) = open_handle(p, libc::O_RDONLY, 0) else { panic!("open {p}") };
             let i = handle(fd).unwrap().0;
-            release(fd);
+            release(fd).unwrap();
             i
         };
         let (data, scene) = (ino("/data.xp3"), ino("/scene.ks"));
@@ -3340,7 +3418,7 @@ pub(crate) mod tests {
         *PREDICT.locked() = None;
         let At::Ours(Ok(fd)) = open_handle("/data.xp3", libc::O_RDONLY, 0) else { panic!("open") };
         let data = handle(fd).unwrap().0;
-        release(fd);
+        release(fd).unwrap();
         let at = predict::xp3_index_at(&arc).unwrap() as usize;
         let ms = predict::xp3_index(&predict::xp3_index_bytes(&arc[at..]).unwrap());
         let (first, png) = (ms[0].segments[0], |k: usize| ms[2 + k].segments[0].0 as usize / 64);
@@ -3417,7 +3495,7 @@ pub(crate) mod tests {
         let ino = |p: &str| {
             let At::Ours(Ok(fd)) = open_handle(p, libc::O_RDONLY, 0) else { panic!("open {p}") };
             let i = handle(fd).unwrap().0;
-            release(fd);
+            release(fd).unwrap();
             i
         };
         let (data, v1) = (ino("/data01000.arc"), ino("/v001.ogg"));
@@ -3499,7 +3577,7 @@ pub(crate) mod tests {
             let ino = handle(fd).unwrap().0;
             let mut b = vec![0u8; n];
             assert_eq!(read_at(ino, &mut b, off), Ok(n));
-            release(fd);
+            release(fd).unwrap();
             ino
         };
         let v1 = read("/voice/v001.ogg", 40, 16);
@@ -3623,9 +3701,10 @@ pub(crate) mod tests {
     /// as it was; reads past the end of a file in memory read nothing, whatever the offset.
     #[test]
     fn upper_file_too_big_is_an_error() {
-        // (a file with no name: the tests share one file system)
-        let ino = with(|fs| fs.add(Data::File(Content::Upper(crate::pages::Pages::from_slice(b"abc"))), 0o644, 0));
-        let size = |ino| with(|fs| fs.file_size(ino));
+        // (a file with no name, in a file system no other test replaces meanwhile)
+        let _fs = host_files();
+        let ino = change(|fs| Ok::<_, c_int>(fs.add(Data::File(Content::Upper(crate::pages::Pages::from_slice(b"abc"))), 0o644, 0))).unwrap();
+        let size = |ino| look(|fs| fs.file_size(ino));
         // (more than any allocator has: not the whole address space zeroed first)
         let far = isize::MAX as u64 - 8;
         assert_eq!(write_at(ino, b"x", far), Err(libc::ENOSPC));
@@ -3838,7 +3917,7 @@ mod proptests {
     /// name leads to a live node, no node has two names, and every live node is named (or
     /// open, or a mount's root): no leak, no name reaching a freed or reused inode.
     fn tree_holds() -> Result<(), String> {
-        with(|fs| {
+        look(|fs| {
             let roots: Vec<Ino> = fs.mounts.iter().map(|m| m.1).collect();
             let mut seen = std::collections::HashSet::new();
             let mut stack = vec![(roots[0], "/".to_string())];
@@ -3878,7 +3957,7 @@ mod proptests {
         assert!(matches!(rename_at("/tmp/d", "/b/d"), At::Ours(Ok(()))));
         assert!(matches!(remove_at("/b/d", true), At::Ours(Ok(()))));
         let At::Ours(Ok(h)) = open_handle("/b", libc::O_RDONLY, 0) else { panic!() };
-        release(h);
+        release(h).unwrap();
         tree_holds().unwrap();
         assert!(matches!(mkdir_at("/c"), At::Ours(Ok(()))));
         assert!(matches!(info_at("/b", true), At::Ours(Ok(i)) if i.dir));
@@ -3890,7 +3969,7 @@ mod proptests {
         assert!(matches!(rename_at("/c", "/m"), At::Ours(Err(libc::EBUSY))));
         // (a file onto a directory, a directory onto a file)
         let At::Ours(Ok(h)) = open_handle("/f", libc::O_CREAT | libc::O_RDWR, 0o644) else { panic!() };
-        release(h);
+        release(h).unwrap();
         assert!(matches!(rename_at("/f", "/c"), At::Ours(Err(libc::EISDIR))));
         assert!(matches!(rename_at("/c", "/f"), At::Ours(Err(libc::ENOTDIR))));
         tree_holds().unwrap();
@@ -3912,7 +3991,7 @@ mod proptests {
                 let At::Ours(Ok(h0)) = open_handle("/m/f", libc::O_CREAT | libc::O_RDWR, 0o644) else { panic!() };
                 h_set_len(h0, 0).unwrap();
                 h_write(h0, b"0123456789").unwrap();
-                release(h0);
+                release(h0).unwrap();
                 let path = std::ffi::CString::new(host.to_str().unwrap()).unwrap();
                 // SAFETY: a path and buffers of their own lengths
                 let theirs = unsafe {
@@ -3934,7 +4013,7 @@ mod proptests {
                     1 => h_write(h, b"ab").is_ok(),
                     _ => h_set_len(h, 3).is_ok(),
                 };
-                release(h);
+                release(h).unwrap();
                 assert_eq!(ours, theirs, "mode {k}, op {op}");
                 // (and what a refused one leaves: the file as it was)
                 let ours_len = info_at("/m/f", true).ok().map(|i| i.len);
@@ -3967,7 +4046,7 @@ mod proptests {
             });
             let inos: std::collections::HashSet<Ino> = hs.iter().map(|&h| h_info(h).unwrap().ino).collect();
             assert_eq!(inos.len(), 1, "round {round}: {} nodes", inos.len());
-            hs.iter().for_each(|&h| release(h));
+            hs.iter().for_each(|&h| release(h).unwrap());
         }
         tree_holds().unwrap();
     }
@@ -4038,7 +4117,7 @@ mod proptests {
                             let w = is_dir(&m, &parent(p)) && m.get(p) != Some(&true);
                             if w { m.insert(p.clone(), false); }
                             let h = open_handle(p, libc::O_CREAT | libc::O_RDWR, 0o644).ok();
-                            if let Some(h) = h { release(h); }
+                            if let Some(h) = h { release(h).unwrap(); }
                             (w, h.is_some())
                         }
                         Op::Unlink(p) => {
@@ -4075,7 +4154,7 @@ mod proptests {
                             (w, h.is_some())
                         }
                         Op::Drop(i) => {
-                            if *i < held.len() { release(held.remove(*i)); }
+                            if *i < held.len() { release(held.remove(*i)).unwrap(); }
                             (true, true)
                         }
                     };
@@ -4093,7 +4172,7 @@ mod proptests {
                     }
                     prop_assert_eq!(&names, &m, "after {:?}", o);
                 }
-                held.into_iter().for_each(release);
+                held.into_iter().for_each(|h| release(h).unwrap());
                 if let Err(e) = tree_holds() { prop_assert!(false, "at the end: {}", e); }
             }
         }
