@@ -15,6 +15,26 @@ CheckDeviceFormat D3DUSAGE_AUTOGENMIPMAP (texture; dynamic too)
   A16B16G16R16F 0 0 cube 0
   R32F 0 0 cube 0
   D16 0x8876086a 0x8876086a cube 0x8876086a
+  A8B8G8R8 0 0 cube 0
+  X8B8G8R8 0x8876086a 0x8876086a cube 0x8876086a
+  X1R5G5B5 0 0 cube 0
+  A1R5G5B5 0 0 cube 0
+  A4R4G4B4 0 0 cube 0
+  A2R10G10B10 0 0 cube 0
+  A2B10G10R10 0 0 cube 0
+  G16R16 0 0 cube 0
+  A16B16G16R16 0 0 cube 0
+  L16 0 0 cube 0
+  R16F 0 0 cube 0
+  G16R16F 0 0 cube 0
+  G32R32F 0 0 cube 0
+  A32B32G32R32F 0 0 cube 0
+  Q8W8V8U8 0x876086f 0x876086f cube 0x876086f
+  V16U16 0x876086f 0x876086f cube 0x876086f
+  A4L4 0x8876086a 0x8876086a cube 0x8876086a
+  P8 0x876086f 0x876086f cube 0x876086f
+  DXT5 0x876086f 0x876086f cube 0x876086f
+  D24S8 0x8876086a 0x8876086a cube 0x8876086a
 CreateTexture D3DUSAGE_AUTOGENMIPMAP (levels, pool): hr, GetLevelCount, filter Get / Set(NONE) / Set(POINT) / Get
   levels 0 pool DEFAULT format 21: 0 levels 1 filter 2 0x8876086c 0 1
   levels 1 pool DEFAULT format 21: 0 levels 1 filter 2 0x8876086c 0 1

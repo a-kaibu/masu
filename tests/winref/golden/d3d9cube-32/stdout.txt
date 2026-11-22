@@ -34,9 +34,9 @@ face 5 level 1 SetRenderTarget 0 viewport 4x4 Clear 0
   face 3 level 1 GetRenderTargetData 0 ff00ff70 ff808010 ff00ff70 ff808010
   face 4 level 1 GetRenderTargetData 0 ff00ff90 ff008090 ff00ff90 ff008090
   face 5 level 1 GetRenderTargetData 0 ff00ffb0 ff800090 ff00ffb0 ff800090
-ColorFill 0
-StretchRect 0
-  face 2 level 0 GetRenderTargetData 0x88760868
+ColorFill 0 TestCooperativeLevel 0
+  face 2 level 0 GetRenderTargetData 0 ff00ff40 ff000080 ff123456 ff123456
+StretchRect 0 TestCooperativeLevel 0x88760869
   face 5 level 0 GetRenderTargetData 0x88760868
 sampled bad0bad0 bad0bad0 bad0bad0 bad0bad0 bad0bad0 bad0bad0
 depth cube 0x8876086c
