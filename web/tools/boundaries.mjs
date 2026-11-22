@@ -5,9 +5,15 @@ import { pathToFileURL } from "node:url";
 /** @type {[string, string, string[]][]} */
 const rules = [
   // (this browser's copy is written by a held local lock's write only)
-  ["saves.ts", "localWrite", ["persist", "loadSaves"]],
-  // (the older format's files: taken over once, never written as this format's; review e18bf44)
-  ["saves.ts", "legacyFiles", ["takeOver"]],
+  ["saves.ts", "localWrite", ["persist", "loadSaves", "readCurrent"]],
+  // (the older format's files: read to take them over, marked sent, never written as this
+  // format's; review e18bf44, b5dacf4 1.4)
+  ["saves.ts", "legacyFiles", ["legacyRecord", "legacyBlob", "legacySent"]],
+  // (a record is read only where the decision it feeds is made, in the same hold: a failed
+  // write's record read again in a later hold was another tab's newer one; review b5dacf4 1.2)
+  ["saves.ts", "readSync", ["persist", "acknowledge", "readCurrent"]],
+  // (a record is settled by the upload that sent its bytes only)
+  ["saves.ts", "acknowledge", ["upload", "keepSaving"]],
   ["wasmsource.ts", "sakeWasmBytes", ["runtimeWasm"]],
   // (a save state's index and bodies change under the game's lock only: SnapshotStore's two
   // ways in; review 22bb061 §2, two tabs' saves removing each other's bodies)

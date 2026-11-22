@@ -20,7 +20,7 @@ let stopPlay: (() => void) | undefined;
 //   &warm=0                         don't fetch the rest of the game's files onto the device while it plays (warm.ts)
 
 import { chunkCacheMb } from "./chunkcache";
-import { keepSaving, loadSaves, type SavesModule } from "./saves";
+import { keepSaving, loadSaves, movedSaves, type LoadOutcome, type SavesModule } from "./saves";
 import { memGate } from "./memgate";
 import { startWebGame } from "./html";
 import { argsText, hasRun, missingFeature, readPlan, SAKE_NEEDS, sakeArguments } from "./launch-plan";
@@ -251,12 +251,14 @@ async function loadSavesOrOld(
   name: string,
   old: string | null,
   notice: (m: string) => void,
-): Promise<Uint8Array | null> {
+): Promise<LoadOutcome> {
   const saves = await loadSaves(name, notice);
-  if (saves?.length || !old) return saves;
-  const moved = renameRecords(await loadSaves(old, notice));
-  if (moved?.length) log(`以前のセーブを引き継ぎました (${old})`);
-  return moved ?? saves;
+  if (saves.data?.length || !old) return saves;
+  const moved = renameRecords((await loadSaves(old, notice)).data);
+  if (!moved) return saves;
+  if (moved.length) log(`以前のセーブを引き継ぎました (${old})`);
+  // (written under this name by the keeper: neither side of it holds them yet)
+  return movedSaves(moved);
 }
 
 /** The guest's lines shown in the console (all of them reach the crash log); &alllines: every
@@ -408,15 +410,11 @@ async function boot(audio: Promise<AudioOut>): Promise<void> {
   );
   const saveRoots = [...mounts.map((m) => m.slice(0, m.indexOf("="))), "/masu/prefix/drive_c/users"];
   const { files: installation, registry: legacyRegistry } = await loadInstallation();
-  const saved = nosave
+  // (what each side holds goes to the keeper: the bytes below are what the game starts from)
+  const savesLoaded = nosave
     ? null
-    : withRegistry(
-        selectRecords(
-          await loadSavesOrOld(saveName, oldSaves, (m) => (log(m), toast.warning(m))),
-          portablePath,
-        ),
-        legacyRegistry,
-      );
+    : await loadSavesOrOld(saveName, oldSaves, (m) => (log(m), toast.warning(m)));
+  const saved = savesLoaded && withRegistry(selectRecords(savesLoaded.data, portablePath), legacyRegistry);
   let stateMem: WebAssembly.Memory | undefined;
   // sake.wasm got its 4 GB and still did not start (runtime.ts growRetry): again on sake-grow
   let started = false;
@@ -756,9 +754,15 @@ async function boot(audio: Promise<AudioOut>): Promise<void> {
   recorder.attach(sake);
   if (!nosave) {
     // (the game quits: the upload tried now, even in the pause after a failed one)
-    const save = keepSaving(sake as unknown as SavesModule, saveName, saveRoots, saved, {
-      notice: (m) => (log(m), toast.warning(m, { duration: 15_000 })),
-    });
+    const save = keepSaving(
+      sake as unknown as SavesModule,
+      saveName,
+      saveRoots,
+      savesLoaded ?? movedSaves(null),
+      {
+        notice: (m) => (log(m), toast.warning(m, { duration: 15_000 })),
+      },
+    );
     saveNow = () => save(true);
   }
   // for tests/play.mjs (headless Chromium can't present WebGPU canvases)

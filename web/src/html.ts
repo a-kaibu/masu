@@ -15,7 +15,7 @@ import type { GivePort } from "./gameport";
 import type { TreeWorkerAsk } from "./tree-worker";
 import type { TreeReader } from "./treeread";
 import { openTree } from "./treesource";
-import { loadSaves, storeSaves } from "./saves";
+import { loadSaves, movedSaves, settled, storeSaves } from "./saves";
 import { SAVE_SOON_MS, SaveItems } from "./webstore";
 
 /** The program's tree and folder in it, from &run and the &mount that holds it. */
@@ -151,8 +151,11 @@ export async function startWebGame(
   const saves = new SaveItems();
   const items = saves.map;
   // (none yet: those of before the rename, Z:\vnvm, if any; the next save goes under the new name)
-  let saved = saveName ? await loadSaves(`${saveName}-web`) : null;
-  if (saveName && !saved?.length && oldSaves) saved = await loadSaves(`${oldSaves}-web`);
+  let loaded = saveName ? await loadSaves(`${saveName}-web`) : null;
+  // (the older name's: written under the new one by the first save, as neither side holds them)
+  if (saveName && !loaded?.data?.length && oldSaves)
+    loaded = movedSaves((await loadSaves(`${oldSaves}-web`)).data);
+  const saved = loaded?.data;
   if (saved?.length) {
     try {
       for (const [k, v] of Object.entries(
@@ -163,7 +166,9 @@ export async function startWebGame(
       console.warn("saves:", e);
     }
   }
-  let generation = 0;
+  // (a side the start could not write (or the older name's saves): stored with the first save,
+  // not taken for done; review b5dacf4 1.3)
+  let generation = loaded && saved?.length && !settled(loaded) ? 1 : 0;
   let savedGeneration = 0;
   let pending: Promise<void> | undefined;
   const save = (): Promise<void> => {

@@ -3320,8 +3320,8 @@ unsafe fn context_call2(d: &mut D11, st: &mut State, m: u32, a: &dyn Fn(usize) -
         18 => {
             // IASetVertexBuffers(start, n, buffers, strides, offsets)
             for i in 0..a(2) {
-                let s = us(a(1) + i);
-                if s >= 32 {
+                let s = us(a(1).saturating_add(i));
+                if s >= st.vbs.len() {
                     break;
                 }
                 let new = if a(3) == 0 { 0 } else { d.id_of(rdp(a(3), us(i))) };
@@ -3392,12 +3392,13 @@ unsafe fn context_call2(d: &mut D11, st: &mut State, m: u32, a: &dyn Fn(usize) -
                     set_slots(d, &mut u, 0, 8, 0);
                     st.uavs[0] = u;
                 }
-                hazards::after_outputs(d, st);
                 // the viewport follows the first target when the game never set one
                 if st.viewport[0][2] == 0.0 && let Some((w, h)) = view_size(d, st.rtvs[0]).or_else(|| view_size(d, st.dsv)) {
                     st.viewport[0] = [0.0, 0.0, w as f32, h as f32, 0.0, 1.0];
                 }
             }
+            // (KEEP render targets with new UAVs is an output change too)
+            hazards::after_outputs(d, st);
         }
         35 => {
             set_one(d, &mut st.blend, a(1));
@@ -3520,7 +3521,7 @@ unsafe fn context_call2(d: &mut D11, st: &mut State, m: u32, a: &dyn Fn(usize) -
                     expand::set_fill(d, buf, off);
                 }
             }
-            hazards::after_buffers(d, st);
+            hazards::after_outputs(d, st);
         }
         // ClearUnorderedAccessViewUint(view, values[4]), ClearUnorderedAccessViewFloat(view,
         // values[4]): the whole view

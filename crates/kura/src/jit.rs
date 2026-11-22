@@ -373,7 +373,8 @@ const MAX_BLOCKS: usize = 1024;
 
 #[cfg(target_os = "emscripten")]
 unsafe extern "C" {
-    fn vnvm_jit_init(ptr: *const u8, len: usize);
+    /// `slots`: koji::jit::TABLE_SLOTS, the table's bound
+    fn vnvm_jit_init(ptr: *const u8, len: usize, slots: u32);
     fn vnvm_jit_load(ptr: *const u8, len: usize, n: u32) -> i32;
     fn vnvm_jit_free(base: u32, n: u32);
     // JavaScript forwards this address to generated Wasm; it does not use Cpu's Rust layout.
@@ -563,59 +564,84 @@ const SHARED_MAX: usize = 48 << 20;
 /// Builds of one key kept (regions and functions of code that keeps changing: Mono, packers).
 const SHARED_PER_KEY: usize = 4;
 
-/// SHARED's size in bytes ([`Shared::size`]), kept as entries come and go.
-static SHARED_BYTES: AtomicUsize = AtomicUsize::new(0);
+/// The shared builds by their roots, and their size in bytes ([`Shared::size`] summed): one
+/// value under SHARED's one lock, changed only by these methods, so the count always is what
+/// the map holds (it was an atomic beside the map: a clear that let go of the map before
+/// zeroing the count lost the size of a build pushed between the two, review of 6852be1).
+#[derive(Default)]
+struct SharedCache {
+    map: HashMap<Vec<u32>, Vec<Arc<Shared>>>,
+    bytes: usize,
+}
 
-/// Adds `r` to SHARED under `key`: an older build of the same code (the same bytes) goes, so
-/// do the oldest builds past SHARED_PER_KEY, and the oldest of all past SHARED_MAX.
-fn share_push(key: Vec<u32>, r: Arc<Shared>) {
-    let mut g = SHARED.locked();
-    let map = g.get_or_insert_with(HashMap::new);
-    let list = map.entry(key).or_default();
-    let mut freed = 0;
-    list.retain(|o| {
-        let keep = !(o.exact == r.exact && o.build < r.build && o.text == r.text);
-        if !keep {
-            freed += o.size();
-        }
-        keep
-    });
-    let added = r.size();
-    list.push(r);
-    while list.len() > SHARED_PER_KEY {
-        freed += list.remove(0).size();
+impl SharedCache {
+    fn bytes(&self) -> usize {
+        self.bytes
     }
-    let total = SHARED_BYTES.fetch_add(added, Ordering::Relaxed) + added - freed;
-    SHARED_BYTES.fetch_sub(freed, Ordering::Relaxed);
-    if total <= SHARED_MAX {
-        return;
+
+    fn get(&self, roots: &[u32]) -> Option<&Vec<Arc<Shared>>> {
+        self.map.get(roots)
     }
-    // the oldest (down to 3/4: not again at the next build)
-    let mut all: Vec<(u64, usize)> = map.values().flatten().map(|s| (s.seq, s.size())).collect();
-    all.sort_unstable();
-    let mut over = total - SHARED_MAX * 3 / 4;
-    let mut cut = 0;
-    for &(seq, n) in &all {
-        if over == 0 {
-            break;
-        }
-        cut = seq + 1;
-        over = over.saturating_sub(n);
+
+    fn iter(&self) -> impl Iterator<Item = (&Vec<u32>, &Vec<Arc<Shared>>)> {
+        self.map.iter()
     }
-    let mut gone = (0, 0);
-    map.values_mut().for_each(|l| {
-        l.retain(|s| {
-            let keep = s.seq >= cut;
+
+    /// Adds `r` under `key`: an older build of the same code (the same bytes) goes, so do the
+    /// oldest builds past SHARED_PER_KEY, and the oldest of all past SHARED_MAX. The builds
+    /// dropped past SHARED_MAX: (how many, bytes).
+    fn push(&mut self, key: Vec<u32>, r: Arc<Shared>) -> (usize, usize) {
+        let list = self.map.entry(key).or_default();
+        let mut freed = 0;
+        list.retain(|o| {
+            let keep = !(o.exact == r.exact && o.build < r.build && o.text == r.text);
             if !keep {
-                gone.0 += 1;
-                gone.1 += s.size();
+                freed += o.size();
             }
             keep
-        })
-    });
-    map.retain(|_, l| !l.is_empty());
-    SHARED_BYTES.fetch_sub(gone.1, Ordering::Relaxed);
-    if stats() {
+        });
+        let added = r.size();
+        list.push(r);
+        while list.len() > SHARED_PER_KEY {
+            freed += list.remove(0).size();
+        }
+        self.bytes = self.bytes + added - freed;
+        if self.bytes <= SHARED_MAX {
+            return (0, 0);
+        }
+        // the oldest (down to 3/4: not again at the next build)
+        let mut all: Vec<(u64, usize)> = self.map.values().flatten().map(|s| (s.seq, s.size())).collect();
+        all.sort_unstable();
+        let mut over = self.bytes - SHARED_MAX * 3 / 4;
+        let mut cut = 0;
+        for &(seq, n) in &all {
+            if over == 0 {
+                break;
+            }
+            cut = seq + 1;
+            over = over.saturating_sub(n);
+        }
+        let mut gone = (0, 0);
+        self.map.values_mut().for_each(|l| {
+            l.retain(|s| {
+                let keep = s.seq >= cut;
+                if !keep {
+                    gone.0 += 1;
+                    gone.1 += s.size();
+                }
+                keep
+            })
+        });
+        self.map.retain(|_, l| !l.is_empty());
+        self.bytes -= gone.1;
+        gone
+    }
+}
+
+/// Adds `r` to SHARED under `key` ([`SharedCache::push`]).
+fn share_push(key: Vec<u32>, r: Arc<Shared>) {
+    let gone = SHARED.locked().get_or_insert_with(SharedCache::default).push(key, r);
+    if gone.0 != 0 && stats() {
         eprintln!("vnjit: {} shared builds dropped ({} KiB; over {} MiB)", gone.0, gone.1 >> 10, SHARED_MAX >> 20);
     }
 }
@@ -627,7 +653,7 @@ fn share_seq() -> u64 {
 }
 
 /// Shared regions by their roots.
-static SHARED: Mutex<Option<HashMap<Vec<u32>, Vec<Arc<Shared>>>>> = Mutex::new(None);
+static SHARED: Mutex<Option<SharedCache>> = Mutex::new(None);
 
 /// What the translations hold (MASU_JIT_COUNT prints it, jit_modules): modules loaded (each
 /// thread's own), their bytes, the highest table index they took (all threads), modules freed
@@ -666,7 +692,7 @@ fn loaded(base: i32, n: u32, bytes: usize) -> i32 {
 fn shared_size() -> (usize, usize) {
     let g = SHARED.locked();
     let Some(m) = g.as_ref() else { return (0, 0) };
-    m.values().flatten().fold((0, 0), |(n, b), r| (n + 1, b + r.size()))
+    (m.map.values().map(Vec::len).sum(), m.bytes())
 }
 
 fn code_bytes(mem: &mut Linear, code: &[(u32, u32)]) -> Option<Vec<u8>> {
@@ -867,7 +893,6 @@ fn drop_translations() {
     }
     CODE_RANGES.locked().clear();
     *SHARED.locked() = None;
-    SHARED_BYTES.store(0, Ordering::Relaxed);
     changed(0, u32::MAX);
 }
 
@@ -1050,7 +1075,7 @@ fn with_state<R>(f: impl FnOnce(&mut State) -> R) -> R {
             let d = jit::dispatch::module();
             #[cfg(target_os = "emscripten")]
             unsafe {
-                vnvm_jit_init(d.as_ptr(), d.len())
+                vnvm_jit_init(d.as_ptr(), d.len(), jit::TABLE_SLOTS)
             };
             let _ = d;
             // (the compiler thread started now, at a thread's first use of the JIT, not with the
@@ -4213,22 +4238,54 @@ mod invalidate_tests {
         // a newer build of the same code takes the older one's place
         share_push(key.clone(), mk(1, 1, 10));
         share_push(key.clone(), mk(1, 2, 10));
-        let l = SHARED.locked().as_ref().unwrap()[&key].clone();
+        let l = SHARED.locked().as_ref().unwrap().map[&key].clone();
         assert_eq!(l.iter().map(|s| s.build).collect::<Vec<_>>(), vec![2]);
         // other code (rewritten) is kept beside it, up to SHARED_PER_KEY builds
         for t in 2..10 {
             share_push(key.clone(), mk(t, 1, 10));
         }
-        assert_eq!(SHARED.locked().as_ref().unwrap()[&key].len(), SHARED_PER_KEY);
+        assert_eq!(SHARED.locked().as_ref().unwrap().map[&key].len(), SHARED_PER_KEY);
         // the oldest go past SHARED_MAX
         for i in 0..20u32 {
             share_push(vec![0xbeef_0000 + i], mk(0, 1, 4 << 20));
         }
-        assert!(SHARED_BYTES.load(Ordering::Relaxed) <= SHARED_MAX);
-        let total: usize = SHARED.locked().as_ref().unwrap().values().flatten().map(|s| s.size()).sum();
-        assert_eq!(total, SHARED_BYTES.load(Ordering::Relaxed));
-        assert!(SHARED.locked().as_ref().unwrap().contains_key(&vec![0xbeef_0000 + 19]), "the newest stays");
-        assert!(!SHARED.locked().as_ref().unwrap().contains_key(&vec![0xbeef_0000]), "the oldest went");
+        let g = SHARED.locked();
+        let c = g.as_ref().unwrap();
+        assert!(c.bytes() <= SHARED_MAX);
+        let total: usize = c.map.values().flatten().map(|s| s.size()).sum();
+        assert_eq!(total, c.bytes());
+        assert!(c.map.contains_key(&vec![0xbeef_0000 + 19]), "the newest stays");
+        assert!(!c.map.contains_key(&vec![0xbeef_0000]), "the oldest went");
+    }
+
+    /// Threads pushing builds while others drop every translation (drop_translations: what a
+    /// code change does) in any order: at every moment the cache's byte count is the sum of
+    /// what it holds (review of 6852be1: a clear between a push's map change and its count
+    /// change left 100 bytes held and 0 counted). Each check takes the same lock as a push.
+    #[test]
+    fn shared_bytes_are_what_the_map_holds_under_any_interleaving() {
+        let mk = |text: u8, build: u32, n: usize| Arc::new(Shared { bytes: vec![0; n], starts: vec![], code: vec![], text: vec![text], build, sites: vec![], exact: false, seq: share_seq() });
+        let check = || {
+            let g = SHARED.locked();
+            if let Some(c) = g.as_ref() {
+                let total: usize = c.map.values().flatten().map(|s| s.size()).sum();
+                assert_eq!(total, c.bytes());
+            }
+        };
+        std::thread::scope(|s| {
+            for t in 0..4u32 {
+                s.spawn(move || {
+                    for i in 0..2000u32 {
+                        share_push(vec![0xc0de_0000 + t * 7 + i % 7], mk((i % 3) as u8, i % 5, 100 + (i as usize % 900) * 1000));
+                        if i % 97 == t {
+                            *SHARED.locked() = None;
+                        }
+                        check();
+                    }
+                });
+            }
+        });
+        check();
     }
 }
 

@@ -739,8 +739,7 @@ pub(crate) mod gc_tests {
 
     fn saves_on(s: Storage) -> Arc<crate::saves::Saves> {
         let db = s.db.clone();
-        db.connect().unwrap().execute_batch("CREATE TABLE IF NOT EXISTS saves(name TEXT PRIMARY KEY, revision INTEGER NOT NULL, data BLOB, written_ms INTEGER);").unwrap();
-        Arc::new(crate::saves::Saves { db, remote: Some(s), lock: Default::default() })
+        Arc::new(crate::saves::Saves::open(db, Some(s)).unwrap())
     }
 
     /// Review D-1: a big save state stalled on its way to the bucket holds up only its own
@@ -910,8 +909,7 @@ pub(crate) mod gc_tests {
     async fn old_save_revisions_are_retired() {
         let (f, s, dir) = serve(0).await;
         let db = s.db.clone();
-        db.connect().unwrap().execute_batch("CREATE TABLE IF NOT EXISTS saves(name TEXT PRIMARY KEY, revision INTEGER NOT NULL, data BLOB, written_ms INTEGER);").unwrap();
-        let saves = crate::saves::Saves { db, remote: Some(s), lock: Default::default() };
+        let saves = crate::saves::Saves::open(db, Some(s)).unwrap();
         for rev in 0..20 {
             assert!(saves.write("game", rev, format!("save {rev}").as_bytes()).await.unwrap());
         }
@@ -1149,8 +1147,7 @@ pub(crate) mod gc_tests {
     async fn unnamed_state_files_leave_the_bucket() {
         let (f, s, dir) = serve(0).await;
         let db = s.db.clone();
-        db.connect().unwrap().execute_batch("CREATE TABLE IF NOT EXISTS saves(name TEXT PRIMARY KEY, revision INTEGER NOT NULL, data BLOB, written_ms INTEGER);").unwrap();
-        let saves = crate::saves::Saves { db, remote: Some(s), lock: Default::default() };
+        let saves = crate::saves::Saves::open(db, Some(s)).unwrap();
         let hash = |i: i64| format!("{i:032x}");
         for i in 0..12 {
             assert!(saves.write(&format!("state.g.{}", hash(i)), 0, format!("state {i}").as_bytes()).await.unwrap());
@@ -3120,6 +3117,13 @@ impl Storage {
                      ON CONFLICT(name) DO UPDATE SET revision=excluded.revision,data=excluded.data WHERE excluded.revision>main.saves.revision",
                     [],
                 )?;
+            }
+            // (the browsers' records the other store's writes superseded: a browser asks the
+            // merged store about them (saves.rs Saves::covered); generations are UUIDs, never
+            // two browsers' one)
+            if has("save_covers")? {
+                tx.execute_batch("CREATE TABLE IF NOT EXISTS main.save_covers(name TEXT NOT NULL, generation TEXT NOT NULL, revision INTEGER NOT NULL, PRIMARY KEY(name, generation));")?;
+                tx.execute("INSERT OR IGNORE INTO main.save_covers(name,generation,revision) SELECT name,generation,revision FROM other.save_covers", [])?;
             }
             // (packs made elsewhere, of the objects named here: taken; a pack no row names then,
             // here or the other's, is retired)

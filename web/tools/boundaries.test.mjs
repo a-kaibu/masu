@@ -6,13 +6,18 @@ test("save metadata writes and unchecked runtime bytes stay with their callers",
   const files = {
     "/src/saves.ts": `
       async function localWrite() {}
-      function persist() { return localWrite(); }
+      function persist() { readSync(); return localWrite(); }
       async function loadSaves() { await localWrite(); }
       function storeSaves() { localWrite(); }
       const escaped = { localWrite };
       const legacyFiles = (name) => ({ bin: name });
-      async function takeOver() { legacyFiles("game"); }
+      async function legacyRecord() { legacyFiles("game"); }
       function readSync() { return legacyFiles("game"); }
+      async function acknowledge() { await readSync(); }
+      async function upload() { await acknowledge(); }
+      async function persistOrStale() { await localWrite(); await readSync(); }
+      function keepSaving() { const settle = () => acknowledge(); return settle; }
+      function storeSavesToo() { return acknowledge(); }
     `,
     "/src/wasmsource.ts": `
       export function sakeWasmBytes() {}
@@ -29,8 +34,12 @@ test("save metadata writes and unchecked runtime bytes stay with their callers",
   host.getSourceFile = (f) =>
     files[f] === undefined ? undefined : ts.createSourceFile(f, files[f], ts.ScriptTarget.Latest, true);
   const findings = check(ts.createProgram(Object.keys(files), options, host));
-  expect(findings.filter((f) => f.startsWith("/src/saves.ts:"))).toHaveLength(3);
+  // (storeSaves' and escaped's localWrite, persistOrStale's localWrite and readSync (the read in
+  // a hold of its own, review b5dacf4 1.2), readSync's legacyFiles, storeSavesToo's acknowledge)
+  expect(findings.filter((f) => f.startsWith("/src/saves.ts:"))).toHaveLength(6);
   expect(findings.filter((f) => f.includes("legacyFiles may only"))).toHaveLength(1);
+  expect(findings.filter((f) => f.includes("readSync may only"))).toHaveLength(1);
+  expect(findings.filter((f) => f.includes("acknowledge may only"))).toHaveLength(1);
   expect(findings.filter((f) => f.startsWith("/src/wasmsource.ts:"))).toHaveLength(1);
   expect(findings.some((f) => f.startsWith("/src/play.ts:"))).toBe(true);
   expect(findings.some((f) => f.includes(".test.ts:"))).toBe(false);

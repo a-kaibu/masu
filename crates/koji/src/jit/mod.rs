@@ -235,6 +235,10 @@ pub const RING_SIZE: u32 = 64;
 
 /// A hash table entry's value: the function's table index | the block's index << ENTRY_SHIFT.
 pub const ENTRY_SHIFT: u32 = 20;
+/// The funcref table slots a hash table entry can name (`0..TABLE_SLOTS`): host/vnjit.js gets
+/// it from kura (vnvm_jit_init) and answers TABLE_FULL before handing out a slot past it (a
+/// slot at 2^20 decoded as slot 0 of another module, review of 6852be1).
+pub const TABLE_SLOTS: u32 = 1 << ENTRY_SHIFT;
 /// A function's blocks it can be entered at are below this (hash entries: the entry's index in
 /// `starts` << ENTRY_SHIFT, 0 the root).
 const MAX_ENTRY: usize = 0x7fe;
