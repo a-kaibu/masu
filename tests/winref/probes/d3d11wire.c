@@ -47,9 +47,10 @@ static ID3D11UnorderedAccessView *uav;
 static ID3D11RenderTargetView *rt;
 static ID3D11DepthStencilState *always;
 
+/* (NDS as a draw's `ds`: no depth stencil view bound, its depth words printed as 0) */
 enum { D32, D24, D16, NDS };
 static const DXGI_FORMAT DSF[NDS] = { DXGI_FORMAT_D32_FLOAT, DXGI_FORMAT_D24_UNORM_S8_UINT, DXGI_FORMAT_D16_UNORM };
-static const char *DSN[NDS] = { "D32_FLOAT", "D24_UNORM_S8_UINT", "D16_UNORM" };
+static const char *DSN[NDS + 1] = { "D32_FLOAT", "D24_UNORM_S8_UINT", "D16_UNORM", "no depth view" };
 static ID3D11Texture2D *dst[NDS], *dstage[NDS];
 static ID3D11DepthStencilView *dsv[NDS];
 
@@ -70,8 +71,8 @@ static void run(const char *name, D3D11_FILL_MODE fill, D3D11_CULL_MODE cull, BO
     if (FAILED(ID3D11Device_CreateRasterizerState(dev, &rd, &rs))) { puts("  no rasterizer state"); return; }
     static const UINT e[4] = { EMPTY, EMPTY, EMPTY, EMPTY };
     ID3D11DeviceContext_ClearUnorderedAccessViewUint(ctx, uav, e);
-    ID3D11DeviceContext_ClearDepthStencilView(ctx, dsv[ds], D3D11_CLEAR_DEPTH | D3D11_CLEAR_STENCIL, 1.0f, 0);
-    ID3D11DeviceContext_OMSetRenderTargetsAndUnorderedAccessViews(ctx, 1, &rt, dsv[ds], 1, 1, &uav, NULL);
+    if (ds < NDS) ID3D11DeviceContext_ClearDepthStencilView(ctx, dsv[ds], D3D11_CLEAR_DEPTH | D3D11_CLEAR_STENCIL, 1.0f, 0);
+    ID3D11DeviceContext_OMSetRenderTargetsAndUnorderedAccessViews(ctx, 1, &rt, ds < NDS ? dsv[ds] : NULL, 1, 1, &uav, NULL);
     ID3D11DeviceContext_OMSetDepthStencilState(ctx, always, 0);
     D3D11_VIEWPORT full = { 0, 0, W, H, 0, 1 };
     ID3D11DeviceContext_RSSetViewports(ctx, 1, &full);
@@ -79,21 +80,22 @@ static void run(const char *name, D3D11_FILL_MODE fill, D3D11_CULL_MODE cull, BO
     ID3D11DeviceContext_IASetPrimitiveTopology(ctx, topo);
     ID3D11DeviceContext_Draw(ctx, n, 0);
     ID3D11DeviceContext_CopyResource(ctx, (ID3D11Resource *)stage, (ID3D11Resource *)ub);
-    ID3D11DeviceContext_CopyResource(ctx, (ID3D11Resource *)dstage[ds], (ID3D11Resource *)dst[ds]);
+    if (ds < NDS) ID3D11DeviceContext_CopyResource(ctx, (ID3D11Resource *)dstage[ds], (ID3D11Resource *)dst[ds]);
     D3D11_MAPPED_SUBRESOURCE m, dm;
+    memset(&dm, 0, sizeof dm);
     if (FAILED(ID3D11DeviceContext_Map(ctx, (ID3D11Resource *)stage, 0, D3D11_MAP_READ, 0, &m))) { puts("  map failed"); return; }
-    if (FAILED(ID3D11DeviceContext_Map(ctx, (ID3D11Resource *)dstage[ds], 0, D3D11_MAP_READ, 0, &dm))) { puts("  depth map failed"); return; }
+    if (ds < NDS && FAILED(ID3D11DeviceContext_Map(ctx, (ID3D11Resource *)dstage[ds], 0, D3D11_MAP_READ, 0, &dm))) { puts("  depth map failed"); return; }
     const UINT *w = m.pData;
     for (int y = 0; y < H; y++)
         for (int x = 0; x < W; x++) {
             const UINT *r = w + (y * W + x) * REC;
-            const BYTE *row = (const BYTE *)dm.pData + y * dm.RowPitch;
-            UINT dw = ds == D16 ? ((const USHORT *)row)[x] : ((const UINT *)row)[x];
-            UINT clear = ds == D32 ? 0x3f800000u : ds == D24 ? 0x00ffffffu : 0xffffu;
+            const BYTE *row = ds < NDS ? (const BYTE *)dm.pData + y * dm.RowPitch : NULL;
+            UINT dw = !row ? 0 : ds == D16 ? ((const USHORT *)row)[x] : ((const UINT *)row)[x];
+            UINT clear = ds == D32 ? 0x3f800000u : ds == D24 ? 0x00ffffffu : ds == D16 ? 0xffffu : 0;
             if (r[4] == EMPTY && dw == clear) continue;
             printf("  %d,%d: %08x %08x %08x %08x x%u depth %08x\n", x, y, r[0], r[1], r[2], r[3], r[4] == EMPTY ? 0 : r[4] - EMPTY, dw);
         }
-    ID3D11DeviceContext_Unmap(ctx, (ID3D11Resource *)dstage[ds], 0);
+    if (ds < NDS) ID3D11DeviceContext_Unmap(ctx, (ID3D11Resource *)dstage[ds], 0);
     ID3D11DeviceContext_Unmap(ctx, (ID3D11Resource *)stage, 0);
     ID3D11RasterizerState_Release(rs);
 }
@@ -195,6 +197,9 @@ int main(void) {
                 run("depth", D3D11_FILL_WIREFRAME, D3D11_CULL_NONE, FALSE, bs[k].bias, bs[k].clamp, bs[k].slope, ds, D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST, 3);
                 run("depth", D3D11_FILL_SOLID, D3D11_CULL_NONE, FALSE, bs[k].bias, bs[k].clamp, bs[k].slope, ds, D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST, 3);
             }
+        /* no depth stencil view: the unit of the bias SV_Position.z is given */
+        run("depth", D3D11_FILL_WIREFRAME, D3D11_CULL_NONE, FALSE, 1000, 0, 0.5f, NDS, D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST, 3);
+        run("depth", D3D11_FILL_SOLID, D3D11_CULL_NONE, FALSE, 1000, 0, 0.5f, NDS, D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST, 3);
         /* the bias past the far plane: clamped to the viewport's depth, or cut */
         run("depth", D3D11_FILL_WIREFRAME, D3D11_CULL_NONE, FALSE, 0, 0, 1000.0f, D32, D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST, 3);
         run("depth", D3D11_FILL_SOLID, D3D11_CULL_NONE, FALSE, 0, 0, 1000.0f, D32, D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST, 3);
@@ -231,6 +236,13 @@ int main(void) {
         vertices(za, 6);
         run("no area", D3D11_FILL_WIREFRAME, D3D11_CULL_NONE, FALSE, 0, 0, 0, D32, D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST, 6);
         run("no area", D3D11_FILL_WIREFRAME, D3D11_CULL_BACK, FALSE, 0, 0, 0, D32, D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST, 6);
+    }
+    /* three corners on one line at the 1/256 pixel grid itself (the "no area" line's area is
+     * not 0 there): each CullMode */
+    {
+        static const float ol[3][4] = { { -0.5f, -0.5f, 0.5f, 1 }, { 0.0f, 0.0f, 0.5f, 1 }, { 0.5f, 0.5f, 0.5f, 1 } };
+        vertices(ol, 3);
+        for (int c = D3D11_CULL_NONE; c <= D3D11_CULL_BACK; c++) run("on a line", D3D11_FILL_WIREFRAME, c, FALSE, 0, 0, 0, D32, D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST, 3);
     }
     puts("done");
     return 0;

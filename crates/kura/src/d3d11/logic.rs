@@ -48,25 +48,60 @@ pub fn int_bits(page: u32) -> Option<([u32; 4], Sign)> {
     })
 }
 
-/// The SINT twin (its page format) and the channels' bits of a render target view of an
-/// 8-bit SNORM DXGI format (R8G8B8A8_SNORM 31, R8G8_SNORM 51, R8_SNORM 63): WebGPU draws to no
-/// SNORM format, the page draws to the twin (dxwgsl::snorm). None for the other formats.
+/// The SINT twin (its page format) and the channels' bits of a render target view of an SNORM
+/// DXGI format: 8-bit (R8G8B8A8_SNORM 31, R8G8_SNORM 51, R8_SNORM 63) and 16-bit
+/// (R16G16B16A16_SNORM 13, R16G16_SNORM 37, R16_SNORM 58). WebGPU draws to no SNORM format,
+/// the page draws to the twin (dxwgsl::snorm). None for the other formats.
 pub fn snorm_twin(view_dxgi: u32) -> Option<(u32, [u32; 4])> {
     match view_dxgi {
         31 => Some((f::P_RGBA8SI, [8, 8, 8, 8])),
         51 => Some((f::P_RG8SI, [8, 8, 0, 0])),
         63 => Some((f::P_R8SI, [8, 0, 0, 0])),
+        13 => Some((f::P_RGBA16SI, [16, 16, 16, 16])),
+        37 => Some((f::P_RG16SI, [16, 16, 0, 0])),
+        58 => Some((f::P_R16SI, [16, 0, 0, 0])),
         _ => None,
     }
 }
 
 /// The page format of a texture of DXGI format `fmt` (dimension `dim`, `layers`, `mips`,
-/// `samples`, bind flags `bind`) when it is an 8-bit SNORM one the page multisamples: its SINT
-/// twin (snorm_twin), which WebGPU multisamples (2D, one level and layer, no UAV: render::d3d
+/// `samples`, bind flags `bind`) when it is an SNORM one the page multisamples: its SINT twin
+/// (snorm_twin), which WebGPU multisamples (2D, one level and layer, no UAV: render::d3d
 /// create_texture2's conditions).
 pub fn snorm_ms_page(fmt: u32, dim: u32, layers: u32, mips: u32, samples: u32, bind: u32) -> Option<u32> {
     let (page, _) = snorm_twin(fmt)?;
     (samples > 1 && dim == 2 && layers <= 1 && mips <= 1 && bind & 0x80 == 0 && crate::render::d3d::page_multisamples(page)).then_some(page)
+}
+
+/// The page's copy of a subresource's texels between page format `from` and `to` (one an SNORM
+/// view's SINT twin, the other the page format its texture has): the bits of an 8-bit one
+/// (COPY's filter 2 single-sampled, CONVERT's bytes multisampled: WebGPU copies no part of a
+/// multisampled texture), the values of a 16-bit SNORM one (its page floats). None: no such
+/// copy (a texture of another typeless group's page).
+#[allow(clippy::too_many_arguments)]
+pub fn twin_copy(src: u32, src_sub: u32, dst: u32, dst_sub: u32, w: u32, h: u32, from: u32, to: u32, ms: bool) -> Option<Vec<u32>> {
+    let unorm8 = unorm8_page;
+    let bits8 = |p: u32| matches!(p, f::P_RGBA8 | f::P_RG8 | f::P_R8 | f::P_RGBA8SN | f::P_RG8SN | f::P_R8SN | f::P_RGBA8SI | f::P_RG8SI | f::P_R8SI);
+    let sint8 = |p: u32| matches!(p, f::P_RGBA8SI | f::P_RG8SI | f::P_R8SI);
+    let float16 = |p: u32| matches!(p, f::P_RGBA32F | f::P_RG32F | f::P_R32F);
+    let sint16 = |p: u32| matches!(p, f::P_RGBA16SI | f::P_RG16SI | f::P_R16SI);
+    let convert = |k: gpu::Convert| Some(vec![gpu::CONVERT, src, src_sub, dst, dst_sub, w, h, k.word()]);
+    if bits8(from) && bits8(to) && !ms {
+        return Some(vec![gpu::COPY, src, src_sub, 0, 0, w, h, dst, dst_sub, 0, 0, w, h, 2]);
+    }
+    if unorm8(from) && sint8(to) {
+        return convert(gpu::Convert::Unorm8ToSint8);
+    }
+    if sint8(from) && unorm8(to) {
+        return convert(gpu::Convert::Sint8ToUnorm8);
+    }
+    if float16(from) && sint16(to) && !ms {
+        return convert(gpu::Convert::Snorm16ToSint16);
+    }
+    if sint16(from) && float16(to) && !ms {
+        return convert(gpu::Convert::Sint16ToSnorm16);
+    }
+    None
 }
 
 /// What the blend state (kura's words: AlphaToCoverage, IndependentBlend, 8 targets of 8
@@ -246,6 +281,38 @@ fn src_buffer(d: &mut D11, w: u32, h: u32) -> u32 {
 const TWIN_OF: u32 = 0x400;
 const SNORM_SRC_OF: u32 = 0x500;
 const RESOLVE_OF: u32 = 0x600;
+const RESOLVE_MS_OF: u32 = 0x700;
+
+/// The multisampled SINT texture (page format `page`) a multisampled texture of `w` x `h` on
+/// another page (a typeless one's UNORM page) is converted into for an SNORM resolve (made the
+/// first time).
+pub fn resolve_ms_twin(d: &mut D11, w: u32, h: u32, page: u32) -> u32 {
+    scratch(d, (RESOLVE_MS_OF, w, h, page, true))
+}
+
+/// The values of the channels (`bits`, 8 or 16 each: snorm_twin's) of an SNORM texel's bytes
+/// (little-endian, as clear::texel makes them); a channel the format has not 0.
+pub fn snorm_values(bits: [u32; 4], texel: &[u8]) -> [i32; 4] {
+    let mut at = 0usize;
+    bits.map(|b| {
+        let v = match b {
+            8 => texel.get(at).map_or(0, |&x| i32::from(x.cast_signed())),
+            16 => match (texel.get(at), texel.get(at.saturating_add(1))) {
+                (Some(&lo), Some(&hi)) => i32::from(i16::from_le_bytes([lo, hi])),
+                _ => 0,
+            },
+            _ => 0,
+        };
+        at = at.saturating_add(usize::try_from(b / 8).unwrap_or(0));
+        v
+    })
+}
+
+/// Whether page format `page` is an 8-bit UNORM one (a typeless texture's of the 8-bit
+/// groups: its SNORM views' bytes the same bits).
+pub fn unorm8_page(page: u32) -> bool {
+    matches!(page, f::P_RGBA8 | f::P_RG8 | f::P_R8)
+}
 
 /// The single-sampled SINT texture (page format `page`) a multisampled SNORM texture of `w` x
 /// `h` is resolved into before its bits are copied into the resolve's target (made the first
@@ -270,41 +337,45 @@ fn snorm_src_buffer(d: &mut D11, target: u32, w: u32, h: u32) -> u32 {
 }
 
 /// An SNORM target's SINT twin for a draw: the target's slot, the twin's page texture and
-/// format, the level's size, and the page's copies of the target's bits into the twin before
-/// the draw (`load`) and back after it (`store`).
-#[derive(Clone, Copy, Debug)]
+/// format, whether it is multisampled, the level's size, and the page's copies of the target's
+/// texels into the twin before the draw (`load`) and back after it (`store`): twin_copy.
+#[derive(Clone, Debug)]
 pub struct Twin {
     pub target: u32,
     pub twin: u32,
     pub page: u32,
+    pub ms: bool,
     pub w: u32,
     pub h: u32,
-    pub load: [u32; 14],
-    pub store: [u32; 14],
+    pub load: Vec<u32>,
+    pub store: Vec<u32>,
 }
 
-/// The twin of SNORM target `l` (Store::Snorm) at view `rtv`, made the first time and kept by
-/// the target's slot, size and format (one level and layer).
+/// The twin of SNORM target `l` (Store::Snorm or Store::SnormStash) at view `rtv`, made the
+/// first time and kept by the target's slot, size and format (one level and layer; multisampled
+/// as the target is): none when the texture's page is the twin (snorm_ms_page) or the page has
+/// no copy into it (twin_copy).
 pub fn twin_of(d: &mut D11, rtv: u32, l: &Logic, view_dxgi: u32) -> Option<Twin> {
     let (page, _) = snorm_twin(view_dxgi)?;
-    let (tex, level, layer, _, w, h, own) = target_texture(d, rtv)?;
-    // (a multisampled SNORM texture is its twin on the page: snorm_ms_page)
+    let (tex, level, layer, ms, w, h, own) = target_texture(d, rtv)?;
     if own == page {
         return None;
     }
-    let twin = scratch(d, (TWIN_OF | l.target, w, h, page, false));
-    // (COPY's filter 2: the bits of another format of the same size, render/d3d.rs copy_rect)
+    let ms = ms && crate::render::d3d::page_multisamples(own);
     let sub = level | layer << 16;
-    let load = [gpu::COPY, tex, sub, 0, 0, w, h, twin, 0, 0, 0, w, h, 2];
-    let store = [gpu::COPY, twin, 0, 0, 0, w, h, tex, sub, 0, 0, w, h, 2];
-    Some(Twin { target: l.target, twin, page, w, h, load, store })
+    // (no copy between the pages: no twin, and no scratch texture made for one)
+    twin_copy(tex, sub, 0, 0, w, h, own, page, ms)?;
+    let twin = scratch(d, (TWIN_OF | l.target, w, h, page, ms));
+    let load = twin_copy(tex, sub, twin, 0, w, h, own, page, ms)?;
+    let store = twin_copy(twin, 0, tex, sub, w, h, page, own, ms)?;
+    Some(Twin { target: l.target, twin, page, ms, w, h, load, store })
 }
 
 /// The copy for target view `rtv` with logic op `l` (its scratch texture by the target's slot:
 /// two targets of one size and format have a copy each); an SNORM target's of its twin.
 pub fn copy_of(d: &mut D11, rtv: u32, l: &Logic, twins: &[Twin]) -> Option<Copy> {
     let (tex, level, layer, ms, w, h, page) = match twins.iter().find(|t| t.target == l.target) {
-        Some(t) => (t.twin, 0, 0, false, t.w, t.h, t.page),
+        Some(t) => (t.twin, 0, 0, t.ms, t.w, t.h, t.page),
         None => target_texture(d, rtv)?,
     };
     let copy = scratch(d, (COPY_OF | l.target, w, h, page, ms));
@@ -330,10 +401,10 @@ pub struct Stash {
 
 /// The stash passes of a draw to targets `colors` (SET_TARGETS2's (tex level layer) words)
 /// and depth `depth` ((tex level layer)), its stash targets `stashes` (multisampled ones) with
-/// their write masks `masks` and copies `copies`; an SNORM stash's resolve reads the blend
-/// constant from page buffer `constant`.
+/// their write masks `masks`, copies `copies` and SNORM twins `twins`; an SNORM stash's
+/// resolve reads the blend constant from page buffer `constant`.
 #[allow(clippy::too_many_arguments)]
-pub fn stash_of(d: &mut D11, rtvs: &[u32], colors: &[u32], depth: [u32; 3], stashes: &[&Logic], masks: &[u32], copies: &[Copy], constant: u32) -> Option<Stash> {
+pub fn stash_of(d: &mut D11, rtvs: &[u32], colors: &[u32], depth: [u32; 3], stashes: &[&Logic], masks: &[u32], copies: &[Copy], twins: &[Twin], constant: u32) -> Option<Stash> {
     let first = stashes.first()?;
     let mark = first.mark()?;
     let (_, _, _, _, w, h, _) = target_texture(d, rtvs.get(usize::try_from(first.target).ok()?).copied()?)?;
@@ -375,7 +446,11 @@ pub fn stash_of(d: &mut D11, rtvs: &[u32], colors: &[u32], depth: [u32; 3], stas
     let (ch, bit) = mark.flag();
     for (l, &(_, stash)) in stashes.iter().zip(&stash_tex) {
         let rtv = rtvs.get(usize::try_from(l.target).ok()?).copied()?;
-        let (tex, ..) = target_texture(d, rtv)?;
+        // (an SNORM target's twin, where it has one: the resolve writes it)
+        let tex = match twins.iter().find(|t| t.target == l.target) {
+            Some(t) => t.twin,
+            None => target_texture(d, rtv)?.0,
+        };
         let copy = copies.iter().find(|c| c.entry[0] == dxwgsl::logic::LOGIC_DST.saturating_add(l.target)).map_or(0, |c| c.entry[2]);
         let mask = masks.get(usize::try_from(l.target).ok()?).copied().unwrap_or(0xf);
         let op = match l.store {

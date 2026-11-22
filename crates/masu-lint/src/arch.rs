@@ -77,6 +77,7 @@ pub enum Rule {
     NanMinMax,
     PcsgPack,
     WarpSetup,
+    WarpWire,
     JitExitContract,
     JitHarnessImports,
     RunPlan,
@@ -96,7 +97,7 @@ pub enum Rule {
 }
 
 impl Rule {
-    pub const ALL: [Rule; 76] = [
+    pub const ALL: [Rule; 77] = [
         Rule::BuildOutput,
         Rule::HresultCopy,
         Rule::KomeCopy,
@@ -157,6 +158,7 @@ impl Rule {
         Rule::NanMinMax,
         Rule::PcsgPack,
         Rule::WarpSetup,
+        Rule::WarpWire,
         Rule::JitExitContract,
         Rule::JitHarnessImports,
         Rule::RunPlan,
@@ -238,6 +240,7 @@ impl Rule {
             Rule::NanMinMax => "nan-min-max",
             Rule::PcsgPack => "pcsg-pack",
             Rule::WarpSetup => "warp-setup",
+            Rule::WarpWire => "warp-wire",
             Rule::JitExitContract => "jit-exit-contract",
             Rule::JitHarnessImports => "jit-harness-imports",
             Rule::DllSearch => "dll-search",
@@ -289,7 +292,7 @@ impl Rule {
             Rule::ClearRounding => "Windows clears 16-bit and 11/10-bit float channels toward zero (2026-11-21: kura rounded them to the nearest, winref d3d11clear): kura's clear.rs makes them with f16_rtz / rtz_bits, never format::f16_bits",
             Rule::PsQuads => "PSInvocations is whole 2x2 quads of the rasterized triangles and, for a line, 2 for each quad WARP's line rasterizer visits (2026-11-21: kura answered the occlusion samples; lines were counted by the quads they light): dxwgsl's clip pass adds ps_pairs to counter PS_PAIRS, kura's PIPELINE_STATISTICS reads c::PS_PAIRS, a line is counted by line_visits / ps_line_visits and a triangle by its edge DDA's spans (spans / ps_edge_x, BigEdgeIterator's big_edge_x / ps_big_edge_x past ±2^20); ps_tests.rs checks the spans against exact geometry and shaderconf's ps_cases runs the WGSL against the Rust rule on WebGPU",
             Rule::LogicOps => "Direct3D 11.1 logic ops are applied, not refused (2026-11-22: kura answered OutputMergerLogicOp 0 and drew logic-op blend states as plain writes; WARP answers 1): D3D11_OPTIONS answers every BOOL from 0, the pixel shader of a draw with logic ops is translated with them (dxwgsl::translate_views; logic_output reads the target's copy at LOGIC_DST), a draw reading its target is split by logic::split after a copy of it, and the ops are checked against D3D11_LOGIC_OP's table (dxwgsl logic_tests.rs) and on Windows (winref d3d11logic)",
-            Rule::SnormTargets => "8-bit SNORM render targets are drawn, not dropped (2026-11-22: kura gave up on R8G8B8A8_SNORM, R8G8_SNORM and R8_SNORM targets because WebGPU renders to no SNORM format: ClearRenderTargetView and every draw to them did nothing, winref d3d11logic rgba8_snorm): the draw goes to the target's SINT twin (logic::twin_of, logic::snorm_twin), the pixel shader stores and blends the bytes itself (wgsl.rs logic_output's Store::Snorm, dxwgsl::snorm checked against WARP's answers in snorm_tests.rs, winref d3d11snorm), and an SNORM view's clear writes its texels",
+            Rule::SnormTargets => "SNORM render targets are drawn, not dropped (2026-11-22: kura gave up on R8G8B8A8_SNORM, R8G8_SNORM and R8_SNORM targets because WebGPU renders to no SNORM format: ClearRenderTargetView and every draw to them did nothing, winref d3d11logic rgba8_snorm; 16-bit ones were drawn as unclamped floats): the draw goes to the target's SINT twin (logic::twin_of, logic::snorm_twin, logic::twin_copy for 16-bit and multisampled typeless pages), the pixel shader stores and blends the values itself (wgsl.rs logic_output's Store::Snorm, dxwgsl::snorm checked against WARP's answers in snorm_tests.rs, winref d3d11snorm and d3d11snorm2), and an SNORM view's clear writes its texels (ClearView's rectangles of a multisampled view a CLEAR_RECTS pass)",
             Rule::Review6852be1 => "what the review of kura at 6852be1 found stays fixed (2026-11-22): stream output targets and all 32 vertex buffer slots in the D3D11 hazards, UAVs resolved under KEEP, the shared JIT cache counting what its map holds, the JIT table limit the loader's, a shared VFS change taken back and answered ENOSPC when it cannot be published, handle access checked, readback ids global, a stop request the page can cancel, the audio list read page by page",
             Rule::D3d9Status => "a Direct3D 9 status code is d3d9.h's (2026-11-21: D3DOK_NOAUTOGEN was 0x0876_087f, not MAKE_D3DSTATUS(2159) = 0x0876_086f, and its tests copied it; winref d3d9tex): a D3DERR_/D3DOK_/S_ const in kura's d3d9 or sake's d3dx9 has the value regress::D3D9_CODES gives its name, and a new name is added there from the header",
             Rule::D3d9DevFormats => "every format the winref d3d9dev probe asks about is one kura's d3d9_answers_as_the_golden names (2026-11-22: the probe grew A8..X8B8G8R8, the nightly golden came back with them, and the test panicked on the first unnamed one instead of checking kura's answers): each \"NAME\" of the probe's fm[] table is a \"NAME\" => arm in dev_tests.rs",
@@ -319,6 +322,7 @@ impl Rule {
             Rule::NanMinMax => "a NaN through Direct3D's min/max gives the other operand (winref d3d11tess: [maxtessfactor(5.5)] turned a NaN tess factor into 5.5 on Windows, and the domain shader read 5.5 back; masu kept the NaN and culled the patch): dxwgsl's float min/max go through d3d_min/d3d_max (WGSL leaves a NaN to the implementation), hlslc clamps a patch constant function's tess factors to [maxtessfactor] with min, kura's clamp gives the maximum for a NaN (regress::NAN_MIN_MAX / NAN_MIN_MAX_NOT)",
             Rule::PcsgPack => "hlslc packs a patch constant that is not a tess factor into a taken register's free components as d3dcompiler does (winref d3d11tess: `uint pid : PID` after SV_TessFactor[3] sits at r0.y on Windows; hlslc gave it a register of its own): regress::PCSG_PACK in lower.rs's sig()",
             Rule::WarpSetup => "a Direct3D 11 draw whose pixel shader reads interpolated inputs (or whose last stage writes clip/cull distances) goes through the setup pass, WARP's clipper and planes evaluated in the fragment shader (winref d3d11logic: WebGPU's rasterizer gave 3e9c28f4 where WARP gives 3e9c28f6): expand.rs asks setup_wanted and runs setup_draw, dxwgsl's pixel inputs come from expand::setup::inputs, and setup.rs's WGSL has no fma (a fused multiply-add rounds once where WARP rounds twice) (regress::WARP_SETUP / WARP_SETUP_NOT)",
+            Rule::WarpWire => "FillMode WIREFRAME draws a triangle's edges as the setup's aliased lines, culled per fan triangle as a solid one and each line biased by DepthBias and SlopeScaledDepthBias as WARP does (winref d3d11wire; review b5dacf4 3.2: the draw's own edges as a line list lost CullMode and DepthBias): setup.rs biases each edge (Bias::of, sx_bias), kura sends the bias words and sends wireframe draws to the setup, the squares drawn uncull'd and unbiased, no edge list of the draw's own is made, and the draw's side asks no device feature (the device is the page's) (regress::WARP_WIRE / WARP_WIRE_NOT)",
             Rule::JitExitContract => "koji's exit contract (jit::ExitAt): before or after an instruction that may leave, every status flag exact (an exception handler reads EFLAGS: xor eax,eax / mov ecx,[0] left 0x202 where the interpreter has 0x246); at a jump to code, those it reads. Gen::exit_with, jump_dyn and fallback check it, liveness sees the bails of an unchecked ESP, a callee that reads none is recorded so, a loop's hoisted checks need only its head's live-in, and no iced RflagsBits are emitted as EFLAGS bits (regress::JIT_EXIT_CONTRACT / JIT_EXIT_CONTRACT_NOT)",
             Rule::JitHarnessImports => "a test harness that runs koji's modules (a wasmtime linker defining env.table: jit16test, jit32test, jit64test, fuzz) defines env.pages too, the page marks every module imports since the saved code runs with the page checks on, and jit32test fails when no translation loaded: its translations' load errors were taken as refusals, so after that import came every one failed to load and 600 random programs compared the interpreter with itself (regress::JIT_HARNESS_LOADED)",
             Rule::DllSearch => "sake's loader looks for a DLL named without a path in LdrGetDllPath's folders for that load (its module and LoadLibraryEx's flags, SetDefaultDllDirectories' with none) and for a DLL's imports as the load that found it (review b5dacf4 2.1: find_dll_file had an order of its own with the folder of every DLL loaded by path in it, and LoadLibraryEx's LOAD_LIBRARY_SEARCH_* flags never reached it; winref dllsearch): pe::LoadSearch::folders is dllpath::dll_folders, LoadLibraryExW passes its flags, and pe.rs names no folders of its own (regress::DLL_SEARCH / DLL_SEARCH_NOT)",
@@ -401,6 +405,7 @@ impl Rule {
             Rule::NanMinMax => regress::nan_min_max(tree),
             Rule::PcsgPack => regress::pcsg_pack(tree),
             Rule::WarpSetup => regress::warp_setup(tree),
+            Rule::WarpWire => regress::warp_wire(tree),
             Rule::JitExitContract => regress::jit_exit_contract(tree),
             Rule::JitHarnessImports => regress::jit_harness_imports(tree),
             Rule::DllSearch => regress::dll_search(tree),

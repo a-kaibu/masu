@@ -577,11 +577,12 @@ pub struct Line {
 }
 
 /// The viewport's clip space position (w 1) of a pixel position at window depth z (the depth
-/// range's 0..1, clamped).
+/// range's 0..1, beyond it where the plane goes: the page draws a setup's squares and regions
+/// with unclippedDepth, the depth written clamped to the viewport's range).
 fn clip_at(x: f32, y: f32, z: f32, r: &Raster) -> [f32; 4] {
     let [vx, vy, vw, vh, n, f] = r.viewport;
     let (hx, ox, hy, oy) = (vw * 0.5, vw * 0.5 + vx, -vh * 0.5, vh * 0.5 + vy);
-    let dz = if same(f, n) { 0.0 } else { ((z - n) / (f - n)).clamp(0.0, 1.0) };
+    let dz = if same(f, n) { 0.0 } else { (z - n) / (f - n) };
     [(x - ox) / hx, (y - oy) / hy, dz, 1.0]
 }
 
@@ -736,6 +737,98 @@ pub fn line(c: &[Corner; 2], modes: &[Mode], r: &Raster) -> Option<Line> {
     Some(Line { x0: sx, y0: sy, dx: sdx, dy: sdy, hi_col, hi_row, rhw: axis(rhw[0], rhw[1]), z: axis(z[0], z[1]), attrs, ends: [(x0, y0), (x1, y1)] })
 }
 
+/// What a depth bias counts in: the depth buffer's unit (a UNORM buffer's r is 2^-bits, a float
+/// one's 2^(e - 23), e the exponent of the primitive's largest depth).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum DepthUnit {
+    Float,
+    Unorm(u32),
+}
+
+impl DepthUnit {
+    /// Of a depth stencil view's DXGI format (None: not a depth format)
+    pub fn of_dxgi(fmt: u32) -> Option<DepthUnit> {
+        match fmt {
+            // D32_FLOAT_S8X24_UINT, D32_FLOAT
+            20 | 40 => Some(DepthUnit::Float),
+            // D24_UNORM_S8_UINT
+            45 => Some(DepthUnit::Unorm(24)),
+            // D16_UNORM
+            55 => Some(DepthUnit::Unorm(16)),
+            _ => None,
+        }
+    }
+
+    /// Its xd DEPTH_UNIT word: 0 float, else the UNORM bits
+    pub fn word(self) -> u32 {
+        match self {
+            DepthUnit::Float => 0,
+            DepthUnit::Unorm(n) => n,
+        }
+    }
+}
+
+/// A rasterizer state's DepthBias, DepthBiasClamp and SlopeScaledDepthBias, in the bound depth
+/// buffer's unit.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Bias {
+    pub constant: i32,
+    pub clamp: f32,
+    pub slope: f32,
+    pub unit: DepthUnit,
+}
+
+impl Bias {
+    /// The bias of a primitive whose largest depth is `zmax` and whose depth changes by `slope`
+    /// a pixel: DepthBias · r + SlopeScaledDepthBias · slope, held to DepthBiasClamp (0: none) on
+    /// its side (winref d3d11wire "depth": 1000 on a triangle up to 0.7 is 1000 · 2^-24 in D32)
+    pub fn of(&self, zmax: f32, slope: f32) -> f32 {
+        let r = match self.unit {
+            DepthUnit::Float => {
+                let e = i32::try_from((zmax.abs().to_bits() >> 23) & 0xff).unwrap_or(0);
+                2f32.powi(e.saturating_sub(127).saturating_sub(23))
+            }
+            DepthUnit::Unorm(n) => 2f32.powi(i32::try_from(n).unwrap_or(0).saturating_neg()),
+        };
+        let v = to_f32(self.constant) * r + self.slope * slope;
+        if self.clamp > 0.0 {
+            v.min(self.clamp)
+        } else if 0.0 > self.clamp {
+            v.max(self.clamp)
+        } else {
+            v
+        }
+    }
+}
+
+/// A triangle drawn WIREFRAME as WARP draws it (winref d3d11wire): when one of the fan
+/// triangles of its clipped polygon is drawn (culled as a solid one's, of no area dropped: case
+/// "no area" under CullMode BACK, "on a line" under each), its three edges in the API's order, each an aliased line of its own (the clipper's new edges
+/// on the planes are none of them); each line's depth biased by `b` with the triangle's largest
+/// depth and the line's own slope along its major axis (its depth's change a pixel there).
+pub fn wire(c: &[Corner; 3], modes: &[Mode], r: &Raster, b: &Bias) -> Vec<Line> {
+    let Some((table, poly, _)) = clip(c, r.depth_clip) else { return Vec::new() };
+    let scr: Vec<((i32, i32), f32, f32)> = table.iter().map(|p| screen(p, r)).collect();
+    let first = poly.first().copied().unwrap_or(0);
+    let at = |k: usize| scr.get(k).map_or((0, 0), |v| v.0);
+    let drawn = (1..poly.len().saturating_sub(1)).any(|i| {
+        let s = [at(first), at(poly.get(i).copied().unwrap_or(0)), at(poly.get(i.saturating_add(1)).copied().unwrap_or(0))];
+        geometry(s).is_some() && facing(s, r)
+    });
+    if !drawn {
+        return Vec::new();
+    }
+    let zmax = poly.iter().filter_map(|&k| scr.get(k)).map(|v| v.1).fold(f32::NEG_INFINITY, f32::max);
+    [[0usize, 1], [1, 2], [2, 0]]
+        .iter()
+        .filter_map(|&[a, e]| {
+            let mut l = line(&[c[a].clone(), c[e].clone()], modes, r)?;
+            l.z.c += b.of(zmax, l.z.gx.abs().max(l.z.gy.abs()));
+            Some(l)
+        })
+        .collect()
+}
+
 /// Each table point's value of one component on a line (the corners as given, new points by
 /// their mode's rule).
 fn line_values(table: &[Point], corners: [u32; 3], mode: Mode) -> Vec<f32> {
@@ -817,7 +910,8 @@ pub fn point(c: &Corner, modes: &[Mode], r: &Raster) -> Option<Dot> {
 pub fn dot_squares(d: &Dot, r: &Raster) -> [[[f32; 4]; 3]; 2] {
     let (px, py) = (f32_of(i128::from(d.pixel.0)), f32_of(i128::from(d.pixel.1)));
     let (lo, hi) = ((px + 0.0625, py + 0.0625), (px + 0.9375, py + 0.9375));
-    let q = [lo, (hi.0, lo.1), (lo.0, hi.1), hi].map(|(x, y)| clip_at(x, y, d.z, r));
+    // (a point's depth is one value: held to the range at the corners as at every pixel)
+    let q = [lo, (hi.0, lo.1), (lo.0, hi.1), hi].map(|(x, y)| clip_at(x, y, d.z, r)).map(|[x, y, z, w]| [x, y, z.clamp(0.0, 1.0), w]);
     [[q[0], q[1], q[2]], [q[1], q[3], q[2]]]
 }
 
@@ -855,6 +949,19 @@ fn sx_r3(v: vec3<f32>) -> vec3<f32> { return bitcast<vec3<f32>>(bitcast<vec3<u32
 ";
 
 const SETUP_WGSL: &str = r#"
+// Bias::of: DepthBias times the depth buffer's unit (xd DEPTH_UNIT: 0 float, 2^(e - 23) of the
+// largest depth's exponent e; else its bits, 2^-bits) plus SlopeScaledDepthBias times the slope,
+// held to DepthBiasClamp on its side
+fn sx_bias(zmax: f32, slope: f32) -> f32 {
+    let bits = xw(XD_DEPTH_UNIT);
+    var e = -i32(bits);
+    if (bits == 0u) { e = i32((bitcast<u32>(abs(zmax)) >> 23u) & 0xffu) - 150; }
+    let v = sx_r(f32(bitcast<i32>(xw(XD_BIAS))) * ldexp(1.0f, e)) + sx_r(bitcast<f32>(xw(XD_BIAS_SLOPE)) * slope);
+    let c = bitcast<f32>(xw(XD_BIAS_CLAMP));
+    if (c > 0.0f) { return min(v, c); }
+    if (0.0f > c) { return max(v, c); }
+    return v;
+}
 fn sx_u64_f32(hi: u32, lo: u32) -> f32 {
     if (hi == 0u && lo < 0x1000000u) { return f32(lo); }
     var top: u32;
@@ -1003,7 +1110,7 @@ pub fn setup_pass(store: &Store, osgn: &[SigElement], ps: Option<&[u8]>, prim: P
     wln!(m, "const SX_PLANES = {planes}u;\nconst SX_SLOTS = {nslots}u;\nconst SX_STRIDE = {stride}u;");
     wln!(m, "var<private> tp: array<vec4<f32>, {maxt}>;\nvar<private> td: array<array<f32, {planes}>, {maxt}>;");
     wln!(m, "var<private> tin: array<u32, {maxt}>;\nvar<private> tout: array<u32, {maxt}>;\nvar<private> tdin: array<f32, {maxt}>;\nvar<private> tdout: array<f32, {maxt}>;\nvar<private> tden: array<f32, {maxt}>;\nvar<private> tn = 0u;");
-    wln!(m, "var<private> rot: array<u32, 3>;\nvar<private> fan: array<vec3<u32>, {nslots}>;\nvar<private> fga: array<vec4<f32>, {nslots}>;\nvar<private> fgb: array<vec4<f32>, {nslots}>;\nvar<private> frhw: array<vec3<f32>, {nslots}>;\nvar<private> nf = 0u;\nvar<private> base = 0u;");
+    wln!(m, "var<private> rot: array<u32, 3>;\nvar<private> fan: array<vec3<u32>, {nslots}>;\nvar<private> fga: array<vec4<f32>, {nslots}>;\nvar<private> fgb: array<vec4<f32>, {nslots}>;\nvar<private> frhw: array<vec3<f32>, {nslots}>;\nvar<private> nf = 0u;\nvar<private> base = 0u;\nvar<private> sx_wz = 0.0f;");
     wln!(m, "var<private> av: array<f32, {maxt}>;");
     // one component: its value at every table point, then its plane on every fan triangle
     wln!(
@@ -1061,7 +1168,7 @@ pub fn setup_pass(store: &Store, osgn: &[SigElement], ps: Option<&[u8]>, prim: P
             return Ok(Wgsl { code: m, bindings });
         }
         Prim::Line => {
-            m.push_str("    line_slot(0u, e0, e1);\n}\n");
+            m.push_str("    line_slot(0u, e0, e1, false);\n}\n");
             return Ok(Wgsl { code: m, bindings });
         }
         Prim::Triangle | Prim::Wire => {}
@@ -1171,6 +1278,7 @@ pub fn setup_pass(store: &Store, osgn: &[SigElement], ps: Option<&[u8]>, prim: P
     let vw = bitcast<f32>(xw(XD_VIEWPORT + 2u)); let vh = bitcast<f32>(xw(XD_VIEWPORT + 3u));
     let zn = bitcast<f32>(xw(XD_DEPTH)); let zf = bitcast<f32>(xw(XD_DEPTH + 1u));
     nf = 0u;
+    sx_wz = bitcast<f32>(0xff7fffffu);
     for (var i = 1u; i + 1u < n; i += 1u) {
         let k = vec3<u32>(poly[0], poly[i], poly[i + 1u]);
         var s: array<vec2<i32>, 3>;
@@ -1193,17 +1301,17 @@ pub fn setup_pass(store: &Store, osgn: &[SigElement], ps: Option<&[u8]>, prim: P
             r[c] = rhw;
             z[c] = sx_r(rhw * zc * (zf - zn)) + zn;
             dp[c] = q;
+            sx_wz = max(sx_wz, z[c]);
         }
         if (!sx_geometry(s[0], s[1], s[2])) { continue; }
         // (WIREFRAME: drawn when a fan triangle is, culling as solid)
         nf += 1u;
-        break;
     }
 ";
     m.push_str(if prim == Prim::Wire { FAN_WIRE } else { FAN });
     if prim == Prim::Wire {
         // (each edge an aliased line of its own, in the API's corner order)
-        m.push_str("    if (nf == 0u) { return; }\n    line_slot(0u, e0, e1);\n    line_slot(1u, e1, e2);\n    line_slot(2u, e2, e0);\n}\n");
+        m.push_str("    if (nf == 0u) { return; }\n    line_slot(0u, e0, e1, true);\n    line_slot(1u, e1, e2, true);\n    line_slot(2u, e2, e0, true);\n}\n");
         return Ok(Wgsl { code: m, bindings });
     }
     // each input component of the layout, from the store by semantic
@@ -1286,7 +1394,7 @@ fn l_diamond(x: f32, y: f32, cx: f32, cy: f32, xm: bool) -> bool {
 }
 ",
     );
-    wln!(m, "fn line_slot(f: u32, ea: u32, eb: u32) {{\n    let o = (base + f) * SX_STRIDE;");
+    wln!(m, "fn line_slot(f: u32, ea: u32, eb: u32, wired: bool) {{\n    let o = (base + f) * SX_STRIDE;");
     for &(r, cc) in culls {
         let x = XYZW.get(usize::from(cc)).copied().unwrap_or('x');
         wln!(m, "    if (0.0f > bitcast<f32>(store[ea * {regs}u + {r}u].{x}) && 0.0f > bitcast<f32>(store[eb * {regs}u + {r}u].{x})) {{ return; }}");
@@ -1369,7 +1477,10 @@ fn l_diamond(x: f32, y: f32, cx: f32, cy: f32, xm: bool) -> bool {
     if (xm) { l_inv = ps_div(1.0f, x1 - x0); l_base = x0; } else { l_inv = ps_div(1.0f, y1 - y0); l_base = y0; }
     lrhw = vec2<f32>(rr[0], rr[1]);
     let pr = line_axis(rr[0], rr[1]);
-    let pz = line_axis(zz[0], zz[1]);
+    var pz = line_axis(zz[0], zz[1]);
+    // (a wireframe edge's depth bias: Bias::of with the triangle's largest depth and the line's
+    // slope along its major axis; a line has none)
+    if (wired) { pz.z = pz.z + sx_bias(sx_wz, max(abs(pz.x), abs(pz.y))); }
     // the triangle drawn: over the line's pixels and one more on every side, its depth the
     // plane's at its corners (in the viewport's clip space, w 1)
     let vx = bitcast<f32>(xw(XD_VIEWPORT)); let vy = bitcast<f32>(xw(XD_VIEWPORT + 1u));
@@ -1381,7 +1492,7 @@ fn l_diamond(x: f32, y: f32, cx: f32, cy: f32, xm: bool) -> bool {
     for (var c = 0u; c < 3u; c += 1u) {
         let q = cs[c];
         var dz = 0.0f;
-        if (zf != zn) { dz = clamp(ps_div((sx_r(pz.x * q.x) + (sx_r(pz.y * q.y) + pz.z)) - zn, zf - zn), 0.0f, 1.0f); }
+        if (zf != zn) { dz = ps_div((sx_r(pz.x * q.x) + (sx_r(pz.y * q.y) + pz.z)) - zn, zf - zn); }
         setup[o + c] = bitcast<vec4<u32>>(vec4<f32>(ps_div(q.x - ox, hx), ps_div(q.y - oy, hy), dz, 1.0f));
     }
     setup[o + 3u] = vec4<u32>(bitcast<u32>(pr.x), bitcast<u32>(pr.y), bitcast<u32>(pr.z), bitcast<u32>(hc));
@@ -1528,9 +1639,20 @@ pub(crate) fn inputs(ps: &[u8], samples: u32, params: &mut Vec<String>, pre: &mu
     m.push_str(SX_ROUND);
     m.push_str(ps::DIV);
     m.push_str("fn sx_at(o: u32, c: u32, p: vec2<f32>) -> f32 {\n    return (bitcast<f32>(setup[o + 2u][c]) + sx_r(bitcast<f32>(setup[o + 1u][c]) * p.y)) + sx_r(bitcast<f32>(setup[o][c]) * p.x);\n}\n");
+    // (the header's rhw and depth planes: one vec4 each, (gx, gy, c, _); an input's component's
+    // plane is down three vec4s, sx_at)
+    m.push_str("fn sx_head(o: u32, p: vec2<f32>) -> f32 {\n    let g = bitcast<vec4<f32>>(setup[o]);\n    return (g.z + sx_r(g.y * p.y)) + sx_r(g.x * p.x);\n}\n");
     pre.push("sx_k = in_slot & 0x80000000u;".into());
     pre.push(format!("let sx_o = in_slot * {stride}u;"));
     pre.push("let sx_c = floor(in_pos.xy) + vec2<f32>(0.5f);".into());
+    if samples == 1 {
+        // (the depth written: the depth plane at the pixel's centre, as WARP writes it (winref
+        // d3d11wire: WebGPU's own interpolation of the drawn triangle's corners was an ulp or
+        // two off), held to the viewport's range by WebGPU; with more samples each sample's
+        // depth is the rasterizer's at that sample)
+        pre.push("sx_depth = sx_head(sx_o + 4u, sx_c);".into());
+        m.push_str("var<private> sx_depth: f32;\n");
+    }
     // (an aliased line's slot: the pixel lit by lines.md §1.2's test at its centre, the
     // triangle drawn only bounds it)
     m.push_str(SX_LINE_COVERS);
@@ -1547,7 +1669,7 @@ pub(crate) fn inputs(ps: &[u8], samples: u32, params: &mut Vec<String>, pre: &mu
         let all = (1u32 << offs.len()).wrapping_sub(1);
         pre.push(format!("var sx_cen = sx_c;\n    if ((in_cov & {all}u) != {all}u) {{ let k = firstTrailingBit(in_cov & {all}u); sx_cen = sx_c + SX_COFFS[min(k, {}u)]; }}", offs.len().saturating_sub(1)));
     }
-    let rhw_at = |pt: &str| format!("ps_div(1.0f, sx_at(sx_o + 3u, 0u, {pt}))");
+    let rhw_at = |pt: &str| format!("ps_div(1.0f, sx_head(sx_o + 3u, {pt}))");
     for (i, inp) in (0u32..).zip(&layout.inputs) {
         let o = HEADER.saturating_add(i.saturating_mul(3));
         for c in bits(inp.mask) {
@@ -1576,7 +1698,7 @@ pub(crate) fn inputs(ps: &[u8], samples: u32, params: &mut Vec<String>, pre: &mu
                 let v = match c {
                     0 => format!("bitcast<u32>({pt}.x)"),
                     1 => format!("bitcast<u32>({pt}.y)"),
-                    2 => format!("bitcast<u32>(sx_at(sx_o + 4u, 0u, {pt}))"),
+                    2 => format!("bitcast<u32>(sx_head(sx_o + 4u, {pt}))"),
                     _ => format!("bitcast<u32>({})", rhw_at(&pt)),
                 };
                 pre.push(format!("v{r}.{x} = {v};"));
@@ -1593,3 +1715,7 @@ mod tests;
 #[cfg(test)]
 #[path = "setup_golden_tests.rs"]
 mod golden_tests;
+
+#[cfg(test)]
+#[path = "setup_wire_golden_tests.rs"]
+mod wire_golden_tests;

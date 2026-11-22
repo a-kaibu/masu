@@ -1016,6 +1016,16 @@ fn raster_words(d: &D11, st: &State, w: &mut [u32; x::xd::WORDS]) {
     let cull = x::ps::Cull::of(at(1)).unwrap_or(x::ps::Cull::Back);
     let bits = cull.word() | u32::from(at(2) != 0) << 2 | u32::from(at(6) != 0) << 3 | u32::from(st.ps != 0) << 4;
     put(w, x::xd::RASTER, 0, bits);
+    // (a wireframe edge's depth bias, the setup's: DepthBias, DepthBiasClamp, SlopeScaled, in
+    // the bound depth view's unit; with none bound, a float buffer's)
+    put(w, x::xd::BIAS, 0, at(3));
+    put(w, x::xd::BIAS_CLAMP, 0, at(4));
+    put(w, x::xd::BIAS_SLOPE, 0, at(5));
+    let dsv_fmt = match d.objs.get(&st.dsv).map(|o| &o.data) {
+        Some(Data::View(v)) => Some(v.fmt),
+        _ => None,
+    };
+    put(w, x::xd::DEPTH_UNIT, 0, dsv_fmt.and_then(x::setup::DepthUnit::of_dxgi).unwrap_or(x::setup::DepthUnit::Float).word());
     for (k, v) in x::ps::rect(&vp, view_size(d, st.rtvs[0]).or_else(|| view_size(d, st.dsv)), (at(7) != 0).then_some(st.scissor[0])).iter().enumerate() {
         put(w, x::xd::RECT, k, v.cast_unsigned());
     }
@@ -1029,7 +1039,27 @@ pub struct StoreDraw {
     pub topo: u32,
     pub count: u32,
     /// a setup store's draw: the pixel shader's entry of the store (setup.rs)
-    pub setup: Option<[u32; 8]>,
+    pub setup: Option<SetupStore>,
+}
+
+/// A setup store a draw reads: its entry, and what its slots are
+#[derive(Clone, Copy, Debug)]
+pub struct SetupStore {
+    pub entry: [u32; 8],
+    pub prim: x::setup::Prim,
+}
+
+impl SetupStore {
+    /// The slots are squares and regions around lines and points (WIREFRAME's edges among
+    /// them): drawn uncull'd, with no depth bias of the pipeline's (the setup put the edges'
+    /// in), their depth unclipped (a region's corners go beyond 0 and 1 where its plane does;
+    /// the page's unclippedDepth, on a device with depth-clip-control)
+    pub fn squares(self) -> bool {
+        match self.prim {
+            x::setup::Prim::Triangle => false,
+            x::setup::Prim::Wire | x::setup::Prim::Line | x::setup::Prim::Point => true,
+        }
+    }
 }
 
 /// What [`setup_draw`] did.
@@ -1056,7 +1086,10 @@ fn setup_wanted(d: &mut D11, st: &State) -> bool {
     // (the stage whose outputs are rasterized: the geometry, domain or vertex shader)
     let last = [st.shaders[0], st.shaders[2], st.vs].into_iter().find(|&s| s != 0).unwrap_or(0);
     let distances = code_of(d, last).is_some_and(|c| dxwgsl::signature(c, true).iter().any(|e| matches!(e.sysval, 2 | 3)));
-    distances || (st.ps != 0 && layout_of(d, st.ps).is_some_and(|l| l.needed()))
+    // (FillMode WIREFRAME: a triangle's edges are lines of the setup's, culled and biased as
+    // WARP's, review b5dacf4 3.2; a draw of points or lines is the same either way)
+    let wired = state_desc(d, st.raster).and_then(|r| r.first().copied()).is_some_and(|f| Fill::of(f) == Fill::Wireframe);
+    wired || distances || (st.ps != 0 && layout_of(d, st.ps).is_some_and(|l| l.needed()))
 }
 
 /// The setup pass over the store's list triangles and the draw of their fan triangles, in pieces
@@ -1095,7 +1128,7 @@ fn setup_draw(d: &mut D11, st: &State, stv: &Store, osgn: &[dxwgsl::dxbc::SigEle
             Over::Data { binding, kind, bytes } => Over::Data { binding: *binding, kind: *kind, bytes: bytes.clone() },
         }));
         pass(d, st, 0, &sh, &over, Some(n));
-        let sd = StoreDraw { vs: vsh.clone(), over: vec![store_entry(x::setup::B_SETUP, sbuf, false)], topo: 3, count: n.saturating_mul(per).saturating_mul(3), setup: Some(store_entry(x::setup::B_SETUP, sbuf, false)) };
+        let sd = StoreDraw { vs: vsh.clone(), over: vec![store_entry(x::setup::B_SETUP, sbuf, false)], topo: 3, count: n.saturating_mul(per).saturating_mul(3), setup: Some(SetupStore { entry: store_entry(x::setup::B_SETUP, sbuf, false), prim }) };
         // SAFETY: a store draw reads no guest memory of its own
         unsafe { draw_with(d, st, false, sd.count, 1, 0, 0, 0, None, Some(&sd)) };
         first = first.saturating_add(n);

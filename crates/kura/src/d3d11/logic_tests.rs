@@ -233,3 +233,49 @@ fn multisampled_snorm_textures_are_twins() {
     assert_eq!(snorm_ms_page(31, 2, 1, 1, 4, 0xa0), None);
     assert_eq!(snorm_ms_page(28, 2, 1, 1, 4, 0x20), None);
 }
+
+/// a multisampled 16-bit SNORM texture is its SINT twin too; 16-bit SNORM views have twins of
+/// 16-bit channels, drawn with the shader's 16-bit store
+#[test]
+fn sixteen_bit_snorm_has_twins() {
+    assert_eq!(snorm_twin(13), Some((f::P_RGBA16SI, [16, 16, 16, 16])));
+    assert_eq!(snorm_twin(37), Some((f::P_RG16SI, [16, 16, 0, 0])));
+    assert_eq!(snorm_twin(58), Some((f::P_R16SI, [16, 0, 0, 0])));
+    assert_eq!(snorm_ms_page(13, 2, 1, 1, 4, 0x20), Some(f::P_RGBA16SI));
+    assert_eq!(snorm_ms_page(37, 2, 1, 1, 4, 0x20), Some(f::P_RG16SI));
+    assert_eq!(snorm_ms_page(58, 2, 1, 1, 4, 0x20), Some(f::P_R16SI));
+    let (ops, _) = targets(&blending(true, [5, 6, 1, 2, 7, 3]), &[f::P_RGBA32F], &[13], &[false], false);
+    assert!(matches!(ops[0].store, Store::Snorm(Some(_))), "{ops:?}");
+    assert_eq!(ops[0].snorm_width(), dxwgsl::snorm::Width::Bits16);
+}
+
+/// the twins' copies: bits between 8-bit pages (COPY's filter 2 single-sampled, CONVERT's bytes
+/// multisampled), a 16-bit SNORM page's floats to and from its twin's values, nothing else
+#[test]
+fn twin_copies() {
+    let c = |from, to, ms| twin_copy(1, 2 | 3 << 16, 4, 0, 8, 6, from, to, ms);
+    assert_eq!(c(f::P_RGBA8SN, f::P_RGBA8SI, false), Some(vec![gpu::COPY, 1, 2 | 3 << 16, 0, 0, 8, 6, 4, 0, 0, 0, 8, 6, 2]));
+    assert_eq!(c(f::P_RGBA8, f::P_RGBA8SI, false).map(|v| v[13]), Some(2));
+    let conv = |k: gpu::Convert| Some(vec![gpu::CONVERT, 1, 2 | 3 << 16, 4, 0, 8, 6, k.word()]);
+    assert_eq!(c(f::P_RGBA8, f::P_RGBA8SI, true), conv(gpu::Convert::Unorm8ToSint8));
+    assert_eq!(c(f::P_RG8SI, f::P_RG8, true), conv(gpu::Convert::Sint8ToUnorm8));
+    assert_eq!(c(f::P_RGBA32F, f::P_RGBA16SI, false), conv(gpu::Convert::Snorm16ToSint16));
+    assert_eq!(c(f::P_R16SI, f::P_R32F, false), conv(gpu::Convert::Sint16ToSnorm16));
+    assert_eq!(c(f::P_RGBA16F, f::P_RGBA16SI, false), None);
+    assert_eq!(c(f::P_RGBA32F, f::P_RGBA16SI, true), None);
+    assert_eq!(c(f::P_BGRA8, f::P_RGBA8SI, true), None);
+}
+
+proptest::proptest! {
+    /// an SNORM texel's values: each channel's bytes as the signed value (8 or 16 bits), a
+    /// channel the format has not 0
+    #[test]
+    fn snorm_values_of_texels(b in proptest::prelude::any::<[u8; 8]>()) {
+        let s8 = |i: usize| i32::from(b[i].cast_signed());
+        let s16 = |i: usize| i32::from(i16::from_le_bytes([b[i], b[i + 1]]));
+        proptest::prop_assert_eq!(snorm_values([8, 8, 8, 8], &b), [s8(0), s8(1), s8(2), s8(3)]);
+        proptest::prop_assert_eq!(snorm_values([8, 8, 0, 0], &b[..2]), [s8(0), s8(1), 0, 0]);
+        proptest::prop_assert_eq!(snorm_values([16, 16, 16, 16], &b), [s16(0), s16(2), s16(4), s16(6)]);
+        proptest::prop_assert_eq!(snorm_values([16, 0, 0, 0], &b[..2]), [s16(0), 0, 0, 0]);
+    }
+}
