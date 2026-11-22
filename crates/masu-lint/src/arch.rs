@@ -606,7 +606,8 @@ fn release_build_only(tree: &Tree) -> Hits {
 }
 
 /// what must stay in place: (file, text, why)
-pub const REQUIRED: [(&str, &str, &str); 35] = [
+pub const REQUIRED: [(&str, &str, &str); 36] = [
+    ("crates/sake/src/imagecert.rs", "    implement(\"imagehlp\", \"ImageAddCertificate\", ImageAddCertificate);", "ImageAddCertificate / ImageRemoveCertificate write the certificate table (they were unimplemented and answered 0; 2026-11-22)"),
     ("crates/sake/src/files.rs", "    let w = admin_share(&w).unwrap_or(w);", "\\\\SAKE\\C$\\x is this machine's C:\\x (GetLongPathName of a UNC path to the guest's own drive found nothing; 2026-11-22)"),
     ("crates/sake/src/files.rs", "    resolve_found(w).or_else(|| crate::sysdll::make(w))", "system32 holds a file for each DLL sake implements, as Windows does (CopyFile and NtOpenFile of kernel32.dll found none; 2026-11-22)"),
     ("crates/sake/src/k32.rs", "    if path == 0 && !own_path && let Some(w) = crate::actctx::redirect_file(&n) {", "SearchPath with no path first redirects the name through the activation context (RtlDosSearchPath_Ustr flag 1; it searched only the folders; 2026-11-22)"),
