@@ -265,7 +265,7 @@ fn mapped_buffers_live_in_guest_memory() {
                     let src: Vec<u8> = (0..n).map(|_| r.next() as u8).collect();
                     unsafe { glBufferData(T, n as isize, if r.chance(30) { std::ptr::null() } else { src.as_ptr() }, 0x88E4) };
                     // (glBufferData(NULL) is zeros here; the mapping, if any, is gone)
-                    *data = GL.locked().buffers[&id].data.clone();
+                    *data = crate::gl::current_objs().objs.buffers[&id].data.clone();
                     assert_eq!(data.len(), n, "{at}");
                     *mapped = 0;
                 }
@@ -297,12 +297,12 @@ fn mapped_buffers_live_in_guest_memory() {
                 6 => {
                     assert_eq!(glUnmapBuffer(T), 1);
                     *mapped = 0;
-                    assert_eq!(GL.locked().buffers[&id].data, *data, "{at}: after the unmap");
+                    assert_eq!(crate::gl::current_objs().objs.buffers[&id].data, *data, "{at}: after the unmap");
                 }
                 7 => {
                     // (a draw of nothing: buffers still mapped are read as they are now)
                     glDrawArrays(4, 0, 0);
-                    assert_eq!(GL.locked().buffers[&id].data, *data, "{at}: at a draw");
+                    assert_eq!(crate::gl::current_objs().objs.buffers[&id].data, *data, "{at}: at a draw");
                 }
                 8 if r.chance(40) => {
                     unsafe { glDeleteBuffers(1, &id) };
@@ -433,6 +433,8 @@ fn reads_come_from_the_read_framebuffer() {
         let mut lk = GL.locked();
         let g = &mut *lk;
         let c = g.ctxs.remove(&ctx).unwrap();
+        let group = c.group;
+        g.objs = g.groups.remove(&group).unwrap_or_default();
         let got = read_target(g, &c);
         let want = |g: &Gl, f: u32| -> Option<(u32, u32, u32, u32)> {
             if f == 0 {
@@ -440,11 +442,11 @@ fn reads_come_from_the_read_framebuffer() {
             }
             let (tex, n, l) = (*fbos.get(&f)?)?;
             if tex {
-                let t = &g.textures[&n];
+                let t = &g.objs.textures[&n];
                 Some((t.gpu, l, (t.w >> l).max(1), (t.h >> l).max(1)))
             } else {
                 let rb = rbs.iter().find(|x| x.0 == n).unwrap();
-                Some((g.rbs[&n].gpu, 0, rb.1, rb.2))
+                Some((g.objs.rbs[&n].gpu, 0, rb.1, rb.2))
             }
         };
         let w = want(g, read);
@@ -459,6 +461,8 @@ fn reads_come_from_the_read_framebuffer() {
             (Some(a), Some(b)) if b.0 == u32::MAX => assert_eq!((a.2, a.3), (b.2, b.3), "step {step}: window draw"),
             (a, b) => assert_eq!(a, b, "step {step}: draw {draw}"),
         }
+        let objs = std::mem::take(&mut g.objs);
+        g.groups.insert(group, objs);
         g.ctxs.insert(ctx, c);
     }
 }

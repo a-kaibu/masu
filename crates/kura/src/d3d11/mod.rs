@@ -43,6 +43,8 @@ mod deferred_tests;
 #[cfg(test)]
 mod context_op_tests;
 #[cfg(test)]
+mod devices_tests;
+#[cfg(test)]
 mod desc_tests;
 #[cfg(test)]
 mod copy_tests;
@@ -390,8 +392,8 @@ pub enum Data {
     /// an adapter: WARP's (Microsoft Basic Render Driver) when true
     Adapter(bool),
     Output,
-    Device,
-    Context,
+    Device(Dev),
+    Context(Box<Imm>),
     SwapChain(SwapChain),
     Buffer(Buffer),
     Texture(Texture),
@@ -446,6 +448,37 @@ pub struct Obj {
     pub data: Data,
     /// (guid, data, the object of SetPrivateDataInterface it holds a reference to)
     pub private: Vec<([u8; 16], Vec<u8>, u32)>,
+    /// the device that made it (a device child, its immediate or deferred context: the device
+    /// it holds while it is held and its GetDevice gives; 0 for DXGI objects and devices)
+    pub dev: u32,
+}
+
+/// One device (each D3D11CreateDevice makes its own, as Windows does): its immediate context
+/// and what it was made as.
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub struct Dev {
+    pub context: u32,
+    /// the feature level it was made at (GetFeatureLevel, which shaders it takes)
+    pub level: u32,
+    /// made by D3D10CreateDevice*: its children's D3D10 faces give it back (GetDevice), those
+    /// of a D3D11 device's children give none
+    pub made10: bool,
+    /// CreateDeviceContextState was called: QueryInterface gives the device's D3D10 faces
+    pub ten_faces: bool,
+    /// ID3D10Multithread::SetMultithreadProtected (only reported back)
+    pub mt_protected: bool,
+}
+
+impl Dev {
+    /// What a call on an object of no device answers (the DXGI objects')
+    const NONE: Dev = Dev { context: 0, level: 0xb000, made10: false, ten_faces: false, mt_protected: false };
+}
+
+/// A device's immediate context: its state, and the ID3DDeviceContextState whose state that
+/// is (0: the context's own)
+pub struct Imm {
+    pub st: State,
+    pub st_owner: u32,
 }
 
 #[derive(Clone, PartialEq, Debug)]
@@ -490,16 +523,6 @@ pub struct State {
 }
 
 pub struct D11 {
-    /// children made by another device object of the device (a D3D11_CREATE_DEVICE_VIDEO_SUPPORT
-    /// one: see create_device): child -> that device object, which their GetDevice gives back
-    made_by: HashMap<u32, u32>,
-    /// CreateDeviceContextState was called: QueryInterface gives the device's D3D10 faces
-    ten_faces: bool,
-    /// the device was last made by D3D10CreateDevice*: its children's D3D10 faces give it back
-    /// (GetDevice), those of a D3D11 device's children give none
-    made10: bool,
-    /// the feature level the device was last made at (GetFeatureLevel, which shaders it takes)
-    level: u32,
     /// PIPELINE_STATISTICS counts of what the device sent the page (d3d11/query.rs)
     stats: query::Stats,
     vtbls: Vec<u32>,
@@ -508,9 +531,9 @@ pub struct D11 {
     free_blocks: Vec<u32>,
     calls: *const HostCalls,
     trace: bool,
-    /// ID3D10Multithread::SetMultithreadProtected (only reported back)
-    mt_protected: bool,
     counts: HashMap<u32, u32>,
+    /// the device the call being made is on (the object's, see `enter`), and its immediate
+    /// context
     device: u32,
     context: u32,
     factory: u32,
@@ -519,9 +542,6 @@ pub struct D11 {
     /// Windows since 8
     warp: u32,
     output: u32,
-    st: State,
-    /// the ID3DDeviceContextState whose state `st` is (0: the context's own)
-    st_owner: u32,
     pipelines: HashMap<PipelineKey, u32>,
     /// point sprites' viewport uniform (page buffer, the half size written to it)
     sprite_view: (u32, [f32; 2]),
@@ -661,11 +681,60 @@ impl D11 {
         self.next += 1;
         let id = self.next;
         let addr = self.block(iface, id);
-        self.objs.insert(id, Obj { iface, refs: 1, binds: 0, faces: vec![(iface, addr)], data, private: Vec::new() });
-        if holds_device(iface) && iface != IF_CONTEXT && self.device != 0 {
-            self.add_ref(self.device);
+        let dev = if holds_device(iface) { self.device } else { 0 };
+        self.objs.insert(id, Obj { iface, refs: 1, binds: 0, faces: vec![(iface, addr)], data, private: Vec::new(), dev });
+        if dev != 0 && iface != IF_CONTEXT {
+            self.add_ref(dev);
         }
         addr
+    }
+
+    /// Makes the call on object `this` one on its device (and that device's immediate
+    /// context): the device itself, a device child's or context's device, a swap chain's. A
+    /// DXGI object's call stays on the device of the call before.
+    fn enter(&mut self, this: u32) {
+        let Some(o) = self.objs.get(&this) else { return };
+        let dev = match &o.data {
+            Data::Device(_) => this,
+            Data::SwapChain(s) => s.device,
+            Data::Factory | Data::Adapter(_) | Data::Output => return,
+            Data::Context(_) | Data::Buffer(_) | Data::Texture(_) | Data::View(_) | Data::Shader(_) | Data::Layout(_) | Data::State(_) | Data::Query(_) | Data::Deferred(_) | Data::CmdList(_) | Data::CtxState(_) | Data::BufferUav(_) | Data::Other => o.dev,
+        };
+        if let Some(Data::Device(v)) = self.objs.get(&dev).map(|o| &o.data) {
+            (self.device, self.context) = (dev, v.context);
+        }
+    }
+
+    /// The device the call is on.
+    fn dev(&self) -> Dev {
+        match self.objs.get(&self.device).map(|o| &o.data) {
+            Some(Data::Device(v)) => *v,
+            Some(_) | None => Dev::NONE,
+        }
+    }
+
+    fn dev_mut(&mut self) -> Option<&mut Dev> {
+        match self.objs.get_mut(&self.device).map(|o| &mut o.data) {
+            Some(Data::Device(v)) => Some(v),
+            Some(_) | None => None,
+        }
+    }
+
+    /// The state of the immediate context the last call was on.
+    #[cfg(test)]
+    fn imm_state(&self) -> State {
+        match self.objs.get(&self.context).map(|o| &o.data) {
+            Some(Data::Context(c)) => c.st.clone(),
+            Some(_) | None => default_state(),
+        }
+    }
+
+    /// The immediate context the call is on.
+    fn imm_mut(&mut self) -> Option<&mut Imm> {
+        match self.objs.get_mut(&self.context).map(|o| &mut o.data) {
+            Some(Data::Context(c)) => Some(c),
+            Some(_) | None => None,
+        }
     }
 
     /// The block of `id` for interface `iface` (made on first use).
@@ -697,10 +766,10 @@ impl D11 {
         match self.objs.get_mut(&id) {
             Some(o) => {
                 o.refs += 1;
-                let r = o.refs;
-                // (a device child holds the device while anyone holds the child)
-                if r == 1 && holds_device(o.iface) {
-                    self.add_ref(self.device);
+                let (r, dev) = (o.refs, o.dev);
+                // (a device child holds its device while anyone holds the child)
+                if r == 1 && dev != 0 {
+                    self.add_ref(dev);
                 }
                 r
             }
@@ -713,29 +782,26 @@ impl D11 {
         let was = o.refs;
         o.refs = o.refs.saturating_sub(1);
         let r = o.refs;
-        let (iface, binds) = (o.iface, o.binds);
-        // (one device per process here: "two" devices, one stored in the other's private data,
-        // are one holding itself. Once only those references are left, nobody holds it)
+        let (binds, dev, device) = (o.binds, o.dev, matches!(o.data, Data::Device(_)));
+        // (a device stored in its own private data holds itself: once only those references
+        // are left, nobody holds it)
         let selfs = lo32(o.private.iter().filter(|p| p.2 == id).count());
-        if r > 0 && r == selfs && id == self.device {
+        if r > 0 && r == selfs && device {
             o.private.retain(|p| p.2 != id);
             o.refs = 0;
-            if holds_device(iface) {
-                self.release(self.device);
-            }
             if binds == 0 {
                 self.destroy(id);
             }
             return 0;
         }
-        if id == self.device && self.trace && r > 0 {
+        if device && self.trace && r > 0 {
             // (who still holds the device: device children the application has not let go of)
             let mut left: Vec<String> = self.objs.iter().filter(|(_, o)| o.refs > 0 && holds_device(o.iface) && o.iface != IF_CONTEXT).map(|(&k, o)| format!("{}#{k}x{}", name(o.iface, 0).split(':').next().unwrap_or(""), o.refs)).collect();
             left.sort();
             eprintln!("d3d11: device released, {r} left: {}", left.join(" "));
         }
-        if was == 1 && holds_device(iface) {
-            self.release(self.device);
+        if was == 1 && dev != 0 {
+            self.release(dev);
         }
         if r == 0 && binds == 0 {
             self.destroy(id);
@@ -768,20 +834,20 @@ impl D11 {
     }
 
     fn destroy(&mut self, id: u32) {
-        // (the device, its immediate context and the DXGI objects live as long as the process;
-        // but the adapter objects each enumeration makes, Windows' new ones every time, and
-        // deferred contexts: one let go of took its state and its list along, and what they
-        // held, for good)
-        let made = match self.objs.get(&id).map(|o| &o.data) {
-            Some(Data::Adapter(_)) => id != self.adapter && id != self.warp,
-            Some(Data::Deferred(_)) => true,
+        // (the DXGI objects live as long as the process, but the adapter objects each
+        // enumeration makes, Windows' new ones every time. A device nobody holds goes, and its
+        // immediate context with it: the context holds its device while it is held. A deferred
+        // context let go of takes its state and its list along, and what they held, for good)
+        let made = match self.objs.get(&id).map(|o| (&o.data, o.dev)) {
+            Some((Data::Adapter(_), _)) => id != self.adapter && id != self.warp,
+            Some((Data::Deferred(_) | Data::Device(_), _)) => true,
+            Some((Data::Context(_), dev)) => !self.objs.contains_key(&dev),
             Some(_) | None => false,
         };
         if !made && matches!(self.objs.get(&id).map(|o| o.iface), Some(IF_DEVICE | IF_CONTEXT | IF_FACTORY | IF_ADAPTER | IF_OUTPUT) | None) {
             return;
         }
         let Some(o) = self.objs.remove(&id) else { return };
-        self.made_by.remove(&id);
         for &(_, _, held) in &o.private {
             if held != 0 {
                 self.release(held);
@@ -855,7 +921,17 @@ impl D11 {
                 // (the reference new_swapchain took)
                 self.release(s.device);
             }
-            Data::Factory | Data::Adapter(_) | Data::Output | Data::Device | Data::Context | Data::Layout(_) | Data::State(_) | Data::CtxState(_) | Data::Other => {}
+            Data::Device(v) => {
+                self.destroy(v.context);
+                if self.device == id {
+                    (self.device, self.context) = (0, 0);
+                }
+            }
+            Data::Context(c) => {
+                unbind_state(self, &c.st);
+                self.unbind(c.st_owner);
+            }
+            Data::Factory | Data::Adapter(_) | Data::Output | Data::Layout(_) | Data::State(_) | Data::CtxState(_) | Data::Other => {}
             Data::BufferUav(u) => {
                 self.unbind(u.buf);
                 if u.counter_page != 0 {
@@ -878,10 +954,6 @@ pub unsafe fn init(vtbls: *const u32, count: u32) -> u32 {
         Some(d) => d.vtbls = v,
         None => {
             *g = Some(D11 {
-                made_by: HashMap::new(),
-                ten_faces: false,
-                level: 0xb000,
-                made10: false,
                 stats: [0; 11],
                 vtbls: v,
                 objs: HashMap::new(),
@@ -889,7 +961,6 @@ pub unsafe fn init(vtbls: *const u32, count: u32) -> u32 {
                 free_blocks: Vec::new(),
                 calls: std::ptr::null(),
                 trace: crate::env_on!("MASU_D3D_TRACE"),
-                mt_protected: false,
                 counts: HashMap::new(),
                 device: 0,
                 context: 0,
@@ -897,8 +968,6 @@ pub unsafe fn init(vtbls: *const u32, count: u32) -> u32 {
                 adapter: 0,
                 warp: 0,
                 output: 0,
-                st: default_state(),
-                st_owner: 0,
                 pipelines: HashMap::new(),
                 sprite_view: (0, [0.0; 2]),
                 cb_copies: HashMap::new(),
@@ -957,6 +1026,7 @@ pub unsafe fn call(id: u32, args: *const u32, calls: *const HostCalls) -> u32 {
             _ => {
                 let (iface, m) = (id >> 8, id & 0xff);
                 let this = d.id_of(a(0));
+                d.enter(this);
                 let r = if this == 0 {
                     E_INVALIDARG
                 } else {
@@ -1043,7 +1113,7 @@ unsafe fn query_interface(d: &mut D11, id: u32, iface: u32, riid: u32, out: u32)
                 iface
             } else if ifs.contains(&primary) {
                 primary
-            } else if let Some(&f) = ifs.iter().find(|&&f| other_face(primary, f) || ((d.ten_faces || d3d10::eleven(iface).is_some()) && d3d10::ten(primary) == Some(f))) {
+            } else if let Some(&f) = ifs.iter().find(|&&f| other_face(primary, f) || ((d.dev().ten_faces || d3d10::eleven(iface).is_some()) && d3d10::ten(primary) == Some(f))) {
                 f
             } else {
                 0
@@ -1130,53 +1200,25 @@ unsafe fn create_device(d: &mut D11, args: *const u32) -> u32 {
     }
     dxgi_objects(d);
     d.release(d.factory);
-    if d.device == 0 {
-        let dev = d.new_obj(IF_DEVICE, Data::Device);
-        d.device = d.id_of(dev);
-        let ctx = d.new_obj(IF_CONTEXT, Data::Context);
-        d.context = d.id_of(ctx);
+    // (a device of its own every time, with its own immediate context and state: what one
+    // device makes, binds and sets the other never sees)
+    let dev = d.new_obj(IF_DEVICE, Data::Device(Dev { level, ..Dev::NONE }));
+    let dev = d.id_of(dev);
+    d.device = dev;
+    let ctx = d.new_obj(IF_CONTEXT, Data::Context(Box::new(Imm { st: default_state(), st_owner: 0 })));
+    let ctx = d.id_of(ctx);
+    d.context = ctx;
+    if let Some(o) = d.objs.get_mut(&ctx) {
         // (unreferenced until handed out: see `add_ref`)
-        if let Some(o) = d.objs.get_mut(&d.context) {
-            o.refs = 0;
-        }
-        d.st = default_state();
-    } else {
-        // (a device nobody holds any more: the new one starts from the default state)
-        if d.objs.get(&d.device).is_some_and(|o| o.refs == 0) && d.objs.get(&d.context).is_some_and(|o| o.refs == 0) {
-            let old = std::mem::replace(&mut d.st, default_state());
-            unbind_state(d, &old);
-            // (and without what the old one kept in its private data)
-            for id in [d.device, d.context] {
-                let old = d.objs.get_mut(&id).map_or_default(|o| std::mem::take(&mut o.private));
-                for (_, _, held) in old {
-                    if held != 0 && held != id {
-                        d.release(held);
-                    }
-                }
-            }
-        }
-        d.add_ref(d.device);
+        o.refs = 0;
     }
-    // D3D11_CREATE_DEVICE_VIDEO_SUPPORT next to a device in use: another device object of the
-    // same device (a decoding device of its own, as Unity's VideoPlayer makes one: it tells its
-    // textures from its own device's by the device, and opens them through shared handles, #227)
-    let mut dev = d.device;
-    if a(3) & 0x800 != 0 && dev_out != 0 && d.objs.get(&d.device).is_some_and(|o| o.refs > 1) {
-        d.release(d.device);
-        let v = d.new_obj(IF_DEVICE, Data::Device);
-        dev = d.id_of(v);
+    if let Some(v) = d.dev_mut() {
+        v.context = ctx;
     }
     wr(level_out, 0, level);
-    d.level = level;
-    d.made10 = false;
-    if dev_out != 0 {
-        wrp(dev_out, 0, d.addr_of(dev));
-    } else {
-        d.release(d.device);
-    }
     if ctx_out != 0 {
-        d.add_ref(d.context);
-        wrp(ctx_out, 0, d.addr_of(d.context));
+        d.add_ref(ctx);
+        wrp(ctx_out, 0, d.addr_of(ctx));
     }
     if desc != 0 && sc_out != 0 {
         let p = swap_desc(desc);
@@ -1186,8 +1228,13 @@ unsafe fn create_device(d: &mut D11, args: *const u32) -> u32 {
             return E_FAIL;
         }
     }
+    if dev_out != 0 {
+        wrp(dev_out, 0, d.addr_of(dev));
+    } else {
+        d.release(dev);
+    }
     if d.trace {
-        eprintln!("d3d11: device, feature level {level:#x}");
+        eprintln!("d3d11: device #{dev}, feature level {level:#x}");
     }
     // (nothing asked for back: only a check that the device can be made)
     if dev_out == 0 && ctx_out == 0 && sc_out == 0 {
@@ -1329,7 +1376,9 @@ unsafe fn create_device10(d: &mut D11, args: *const u32) -> u32 {
     if r != S_OK {
         return r;
     }
-    d.made10 = true;
+    if let Some(v) = d.dev_mut() {
+        v.made10 = true;
+    }
     let id = d.id_of(rdp(lo32(dev.as_mut_ptr().expose_provenance()), 0));
     if dev_out != 0 {
         let f = d.face(id, d3d10::IF10_DEVICE);
@@ -1617,8 +1666,8 @@ unsafe fn method(d: &mut D11, iface: u32, m: u32, this: u32, args: *const u32, a
         IF_SWAPCHAIN => swapchain_call(d, m, this, &a, after),
         // Enter/Leave: every call already runs under the host's lock
         IF_MULTITHREAD => match m {
-            5 => u32::from(std::mem::replace(&mut d.mt_protected, a(1) != 0)),
-            6 => u32::from(d.mt_protected),
+            5 => u32::from(d.dev_mut().is_some_and(|v| std::mem::replace(&mut v.mt_protected, a(1) != 0))),
+            6 => u32::from(d.dev().mt_protected),
             _ => 0,
         },
         IF_DXGIDEVICE => match m {
@@ -1675,7 +1724,7 @@ unsafe fn method(d: &mut D11, iface: u32, m: u32, this: u32, args: *const u32, a
             _ => 0,
         },
         IF_DXGIRES => match m {
-            6 | 7 => parent(d, d.made_by.get(&this).copied().unwrap_or(d.device), a(1), a(2)),
+            6 | 7 => parent(d, d.objs.get(&this).map_or(0, |o| o.dev), a(1), a(2)),
             8 => {
                 // GetSharedHandle: a handle of a texture made with D3D11_RESOURCE_MISC_SHARED (or
                 // SHARED_KEYEDMUTEX / SHARED_NTHANDLE), for OpenSharedResource; none otherwise
@@ -1710,7 +1759,7 @@ unsafe fn method(d: &mut D11, iface: u32, m: u32, this: u32, args: *const u32, a
             _ => E_NOTIMPL,
         },
         IF_SURFACE => match m {
-            6 | 7 => parent(d, d.made_by.get(&this).copied().unwrap_or(d.device), a(1), a(2)),
+            6 | 7 => parent(d, d.objs.get(&this).map_or(0, |o| o.dev), a(1), a(2)),
             8 => {
                 // GetDesc: Width Height Format SampleDesc
                 let Some(Data::Texture(t)) = d.objs.get(&this).map(|o| &o.data) else { return E_FAIL };
@@ -1740,17 +1789,6 @@ unsafe fn method(d: &mut D11, iface: u32, m: u32, this: u32, args: *const u32, a
             }
             _ => E_NOTIMPL,
         },
-        IF_DEVICE if this != d.device => {
-            // (another device object: what it makes is its)
-            let before = d.next;
-            let r = device_call(d, m, this, &a);
-            for id in before + 1..=d.next {
-                if d.objs.contains_key(&id) {
-                    d.made_by.insert(id, this);
-                }
-            }
-            r
-        }
         IF_DEVICE => device_call(d, m, this, &a),
         IF_CONTEXT if this != d.context => deferred::call(d, this, m, &a, after),
         IF_CONTEXT => context_call(d, m, &a, after),
@@ -2390,7 +2428,7 @@ unsafe fn device_call(d: &mut D11, m: u32, this: u32, a: &dyn Fn(usize) -> u32) 
                 17 => IF_DS,
                 _ => IF_CS,
             };
-            if let Err(hr) = check::shader(&code, m, d.level) {
+            if let Err(hr) = check::shader(&code, m, d.dev().level) {
                 if a(4) != 0 {
                     wrp(a(4), 0, 0);
                 }
@@ -2413,7 +2451,7 @@ unsafe fn device_call(d: &mut D11, m: u32, this: u32, a: &dyn Fn(usize) -> u32) 
                 // guest address)
                 (0..a(2)).map(|i| unsafe { *gc::<u8>(a(1).wrapping_add(i)) }).collect()
             };
-            let gs = check::shader(&code, 13, d.level).is_ok();
+            let gs = check::shader(&code, 13, d.dev().level).is_ok();
             let fail = |hr: u32| {
                 if a(9) != 0 {
                     wrp(a(9), 0, 0);
@@ -2421,7 +2459,7 @@ unsafe fn device_call(d: &mut D11, m: u32, this: u32, a: &dyn Fn(usize) -> u32) 
                 hr
             };
             // (stream output of a vertex or domain shader: no geometry shader of its own)
-            if a(1) != 0 && !gs && check::shader(&code, 12, d.level).is_err() && check::shader(&code, 17, d.level).is_err() {
+            if a(1) != 0 && !gs && check::shader(&code, 12, d.dev().level).is_err() && check::shader(&code, 17, d.dev().level).is_err() {
                 return fail(E_INVALIDARG);
             }
             // D3D11_SO_DECLARATION_ENTRY { Stream, SemanticName, SemanticIndex, Start, Count, Slot }
@@ -2506,8 +2544,8 @@ unsafe fn device_call(d: &mut D11, m: u32, this: u32, a: &dyn Fn(usize) -> u32) 
         26 => E_INVALIDARG,
         27 => deferred::create(d, a(1), a(2)),
         28 | 48 => {
-            // OpenSharedResource(handle, riid, out), OpenSharedResource1: the texture itself
-            // (one process, one device)
+            // OpenSharedResource(handle, riid, out), OpenSharedResource1: the texture itself, the
+            // one object whichever device opens it (its GetDevice: the device that made it)
             if a(3) == 0 {
                 return E_INVALIDARG;
             }
@@ -2581,7 +2619,7 @@ unsafe fn device_call(d: &mut D11, m: u32, this: u32, a: &dyn Fn(usize) -> u32) 
             S_OK
         }
         34..=36 => private_data(d, m - 30, this, a),
-        37 => d.level,
+        37 => d.dev().level,
         38 => 0,
         39 => S_OK,
         40 => {
@@ -2651,7 +2689,9 @@ unsafe fn device_call(d: &mut D11, m: u32, this: u32, a: &dyn Fn(usize) -> u32) 
             };
             wr(a(6), 0, level);
             // (from now on the device answers for its D3D10 interfaces too, as Windows does)
-            d.ten_faces = true;
+            if let Some(v) = d.dev_mut() {
+                v.ten_faces = true;
+            }
             if a(7) == 0 {
                 return S_FALSE;
             }
@@ -3051,7 +3091,7 @@ fn buffer_view_sync(d: &mut D11, view: u32) {
 unsafe fn child_call(d: &mut D11, iface: u32, m: u32, this: u32, a: &dyn Fn(usize) -> u32) -> u32 {
     match m {
         3 => {
-            let dev = d.made_by.get(&this).copied().unwrap_or(d.device);
+            let dev = d.objs.get(&this).map_or(0, |o| o.dev);
             d.add_ref(dev);
             wrp(a(1), 0, d.addr_of(dev));
             return S_OK;
@@ -3232,9 +3272,13 @@ fn predicated_off(d: &D11, st: &State) -> bool {
 }
 
 unsafe fn context_call(d: &mut D11, m: u32, a: &dyn Fn(usize) -> u32, after: &mut After) -> u32 {
-    let mut st = std::mem::replace(&mut d.st, default_state());
+    // (the state of the context the call is on, out of it while the call runs)
+    let Some(c) = d.imm_mut() else { return E_FAIL };
+    let mut st = std::mem::replace(&mut c.st, default_state());
     let r = context_call2(d, &mut st, m, a, after);
-    d.st = st;
+    if let Some(c) = d.imm_mut() {
+        c.st = st;
+    }
     r
 }
 
@@ -3417,8 +3461,8 @@ unsafe fn swap_state(d: &mut D11, st: &mut State, state: u32, prev_out: u32) {
         return;
     };
     let cur = std::mem::replace(st, *loaded);
-    let old = d.st_owner;
-    d.st_owner = new;
+    let Some(c) = d.imm_mut() else { return };
+    let old = std::mem::replace(&mut c.st_owner, new);
     // (the context holds its current state privately: the application may let go of it)
     d.bind(new);
     if let Some(Data::CtxState(slot)) = d.objs.get_mut(&old).map(|o| &mut o.data) {
