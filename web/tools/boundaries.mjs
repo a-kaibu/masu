@@ -9,7 +9,16 @@ const rules = [
   // (the older format's files: taken over once, never written as this format's; review e18bf44)
   ["saves.ts", "legacyFiles", ["takeOver"]],
   ["wasmsource.ts", "sakeWasmBytes", ["runtimeWasm"]],
+  // (a save state's index and bodies change under the game's lock only: SnapshotStore's two
+  // ways in; review 22bb061 §2, two tabs' saves removing each other's bodies)
+  ["snapshot-store.ts", "writeBody", ["publish", "cache", "writeIndex"]],
+  ["snapshot-store.ts", "writeIndex", ["publish", "cache"]],
+  ["snapshot-store.ts", "pruneBodies", ["writeIndex"]],
 ];
+
+/** OPFS folders each owned by one module: getDirectoryHandle("<folder>") elsewhere is an error. */
+/** @type {[string, string][]} */
+const folders = [["states", "snapshot-store.ts"]];
 
 export function check(program) {
   const checker = program.getTypeChecker();
@@ -35,6 +44,19 @@ export function check(program) {
       continue;
     function visit(node, owner) {
       if (ts.isFunctionDeclaration(node)) owner = node;
+      if (
+        ts.isCallExpression(node) &&
+        ts.isPropertyAccessExpression(node.expression) &&
+        node.expression.name.text === "getDirectoryHandle" &&
+        node.arguments[0] &&
+        ts.isStringLiteralLike(node.arguments[0])
+      ) {
+        const folder = folders.find(([f]) => f === node.arguments[0].text);
+        if (folder && !source.fileName.endsWith("/src/" + folder[1])) {
+          const line = source.getLineAndCharacterOfPosition(node.getStart()).line + 1;
+          errors.push(`${source.fileName}:${line}: OPFS ${folder[0]}/ belongs to ${folder[1]}`);
+        }
+      }
       if (ts.isIdentifier(node)) {
         let symbol = ts.isShorthandPropertyAssignment(node.parent)
           ? checker.getShorthandAssignmentValueSymbol(node.parent)
