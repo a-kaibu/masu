@@ -35,11 +35,26 @@ impl Code {
     }
 }
 
+/// The SIMD loads and stores the JIT emits (their 0xfd opcodes): each goes through
+/// Code::simd_access, which counts it ([`MEMCOUNT`])
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[repr(u32)]
+pub enum SimdMem {
+    Load = 0,
+    Load8Splat = 7,
+    Load16Splat = 8,
+    Load32Splat = 9,
+    Load64Splat = 10,
+    Store = 11,
+    Load32Zero = 0x5c,
+    Load64Zero = 0x5d,
+}
+
 /// Measuring (kura: MASU_JIT_MEMCOUNT): every load and store the JIT emits from now on counts
 /// itself in [`MEM_COUNTS`], by whether its address came from the Cpu (local 0: a `local.get 0`
 /// since the last access or call, which is how the translators address Cpu fields) and that
 /// field's offset, or not (the guest's memory, tables). wasm32 only (the counters' addresses
-/// are constants in the code; SIMD loads and stores are not counted). The counting itself is
+/// are constants in the code; the SIMD loads and stores too: SimdMem). The counting itself is
 /// slow; the counts are what to look at.
 pub static MEMCOUNT: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
 /// Cpu offsets counted one by one (larger ones together in the last slot)
@@ -447,31 +462,33 @@ impl Code {
     pub fn wrap(&mut self) -> &mut Self {
         self.op(0xa7)
     }
-    /// A SIMD instruction (0xfd prefix), with a memarg for loads and stores.
+    /// A SIMD instruction (0xfd prefix); its loads and stores are SimdMem's (simd_access).
     pub fn simd(&mut self, op: u32) -> &mut Self {
         self.b.push(0xfd);
         uleb(&mut self.b, u64::from(op));
         self
     }
-    pub fn v128load(&mut self, off: u32) -> &mut Self {
-        self.simd(0);
+    /// A SIMD load or store `op` at offset `off` (counted as the others: [`MEMCOUNT`])
+    fn simd_access(&mut self, op: SimdMem, off: u32) -> &mut Self {
+        if self.count_mem {
+            self.count_access(op == SimdMem::Store, off);
+        }
+        self.cpu_at = false;
+        self.simd(op as u32);
         uleb(&mut self.b, 0);
         uleb(&mut self.b, u64::from(off));
         self
+    }
+    pub fn v128load(&mut self, off: u32) -> &mut Self {
+        self.simd_access(SimdMem::Load, off)
     }
     /// v128.load64_zero
     pub fn v128load64(&mut self, off: u32) -> &mut Self {
-        self.simd(0x5d);
-        uleb(&mut self.b, 0);
-        uleb(&mut self.b, u64::from(off));
-        self
+        self.simd_access(SimdMem::Load64Zero, off)
     }
     /// v128.load32_zero
     pub fn v128load32(&mut self, off: u32) -> &mut Self {
-        self.simd(0x5c);
-        uleb(&mut self.b, 0);
-        uleb(&mut self.b, u64::from(off));
-        self
+        self.simd_access(SimdMem::Load32Zero, off)
     }
     /// A SIMD lane instruction (extract_lane, replace_lane) on lane `lane`.
     pub fn lane(&mut self, op: u32, lane: u8) -> &mut Self {
@@ -492,11 +509,8 @@ impl Code {
         self
     }
     /// A SIMD memory instruction (load_splat and the like) at offset `off`.
-    pub fn simd_mem(&mut self, op: u32, off: u32) -> &mut Self {
-        self.simd(op);
-        uleb(&mut self.b, 0);
-        uleb(&mut self.b, u64::from(off));
-        self
+    pub fn simd_mem(&mut self, op: SimdMem, off: u32) -> &mut Self {
+        self.simd_access(op, off)
     }
     pub fn v128zero(&mut self) -> &mut Self {
         self.simd(0x0c);
@@ -510,10 +524,7 @@ impl Code {
         self
     }
     pub fn v128store(&mut self, off: u32) -> &mut Self {
-        self.simd(11);
-        uleb(&mut self.b, 0);
-        uleb(&mut self.b, u64::from(off));
-        self
+        self.simd_access(SimdMem::Store, off)
     }
     /// memory.copy within memory 0
     pub fn memory_copy(&mut self) -> &mut Self {

@@ -479,3 +479,17 @@ A/B, one build, `JB_KNOBS_A=ssa=0 JB_KNOBS_B=ssa=1`, 9 rounds (B/A):
 Same sums, interpreter steps and exits; peak memory the same. The gain is the size (0.3-3.5%):
 V8 already shares what a block computes twice, so hot time is within the noise (±5%). What
 the SSA is for next is crossing blocks (the flags and values a loop carries) and SIMD (stage 4).
+
+## YMM upper halves in place, SIMD accesses counted (2026-11-22, stage 4 part)
+
+A VEX.256 form done as its VEX.128 form per lane (long/sse.rs `sse256`) used to swap each
+register's halves in the Cpu (`Cpu::xmm` <-> `Cpu::ymmh`, three v128 accesses a register) before
+the upper lanes and back after, and every leave in between had to swap them back. Now the
+generator has a lane (`Gen::lane`, `Lane::Lo` / `Lane::Hi`) and `xoff(lane, r)` gives the upper
+half's offset (`avx::halves`): nothing swapped, nothing to put back. jit64test 6000 programs
+pass; `Lane::Hi` answering the lower half fails 78 of 1000. golden: Region64/5 and Function64/5
+changed (their VEX.256 forms), the rest the same bytes.
+
+MASU_JIT_MEMCOUNT counts the SIMD loads and stores too: each goes through
+`Code::simd_access` with a `wasm::SimdMem`. masu-lint jit-simd-access fails a raw SIMD memory
+opcode or `swap_hi`. Not measured in V8 yet: jitbench has no long-mode program (issue).

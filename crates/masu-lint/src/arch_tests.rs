@@ -834,6 +834,16 @@ fn fixture(r: Rule) -> Fixture {
             ],
             mutate: ("tools/jit32test/src/main.rs", |t| Some(t.replace("koji::jit::SSA.store(mode.ssa, Relaxed);", ""))),
         },
+        Rule::JitSimdAccess => Fixture {
+            bad: &[
+                ("crates/koji/src/jit/long/sse.rs", "fn f(&mut self) { self.c.get(L_A).simd(0); self.swap_hi(&regs); }\n"),
+            ],
+            good: &[
+                ("crates/koji/src/jit/long/sse.rs", "fn f(&mut self) { self.c.get(L_A).v128load(0); self.c.get(a).get(b).simd(0x52); self.lane = Lane::Hi; }\n"),
+                ("crates/koji/src/jit/wasm.rs", "fn simd_access(&mut self, op: SimdMem, off: u32) -> &mut Self { self.simd(op as u32); self }\n"),
+            ],
+            mutate: ("crates/koji/src/jit/long/avx.rs", |t| Some(t.replace("simd_mem(load, 0)", "simd(7)"))),
+        },
         Rule::DllSearch => Fixture {
             bad: &[
                 ("crates/sake/src/pe.rs", "pub static DLL_DIRS: Mutex<Vec<String>> = Mutex::new(Vec::new());\nfn find_dll_file(dll: &str) {\n    let mut dirs = vec![exe_dir];\n    dirs.extend(crate::dllpath::user_dirs().into_iter().rev());\n    dirs.push(crate::files::cwd().trim_end_matches('\\\\').to_string());\n    dirs.push(\"C:\\\\windows\\\\system32\".into());\n}\n// for d in search.folders() image_resolver(search.of_dependency(&win))\n"),

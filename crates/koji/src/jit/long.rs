@@ -285,9 +285,8 @@ struct Gen<'a> {
     mx_seen: [[Option<super::mxguard::Key>; 2]; 16],
     /// load_regs / store_regs so far: (offset in c.b, index in c.locs, store)
     marks: Vec<(usize, usize, bool)>,
-    /// YMM registers whose halves a VEX.256 translation has swapped (long/sse.rs): leaving for
-    /// the interpreter swaps them back first
-    hi_swapped: Vec<Register>,
+    /// the 128-bit lane a VEX.256 form is computing (long/sse.rs): its registers' offsets
+    lane: sse::Lane,
     /// the block's code may be rewritten ([`super::WATCH`]): an instruction's store into a
     /// page with translated code leaves at the next instruction with Cpu::jit_smc set
     smc: bool,
@@ -1138,10 +1137,6 @@ impl<'a> Gen<'a> {
 
     /// Leaves so the interpreter runs the current instruction.
     fn bail(&mut self) {
-        if !self.hi_swapped.is_empty() {
-            let r = self.hi_swapped.clone();
-            self.swap_hi(&r);
-        }
         let ip = self.ins.ip();
         self.exit_to(ip, RET_INTERP);
     }
@@ -1497,10 +1492,6 @@ impl<'a> Gen<'a> {
         self.depth += 1;
         self.c.get(L_CPU).get(L_W).store32(cpu_off!(jit_smc));
         self.c.get(L_CPU).u32c(size.max(1)).store32(cpu_off!(jit_smc_len));
-        if !self.hi_swapped.is_empty() {
-            let r = self.hi_swapped.clone();
-            self.swap_hi(&r);
-        }
         let next = self.ins.next_ip();
         self.exit_to(next, RET_INTERP);
         self.depth -= 1;
@@ -1556,10 +1547,6 @@ impl<'a> Gen<'a> {
         self.depth += 1;
         self.c.get(L_CPU).u32c(a).store32(cpu_off!(jit_smc));
         self.c.get(L_CPU).u32c(n.max(1)).store32(cpu_off!(jit_smc_len));
-        if !self.hi_swapped.is_empty() {
-            let r = self.hi_swapped.clone();
-            self.swap_hi(&r);
-        }
         let next = self.ins.next_ip();
         self.exit_to(next, RET_INTERP);
         self.depth -= 1;
@@ -3605,7 +3592,7 @@ fn translate_seen64<M: Memory>(tc: &TranslationContext, module: &mut Module, mem
     }
     let lay = if !tc.debug64.structured && !fnm { None } else { structure64(&blocks, (&index, &copy_index), &returns, (&group_of, &groups), roots, fnm, (&copies, &copy_ret), tc.debug64) };
     let nodes = blocks.len() + groups.len() + 1;
-    let mut g = Gen { c: Code::measured(&tc.measure), tc: *tc, blocks: &blocks, index: &index, copy_index: &copy_index, returns: &returns, flags: Flags::Cpu, depth: 0, ins: blocks[0].ins[0], temps: 0, mx_checked: None, mx_seen: [[None; 2]; 16], marks: Vec::new(), hi_swapped: Vec::new(), smc: false, fresh: None, watch_store: false, fell_back: false, bad: false, info: iced_x86::InstructionInfoFactory::new(), structured: lay.is_some(), fwd: alloc::vec![None; nodes], back: alloc::vec![None; nodes], cur: 0, table_node: BTreeMap::new(), side: BTreeMap::new(), fnm, thunks: &thunks, copies: &copies, copy_ret: &copy_ret, copy: LeafCopy::NONE, unlaid: Vec::new() };
+    let mut g = Gen { c: Code::measured(&tc.measure), tc: *tc, blocks: &blocks, index: &index, copy_index: &copy_index, returns: &returns, flags: Flags::Cpu, depth: 0, ins: blocks[0].ins[0], temps: 0, mx_checked: None, mx_seen: [[None; 2]; 16], marks: Vec::new(), lane: sse::Lane::Lo, smc: false, fresh: None, watch_store: false, fell_back: false, bad: false, info: iced_x86::InstructionInfoFactory::new(), structured: lay.is_some(), fwd: alloc::vec![None; nodes], back: alloc::vec![None; nodes], cur: 0, table_node: BTreeMap::new(), side: BTreeMap::new(), fnm, thunks: &thunks, copies: &copies, copy_ret: &copy_ret, copy: LeafCopy::NONE, unlaid: Vec::new() };
     // the dispatcher's key is the low 32 bits: code at another 4GB alias is left to the
     // interpreter (a function's adapter checks, fn_adapter)
     if !fnm {

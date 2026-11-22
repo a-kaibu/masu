@@ -1322,6 +1322,22 @@ pub(super) fn jit_budget_harness(tree: &Tree) -> Hits {
     out
 }
 
+/// What koji's generators must not spell (Rule::JitSimdAccess): SIMD memory opcodes emitted
+/// raw (0 load, 7-10 splats, 11 store, 0x5c/0x5d zero-extending loads), and the YMM half swap
+pub const JIT_SIMD_RAW: [&str; 11] = [".simd(0)", ".simd(7)", ".simd(8)", ".simd(9)", ".simd(10)", ".simd(11)", ".simd(0x5c)", ".simd(0x5d)", ".simd(92)", ".simd(93)", "swap_hi("];
+
+pub(super) fn jit_simd_access(tree: &Tree) -> Hits {
+    let mut out = Hits::new();
+    for f in tree.rs(&["crates/koji/src/jit/"]) {
+        for (k, l) in product_code(tree, &f).lines().enumerate() {
+            if let Some(b) = JIT_SIMD_RAW.iter().find(|b| l.contains(*b)) {
+                out.push((f.clone(), k.saturating_add(1), format!("`{b}`: a SIMD access not through Code::simd_access (MEMCOUNT misses it), or the YMM halves swapped in the Cpu")));
+            }
+        }
+    }
+    out
+}
+
 /// What jit32test must say: a module that does not load fails the test (Made, not a refusal),
 /// and a run in which no translation loaded fails
 pub const JIT_HARNESS_LOADED: [(&str, &str); 2] = [("tools/jit32test/src/main.rs", "fn translate(&mut self, base: usize, eip: u32) -> Result<Made, String>"), ("tools/jit32test/src/main.rs", "if loaded == 0 && count > 0")];
