@@ -1,0 +1,25 @@
+LoadLibrary, app and sub: which 1
+LoadLibrary, sub only: none err 126
+SetDllDirectory sub, sub only: which 2
+SetDllDirectory sub, app and sub: which 1
+AddDllDirectory 1
+AddDllDirectory sub, LoadLibrary: which 1
+LOAD_LIBRARY_SEARCH_USER_DIRS: which 2
+LOAD_LIBRARY_SEARCH_APPLICATION_DIR: which 1
+LOAD_LIBRARY_SEARCH_DEFAULT_DIRS: which 1
+LOAD_LIBRARY_SEARCH_SYSTEM32, app only: none err 126
+LOAD_LIBRARY_SEARCH_USER_DIRS, app only: none err 126
+DLL_LOAD_DIR, relative name: none err 87
+altered and USER_DIRS: none err 87
+by path, import beside it, no flag: none err 126
+by path, LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR: which 17
+by path, LOAD_WITH_ALTERED_SEARCH_PATH: which 17
+SetDefaultDllDirectories(USER_DIRS) 1
+defaults USER_DIRS, LoadLibraryEx 0: which 2
+defaults USER_DIRS, LoadLibrary: which 2
+defaults USER_DIRS, flag APPLICATION_DIR: which 1
+SetDefaultDllDirectories(SYSTEM32) 1
+defaults SYSTEM32, app only: none err 126
+SetDefaultDllDirectories(DEFAULT_DIRS) 1
+defaults DEFAULT_DIRS, app and sub: which 1
+defaults DEFAULT_DIRS, sub only: which 2
