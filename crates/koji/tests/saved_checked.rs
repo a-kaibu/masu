@@ -55,7 +55,7 @@ fn globals(b: &[u8]) -> Result<(Vec<(String, String, bool)>, usize), String> {
 
 /// The entry kura saves for a region (save(): roots, starts, code, its text, the pages).
 fn entry(r: &jit::Region, root: u32) -> saved::Entry {
-    saved::Entry { roots: vec![root], starts: r.starts.clone(), code: r.code.clone(), text: r.text.clone().unwrap_or_default(), build: 0, sites: r.sites.clone(), pages: r.pages }
+    saved::Entry { roots: vec![root], starts: r.starts.clone(), code: r.code.clone(), text: r.text.clone().unwrap_or_default(), build: 0, sites: r.sites.clone(), pages: r.ctx.pages }
 }
 
 /// Loads and stores through ECX/EDX, each of the widths: what the checks guard (a POP to
@@ -77,7 +77,7 @@ fn a_checked_translation_is_saved_and_used_with_the_checks_on() {
     jit::PAGE_CHECK.store(false, Ordering::SeqCst);
     let code: Vec<u8> = ACCESSES.concat();
     let (plain, pr) = translate(&code).expect("translated");
-    assert_eq!(pr.pages, Pages::Unchecked);
+    assert_eq!(pr.ctx.pages, Pages::Unchecked);
     let (imports, gets) = globals(&plain).expect("valid");
     // (every module imports the global, whether it reads it or not: a bundle merges them)
     assert_eq!(imports, [("env".to_string(), "pages".to_string(), false)]);
@@ -86,7 +86,7 @@ fn a_checked_translation_is_saved_and_used_with_the_checks_on() {
     // (the first PAGE_NOACCESS: the checks on; the translation made now is saved)
     jit::PAGE_CHECK.store(true, Ordering::SeqCst);
     let (checked, cr) = translate(&code).expect("translated");
-    assert_eq!(cr.pages, Pages::Checked);
+    assert_eq!(cr.ctx.pages, Pages::Checked);
     let (imports, gets) = globals(&checked).expect("valid");
     assert_eq!(imports, [("env".to_string(), "pages".to_string(), false)]);
     // (two page bytes per access: its first and its last)
@@ -121,7 +121,7 @@ proptest! {
         let _one = ONE.lock().unwrap_or_else(|e| e.into_inner());
         jit::PAGE_CHECK.store(on, Ordering::SeqCst);
         let Some((b, r)) = translate(&bytes) else { return Ok(()) };
-        prop_assert_eq!(r.pages, if on { Pages::Checked } else { Pages::Unchecked });
+        prop_assert_eq!(r.ctx.pages, if on { Pages::Checked } else { Pages::Unchecked });
         let (imports, gets) = globals(&b).map_err(TestCaseError::fail)?;
         prop_assert_eq!(imports, vec![("env".to_string(), "pages".to_string(), false)]);
         if !on {
@@ -131,7 +131,7 @@ proptest! {
         let e = entry(&r, 0x10_0000);
         if r.text.is_none() || !e.consistent() { return Ok(()) }
         let back = saved::decode(&saved::encode(&[e])).expect("index");
-        prop_assert_eq!(back[0].pages, r.pages);
+        prop_assert_eq!(back[0].pages, r.ctx.pages);
         prop_assert!(back[0].pages.runs_now());
     }
 }

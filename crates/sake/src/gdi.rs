@@ -55,6 +55,8 @@ pub struct Pen {
     pub style: u32,
     pub width: i32,
     pub color: u32,
+    /// made by ExtCreatePen (OBJ_EXTPEN, its handle's type 0x50)
+    pub ext: bool,
 }
 
 #[derive(Clone)]
@@ -161,7 +163,7 @@ struct DceTable {
 
 struct Objs {
     m: HashMap<u32, G>,
-    next: u32,
+    slots: Slots,
     solid: HashMap<u32, u32>,
     /// solid's brushes, by handle (DeleteObject scanned all of solid each call)
     solid_h: std::collections::HashSet<u32>,
@@ -176,27 +178,158 @@ fn objs() -> MutexGuard<'static, Option<Objs>> {
 
 fn with<R>(f: impl FnOnce(&mut Objs) -> R) -> R {
     let mut g = objs();
-    f(g.get_or_insert_with(|| Objs { m: HashMap::default(), next: 0x0a00_0100, solid: HashMap::default(), solid_h: Default::default(), dce: DceTable::default() }))
+    f(g.get_or_insert_with(|| Objs { m: HashMap::default(), slots: Slots::new(), solid: HashMap::default(), solid_h: Default::default(), dce: DceTable::default() }))
 }
 
 fn add(o: G) -> u32 {
     with(|t| add_in(t, o))
 }
 
+/// A new object's handle (0 when all of the table's slots are taken, as Windows fails then)
 fn add_in(t: &mut Objs, o: G) -> u32 {
-    let h = t.next;
-    t.next += 4;
+    let Some(i) = t.slots.take() else { return 0 };
+    let h = handle(i, ext_type(&o), false, t.slots.generation(i));
+    t.slots.publish(i, h, &o);
     t.m.insert(h, o);
     h
 }
 
-/// Stock objects: GetStockObject(i) is STOCK + 4*i.
-const STOCK: u32 = 0x0a00_0000;
-const STOCK_N: u32 = 20;
-const DEFAULT_BITMAP: u32 = STOCK + 4 * 21;
+impl Objs {
+    /// The object `h` names, out of the table; its slot is free for a later object (the next
+    /// generation of the slot: the old handle names nothing)
+    fn take(&mut self, h: u32) -> Option<G> {
+        let o = self.m.remove(&h)?;
+        if !is_stock(h) {
+            self.slots.give_back(handle_index(h));
+        }
+        Some(o)
+    }
+}
+
+// GDI handles as Windows makes them (Wine's ntgdi.h, gdi32:gdiobj test_shared_handle_table):
+// the low word is the object's slot in the shared handle table PEB->GdiSharedHandleTable
+// points at, the high word the slot's Unique: the object's type (7 bits), the stock flag
+// (0x80) and the slot's generation (the high byte, counted up each time the slot is reused).
+
+/// GDI_MAX_HANDLE_COUNT
+const SLOTS: usize = 0x1_0000;
+/// the slots the stock objects take (Windows' are low ones too)
+const STOCK_SLOT: u16 = 0x10;
+/// the first slot an object made by a program takes
+const FIRST_SLOT: u16 = 0x100;
+/// GDI_HANDLE_ENTRY: Object (8), Owner (4), Unique (2), Type, Flags, UserPointer (8)
+const ENTRY: u32 = 24;
+
+/// An object's type in its handle, NTGDI_OBJ_* >> 16 (a memory DC is a DC, as on Windows)
+fn ext_type(o: &G) -> u8 {
+    match o {
+        G::Dc(_) => 0x01,
+        G::Region(_) => 0x04,
+        G::Palette(_) => 0x08,
+        G::Bitmap(_) => 0x09,
+        G::Font(_) => 0x0a,
+        G::Brush(_) => 0x10,
+        G::Pen(p) => if p.ext { 0x50 } else { 0x30 },
+    }
+}
+
+const fn handle(slot: u16, ty: u8, stock: bool, generation: u8) -> u32 {
+    let unique = (ty & 0x7f) as u32 | if stock { 0x80 } else { 0 } | (generation as u32) << 8;
+    unique << 16 | slot as u32
+}
+
+const fn handle_index(h: u32) -> u16 {
+    (h & 0xffff) as u16
+}
+
+/// Which slots are free, each slot's generation, and the guest copy of the table
+struct Slots {
+    free: std::collections::VecDeque<u16>,
+    /// the slots below it not yet handed out are never free
+    next: u32,
+    generation: Vec<u8>,
+    /// GDI_SHARED_MEMORY in guest memory (0 until the process has its PEB)
+    table: u32,
+}
+
+impl Slots {
+    fn new() -> Self {
+        Slots { free: Default::default(), next: u32::from(FIRST_SLOT), generation: vec![0; SLOTS], table: 0 }
+    }
+    fn take(&mut self) -> Option<u16> {
+        if let Some(i) = self.free.pop_front() {
+            return Some(i);
+        }
+        let i = u16::try_from(self.next).ok()?;
+        self.next = self.next.saturating_add(1);
+        Some(i)
+    }
+    fn generation(&self, i: u16) -> u8 {
+        self.generation.get(usize::from(i)).copied().unwrap_or(0)
+    }
+    /// A deleted object's slot: its entry keeps what it said until the slot is reused (Windows
+    /// leaves the entry of a deleted region as it was: test_shared_handle_table)
+    fn give_back(&mut self, i: u16) {
+        if let Some(g) = self.generation.get_mut(usize::from(i)) {
+            *g = g.wrapping_add(1);
+        }
+        self.free.push_back(i);
+    }
+    /// The guest table's entry for handle `h` (its slot)
+    fn publish(&self, i: u16, h: u32, o: &G) {
+        if self.table == 0 {
+            return;
+        }
+        let e = self.table + u32::from(i) * ENTRY;
+        let ty = ext_type(o);
+        // (Object: the kernel's object; any address other than 0 that is the slot's)
+        mem::w64(e, u64::from(0x8000_0000 | u32::from(i) << 4));
+        // (Owner: the process id's low word; no locks, a count of 0)
+        w32(e + 8, crate::pid() & 0xffff);
+        w16(e + 12, (h >> 16) as u16);
+        // (Type: the base type, NTGDI_OBJ_* & 0x1f0000)
+        w8(e + 14, ty & 0x1f);
+        w8(e + 15, 0);
+        mem::w64(e + 16, 0);
+    }
+}
+
+/// The process has its PEB: the shared handle table goes into guest memory (read-only to the
+/// program, as Windows maps it) with the objects there are, PEB->GdiSharedHandleTable at it
+pub fn share_table(peb: u32) {
+    let Some(table) = mem::reserve(0, SLOTS as u32 * ENTRY, 2, 0x40000, true) else { return };
+    mem::commit(table, 2);
+    with(|t| {
+        t.slots.table = table;
+        for (&h, o) in &t.m {
+            t.slots.publish(handle_index(h), h, o);
+        }
+    });
+    if mem::x64() {
+        mem::w64(peb + 0xf8, u64::from(table));
+    } else {
+        w32(peb + 0x94, table);
+    }
+}
+
+/// Stock objects: GetStockObject(i) is stock(i), the default bitmap the last (STOCK_LAST + 1)
+const STOCK_N: u32 = 21;
+const STOCK_TYPES: [u8; STOCK_N as usize] =
+    [0x10, 0x10, 0x10, 0x10, 0x10, 0x10, 0x30, 0x30, 0x30, 0x0a, 0x0a, 0x0a, 0x0a, 0x0a, 0x0a, 0x08, 0x0a, 0x0a, 0x10, 0x30, 0x09];
+const fn stock(i: u32) -> u32 {
+    handle(STOCK_SLOT + i as u16, STOCK_TYPES[i as usize], true, 0)
+}
+const STOCK: u32 = stock(0);
+const DEFAULT_BITMAP: u32 = stock(STOCK_N - 1);
 
 fn is_stock(h: u32) -> bool {
-    (STOCK..=DEFAULT_BITMAP).contains(&h)
+    stock_index(h).is_some()
+}
+
+/// Which stock object `h` is
+pub(crate) fn stock_index(h: u32) -> Option<u32> {
+    let i = u32::from(handle_index(h).checked_sub(STOCK_SLOT)?);
+    (i < STOCK_N && stock(i) == h).then_some(i)
 }
 
 fn rgb(cr: u32) -> u32 {
@@ -231,16 +364,16 @@ fn stock_font(face: &str, height: i32) -> LogFont {
 pub fn init() {
     with(|t| {
         let solid = |c: u32| G::Brush(Brush { style: 0, color: c, hatch: 0, pattern: 0 });
-        let stock: Vec<G> = vec![
+        let objs: Vec<G> = vec![
             solid(0xffffff),
             solid(0xc0c0c0),
             solid(0x808080),
             solid(0x404040),
             solid(0),
             G::Brush(Brush { style: 1, color: 0, hatch: 0, pattern: 0 }),
-            G::Pen(Pen { style: 0, width: 1, color: 0xffffff }),
-            G::Pen(Pen { style: 0, width: 1, color: 0 }),
-            G::Pen(Pen { style: 5, width: 1, color: 0 }),
+            G::Pen(Pen { style: 0, width: 1, color: 0xffffff, ext: false }),
+            G::Pen(Pen { style: 0, width: 1, color: 0, ext: false }),
+            G::Pen(Pen { style: 5, width: 1, color: 0, ext: false }),
             G::Font(stock_font("Terminal", 12)),
             G::Font(stock_font("ＭＳ ゴシック", 12)),
             G::Font(stock_font("ＭＳ ゴシック", 12)),
@@ -251,10 +384,10 @@ pub fn init() {
             G::Font(stock_font("ＭＳ ゴシック", 16)),
             G::Font(stock_font(SYS_FACE, -12)),
             solid(0xffffff),
-            G::Pen(Pen { style: 0, width: 1, color: 0 }),
+            G::Pen(Pen { style: 0, width: 1, color: 0, ext: false }),
         ];
-        for (i, o) in stock.into_iter().enumerate() {
-            t.m.insert(STOCK + 4 * i as u32, o);
+        for (i, o) in objs.into_iter().enumerate() {
+            t.m.insert(stock(i as u32), o);
         }
         if let Some(b) = new_bitmap_raw(1, 1, 1, 0) {
             t.m.insert(DEFAULT_BITMAP, G::Bitmap(b));
@@ -672,9 +805,9 @@ fn fresh_state() -> DcState {
     DcState {
         bitmap: DEFAULT_BITMAP,
         brush: STOCK,
-        pen: STOCK + 4 * 7,
-        font: STOCK + 4 * 13,
-        palette: STOCK + 4 * 15,
+        pen: stock(7),
+        font: stock(13),
+        palette: stock(15),
         text: 0,
         bk: 0xffffff,
         bk_mode: 2,
@@ -706,7 +839,7 @@ pub const DCX_INTERSECTRGN: u32 = 0x80;
 
 fn drop_region(t: &mut Objs, r: Option<u32>) {
     if let Some(r) = r.filter(|r| matches!(t.m.get(r), Some(G::Region(_)))) {
-        t.m.remove(&r);
+        t.take(r);
     }
 }
 
@@ -846,7 +979,7 @@ pub fn window_resized(h: u32) {
 /// on no window (it keeps its state; ReleaseDC fails)
 pub fn window_destroyed(h: u32) {
     with(|t| {
-        if let Some(d) = t.dce.own.remove(&h) && let Some(G::Dc(x)) = t.m.remove(&d) {
+        if let Some(d) = t.dce.own.remove(&h) && let Some(G::Dc(x)) = t.take(d) {
             drop_region(t, x.rgn);
         }
         let dcs: Vec<u32> = t.m.iter().filter(|(_, g)| matches!(g, G::Dc(d) if d.kind == Kind::Window(h) && d.dce != Dce::None)).map(|(&k, _)| k).collect();
@@ -1163,7 +1296,7 @@ impl Pat {
 }
 
 fn pattern(t: &Objs, s: &DcState, brush: u32) -> Pat {
-    let brush = if brush == STOCK + 4 * 18 { return Pat::Solid(rgb(s.dc_brush)) } else { brush };
+    let brush = if brush == stock(18) { return Pat::Solid(rgb(s.dc_brush)) } else { brush };
     if (1..=31).contains(&brush) {
         return Pat::Solid(rgb(sys_color(brush - 1)));
     }
@@ -2610,7 +2743,7 @@ fn dc_of(c: &Ctx, i: u32) -> u32 {
 fn GetStockObject(c: &mut Ctx) -> u32 {
     let i = c.a(0);
     if i < STOCK_N {
-        STOCK + 4 * i
+        stock(i)
     } else {
         0
     }
@@ -2633,7 +2766,7 @@ fn CreateICW(_: &mut Ctx) -> u32 {
 }
 fn DeleteDC(c: &mut Ctx) -> u32 {
     let h = c.a(0);
-    u32::from(with(|t| match t.m.remove(&h) {
+    u32::from(with(|t| match t.m.get(&h).map(|g| matches!(g, G::Dc(_))).and_then(|dc| dc.then(|| t.take(h)).flatten()) {
         Some(G::Dc(d)) => {
             // (its GetDCEx region and its place among the window DCs go with it)
             drop_region(t, d.rgn);
@@ -2642,11 +2775,7 @@ fn DeleteDC(c: &mut Ctx) -> u32 {
             t.dce.class.retain(|_, x| *x != h);
             true
         }
-        Some(other) => {
-            t.m.insert(h, other);
-            false
-        }
-        None => false,
+        _ => false,
     }))
 }
 
@@ -2657,6 +2786,7 @@ pub fn is_object(h: u32) -> bool {
 
 fn GetObjectType(c: &mut Ctx) -> u32 {
     with(|t| match t.m.get(&c.a(0)) {
+        Some(G::Pen(p)) if p.ext => 11,
         Some(G::Pen(_)) => 1,
         Some(G::Brush(_)) => 2,
         Some(G::Dc(d)) => {
@@ -2670,7 +2800,11 @@ fn GetObjectType(c: &mut Ctx) -> u32 {
         Some(G::Font(_)) => 6,
         Some(G::Bitmap(_)) => 7,
         Some(G::Region(_)) => 8,
-        None => 0,
+        // (GetObjectType sets the last error for a handle that is no object: gdi32:gdiobj)
+        None => {
+            crate::k32::last_error(6);
+            0
+        }
     })
 }
 
@@ -2717,11 +2851,11 @@ fn DeleteObject(c: &mut Ctx) -> u32 {
         if t.solid_h.contains(&h) {
             return 1;
         }
-        match t.m.remove(&h) {
+        match t.take(h) {
             Some(G::Bitmap(b)) => free_bitmap(&b),
             // (a DIB pattern brush's own copy of the DIB)
             Some(G::Brush(b)) if b.style == 5 => {
-                if let Some(G::Bitmap(b)) = t.m.remove(&b.pattern) {
+                if let Some(G::Bitmap(b)) = t.take(b.pattern) {
                     free_bitmap(&b);
                 }
             }
@@ -2739,6 +2873,19 @@ fn GetObjectW(c: &mut Ctx) -> u32 {
 }
 fn get_object(c: &mut Ctx, wide: bool) -> u32 {
     let (h, n, p) = (c.a(0), c.a(1), c.a(2));
+    // (a buffer that is not memory: 0 and ERROR_NOACCESS, nothing written; gdi32:gdiobj)
+    let small = with(|t| match t.m.get(&h) {
+        Some(G::Bitmap(_)) => if mem::x64() { 32 } else { 24 },
+        Some(G::Pen(_)) => 16,
+        Some(G::Brush(_)) => 12,
+        Some(G::Font(_)) => if wide { 92 } else { 60 },
+        Some(G::Palette(_)) => 2,
+        _ => 0,
+    });
+    if p != 0 && small != 0 && mem::range(p, small.min(n)).is_none() {
+        crate::k32::last_error(998);
+        return 0;
+    }
     with(|t| match t.m.get(&h) {
         Some(G::Bitmap(b)) => {
             // BITMAP, then DIBSECTION's BITMAPINFOHEADER, bit fields, section and offset; x64:
@@ -2814,7 +2961,8 @@ fn get_object(c: &mut Ctx, wide: bool) -> u32 {
 fn GetCurrentObject(c: &mut Ctx) -> u32 {
     let (dc, ty) = (c.a(0), c.a(1));
     dc_state(dc).map_or(0, |s| match ty {
-        1 => s.pen,
+        // (OBJ_PEN and OBJ_EXTPEN both answer the pen selected, either kind)
+        1 | 11 => s.pen,
         2 => s.brush,
         5 => s.palette,
         6 => s.font,
@@ -2867,15 +3015,15 @@ fn CreateDIBPatternBrush(c: &mut Ctx) -> u32 {
     dib_pattern_brush(crate::k32::global_lock(c.a(0)), c.a(1))
 }
 fn CreatePen(c: &mut Ctx) -> u32 {
-    add(G::Pen(Pen { style: c.a(0), width: c.i(1).max(1), color: c.a(2) }))
+    add(G::Pen(Pen { style: c.a(0), width: c.i(1).max(1), color: c.a(2), ext: false }))
 }
 fn CreatePenIndirect(c: &mut Ctx) -> u32 {
     let p = c.a(0);
-    add(G::Pen(Pen { style: r32(p), width: (r32(p + 4) as i32).max(1), color: r32(p + 12) }))
+    add(G::Pen(Pen { style: r32(p), width: (r32(p + 4) as i32).max(1), color: r32(p + 12), ext: false }))
 }
 fn ExtCreatePen(c: &mut Ctx) -> u32 {
     let lb = c.a(2);
-    add(G::Pen(Pen { style: c.a(0) & 0xf, width: c.i(1).max(1), color: if lb != 0 { r32(lb + 4) } else { 0 } }))
+    add(G::Pen(Pen { style: c.a(0) & 0xf, width: c.i(1).max(1), color: if lb != 0 { r32(lb + 4) } else { 0 }, ext: true }))
 }
 fn SetDCBrushColor(c: &mut Ctx) -> u32 {
     let v = c.a(1);
@@ -2885,8 +3033,10 @@ fn SetDCPenColor(c: &mut Ctx) -> u32 {
     let v = c.a(1);
     with_dc(c.a(0), |d| std::mem::replace(&mut d.s.dc_pen, v)).unwrap_or(0xffff_ffff)
 }
-fn UnrealizeObject(_: &mut Ctx) -> u32 {
-    1
+/// UnrealizeObject(h): nothing to do for an object (sake keeps no realized palettes or brush
+/// origins); FALSE, without a last error, for a handle that is no object
+fn UnrealizeObject(c: &mut Ctx) -> u32 {
+    u32::from(is_object(c.a(0)))
 }
 
 // --- DC attributes
@@ -3063,7 +3213,8 @@ fn RestoreDC(c: &mut Ctx) -> u32 {
 }
 
 fn GetDeviceCaps(c: &mut Ctx) -> u32 {
-    if with(|t| matches!(t.m.get(&c.a(0)), Some(G::Dc(d)) if d.disabled)) {
+    // (a deleted DC, or a handle that is no DC, answers 0: gdi32:gdiobj test_thread_objects)
+    if !with(|t| matches!(t.m.get(&c.a(0)), Some(G::Dc(d)) if !d.disabled)) {
         return 0;
     }
     let (w, h) = user::screen();
@@ -3853,7 +4004,7 @@ struct PenInfo {
 }
 
 fn pen_of(t: &Objs, s: &DcState) -> Option<PenInfo> {
-    if s.pen == STOCK + 4 * 19 {
+    if s.pen == stock(19) {
         return Some(PenInfo { col: rgb(s.dc_pen), width: 1, style: 0 });
     }
     match t.m.get(&s.pen) {
@@ -4271,7 +4422,7 @@ fn CreateRectRgn(c: &mut Ctx) -> u32 {
     add(G::Region(vec![Rect { l, t, r, b }].into_iter().filter(|r| !r.empty()).collect()))
 }
 fn CreateRectRgnIndirect(c: &mut Ctx) -> u32 {
-    add(G::Region(vec![Rect::read(c.a(0))].into_iter().filter(|r| !r.empty()).collect()))
+    add(G::Region(vec![Rect::read(c.a(0)).ordered()].into_iter().filter(|r| !r.empty()).collect()))
 }
 /// Elliptic and round regions cover the box less its right column and bottom row.
 fn CreateRoundRectRgn(c: &mut Ctx) -> u32 {
@@ -4339,7 +4490,8 @@ fn PtInRegion(c: &mut Ctx) -> u32 {
     u32::from(region(c.a(0)).is_some_and(|r| r.iter().any(|q| q.has(c.i(1), c.i(2)))))
 }
 fn RectInRegion(c: &mut Ctx) -> u32 {
-    let q = Rect::read(c.a(1));
+    // (a rectangle with its sides swapped is the same rectangle: gdi32:gdiobj test_region)
+    let q = Rect::read(c.a(1)).ordered();
     u32::from(region(c.a(0)).is_some_and(|r| r.iter().any(|x| !x.and(&q).empty())))
 }
 fn EqualRgn(c: &mut Ctx) -> u32 {
@@ -6177,3 +6329,7 @@ mod view_pixel_tests;
 /// of GDI calls, each answer and every bitmap's bytes after it (gdi/api_golden.txt)
 #[cfg(all(test, target_os = "linux", target_arch = "x86_64"))]
 mod api_golden_tests;
+
+/// Handles as Windows makes them, and the shared handle table they name (gdi/handle_tests.rs)
+#[cfg(all(test, target_os = "linux", target_arch = "x86_64"))]
+mod handle_tests;

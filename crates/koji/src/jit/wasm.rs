@@ -16,6 +16,23 @@ pub struct Code {
     pub locs: Vec<u32>,
     /// [`MEMCOUNT`]: a `local.get 0` (the Cpu) was emitted since the last memory access or call
     pub(crate) cpu_at: bool,
+    /// its accesses count themselves ([`MEMCOUNT`] when its translation began: the
+    /// translation's context, jit::context::Measure::mem_sites)
+    pub(crate) count_mem: bool,
+    /// its control transfers bump jit::COUNTERS (jit::COUNT when its translation began:
+    /// jit::context::Measure::count)
+    pub(crate) count_transfers: bool,
+}
+
+impl Code {
+    /// Code that counts what `m` says (a translation's context's)
+    pub fn measured(m: &super::context::Measure) -> Code {
+        Code { count_mem: m.mem_sites, count_transfers: m.count, ..Code::default() }
+    }
+    /// Empty code counting what `self` counts (a part of the same translation)
+    pub fn like(&self) -> Code {
+        Code { count_mem: self.count_mem, count_transfers: self.count_transfers, ..Code::default() }
+    }
 }
 
 /// Measuring (kura: MASU_JIT_MEMCOUNT): every load and store the JIT emits from now on counts
@@ -48,8 +65,9 @@ pub fn mem_site(s: usize) -> usize {
 /// for every exit, spill and reload.)
 pub struct MemSite(Option<usize>);
 impl MemSite {
-    pub fn new(s: usize) -> Self {
-        MemSite(MEMCOUNT.load(core::sync::atomic::Ordering::Relaxed).then(|| mem_site(s)))
+    /// For code that counts its accesses (`on`: Code's count_mem)
+    pub fn new(on: bool, s: usize) -> Self {
+        MemSite(on.then(|| mem_site(s)))
     }
 }
 impl Drop for MemSite {
@@ -192,8 +210,8 @@ impl Code {
         self
     }
     pub fn mem(&mut self, o: u8, align: u32, off: u32) -> &mut Self {
-        if MEMCOUNT.load(core::sync::atomic::Ordering::Relaxed) {
-            self.count_mem((0x36..=0x3e).contains(&o), off);
+        if self.count_mem {
+            self.count_access((0x36..=0x3e).contains(&o), off);
         }
         self.memarg(o, align, off)
     }
@@ -212,8 +230,8 @@ impl Code {
     /// An atomic access (0xfe prefix: `o` the opcode after it) at offset 0.
     pub fn atomic(&mut self, o: u8, align: u32) -> &mut Self {
         // (counted as a store, before the prefix)
-        if MEMCOUNT.load(core::sync::atomic::Ordering::Relaxed) {
-            self.count_mem(true, 0);
+        if self.count_mem {
+            self.count_access(true, 0);
         }
         self.b.push(0xfe);
         self.memarg(o, align, 0)
@@ -309,7 +327,7 @@ impl Code {
         self.op(0x0f)
     }
     /// [`MEMCOUNT`]: `MEM_COUNTS[slot] += 1` (balanced: it can go before any instruction).
-    fn count_mem(&mut self, store: bool, off: u32) {
+    fn count_access(&mut self, store: bool, off: u32) {
         let at = lo32((&raw const MEM_COUNTS[mem_count_slot(store, self.cpu_at, off)]).expose_provenance()).cast_signed();
         self.b.push(0x41);
         sleb(&mut self.b, i64::from(at));
@@ -1001,7 +1019,7 @@ fn compact(params: u32, extra: &[u32], locals: &[u8], code: Code) -> (Vec<u8>, C
             kept.push(t);
         }
     }
-    let mut out = Code { b: Vec::with_capacity(code.b.len()), locs: Vec::with_capacity(code.locs.len()), cpu_at: false };
+    let mut out = Code { b: Vec::with_capacity(code.b.len()), locs: Vec::with_capacity(code.locs.len()), ..code.like() };
     let mut from = 0;
     for &p in &code.locs {
         let p = us(p);

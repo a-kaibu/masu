@@ -115,7 +115,9 @@ impl World {
         match self.names.iter().rev().find(|(h, _)| *h == v) {
             Some((_, n)) => n.clone(),
             None if LIVE.with(|l| l.borrow().contains(&v)) => "ptr".into(),
-            None if (STOCK..=DEFAULT_BITMAP).contains(&v) => format!("stock{}", (v - STOCK) / 4),
+            // (the default bitmap was stock21 when the goldens were taken)
+            None if v == DEFAULT_BITMAP => "stock21".into(),
+            None if let Some(i) = stock_index(v) => format!("stock{i}"),
             None => format!("{v:#x}"),
         }
     }

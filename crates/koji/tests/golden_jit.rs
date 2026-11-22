@@ -56,7 +56,7 @@ fn translate(t: Tr, n: usize) -> u64 {
             for s in &r.sites {
                 h.u32(*s);
             }
-            h.u8(u8::from(r.exact));
+            h.u8(u8::from(r.ctx.exact()));
             h.bytes(&m.finish());
         }
     }

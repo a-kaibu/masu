@@ -80,6 +80,7 @@ pub enum Rule {
     WarpWire,
     JitExitContract,
     JitHarnessImports,
+    JitContext,
     RunPlan,
     DllSearch,
     FullPathOneRule,
@@ -97,7 +98,7 @@ pub enum Rule {
 }
 
 impl Rule {
-    pub const ALL: [Rule; 77] = [
+    pub const ALL: [Rule; 78] = [
         Rule::BuildOutput,
         Rule::HresultCopy,
         Rule::KomeCopy,
@@ -161,6 +162,7 @@ impl Rule {
         Rule::WarpWire,
         Rule::JitExitContract,
         Rule::JitHarnessImports,
+        Rule::JitContext,
         Rule::RunPlan,
         Rule::DllSearch,
         Rule::FullPathOneRule,
@@ -243,6 +245,7 @@ impl Rule {
             Rule::WarpWire => "warp-wire",
             Rule::JitExitContract => "jit-exit-contract",
             Rule::JitHarnessImports => "jit-harness-imports",
+            Rule::JitContext => "jit-context",
             Rule::DllSearch => "dll-search",
             Rule::FullPathOneRule => "full-path-one-rule",
             Rule::ShortNameTable => "short-name-table",
@@ -325,6 +328,7 @@ impl Rule {
             Rule::WarpWire => "FillMode WIREFRAME draws a triangle's edges as the setup's aliased lines, culled per fan triangle as a solid one and each line biased by DepthBias and SlopeScaledDepthBias as WARP does (winref d3d11wire; review b5dacf4 3.2: the draw's own edges as a line list lost CullMode and DepthBias): setup.rs biases each edge (Bias::of, sx_bias), kura sends the bias words and sends wireframe draws to the setup, the squares drawn uncull'd and unbiased, no edge list of the draw's own is made, and the draw's side asks no device feature (the device is the page's) (regress::WARP_WIRE / WARP_WIRE_NOT)",
             Rule::JitExitContract => "koji's exit contract (jit::ExitAt): before or after an instruction that may leave, every status flag exact (an exception handler reads EFLAGS: xor eax,eax / mov ecx,[0] left 0x202 where the interpreter has 0x246); at a jump to code, those it reads. Gen::exit_with, jump_dyn and fallback check it, liveness sees the bails of an unchecked ESP, a callee that reads none is recorded so, a loop's hoisted checks need only its head's live-in, and no iced RflagsBits are emitted as EFLAGS bits (regress::JIT_EXIT_CONTRACT / JIT_EXIT_CONTRACT_NOT)",
             Rule::JitHarnessImports => "a test harness that runs koji's modules (a wasmtime linker defining env.table: jit16test, jit32test, jit64test, fuzz) defines env.pages too, the page marks every module imports since the saved code runs with the page checks on, and jit32test fails when no translation loaded: its translations' load errors were taken as refusals, so after that import came every one failed to load and 600 random programs compared the interpreter with itself (regress::JIT_HARNESS_LOADED)",
+            Rule::JitContext => "koji's generators read the modes (MXCSR flag checks, page checks, 16-bit code's segment, functions, measuring, budgets) from the translation's jit::TranslationContext, made once when it begins, never from the statics: a mode the host turned on while another thread translated made a translation part one, part the other, kept as the first; and the 16-bit segment base was a static every translation read, behind a gate (regress::JIT_MODES / JIT_MODE_READS)",
             Rule::DllSearch => "sake's loader looks for a DLL named without a path in LdrGetDllPath's folders for that load (its module and LoadLibraryEx's flags, SetDefaultDllDirectories' with none) and for a DLL's imports as the load that found it (review b5dacf4 2.1: find_dll_file had an order of its own with the folder of every DLL loaded by path in it, and LoadLibraryEx's LOAD_LIBRARY_SEARCH_* flags never reached it; winref dllsearch): pe::LoadSearch::folders is dllpath::dll_folders, LoadLibraryExW passes its flags, and pe.rs names no folders of its own (regress::DLL_SEARCH / DLL_SEARCH_NOT)",
             Rule::FullPathOneRule => "every file operation opens the full path GetFullPathName names (review b5dacf4 2.2: CreateFile opened `D:save.dat` as D:\\save.dat while GetFullPathName answered from the `=D:` variable): files::full_path makes a Win32 name full with fullpath's RtlGetFullPathName_Ustr (regress::FULL_PATH)",
             Rule::ShortNameTable => "an 8.3 name is given when its long name is made and kept in its folder's table until the name is removed or renamed, as NTFS keeps it (review b5dacf4 2.3: the short names were made again from every listing, so deleting one file changed another's, and a reload gave new ones): kura::fs tells the one watcher each name made and removed, sake watches from its first guest path, shortname reads the kept table, and sake lists and removes folders only through shortname::read_dir / remove_dir (the table is no guest entry) (regress::SHORT_NAMES)",
@@ -408,6 +412,7 @@ impl Rule {
             Rule::WarpWire => regress::warp_wire(tree),
             Rule::JitExitContract => regress::jit_exit_contract(tree),
             Rule::JitHarnessImports => regress::jit_harness_imports(tree),
+            Rule::JitContext => regress::jit_context(tree),
             Rule::DllSearch => regress::dll_search(tree),
             Rule::FullPathOneRule => regress::full_path_one_rule(tree),
             Rule::ShortNameTable => regress::short_name_table(tree),
@@ -738,7 +743,10 @@ fn release_build_only(tree: &Tree) -> Hits {
 }
 
 /// what must stay in place: (file, text, why)
-pub const REQUIRED: [(&str, &str, &str); 56] = [
+pub const REQUIRED: [(&str, &str, &str); 59] = [
+    ("crates/sake/src/gdi.rs", "        let o = self.m.remove(&h)?;\n        if !is_stock(h) {\n            self.slots.give_back(handle_index(h));", "a deleted GDI object's slot goes back with its generation counted up, so the old handle names nothing (gdi32:gdiobj test_shared_handle_table; 2026-11-22)"),
+    ("crates/sake/src/lib.rs", "    PEB.store(peb, Ordering::Relaxed);\n    gdi::share_table(peb);", "PEB->GdiSharedHandleTable points at the GDI handle table (gdi32:gdiobj read a NULL table and crashed; 2026-11-22)"),
+    ("crates/sake/src/gdiplus.rs", "            if row.len() < (w * bpp) as usize {\n                continue;", "GdipCreateBitmapFromScan0 with bits that are not memory does not read them (gdiplus:graphics test_GetDC panicked sake; 2026-11-22)"),
     ("crates/sake/src/sysdll.rs", "    kura::fs::write(&h, image_of(crate::mem::x64(), &n)).ok()?;", "a system32 DLL file carries its RT_VERSION block, so GetFileVersionInfo finds one (version:info crashed on a NULL block; 2026-11-22)"),
     ("crates/sake/src/files.rs", "        if self.shared != 0 && let Ok(p) = self.g.stream_position() {\n            let id = self.shared;\n            crate::kern::with(|k| k.set_file_pos(id, p));", "a file handle processes share keeps its file pointer in the kernel (the child's write did not move the parent's tell: msvcrt:file test_file_inherit; 2026-11-22)"),
     ("crates/sake/src/process.rs", "        Obj::File(f) => f.share().map(|id| KRef::File { id }),", "an inheritable file handle reaches the child (2026-11-22)"),
@@ -940,7 +948,7 @@ fn safe_raw_pointer_abi(tree: &Tree) -> Hits {
 }
 
 /// koji's switch and where it may be set
-pub const NOCHECK_HOME: &str = "crates/koji/src/jit/mod.rs";
+pub const NOCHECK_HOME: &str = "crates/koji/src/jit/context.rs";
 pub const NOCHECK_SETTER: &str = "crates/kura/src/jit.rs";
 static NOCHECK_STATIC: LazyLock<Option<Regex>> = LazyLock::new(|| rx(r"\bstatic\s+NOCHECK\s*:[^=]*=\s*([^;]*);"));
 static NOCHECK_ON: LazyLock<Option<Regex>> = LazyLock::new(|| rx(r"MASU_JIT_NOCHECK\s*[=:]\s*['\x22]?[^0'\x22\s]"));

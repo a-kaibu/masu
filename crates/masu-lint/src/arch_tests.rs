@@ -416,7 +416,7 @@ fn fixture(r: Rule) -> Fixture {
                 ("docs/translator.md", "MASU_JIT_NOCHECK=1: no range checks\n"),
                 ("tests/x.sh", "MASU_JIT_NOCHECK=0 cargo test\n"),
             ],
-            mutate: (NOCHECK_HOME, |t| Some(t.replace("AtomicBool::new(false);\n/// Pushes", "AtomicBool::new(true);\n/// Pushes"))),
+            mutate: (NOCHECK_HOME, |t| Some(t.replace("pub static NOCHECK: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);", "pub static NOCHECK: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(true);"))),
         },
         Rule::EscapeComment => Fixture {
             bad: &[
@@ -810,6 +810,18 @@ fn fixture(r: Rule) -> Fixture {
                 ("tools/jit32test/src/main.rs", "fn new() { linker.define(&store, \"env\", \"table\", table).unwrap(); linker.define(&store, \"env\", \"pages\", pages).unwrap(); }\nfn translate(&mut self, base: usize, eip: u32) -> Result<Made, String> {}\nfn main() { if loaded == 0 && count > 0 { fails += 1; } }\n"),
             ],
             mutate: ("tools/jit64test/src/main.rs", |t| Some(t.replace("linker.define(&store, \"env\", \"pages\", pages).unwrap();", ""))),
+        },
+        Rule::JitContext => Fixture {
+            bad: &[
+                ("crates/koji/src/jit/mod.rs", "fn check(&mut self) { if page_check() { self.guard(); } }\nfn bump(c: &mut Code) { if COUNT.load(Relaxed) {} }\n"),
+                ("crates/koji/src/jit/packed.rs", "fn supported(ins: &Instruction) -> bool { super::mx_exact() }\n"),
+            ],
+            good: &[
+                ("crates/koji/src/jit/mod.rs", "fn check(&mut self) { if self.tc.page_check() { self.guard(); } }\nfn bump(c: &mut Code) { if c.count_transfers {} }\npub fn page_check() -> bool { true }\n"),
+                ("crates/koji/src/jit/packed.rs", "fn supported(ins: &Instruction, float: Float) -> bool { float == Float::Exact }\n"),
+                ("crates/koji/src/jit/context.rs", "pub fn now() -> TranslationContext { let f = super::FN.load(Relaxed); let e = mx_exact(); }\n"),
+            ],
+            mutate: ("crates/koji/src/jit/mod.rs", |t| Some(t.replace("let prot = self.tc.page_check();", "let prot = page_check();"))),
         },
         Rule::DllSearch => Fixture {
             bad: &[

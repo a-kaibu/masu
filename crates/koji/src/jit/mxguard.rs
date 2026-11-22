@@ -43,9 +43,9 @@ pub(super) enum G {
 
 /// The check for `ins` (the legacy form): (what, lane bits, lanes checked, operand 0 read
 /// too); None for an instruction that raises no flag.
-pub(super) fn kind(ins: &Instruction) -> Option<(G, u32, u32, bool)> {
+pub(super) fn kind(ins: &Instruction, float: super::context::Float) -> Option<(G, u32, u32, bool)> {
     use Mnemonic::*;
-    if !super::mx_exact() {
+    if float == super::context::Float::Fast {
         return None; // (nobody has read the flags yet: see jit::MX_EXACT)
     }
     let m = ins.mnemonic();

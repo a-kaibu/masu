@@ -27,6 +27,8 @@ mod packed;
 mod rounding;
 mod mxguard;
 pub mod long;
+pub mod context;
+pub use context::{mx_exact, mx_modes, mx_read, mx_switched, page_check, sse_ok, Pages, TranslationContext, MX_AT, MX_EXACT, PAGES, PAGE_CHECK};
 
 use crate::lazy::{Kind, Op, Size};
 use crate::{Cpu, Fpu, Memory};
@@ -49,36 +51,6 @@ const MAX_INS: usize = 200;
 // block return codes
 pub const RET_CONTINUE: i32 = 0;
 pub const RET_INTERP: i32 = 1;
-/// Whether translated code keeps the MXCSR exception flags as the hardware (jit::mxguard's
-/// checks, which cost SSE float loops 2-3x). Off until the program first reads the flags
-/// ([`mx_read`]: STMXCSR, FXSAVE, the CRT's status functions); flags raised before that by
-/// translated code are not in MXCSR (the interpreter's are). Settled once: never off again.
-pub static MX_EXACT: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
-/// Set with [`MX_EXACT`]: the host drops every translation made without the checks
-/// ([`mx_switched`]).
-static MX_SWITCH: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
-
-/// Where the first read was (the instruction's address; 0: the CRT's status functions).
-pub static MX_AT: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
-
-/// The program reads the MXCSR flags (at `at`): translated code keeps them from now on.
-pub fn mx_read(at: u32) {
-    use core::sync::atomic::Ordering::SeqCst;
-    if !MX_EXACT.swap(true, SeqCst) {
-        // (a swap, not a store: node 22's V8 baseline compiler (Liftoff) stores a local to a
-        // constant address at or above 2 GB, where sake's statics are, at the local's value
-        // as an address: Chromium 153 does not)
-        MX_AT.swap(at, SeqCst);
-        MX_SWITCH.store(true, SeqCst);
-    }
-}
-
-/// Whether [`mx_read`] switched since the last call (the host then drops its translations).
-pub fn mx_switched() -> bool {
-    use core::sync::atomic::Ordering::Relaxed;
-    MX_SWITCH.load(Relaxed) && MX_SWITCH.swap(false, core::sync::atomic::Ordering::SeqCst)
-}
-
 /// Whether STMXCSR `ins` reads only the control bits: the next instructions load the value and
 /// mask the flags off (`mov r32, m` or `movzx r32, m16`, then `and r32, imm` with bits 0-5
 /// clear: MSVC's math functions checking for the default modes, most of the STMXCSR in games).
@@ -103,34 +75,13 @@ pub fn control_read(ins: &Instruction, next: &[Instruction]) -> bool {
         && n2.immediate(1) & 0x3f == 0
 }
 
-/// [`MX_EXACT`].
-pub fn mx_exact() -> bool {
-    MX_EXACT.load(core::sync::atomic::Ordering::Relaxed)
-}
-
-/// Whether translated code may run with this MXCSR: SSE exceptions masked and rounding to
-/// nearest (the JIT's SSE is the plain wasm ops; other modes are the interpreter's, and a step
-/// that changes MXCSR leaves the region: see the `step` import). With FTZ or DAZ only under
-/// [`MX_EXACT`]: jit::mxguard then sends every operation with a denormal operand, or one whose
-/// result may be denormal, to the interpreter, which flushes them (a program setting either
-/// turns MX_EXACT on: [`mx_modes`]).
-pub fn sse_ok(mxcsr: u32) -> bool {
-    mxcsr & 0x7f80 == 0x1f80 && (mxcsr & 0x8040 == 0 || mx_exact())
-}
-
-/// MXCSR was loaded with `mxcsr` (LDMXCSR, FXRSTOR) at `at`: FTZ or DAZ turn [`MX_EXACT`] on.
-pub fn mx_modes(mxcsr: u32, at: u32) {
-    if mxcsr & 0x8040 != 0 && !mx_exact() {
-        mx_read(at);
-    }
-}
 /// Debugging (MASU_JIT_COUNT): counters of control transfers the generated code bumps
 /// (wasm32 only: their addresses are i32 constants). See [`COUNTER_NAMES`].
 pub static COUNT: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
 pub static COUNTERS: [core::sync::atomic::AtomicU32; 15] = [const { core::sync::atomic::AtomicU32::new(0) }; 15];
 pub const COUNTER_NAMES: [&str; 15] = ["call", "call-slow", "call-back|rest", "call-elsewhere", "call-exit", "ret-values", "lookup", "lookup-other", "lookup-own", "lookup-miss", "entry", "ret-ra1", "top", "side", "block"];
 fn bump(c: &mut Code, i: usize) {
-    if COUNT.load(core::sync::atomic::Ordering::Relaxed) && cfg!(target_pointer_width = "32") {
+    if c.count_transfers && cfg!(target_pointer_width = "32") {
         let at = COUNTERS[i].as_ptr() as usize as i32;
         c.i32c(at).i32c(at).load32(0).i32c(1).add().store32(0);
     }
@@ -149,9 +100,6 @@ pub static PROBES: [core::sync::atomic::AtomicU32; 8] = [const { core::sync::ato
 /// callee that left for the dispatcher): the dispatcher continues at EIP. Status flags are
 /// dead across CALL and RET (C calling conventions). Regions stop following calls too.
 pub static FN: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
-fn fn_on() -> bool {
-    FN.load(core::sync::atomic::Ordering::Relaxed)
-}
 /// A jump's target that is in L_NEXT (`Gen::push_target`).
 const TARGET_NEXT: u32 = u32::MAX;
 /// The type of functions: (cpu, ESP, EAX ECX EDX EBX EBP ESI EDI, call depth | entry << 16,
@@ -304,18 +252,11 @@ pub fn set_deny(f: fn(u32) -> bool) {
     DENY.set(f);
 }
 
-/// 16-bit code (Win16, `Cpu::mode16`): while [`translate_region16`] runs, the code segment's
-/// base. Its blocks are translated at linear addresses: the host keeps `cpu.eip` = CS base + IP
-/// while JIT code runs (the step import going back to IP for the interpreter), jumps and
-/// branches inside the segment get their linear targets (NearBranch32), and only instructions
-/// whose 16-bit semantics the generator has are translated ([`ok16`]: data operations on
-/// registers, immediates and [seg:bx+si+disp]-style operands, conditional and direct jumps);
-/// everything else (the stack, calls and returns, segment loads, string ops...) is stepped.
-static SEG16: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
-static SEG16_ON: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
-
-fn seg16() -> Option<u32> {
-    SEG16_ON.load(core::sync::atomic::Ordering::Relaxed).then(|| SEG16.load(core::sync::atomic::Ordering::Relaxed))
+/// Whether `ins` was decoded as 16-bit code ([`decode16`]: a translation of
+/// context::Arch::Real16). The instruction says it: what tells its operands apart needs no mode
+/// besides it.
+fn code16(ins: &Instruction) -> bool {
+    ins.code_size() == iced_x86::CodeSize::Code16
 }
 
 /// The types and imports every translated module starts with (a 32-bit module's, or a
@@ -363,68 +304,22 @@ pub fn module_head(module: &mut Module, long: bool) {
     }
 }
 
-/// Who translates now ([`SEG16`] is one static every translation reads, and translations run
-/// on several threads at once): the number of 32-bit translations, [`GATE_WANT`] while a
-/// 16-bit one waits for them to end (none start meanwhile), [`GATE_EXCL`] while it runs
-/// (alone). formal/tla/TranslateGate.tla checks the protocol.
-static GATE: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
-const GATE_WANT: u32 = 1 << 30;
-const GATE_EXCL: u32 = 1 << 31;
-
-/// A 32-bit translation's place in [`GATE`] (left when dropped).
-struct Shared;
-impl Shared {
-    fn enter() -> Shared {
-        use core::sync::atomic::Ordering::*;
-        loop {
-            let s = GATE.load(Relaxed);
-            if s & (GATE_WANT | GATE_EXCL) == 0 && GATE.compare_exchange_weak(s, s + 1, Acquire, Relaxed).is_ok() {
-                return Shared;
-            }
-            core::hint::spin_loop();
-        }
-    }
-}
-impl Drop for Shared {
-    fn drop(&mut self) {
-        GATE.fetch_sub(1, core::sync::atomic::Ordering::Release);
-    }
-}
-
-/// A 16-bit translation's hold on [`GATE`]: alone (left when dropped).
-struct Excl;
-impl Excl {
-    fn enter() -> Excl {
-        use core::sync::atomic::Ordering::*;
-        // (one waiter at a time: the others wait for its WANT to go)
-        loop {
-            let s = GATE.load(Relaxed);
-            if s & (GATE_WANT | GATE_EXCL) == 0 && GATE.compare_exchange_weak(s, s | GATE_WANT, Relaxed, Relaxed).is_ok() {
-                break;
-            }
-            core::hint::spin_loop();
-        }
-        while GATE.compare_exchange_weak(GATE_WANT, GATE_EXCL, Acquire, Relaxed).is_err() {
-            core::hint::spin_loop();
-        }
-        Excl
-    }
-}
-impl Drop for Excl {
-    fn drop(&mut self) {
-        GATE.store(0, core::sync::atomic::Ordering::Release);
-    }
-}
-
-/// Translates the 16-bit code at linear `root` (CS base `cs_base`): see [`SEG16`]. One root, no
+/// 16-bit code (Win16, `Cpu::mode16`), translated with the code segment's base in its context
+/// (context::Arch::Real16). Its blocks are translated at linear addresses: the host keeps
+/// `cpu.eip` = CS base + IP
+/// while JIT code runs (the step import going back to IP for the interpreter), jumps and
+/// branches inside the segment get their linear targets (NearBranch32), and only instructions
+/// whose 16-bit semantics the generator has are translated ([`ok16`]: data operations on
+/// registers, immediates and [seg:bx+si+disp]-style operands, conditional and direct jumps);
+/// everything else (the stack, calls and returns, segment loads, string ops...) is stepped.
+///
+/// Translates the 16-bit code at linear `root` (CS base `cs_base`). One root, no
 /// merges (regions of other code segments would need their own base).
 pub fn translate_region16<M: Memory>(module: &mut Module, mem: &mut M, root: u32, cs_base: u32, max_blocks: usize, accept: impl FnMut(u32) -> bool) -> Option<Region> {
-    let _alone = Excl::enter();
-    SEG16.store(cs_base, core::sync::atomic::Ordering::Relaxed);
-    SEG16_ON.store(true, core::sync::atomic::Ordering::Relaxed);
-    let r = translate_exits(module, Snapshot::new(mem), &[root], max_blocks, MAX_REGION_INS, accept, None, &|_| None, &|_| false);
-    SEG16_ON.store(false, core::sync::atomic::Ordering::Relaxed);
-    r
+    // (its own context: 32-bit translations on other threads meanwhile read nothing of it,
+    // where the code segment's base was once a static every translation read, behind a gate)
+    let tc = TranslationContext::now(context::Arch::Real16 { cs_base });
+    translate_exits(&tc, module, Snapshot::new(mem), &[root], max_blocks, MAX_REGION_INS, accept, None, &|_| None, &|_| false)
 }
 
 /// A segment register's index in `Cpu::sbase` (ES CS SS DS FS GS).
@@ -462,7 +357,7 @@ pub fn rep_ignored(ins: &Instruction) -> bool {
         && !matches!(ins.mnemonic(), Mnemonic::Retf | Mnemonic::Iret | Mnemonic::Iretd | Mnemonic::Iretq | Mnemonic::Loop | Mnemonic::Loope | Mnemonic::Loopne | Mnemonic::Jrcxz | Mnemonic::Jecxz | Mnemonic::Jcxz)
 }
 
-/// Whether the generator translates 16-bit instruction `ins` (see [`SEG16`]); the others are
+/// Whether the generator translates 16-bit instruction `ins` (see [`translate_region16`]); the others are
 /// stepped by the interpreter.
 pub fn ok16(ins: &Instruction) -> bool {
     use Mnemonic::*;
@@ -593,11 +488,9 @@ pub struct Region {
     pub profile: Vec<(u32, u32, Vec<String>)>,
     /// functions: the indirect calls and jumps (addresses) whose targets the ring samples
     pub sites: Vec<u32>,
-    /// [`MX_EXACT`] was on when it was translated (it has the MXCSR flag checks)
-    pub exact: bool,
-    /// made with the page checks or not (what [`PAGE_CHECK`] was when it began: one turned on
-    /// meanwhile leaves it unchecked, so never run once they are on)
-    pub pages: Pages,
+    /// what it was made under (its MXCSR flag checks, page checks...: one turned on meanwhile
+    /// is not in it, so it does not run once they are on, see TranslationContext::runs_now)
+    pub ctx: TranslationContext,
 }
 
 /// Debugging: count block entries (a u32 per block, leaked) and fill [`Region::profile`].
@@ -679,6 +572,8 @@ enum Flags {
 
 struct Gen<'a> {
     c: Code,
+    /// what the translation is made under (read here only, never from the statics)
+    tc: TranslationContext,
     /// a function (FN), not a region
     fnm: bool,
     /// laid out by `structure` (jumps go to open labels or leave)
@@ -870,60 +765,11 @@ impl Default for FCache {
 
 /// See [`Gen::safe`].
 const SAFE_MARGIN: i32 = 0x8000;
-/// Measuring only (MASU_JIT_NOCHECK=1): no range checks on memory accesses (unsafe).
-pub static NOCHECK: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
 /// Pushes what a jump to another region hands over (registers, lazy flags, budget).
 fn push_state(c: &mut Code) {
     for l in L_REG..N_PARAMS {
         c.get(l);
     }
-}
-fn nocheck() -> bool {
-    NOCHECK.load(core::sync::atomic::Ordering::Relaxed)
-}
-
-/// Guest pages an access faults on (PAGE_NOACCESS, PAGE_GUARD): whether translated code checks
-/// them. The host turns it on when the first such page appears (it drops what was translated
-/// before); from then on every access checks its pages and leaves the block when one is marked,
-/// so that the interpreter raises the fault. Accesses through ESP (the stack) are not checked.
-/// Where the marks are is not written into the code: every module imports it as the global
-/// "pages" ([`PAGES`]), the host address of a byte per page of [0, GUEST_HI), nonzero for such
-/// a page (kura's fault map). A translation is then the same bytes in every run, whatever the
-/// host's heap gave the map, and one made with the checks is kept across runs and used again
-/// (review of 6852be1, §2: the address was an immediate, so saved code was never used once a
-/// thread's stack guard page turned the checks on, that is in every run).
-pub static PAGE_CHECK: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
-
-/// Whether a translation checks the page marks: what it was made with ([`PAGE_CHECK`] then),
-/// kept with it (saved::Entry, the host's caches), and what decides where it may run: one made
-/// without the checks only while they are off.
-#[derive(Clone, Copy, PartialEq, Eq, Debug, Hash)]
-pub enum Pages {
-    Unchecked,
-    Checked,
-}
-
-impl Pages {
-    /// What translations are made with now.
-    pub fn now() -> Pages {
-        if page_check() { Pages::Checked } else { Pages::Unchecked }
-    }
-    /// Whether a translation made with `self` may run now: a checked one always (with no page
-    /// marked it checks and finds none), an unchecked one only while the checks are off.
-    pub fn runs_now(self) -> bool {
-        match self {
-            Pages::Checked => true,
-            Pages::Unchecked => !page_check(),
-        }
-    }
-}
-
-/// The global every module imports first: the page marks' host address ([`PAGE_CHECK`]).
-pub const PAGES: u32 = 0;
-
-/// Whether accesses check the page marks ([`PAGE_CHECK`]).
-pub fn page_check() -> bool {
-    PAGE_CHECK.load(core::sync::atomic::Ordering::Relaxed)
 }
 
 /// Pushes whether [the address on local `t`, + `size`) touches a page marked in the page marks
@@ -1002,7 +848,7 @@ fn mask(bits: u32) -> u32 {
 fn simple_operand(ins: &Instruction, i: u32) -> bool {
     match ins.op_kind(i) {
         OpKind::Register => reg_index(ins.op_register(i)).is_some(),
-        OpKind::Memory if seg16().is_some() => mem16_ok(ins) && matches!(ins.memory_size().size(), 1 | 2 | 4),
+        OpKind::Memory if code16(ins) => mem16_ok(ins) && matches!(ins.memory_size().size(), 1 | 2 | 4),
         OpKind::Memory => {
             let ok_reg = |r: Register| r == Register::None || r.is_gpr32();
             ok_reg(ins.memory_base())
@@ -1017,7 +863,7 @@ fn simple_operand(ins: &Instruction, i: u32) -> bool {
 
 /// A memory operand with 32-bit registers and an ordinary segment.
 fn mem_ok(ins: &Instruction) -> bool {
-    if seg16().is_some() {
+    if code16(ins) {
         return mem16_ok(ins);
     }
     let ok_reg = |r: Register| r == Register::None || r.is_gpr32();
@@ -1229,7 +1075,7 @@ impl<'a> Gen<'a> {
     fn exit_with(&mut self, st: i32, at: ExitAt) {
         self.exit_contract(at);
         self.remat_out();
-        let _site = wasm::MemSite::new(4);
+        let _site = wasm::MemSite::new(self.c.count_mem, 4);
         self.mmx_flush();
         self.xmm_flush();
         self.x87_flush_out();
@@ -1240,7 +1086,7 @@ impl<'a> Gen<'a> {
     /// block's RET returns). The guest code runs instead (in the interpreter) when a range is
     /// outside the guest's.
     fn hle(&mut self, h: Hle) {
-        if page_check() {
+        if self.tc.page_check() {
             // (its ranges: the interpreter checks their pages)
             self.bail();
             return;
@@ -1846,8 +1692,8 @@ impl<'a> Gen<'a> {
     fn addr(&mut self, size: u32) -> u32 {
         let ins = self.ins;
         let t = self.temp();
-        let prot = page_check();
-        if seg16().is_some() {
+        let prot = self.tc.page_check();
+        if code16(ins) {
             // (16-bit: (base + index + disp) mod 64K, then the segment's base; the registers'
             // upper halves are not part of it)
             self.c.u32c(ins.memory_displacement32() & 0xffff);
@@ -1913,7 +1759,7 @@ impl<'a> Gen<'a> {
     /// Checks the address in local `t` (leaving the block if outside the guest range or on a
     /// marked page); returns `t`.
     fn addr_check(&mut self, t: u32, size: u32) -> u32 {
-        if nocheck() {
+        if self.tc.nocheck() {
             return t;
         }
         // checked as t - GUEST_LO, which the access then uses with GUEST_LO as its offset
@@ -1930,7 +1776,7 @@ impl<'a> Gen<'a> {
 
     /// Leaves the block when [local `t`, + `size`) touches a marked page (see [`PAGE_CHECK`]).
     fn guard_pages(&mut self, t: u32, size: u32) {
-        if !page_check() {
+        if !self.tc.page_check() {
             return;
         }
         let ins = self.ins;
@@ -1962,7 +1808,7 @@ impl<'a> Gen<'a> {
             self.c.i32c(i32::from(key.2)).shl();
         }
         self.c.add().set(L_AB);
-        if !self.safe2.contains(&key) && !nocheck() {
+        if !self.safe2.contains(&key) && !self.tc.nocheck() {
             self.c.get(L_AB).u32c(GUEST_LO + lo32(SAFE_MARGIN)).sub().u32c(GUEST_HI - GUEST_LO - 2 * lo32(SAFE_MARGIN)).gt_u().if_();
             self.depth += 1;
             self.bail();
@@ -2017,11 +1863,11 @@ impl<'a> Gen<'a> {
     /// Whether [reg + disp, + size) is inside the guest range by what is known of `reg`,
     /// checking `reg` itself (once) when nothing is known yet.
     fn near_safe(&mut self, reg: usize, disp: i32, size: u32) -> bool {
-        if nocheck() {
+        if self.tc.nocheck() {
             return true;
         }
         // (pages checked: only the stack goes without)
-        if reg != 4 && page_check() {
+        if reg != 4 && self.tc.page_check() {
             return false;
         }
         if disp.unsigned_abs() >= lo32(SAFE_MARGIN) / 2 {
@@ -2046,7 +1892,7 @@ impl<'a> Gen<'a> {
 
     /// Leaves the block unless [local `t`, + local `n`) is inside the guest range.
     fn check_len(&mut self, t: u32, n: u32) {
-        if page_check() {
+        if self.tc.page_check() {
             // (a range of any length: the interpreter checks its pages)
             self.bail();
             return;
@@ -2063,7 +1909,7 @@ impl<'a> Gen<'a> {
 
     /// Leaves the block unless [addr, addr + size) is inside the guest range.
     fn check(&mut self, t: u32, size: u32) {
-        if nocheck() {
+        if self.tc.nocheck() {
             return;
         }
         self.c.get(t).u32c(GUEST_LO).sub().u32c(GUEST_HI - GUEST_LO - size).gt_u().if_();
@@ -2725,7 +2571,7 @@ impl<'a> Gen<'a> {
 
     /// Pushes condition `cc` without its negation from EFLAGS.
     fn cond_eflags(&mut self, cc: Cond) {
-        if LAYOUT.load(core::sync::atomic::Ordering::Relaxed) {
+        if self.tc.measure.layout {
             let k = match self.flags {
                 Flags::Known(op) => alloc::format!("CONDFB_k{}_b{}_cc{}", op.kind.code(), op.size.bits(), cc.code()),
                 Flags::Entry => alloc::format!("CONDFB_entry_cc{}", cc.code()),
@@ -2829,7 +2675,7 @@ impl<'a> Gen<'a> {
 
     /// The lazy flags into the Cpu if they are live after this instruction (L_OP -1 after).
     fn flags_to_cpu(&mut self) {
-        let _site = wasm::MemSite::new(7);
+        let _site = wasm::MemSite::new(self.c.count_mem, 7);
         self.remat_now();
         if !self.flags_live(STATUS_BITS) {
             return;
@@ -2851,7 +2697,7 @@ impl<'a> Gen<'a> {
     /// Writes registers, EIP and the lazy flags back to the Cpu.
     fn spill(&mut self, eip: u32) {
         self.remat_now();
-        let _site = wasm::MemSite::new(4);
+        let _site = wasm::MemSite::new(self.c.count_mem, 4);
         self.store_regs();
         self.c.get(L_CPU).u32c(eip).store32(Off::eip());
         match self.flags {
@@ -2867,7 +2713,7 @@ impl<'a> Gen<'a> {
     }
 
     fn reload(&mut self) {
-        let _site = wasm::MemSite::new(6);
+        let _site = wasm::MemSite::new(self.c.count_mem, 6);
         self.safe = [None; 8];
         self.safe2.clear();
         self.load_regs();
@@ -2897,7 +2743,7 @@ impl<'a> Gen<'a> {
         self.folded = None;
         self.mx_addr = None;
         self.mx_ops = (false, None);
-        if ins.flow_control() == FlowControl::Next && PROBES.iter().any(|p| p.load(core::sync::atomic::Ordering::Relaxed) == ins.ip32()) {
+        if ins.flow_control() == FlowControl::Next && self.tc.measure.probed(ins.ip32()) {
             self.fallback(false);
             return true;
         }
@@ -2931,7 +2777,7 @@ impl<'a> Gen<'a> {
         let r = self.emit_ins(last, next, simple);
         // (a store that went its own way, not through write_op: PUSH, FST/FIST, FNSTCW, the
         // 64-bit and cached 128-bit vector moves, ...; review b02)
-        if (self.smc || self.fresh.is_some()) && r && !self.fell_back && !self.store_seen && ins.flow_control() == FlowControl::Next && seg16().is_none() {
+        if (self.smc || self.fresh.is_some()) && r && !self.fell_back && !self.store_seen && ins.flow_control() == FlowControl::Next && !code16(ins) {
             self.watch_after();
         }
         if self.mx_seen.iter().any(|s| s[1].is_some()) {
@@ -2949,7 +2795,7 @@ impl<'a> Gen<'a> {
         // ESP is taken to point into a stack at every block start (as on real hardware,
         // running off the stack needs a broken program), so an instruction that sets it to
         // something new has it checked here, before the next block relies on that
-        if written & (1 << 4) != 0 && r && seg16().is_none() {
+        if written & (1 << 4) != 0 && r && !code16(ins) {
             let imm = ins.op_count() == 2 && matches!(ins.op_kind(1), OpKind::Immediate8to32 | OpKind::Immediate32);
             let drift = match ins.mnemonic() {
                 Call | Ret | Pushad | Popad | Pushfd | Popfd | Enter => true,
@@ -3049,7 +2895,7 @@ impl<'a> Gen<'a> {
     fn emit_ins(&mut self, last: bool, next: u32, simple: bool) -> bool {
         use Mnemonic::*;
         let ins = self.ins;
-        if seg16().is_some() && !ok16(ins) {
+        if code16(ins) && !ok16(ins) {
             let ends = ins.flow_control() != FlowControl::Next;
             self.fallback(ends);
             if ends {
@@ -4164,7 +4010,7 @@ impl<'a> Gen<'a> {
                 }
                 if self.fnm {
                     // back to the wasm caller: the flags into the Cpu, the rest as results
-                    let _site = wasm::MemSite::new(2);
+                    let _site = wasm::MemSite::new(self.c.count_mem, 2);
                     // (the flags only if the caller may read them: see T_FN)
                     self.c.get(t).get(L_RAIN).ne().if_();
                     self.flags_to_cpu();
@@ -4395,7 +4241,7 @@ impl<'a> Gen<'a> {
                 self.c.i32c(b).set(L_BLK).br(self.depth - p);
             }
             None => {
-                if LAYOUT.load(core::sync::atomic::Ordering::Relaxed) {
+                if self.tc.measure.layout {
                     use core::fmt::Write;
                     let _ = writeln!(self.notes, "TOP {} -> {k}{}", self.block_index, if backward { " back" } else { "" });
                 }
@@ -4473,7 +4319,7 @@ impl<'a> Gen<'a> {
     /// when it returned there. Without a function there, nested too deep or out of budget,
     /// the dispatcher's way (leaving for `t`).
     fn call_fn(&mut self, t: u32, next: u32) {
-        let _site = wasm::MemSite::new(1);
+        let _site = wasm::MemSite::new(self.c.count_mem, 1);
         self.modes = false;
         self.mmx_flush();
         self.xmm_flush();
@@ -4548,7 +4394,7 @@ impl<'a> Gen<'a> {
     /// this function's caller, which then has to leave too). Without a function there, on
     /// the way out as before.
     fn call_rest(&mut self) {
-        let _site = wasm::MemSite::new(5);
+        let _site = wasm::MemSite::new(self.c.count_mem, 5);
         let r = self.ret_to[us(self.ctx)];
         let (h, v) = (self.temp(), self.temp());
         let hash = lo32(offset_of!(Cpu, jit_hash));
@@ -4729,7 +4575,7 @@ fn push_fn_state(c: &mut Code) {
 
 /// The registers and the budget into the Cpu.
 fn state_to_cpu(c: &mut Code) {
-    let _site = wasm::MemSite::new(2);
+    let _site = wasm::MemSite::new(c.count_mem, 2);
     for i in 0..8 {
         c.get(L_CPU).get(L_REG + i).store32(Off::reg(us(i)));
     }
@@ -4777,7 +4623,7 @@ fn lazy_to_cpu(c: &mut Code) {
 
 /// Writes registers, EIP (L_NEXT), the budget and lazy flags back to the Cpu.
 fn writeback(c: &mut Code) {
-    let _site = wasm::MemSite::new(4);
+    let _site = wasm::MemSite::new(c.count_mem, 4);
     for i in 0..8 {
         c.get(L_CPU).get(L_REG + i).store32(Off::reg(us(i)));
     }
@@ -4946,10 +4792,15 @@ impl core::ops::Deref for Insns {
     }
 }
 
+/// The block at `eip`: 16-bit code in a translation of context::Arch::Real16 (`cs16` its code
+/// segment's base)
 fn decode<M: Memory>(mem: &mut M, eip: u32) -> Vec<Instruction> {
+    decode_at(mem, eip, None)
+}
+
+fn decode_at<M: Memory>(mem: &mut M, eip: u32, cs16: Option<u32>) -> Vec<Instruction> {
     let mut out = Vec::new();
     let mut ip = eip;
-    let cs16 = seg16();
     while out.len() < MAX_INS {
         let mut buf = [0u8; 15];
         let n = mem.fetch(ip, &mut buf);
@@ -5401,7 +5252,7 @@ fn emit_level<'a>(
                     if g.fc_moved {
                         fin.clear();
                     }
-                    if LAYOUT.load(core::sync::atomic::Ordering::Relaxed) {
+                    if g.tc.measure.layout {
                         use core::fmt::Write;
                         for (k, f) in &fin {
                             let _ = writeln!(g.notes, "FC {h}..{e} {k}: d{} have {:02x} dirty {:02x} valid {:02x} empty {:02x}", f.delta, f.have, f.dirty, f.valid, f.empty);
@@ -5442,7 +5293,7 @@ fn emit_level<'a>(
                 }
                 let outer = g.slots.is_none();
                 if outer {
-                    g.slots = slot_loop(&blocks[h..=e]);
+                    g.slots = slot_loop(&blocks[h..=e], g.tc.budget.slots);
                     g.slots_load();
                 }
                 let m = if h == e { mm_names(&blocks[h].1) } else { 0 };
@@ -5505,10 +5356,9 @@ struct Slots {
     local: u32,
 }
 
-fn slot_loop(blocks: &[(u32, Insns)]) -> Option<Slots> {
+fn slot_loop(blocks: &[(u32, Insns)], max: usize) -> Option<Slots> {
     use Mnemonic::*;
     // (off by default: then nothing below is worth its cost, run for every outer loop)
-    let max = us(SLOTS_MAX.load(core::sync::atomic::Ordering::Relaxed));
     if max == 0 {
         return None;
     }
@@ -5727,7 +5577,7 @@ fn emit_block<'a>(g: &mut Gen<'a>, blocks: &'a [(u32, Insns)], k: usize, count: 
                 g.c.i32c(-1).set(L_OP);
             }
         }
-        if LAYOUT.load(core::sync::atomic::Ordering::Relaxed) {
+        if g.tc.measure.layout {
             let k = alloc::format!("{:?}{}", ins.mnemonic(), if g.fell_back { "*" } else { "" });
             let e = g.sizes.entry(k).or_insert((0, 0));
             e.0 += 1;
@@ -5957,7 +5807,7 @@ fn flag_effects(list: &[Instruction], exits: &Exits) -> Vec<FlagEffect> {
             }
             // 16-bit code the interpreter steps (see ok16) reads them all: it may leave the
             // region there (HLT, INT, a fault), the flags of what came before in the Cpu
-            if seg16().is_some() && !ok16(ins) || may_leave_before(ins) || esp[i] || exits.before.contains(&ins.ip32()) {
+            if code16(ins) && !ok16(ins) || may_leave_before(ins) || esp[i] || exits.before.contains(&ins.ip32()) {
                 read = STATUS_BITS;
             }
             FlagEffect {
@@ -6061,7 +5911,7 @@ fn remat_keeps(info: &mut iced_x86::InstructionInfoFactory, p: &Instruction, ins
 /// flags with, of registers and immediates, none of them written after it. A loop's head
 /// reached from its end so has its flags without the lazy state kept around the loop (V8 keeps
 /// that in registers: sort's inner loop, header rotated to the load after its TEST, +30%).
-fn remat_heads<'a>(blocks: &'a [(u32, Insns)], l: &structure::Layout, entries: &[usize], tables: usize) -> Vec<Option<Remat<'a>>> {
+fn remat_heads<'a>(blocks: &'a [(u32, Insns)], l: &structure::Layout, entries: &[usize], tables: usize, measure: &context::Measure) -> Vec<Option<Remat<'a>>> {
     let n = blocks.len();
     let mut info = iced_x86::InstructionInfoFactory::new();
     let ends: Vec<Option<usize>> = (0..n)
@@ -6077,7 +5927,7 @@ fn remat_heads<'a>(blocks: &'a [(u32, Insns)], l: &structure::Layout, entries: &
                 OpKind::Immediate8 | OpKind::Immediate16 | OpKind::Immediate32 | OpKind::Immediate8to16 | OpKind::Immediate8to32 => true,
                 _ => false,
             });
-            let probed = PROBES.iter().any(|p| p.load(core::sync::atomic::Ordering::Relaxed) == ins.ip32());
+            let probed = measure.probed(ins.ip32());
             if !matches!(ins.mnemonic(), Mnemonic::Cmp | Mnemonic::Test) || !regs || probed || ins.has_lock_prefix() {
                 return None;
             }
@@ -6086,18 +5936,9 @@ fn remat_heads<'a>(blocks: &'a [(u32, Insns)], l: &structure::Layout, entries: &
             kept.then_some(i)
         })
         .collect();
-    let mut preds: Vec<Vec<usize>> = alloc::vec![Vec::new(); n];
-    let mut outside = alloc::vec![false; n];
-    for (v, ws) in l.succ.iter().enumerate() {
-        for &w in ws.iter().filter(|&&w| w < n) {
-            // (the function's node for its entries: an entry's other way in, its flags the Cpu's)
-            if v < n {
-                preds[w].push(v);
-            } else if v != n + tables {
-                outside[w] = true;
-            }
-        }
-    }
+    // (the function's node for its entries: an entry's other way in, its flags the Cpu's)
+    let preds: Vec<Vec<usize>> = l.pred.iter().take(n).map(|ps| ps.iter().copied().filter(|&v| v < n).collect()).collect();
+    let outside: Vec<bool> = l.pred.iter().take(n).map(|ps| ps.iter().any(|&v| v >= n && v != n + tables)).collect();
     (0..n)
         .map(|k| {
             if outside[k] || preds[k].is_empty() {
@@ -6192,7 +6033,7 @@ fn block_liveness(g: &Gen, blocks: &[(u32, Insns)], tables: &[structure::Table],
 /// uses as a base before writing it, that nothing in the loop writes (no calls in it), is
 /// checked once on the way in (`hoist`), and is safe in the whole loop.
 fn safe_in(g: &Gen, blocks: &[(u32, Insns)], l: &structure::Layout) -> (Vec<u8>, BTreeMap<usize, (u8, u32)>) {
-    if nocheck() || page_check() {
+    if g.tc.nocheck() || g.tc.page_check() {
         return (Vec::new(), BTreeMap::new());
     }
     let n = blocks.len();
@@ -6243,7 +6084,7 @@ fn safe_in(g: &Gen, blocks: &[(u32, Insns)], l: &structure::Layout) -> (Vec<u8>,
             && (lo32(ins.memory_displacement32()).cast_signed()).unsigned_abs() < lo32(SAFE_MARGIN) / 2
     };
     let mut hoist: BTreeMap<usize, (u8, Vec<bool>)> = BTreeMap::new();
-    if HOIST.load(core::sync::atomic::Ordering::Relaxed) {
+    if g.tc.budget.hoist {
         for (h, body) in l.loop_bodies() {
             if h >= n {
                 continue;
@@ -6424,8 +6265,8 @@ fn translate<M: Memory>(
     hints: &dyn Fn(u32) -> Option<u32>,
     ran: &dyn Fn(u32) -> bool,
 ) -> Option<Region> {
-    let _shared = Shared::enter();
-    translate_exits(module, Snapshot::new(mem), roots, max_blocks, max_ins, accept, fn_trap, hints, ran)
+    let tc = TranslationContext::now(context::Arch::Flat32);
+    translate_exits(&tc, module, Snapshot::new(mem), roots, max_blocks, max_ins, accept, fn_trap, hints, ran)
 }
 
 /// Instructions that left where [`may_leave_before`] / [`may_leave_after`] said they would not
@@ -6450,6 +6291,7 @@ const EXIT_ROUNDS: usize = 4;
 /// expect, with those taken in.
 #[allow(clippy::too_many_arguments)]
 fn translate_exits<M: Memory>(
+    tc: &TranslationContext,
     module: &mut Module,
     mut mem: Snapshot<'_, M>,
     roots: &[u32],
@@ -6462,7 +6304,7 @@ fn translate_exits<M: Memory>(
 ) -> Option<Region> {
     let mut exits = Exits::default();
     for _ in 0..EXIT_ROUNDS {
-        match translate_seen(module, &mut mem, roots, max_blocks, max_ins, &mut accept, fn_trap, hints, ran, &exits) {
+        match translate_seen(tc, module, &mut mem, roots, max_blocks, max_ins, &mut accept, fn_trap, hints, ran, &exits) {
             Ok(r) => return r,
             Err(more) => {
                 EXIT_AGAIN.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
@@ -6482,6 +6324,7 @@ fn translate_exits<M: Memory>(
 /// The translation; Err: exits the liveness did not expect (see translate_exits).
 #[allow(clippy::too_many_arguments)]
 fn translate_seen<M: Memory>(
+    tc: &TranslationContext,
     module: &mut Module,
     mem: &mut Snapshot<'_, M>,
     roots: &[u32],
@@ -6493,8 +6336,6 @@ fn translate_seen<M: Memory>(
     ran: &dyn Fn(u32) -> bool,
     exits: &Exits,
 ) -> Result<Option<Region>, Exits> {
-    let exact = mx_exact();
-    let pages = Pages::now();
     let fnm = fn_trap.is_some();
     // blocks of small callees to inline (functions)
     let mut forced: Vec<u32> = Vec::new();
@@ -6514,16 +6355,16 @@ fn translate_seen<M: Memory>(
         if targets.contains_key(&a) || !(GUEST_LO..GUEST_HI).contains(&a) || !(forced.contains(&a) || accept(a)) || DENY.get().is_some_and(|d| d(a)) {
             continue;
         }
-        let list = match if seg16().is_some() { None } else { hle_at(mem, a) } {
+        let list = match if tc.seg16().is_some() { None } else { hle_at(mem, a) } {
             Some(h) => {
                 hle.insert(a, h);
                 alloc::vec![ret_at(a)]
             }
-            None => decode(mem, a),
+            None => decode_at(mem, a, tc.seg16()),
         };
         let Some(list) = Insns::new(list) else { continue };
         let last = list.last();
-        if fn_on() && matches!(last.flow_control(), FlowControl::Call | FlowControl::IndirectCall) {
+        if tc.functions() && matches!(last.flow_control(), FlowControl::Call | FlowControl::IndirectCall) {
             queue.push_back(last.next_ip32());
             if fnm && last.op0_kind() == OpKind::NearBranch32 {
                 let f = last.near_branch32();
@@ -6720,7 +6561,8 @@ fn translate_seen<M: Memory>(
         })
         .collect();
     let mut g = Gen {
-        c: Code::default(),
+        c: Code::measured(&tc.measure),
+        tc: *tc,
         fnm,
         structured: fnm,
         jnode,
@@ -6768,7 +6610,7 @@ fn translate_seen<M: Memory>(
         mx_ops: (false, None),
         mx_checked: None,
         mx_seen: [[None; 2]; 8],
-        ctl_reads: blocks.iter().flat_map(|(_, l)| (0..l.len()).filter(|&i| !exact && control_read(&l[i], &l[i + 1..])).map(|i| l[i].ip32())).collect(),
+        ctl_reads: blocks.iter().flat_map(|(_, l)| (0..l.len()).filter(|&i| !tc.exact() && control_read(&l[i], &l[i + 1..])).map(|i| l[i].ip32())).collect(),
         mm_pre: None,
         mm_loop: 0,
         xm_pre: None,
@@ -6792,7 +6634,7 @@ fn translate_seen<M: Memory>(
         prof: Vec::new(),
     };
     let mut profile = Vec::new();
-    if PROFILE.load(core::sync::atomic::Ordering::Relaxed) && cfg!(target_pointer_width = "32") {
+    if tc.measure.profile && cfg!(target_pointer_width = "32") {
         let counts: &'static mut [u32] = alloc::boxed::Box::leak(alloc::vec![0u32; us(n)].into_boxed_slice());
         for (k, (a, list)) in blocks.iter().enumerate() {
             let at = &raw const counts[k] as usize as u32;
@@ -6830,7 +6672,7 @@ fn translate_seen<M: Memory>(
             .filter(|&k| ctxs[k] == 0 && !inlined.contains_key(&k) && matches!(blocks[k].1.last().flow_control(), FlowControl::Call | FlowControl::IndirectCall))
             .filter_map(|k| find(blocks[k].1.last().next_ip32()))
             .collect();
-        if !FN_ENTRIES.load(core::sync::atomic::Ordering::Relaxed) {
+        if !tc.budget.fn_entries {
             return l0;
         }
         extra = l0.entries(blocks.len(), |k| k != entry && k < MAX_ENTRY && ctxs[k] == 0 && (rets.contains(&k) || l0.header(k)));
@@ -6878,16 +6720,11 @@ fn translate_seen<M: Memory>(
         let entry = us(starts[0].1);
         (g.safe_in, g.hoist) = safe_in(&g, &blocks, &l);
         let entries: Vec<usize> = core::iter::once(entry).chain(extra.iter().copied()).collect();
-        g.remat = remat_heads(&blocks, &l, &entries, tables.len());
+        g.remat = remat_heads(&blocks, &l, &entries, tables.len(), &tc.measure);
         (g.live_in, g.live_out) = block_liveness(&g, &blocks, &tables, &g.call_reads);
-        g.preds = alloc::vec![Vec::new(); blocks.len()];
-        for (v, ws) in l.succ.iter().enumerate().take(blocks.len()) {
-            for &w in ws.iter().filter(|&&w| w < blocks.len()) {
-                g.preds[w].push(lo32(v));
-            }
-        }
+        g.preds = l.pred.iter().take(blocks.len()).map(|ps| ps.iter().filter(|&&v| v < blocks.len()).map(|&v| lo32(v)).collect()).collect();
         g.flags_out = alloc::vec![None; blocks.len()];
-        if LAYOUT.load(core::sync::atomic::Ordering::Relaxed) {
+        if g.tc.measure.layout {
             use core::fmt::Write;
             let _ = writeln!(g.notes, "IRREDUCIBLE {}", l.irreducible());
             let _ = writeln!(g.notes, "ENTRIES {:x?}", extra.iter().map(|&k| (k, blocks[k].0)).collect::<Vec<_>>());
@@ -7008,7 +6845,7 @@ fn translate_seen<M: Memory>(
         module.funcs.push(Func { ty: 2, locals, code: body });
     }
     let mut layout = String::new();
-    if LAYOUT.load(core::sync::atomic::Ordering::Relaxed) {
+    if g.tc.measure.layout {
         use core::fmt::Write;
         for (k, (a, list)) in blocks.iter().enumerate() {
             let _ = writeln!(layout, "{k} {a:08x}-{:08x} ctx {} {} flags in {:#x} out {:#x}{}", list.last().ip32(), ctxs[k], loops.get(&k).map_or_default(|e| alloc::format!("loop ..{e}")), g.live_in.get(k).copied().unwrap_or(0), g.live_out.get(k).copied().unwrap_or(0), g.remat.get(k).copied().flatten().map_or_default(|r| alloc::format!(" again {:08x}{}", r.at.ip32(), if r.entry { " (entry)" } else { "" })));
@@ -7028,7 +6865,7 @@ fn translate_seen<M: Memory>(
         Vec::new()
     };
     let text = code_text(mem, &code);
-    Ok(Some(Region { starts, instructions: count, code, text, layout, profile, sites, exact, pages }))
+    Ok(Some(Region { starts, instructions: count, code, text, layout, profile, sites, ctx: *tc }))
 }
 
 #[cfg(test)]

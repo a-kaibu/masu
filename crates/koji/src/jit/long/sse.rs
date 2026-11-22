@@ -272,7 +272,7 @@ impl Gen<'_> {
     /// of `li` could raise one. `hi`: the operands are a VEX.256 instruction's upper lanes
     /// (swapped in: nothing known about them).
     fn mx_guard(&mut self, li: &Instruction, src1: Option<Register>, size: Option<u32>, hi: bool) {
-        if let Some(k) = crate::jit::mxguard::kind(li) {
+        if let Some(k) = crate::jit::mxguard::kind(li, self.tc.float) {
             use crate::jit::mxguard;
             // (an XMM register checked for the same range earlier in the block and not written
             // since: not again)
@@ -355,7 +355,7 @@ impl Gen<'_> {
                 g.c.set(L_A);
             }
         };
-        if crate::jit::mxguard::kind(&li).is_some() {
+        if crate::jit::mxguard::kind(&li, self.tc.float).is_some() {
             self.ins = li;
             self.mx_guard(&li, src1, size, false);
             upper(self, true);

@@ -545,10 +545,8 @@ struct Shared {
     /// a function's (jit::FN): its build (1 up; 0 for a region) and indirect call sites
     build: u32,
     sites: Vec<u32>,
-    /// translated with the MXCSR flag checks (jit::Region::exact)
-    exact: bool,
-    /// translated with the page checks or not (jit::Region::pages)
-    pages: jit::Pages,
+    /// what it was translated under (jit::Region::ctx: the MXCSR flag checks, the page checks)
+    ctx: jit::TranslationContext,
     /// made after the ones with smaller numbers (share_seq): the oldest go first
     seq: u64,
 }
@@ -596,7 +594,7 @@ impl SharedCache {
         let list = self.map.entry(key).or_default();
         let mut freed = 0;
         list.retain(|o| {
-            let keep = !(o.exact == r.exact && o.pages == r.pages && o.build < r.build && o.text == r.text);
+            let keep = !(o.ctx == r.ctx && o.build < r.build && o.text == r.text);
             if !keep {
                 freed += o.size();
             }
@@ -718,8 +716,7 @@ fn region_text(mem: &mut Linear, region: &jit::Region) -> Option<Vec<u8>> {
 /// A region for `roots` some thread built from the same code as ours.
 fn shared(mem: &mut Linear, roots: &[u32]) -> Option<Arc<Shared>> {
     let list = SHARED.locked().as_ref()?.get(roots)?.clone();
-    let exact = jit::mx_exact();
-    list.into_iter().rev().find(|r| r.exact == exact && r.pages.runs_now() && code_kept(&r.code) && code_bytes(mem, &r.code).is_some_and(|t| t == r.text))
+    list.into_iter().rev().find(|r| r.ctx.runs_now() && code_kept(&r.code) && code_bytes(mem, &r.code).is_some_and(|t| t == r.text))
 }
 
 fn share(mem: &mut Linear, roots: &[u32], bytes: Vec<u8>, region: &jit::Region) {
@@ -728,7 +725,7 @@ fn share(mem: &mut Linear, roots: &[u32], bytes: Vec<u8>, region: &jit::Region) 
 
 fn share_build(mem: &mut Linear, key: Vec<u32>, bytes: Vec<u8>, region: &jit::Region, build: u32) {
     let Some(text) = region_text(mem, region) else { return };
-    let r = Arc::new(Shared { bytes, starts: region.starts.clone(), code: region.code.clone(), text, build, sites: region.sites.clone(), exact: region.exact, pages: region.pages, seq: share_seq() });
+    let r = Arc::new(Shared { bytes, starts: region.starts.clone(), code: region.code.clone(), text, build, sites: region.sites.clone(), ctx: region.ctx, seq: share_seq() });
     share_push(key, r);
 }
 
@@ -755,7 +752,7 @@ pub fn enabled16() -> bool {
     *ON.get_or_init(|| std::env::var("MASU_JIT16").map_or(true, |v| v != "0"))
 }
 
-/// 16-bit code runs translated with `cpu.eip` the linear CS:IP (see koji's `jit::SEG16`):
+/// 16-bit code runs translated with `cpu.eip` the linear CS:IP (see koji's `jit::translate_region16`):
 /// into that form before the dispatcher, back to IP after.
 pub fn to_linear16(cpu: &mut Cpu) {
     cpu.eip = cpu.pc16();
@@ -1954,7 +1951,8 @@ fn maybe_save() {
         sh.iter()
             .filter_map(|(r, l)| {
                 let s = l.iter().max_by_key(|s| s.build)?;
-                book.wanted(r, s.build).then(|| (r.clone(), s.clone()))
+                // (made with counters of this run or the MXCSR flag checks: not for another)
+                (s.ctx.saveable() && book.wanted(r, s.build)).then(|| (r.clone(), s.clone()))
             })
             .collect()
     };
@@ -2023,7 +2021,7 @@ fn save((url, id, new, chunks): Save) {
             text: s.text.clone(),
             build: s.build,
             sites: s.sites.clone(),
-            pages: s.pages,
+            pages: s.ctx.pages,
         })
         .collect();
     let mods: Vec<&[u8]> = new.iter().map(|(_, s)| &s.bytes[..]).collect();
@@ -2769,7 +2767,7 @@ pub(crate) fn maybe_compile(cpu: &mut Cpu, mem: &mut Linear) -> bool {
     })
 }
 
-/// Compiles the 16-bit region at cpu.eip (linear; koji's jit::SEG16): one root, not shared or saved.
+/// Compiles the 16-bit region at cpu.eip (linear; koji's jit::translate_region16): one root, not shared or saved.
 fn compile16(st: &mut State, cpu: &Cpu, mem: &mut Linear) -> bool {
     let eip = cpu.eip;
     let mut m = Module { name: Some(format!("x16_{eip:08x}")), ..Module::default() };
@@ -3003,10 +3001,8 @@ struct Job {
 struct Batch {
     items: Vec<(u32, u32, Built)>,
     merged: Option<Vec<u8>>,
-    /// built with the page checks or not (koji::jit::PAGE_CHECK when the batch began)
-    pages: jit::Pages,
-    /// built with the MXCSR flag checks (koji::jit::MX_EXACT)
-    exact: bool,
+    /// the modes when the batch began (its translations' are these or later ones)
+    ctx: jit::TranslationContext,
 }
 
 /// Functions one batch takes, at most (one load: a longer pause of its own).
@@ -3052,8 +3048,7 @@ fn compiler() -> Option<std::sync::mpsc::Sender<Job>> {
                     waiting.extend(rx.try_iter());
                     let jobs = take_batch(j, &mut waiting, |j| j.state, BATCH_MAX);
                     let done = jobs[0].done.clone();
-                    let pages = jit::Pages::now();
-                    let exact = jit::mx_exact();
+                    let ctx = jit::TranslationContext::now(jit::context::Arch::Flat32);
                     let items: Vec<(u32, u32, Built)> = jobs
                         .into_iter()
                         .map(|j| (j.eip, j.build, build_fn(&mut Linear, j.eip, (j.lo, j.hi), j.part, j.build, &j.maps.0, &j.maps.1, &j.maps.2)))
@@ -3061,7 +3056,7 @@ fn compiler() -> Option<std::sync::mpsc::Sender<Job>> {
                     let mods: Vec<&[u8]> = items.iter().filter_map(|(_, _, b)| b.as_ref().map(|b| &b.0[..])).collect();
                     let merged = if mods.len() > 1 { jit::wasm::merge(&mods, &[]) } else { None };
                     let n = items.len();
-                    let _ = done.send(Batch { items, merged, pages, exact });
+                    let _ = done.send(Batch { items, merged, ctx });
                     drop(done);
                     (0..n).for_each(|_| crate::snap::drain_done());
                 }
@@ -3074,10 +3069,10 @@ fn compiler() -> Option<std::sync::mpsc::Sender<Job>> {
 
 /// Installs the functions the compiler thread finished for this thread.
 fn take_built(st: &mut State, mem: &mut Linear) {
-    while let Ok(Batch { items, merged, pages, exact }) = st.done_rx.try_recv() {
+    while let Ok(Batch { items, merged, ctx }) = st.done_rx.try_recv() {
         // (built before the page checks or the MXCSR flag checks came on: dropped, translated
         // again when hot)
-        if !pages.runs_now() || jit::mx_exact() && !exact {
+        if !ctx.runs_now() {
             for (eip, _, _) in &items {
                 st.pending.remove(eip);
             }
@@ -3176,7 +3171,7 @@ fn finish_fn(st: &mut State, eip: u32, build: u32, built: Built, at: Option<u32>
     }
     if ok {
         keep_profile(&mut region);
-        let r = Arc::new(Shared { bytes, starts: region.starts, code: region.code, text, build, sites: region.sites, exact: region.exact, pages: region.pages, seq: share_seq() });
+        let r = Arc::new(Shared { bytes, starts: region.starts, code: region.code, text, build, sites: region.sites, ctx: region.ctx, seq: share_seq() });
         share_push(fn_key(eip).to_vec(), r);
         maybe_save();
     }
@@ -4243,7 +4238,7 @@ mod invalidate_tests {
 
     #[test]
     fn shared_builds_are_bounded() {
-        let mk = |text: u8, build: u32, n: usize| Arc::new(Shared { bytes: vec![0; n], starts: vec![], code: vec![], text: vec![text], build, sites: vec![], exact: false, pages: jit::Pages::Unchecked, seq: share_seq() });
+        let mk = |text: u8, build: u32, n: usize| Arc::new(Shared { bytes: vec![0; n], starts: vec![], code: vec![], text: vec![text], build, sites: vec![], ctx: jit::TranslationContext::now(jit::context::Arch::Flat32), seq: share_seq() });
         let key = vec![0xdead_0000u32];
         // a newer build of the same code takes the older one's place
         share_push(key.clone(), mk(1, 1, 10));
@@ -4274,7 +4269,7 @@ mod invalidate_tests {
     /// change left 100 bytes held and 0 counted). Each check takes the same lock as a push.
     #[test]
     fn shared_bytes_are_what_the_map_holds_under_any_interleaving() {
-        let mk = |text: u8, build: u32, n: usize| Arc::new(Shared { bytes: vec![0; n], starts: vec![], code: vec![], text: vec![text], build, sites: vec![], exact: false, pages: jit::Pages::Unchecked, seq: share_seq() });
+        let mk = |text: u8, build: u32, n: usize| Arc::new(Shared { bytes: vec![0; n], starts: vec![], code: vec![], text: vec![text], build, sites: vec![], ctx: jit::TranslationContext::now(jit::context::Arch::Flat32), seq: share_seq() });
         let check = || {
             let g = SHARED.locked();
             if let Some(c) = g.as_ref() {
