@@ -23,11 +23,14 @@ class FakeKura implements AdecWasm {
   _vnhost_adec_doorbell(): number {
     return 512;
   }
-  _vnhost_adec_list(out: number, max: number): number {
+  /** pages as kura's: ids `from` and up, in id order, `max` at most */
+  _vnhost_adec_list(out: number, max: number, from: number): number {
     const u32 = new Uint32Array(this.wasmMemory.buffer);
     const u8 = new Uint8Array(this.wasmMemory.buffer);
     let k = 0;
-    for (const [id, s] of this.streams) {
+    const ids = [...this.streams.keys()].filter((id) => id >= from).sort((a, b) => a - b);
+    for (const id of ids) {
+      const s = this.streams.get(id)!;
       if (k === max) break;
       const cp = this._malloc(s.codec.length);
       u8.set(new TextEncoder().encode(s.codec), cp);
@@ -204,6 +207,35 @@ test("an unsupported codec or a decoder error fails the stream", async () => {
   expect(lines.some((l) => l.includes("wma") && l.includes("not supported"))).toBe(true);
 });
 
+test("more streams than one page of the list: none closed, each decoder kept with its state", async () => {
+  // (kura lists 32 a page: 33 and more open took the first page for all of them, review of 6852be1)
+  for (const n of [1, 31, 32, 33, 64, 65, 100]) {
+    const k = new FakeKura();
+    const { Kind, made } = fakeDecoder();
+    const a = new AudioDecode(k, () => {}, Kind, chunk, false);
+    for (let id = 1; id <= n; id++)
+      k.streams.set(id, {
+        gen: 0,
+        codec: "mp3",
+        rate: 44100,
+        ch: 1,
+        desc: [],
+        queue: [[id & 0xff]],
+        taken: 0,
+      });
+    for (let t = 0; t < 4; t++) {
+      a.tick();
+      await tick(3);
+    }
+    expect(made.length, `${n} open`).toBe(n);
+    expect(made.filter((m) => m.closed).length, `${n} open`).toBe(0);
+    // (one closed in the middle: only its decoder goes)
+    k.streams.delete(Math.ceil(n / 2));
+    a.tick();
+    expect(made.filter((m) => m.closed).length, `${n} open, one closed`).toBe(1);
+  }
+});
+
 test("a new generation gets a new decoder; a stream gone closes its decoder", async () => {
   const k = new FakeKura();
   const { Kind, made } = fakeDecoder();
@@ -231,7 +263,7 @@ test("stop(): the doorbell no longer looked at, the decoders closed (a child pro
   k.wasmMemory = new WebAssembly.Memory({ initial: 4, maximum: 4, shared: true });
   let lists = 0;
   const list = k._vnhost_adec_list.bind(k);
-  k._vnhost_adec_list = (out, max) => (lists++, list(out, max));
+  k._vnhost_adec_list = (out, max, from) => (lists++, list(out, max, from));
   const { Kind, made } = fakeDecoder();
   const a = new AudioDecode(k, () => {}, Kind, chunk, true);
   const ring = () => {
@@ -259,9 +291,9 @@ test("a tick that throws does not end the watching", async () => {
   k.wasmMemory = new WebAssembly.Memory({ initial: 4, maximum: 4, shared: true });
   let lists = 0;
   const list = k._vnhost_adec_list.bind(k);
-  k._vnhost_adec_list = (out, max) => {
+  k._vnhost_adec_list = (out, max, from) => {
     if (++lists === 1) throw new RangeError("offset is out of bounds");
-    return list(out, max);
+    return list(out, max, from);
   };
   const notes: string[] = [];
   const { Kind, made } = fakeDecoder();

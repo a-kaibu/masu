@@ -149,11 +149,14 @@ impl Layout {
         let mut l = Layout::default();
         for (&reg, d) in &w.inputs {
             match d.sysval {
-                0 | 2 | 3 => {
+                0 => {
                     let k = w.isgn.iter().find(|e| e.reg == reg).map_or(K::F, |e| K::of_sig(e.component_type));
                     let mode = Mode::of(d.interp, k == K::F).ok_or(format!("v{reg}: interpolation mode {}", d.interp))?;
                     l.inputs.push(Input { reg, mask: d.mask, mode, sysval: d.sysval });
                 }
+                // (a clip or cull distance read by the pixel shader is 0 on WARP: winref
+                // d3d11interp "clip distance", every pixel's SV_ClipDistance0 00000000)
+                2 | 3 => l.inputs.push(Input { reg, mask: d.mask, mode: Mode::Undefined, sysval: d.sysval }),
                 1 => l.position = d.mask & read(&p, reg),
                 _ => {}
             }
@@ -224,6 +227,8 @@ pub struct Fan {
     pub rhw: Plane,
     pub z: Plane,
     pub attrs: Vec<Plane>,
+    /// the corners' snapped screen positions (1/256 pixels)
+    pub scr: [(i32, i32); 3],
 }
 
 /// How a point of the clipper's table came to be: from the inside point `inside` toward the
@@ -483,7 +488,7 @@ pub fn triangle(c: &[Corner; 3], modes: &[Mode], r: &Raster) -> Vec<Fan> {
                 }
             })
             .collect();
-        out.push(Fan { pos: idx.map(|k| table.get(k).map_or([0.0; 4], |p| drawn(p, r.depth_clip))), rhw: plane(&g, rhw), z: plane(&g, z), attrs });
+        out.push(Fan { pos: idx.map(|k| table.get(k).map_or([0.0; 4], |p| drawn(p, r.depth_clip))), rhw: plane(&g, rhw), z: plane(&g, z), attrs, scr: s });
     }
     out
 }
@@ -497,6 +502,247 @@ pub fn eval(f: &Fan, k: usize, mode: Mode, x: f32, y: f32) -> u32 {
         Mode::NoPerspective(_) => p.at(x, y).to_bits(),
         Mode::Perspective(_) => (p.at(x, y) * (1.0 / f.rhw.at(x, y))).to_bits(),
     }
+}
+
+/// An aliased line as WARP sets it up (lines.md §1): the nudged start and extent its coverage
+/// test reads, the bounds of that test, the planes along the major axis.
+#[derive(Clone, Debug)]
+pub struct Line {
+    pub x0: f32,
+    pub y0: f32,
+    pub dx: f32,
+    pub dy: f32,
+    pub hi_col: f32,
+    pub hi_row: f32,
+    pub rhw: Plane,
+    pub z: Plane,
+    pub attrs: Vec<Plane>,
+}
+
+/// ceil(v) - 0.5 as WARP computes it (round to nearest, up when below)
+fn owner(v: f32) -> f32 {
+    let n = v.round_ties_even();
+    let n = if v > n { n + 1.0 } else { n };
+    n - 0.5
+}
+
+fn diamond(x: f32, y: f32, cx: f32, cy: f32, xmajor: bool) -> bool {
+    let d = (x - cx).abs() + (y - cy).abs();
+    let inclusive = y > cy || (y == cy && !xmajor && x > cx);
+    if inclusive { 0.5 >= d } else { 0.5 > d }
+}
+
+/// The clipper's table for a line (its two corners, then each new point) and the two ends in
+/// it after every plane in clip.md's order (an end outside moved to the crossing from the
+/// inside one), None when it is outside.
+fn clip_line(c: &[Corner; 2], depth_clip: bool) -> Option<(Vec<Point>, [usize; 2])> {
+    let user = c.iter().map(|v| v.clip.len()).max().unwrap_or(0);
+    let culls = c.iter().map(|v| v.cull.len()).max().unwrap_or(0);
+    for k in 0..culls {
+        if c.iter().all(|v| v.cull.get(k).is_some_and(|d| 0.0 > *d)) {
+            return None;
+        }
+    }
+    let mut table: Vec<Point> = c
+        .iter()
+        .map(|v| {
+            let [x, y, z, w] = v.pos;
+            let (n, f) = if depth_clip { (z, w - z) } else { (0.0, 0.0) };
+            let mut d = vec![n, f, w + x, w - x, w - y, w + y];
+            d.extend((0..user).map(|k| v.clip.get(k).copied().unwrap_or(0.0)));
+            Point { p: v.pos, d, made: None }
+        })
+        .collect();
+    if depth_clip && table.iter().any(|v| v.d.iter().take(6).any(|x| x.is_nan())) {
+        return None;
+    }
+    let planes = 6usize.saturating_add(user);
+    let mut ends = [0usize, 1];
+    for k in 0..planes {
+        let d = ends.map(|e| table.get(e).and_then(|p| p.d.get(k)).copied().unwrap_or(0.0));
+        let out = d.map(|v| 0.0 > v);
+        if out[0] && out[1] {
+            return None;
+        }
+        if !out[0] && !out[1] {
+            continue;
+        }
+        let (i, o) = if out[1] { (0, 1) } else { (1, 0) };
+        let (inside, outside) = (ends[i], ends[o]);
+        let (d_in, d_out) = (d[i], d[o]);
+        let den = d_in - d_out;
+        let (Some(a), Some(b)) = (table.get(inside), table.get(outside)) else { return None };
+        let p = std::array::from_fn(|q| lerp(a.p[q], b.p[q], d_in, den));
+        let dd = (0..planes).map(|q| {
+            let (x, y) = (a.d.get(q).copied().unwrap_or(0.0), b.d.get(q).copied().unwrap_or(0.0));
+            if q > k { lerp(x, y, d_in, den) } else { x }
+        });
+        let pt = Point { p, d: dd.collect(), made: Some(Made { inside, outside, d_in, d_out, den }) };
+        table.push(pt);
+        ends[o] = table.len().saturating_sub(1);
+    }
+    Some((table, ends))
+}
+
+/// An aliased line WARP sets up for two corners (API order: the first is the start and the
+/// provoking vertex), None for a line it drops.
+pub fn line(c: &[Corner; 2], modes: &[Mode], r: &Raster) -> Option<Line> {
+    let (table, ends) = clip_line(c, r.depth_clip)?;
+    let scr: Vec<((i32, i32), f32, f32)> = table.iter().map(|p| screen(p, r)).collect();
+    let e = f32::from_bits(0x3b80_0000);
+    let at = |k: usize| scr.get(k).map_or((0.0, 0.0), |v| (f32_of(i128::from(v.0.0)) * e, f32_of(i128::from(v.0.1)) * e));
+    let ((x0, y0), (x1, y1)) = (at(ends[0]), at(ends[1]));
+    if x0 == x1 && y0 == y1 {
+        return None;
+    }
+    let xmajor = (x0 - x1).abs() >= (y0 - y1).abs();
+    let (dx, dy) = (x1 - x0, y1 - y0);
+    let (cx0, cy0, cx1, cy1) = (owner(x0), owner(y0), owner(x1), owner(y1));
+    let in_s = diamond(x0, y0, cx0, cy0, xmajor);
+    let in_e = diamond(x1, y1, cx1, cy1, xmajor);
+    let (hi_col, hi_row) = (f32::from_bits(0x3f00_0001), if xmajor { 0.5 } else { f32::from_bits(0x3f00_0001) });
+    let (mut sx, mut sy, mut sdx, mut sdy) = (x0, y0, dx, dy);
+    if in_s && in_e && cx0 == cx1 && cy0 == cy1 {
+        (sx, sy, sdx, sdy) = (-0.5, -0.5, 0.0, 0.0);
+    } else {
+        if in_s {
+            let (u, v) = if xmajor {
+                let u = (x0 - cx0) + if dx > 0.0 { e } else { -e };
+                (u, (dy / dx) * u)
+            } else {
+                let v = (y0 - cy0) + if dy > 0.0 { e } else { -e };
+                ((dx / dy) * v, v)
+            };
+            (sx, sy, sdx, sdy) = (x0 - u, y0 - v, dx + u, dy + v);
+        }
+        if in_e {
+            let (u, v) = if xmajor {
+                let u = ((sx + sdx) - cx1) + if sdx > 0.0 { e } else { -e };
+                (u, (sdy / sdx) * u)
+            } else {
+                let v = ((sy + sdy) - cy1) + if sdy > 0.0 { e } else { -e };
+                ((sdx / sdy) * v, v)
+            };
+            (sdx, sdy) = (sdx - u, sdy - v);
+        }
+    }
+    // the planes along the major axis, from the snapped ends
+    let (d, base) = if xmajor { (x1 - x0, x0) } else { (y1 - y0, y0) };
+    let inv = 1.0 / d;
+    let axis = |v0: f32, v1: f32| -> Plane {
+        let k = (v1 - v0) * inv;
+        let c0 = v0 - k * base;
+        if xmajor { Plane { gx: k, gy: 0.0, c: c0 } } else { Plane { gx: 0.0, gy: k, c: c0 } }
+    };
+    let rhw = ends.map(|k| scr.get(k).map_or(0.0, |v| v.2));
+    let z = ends.map(|k| scr.get(k).map_or(0.0, |v| v.1));
+    let comps = c.iter().map(|v| v.attrs.len()).max().unwrap_or(0);
+    let attrs = (0..comps)
+        .map(|k| {
+            let mode = modes.get(k / 4).copied().unwrap_or(Mode::Undefined);
+            let corners = [c[0].attrs.get(k).copied().unwrap_or(0), c[1].attrs.get(k).copied().unwrap_or(0), 0];
+            let v = line_values(&table, corners, mode);
+            let at = ends.map(|j| v.get(j).copied().unwrap_or(0.0));
+            match mode {
+                Mode::Undefined => Plane::default(),
+                Mode::Constant => Plane { gx: 0.0, gy: 0.0, c: f32::from_bits(corners[0]) },
+                Mode::Perspective(_) => axis(at[0] * rhw[0], at[1] * rhw[1]),
+                Mode::NoPerspective(_) => axis(at[0], at[1]),
+            }
+        })
+        .collect();
+    Some(Line { x0: sx, y0: sy, dx: sdx, dy: sdy, hi_col, hi_row, rhw: axis(rhw[0], rhw[1]), z: axis(z[0], z[1]), attrs })
+}
+
+/// Each table point's value of one component on a line (the corners as given, new points by
+/// their mode's rule).
+fn line_values(table: &[Point], corners: [u32; 3], mode: Mode) -> Vec<f32> {
+    let mut v: Vec<f32> = Vec::with_capacity(table.len());
+    for (i, pt) in table.iter().enumerate() {
+        let x = match (pt.made, mode) {
+            (_, Mode::Undefined) => 0.0,
+            (_, Mode::Constant) => f32::from_bits(corners[0]),
+            // (the ends' copies at the table's end: the point each copies)
+            (None, _) => f32::from_bits(corners.get(i).copied().unwrap_or(0)),
+            (Some(m), Mode::Perspective(_)) => lerp(v.get(m.inside).copied().unwrap_or(0.0), v.get(m.outside).copied().unwrap_or(0.0), m.d_in, m.den),
+            (Some(m), Mode::NoPerspective(_)) => {
+                let (a, b) = (v.get(m.inside).copied().unwrap_or(0.0), v.get(m.outside).copied().unwrap_or(0.0));
+                let w = |k: usize| table.get(k).map_or(0.0, |p| p.p[3]);
+                let s = screen_s(w(m.inside), w(m.outside), m.d_in, m.d_out);
+                (b - a) * s + a
+            }
+        };
+        v.push(x);
+    }
+    v
+}
+
+/// Whether an aliased line lights the pixel whose centre is (px, py) (lines.md §1.2).
+pub fn line_covers(l: &Line, px: f32, py: f32) -> bool {
+    let (inv_dx, inv_dy) = (-1.0 / l.dx, -1.0 / l.dy);
+    let (a, b) = (l.x0 - px, l.y0 - py);
+    let t = a * inv_dx;
+    let col = (0.0..=1.0).contains(&t) && {
+        let e = t * l.dy + b;
+        e > -0.5 && l.hi_col > e
+    };
+    let t2 = b * inv_dy;
+    let row = (0.0..=1.0).contains(&t2) && {
+        let e = t2 * l.dx + a;
+        e > -0.5 && l.hi_row > e
+    };
+    col || row
+}
+
+/// A point as WARP sets it up: the pixel it lights and its values (constant planes: a
+/// perspective input's value times rhw, the pixel shader's divide by rhw after).
+#[derive(Clone, Debug)]
+pub struct Dot {
+    /// the pixel: the one whose centre is in [X - 0.5, X + 0.5) of the snapped position
+    pub pixel: (i32, i32),
+    pub rhw: f32,
+    pub z: f32,
+    pub attrs: Vec<f32>,
+}
+
+/// A point WARP draws for a corner, None when a plane has it outside.
+pub fn point(c: &Corner, modes: &[Mode], r: &Raster) -> Option<Dot> {
+    let [x, y, z, w] = c.pos;
+    let (n, f) = if r.depth_clip { (z, w - z) } else { (0.0, 0.0) };
+    let d = [n, f, w + x, w - x, w - y, w + y];
+    if d.iter().any(|v| 0.0 > *v || v.is_nan()) || c.clip.iter().chain(&c.cull).any(|v| 0.0 > *v) {
+        return None;
+    }
+    let pt = Point { p: c.pos, d: d.to_vec(), made: None };
+    let ((sx, sy), z, rhw) = screen(&pt, r);
+    // (the pixel i with i + 0.5 in [X - 0.5, X + 0.5): i = ceil(X - 1) in 1/256 units)
+    let px = |v: i32| -> i32 { (v.saturating_sub(256)).div_euclid(256).saturating_add(i32::from(v.rem_euclid(256) != 0)) };
+    let attrs = c
+        .attrs
+        .iter()
+        .enumerate()
+        .map(|(k, &a)| match modes.get(k / 4).copied().unwrap_or(Mode::Undefined) {
+            Mode::Undefined => 0.0,
+            Mode::Constant | Mode::NoPerspective(_) => f32::from_bits(a),
+            Mode::Perspective(_) => f32::from_bits(a) * rhw,
+        })
+        .collect();
+    Some(Dot { pixel: (px(sx), px(sy)), rhw, z, attrs })
+}
+
+/// A point's component at its pixel (bits).
+pub fn dot_eval(d: &Dot, k: usize, mode: Mode) -> u32 {
+    let v = d.attrs.get(k).copied().unwrap_or(0.0);
+    match mode {
+        Mode::Undefined => 0,
+        Mode::Constant | Mode::NoPerspective(_) => v.to_bits(),
+        Mode::Perspective(_) => (v * (1.0 / d.rhw)).to_bits(),
+    }
+}
+
+/// A line plane's value at (x, y): A * x + (B * y + C) (lines.md §1.4).
+pub fn line_at(p: Plane, x: f32, y: f32) -> f32 {
+    p.gx * x + (p.gy * y + p.c)
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -920,3 +1166,7 @@ pub(crate) fn inputs(ps: &[u8], samples: u32, params: &mut Vec<String>, pre: &mu
 #[cfg(test)]
 #[path = "setup_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "setup_golden_tests.rs"]
+mod golden_tests;

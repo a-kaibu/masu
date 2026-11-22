@@ -6,7 +6,7 @@
 // (html.ts) checks. Before any script of the game this gives the page a localStorage kept with
 // masu's saved games and the Node stand-ins NW.js games reach for; the saves come from the
 // app's page, and until they do the page's DOMContentLoaded and load wait.
-import { FILE, type FromFrame, type Init } from "./frame-protocol";
+import { FILE, FrameStart, type FromFrame, type Init } from "./frame-protocol";
 import { relayPorts } from "./gameport";
 import { toApp } from "./skynovel";
 import { fileUrl, frameReady, readSync } from "./sync-read";
@@ -227,38 +227,45 @@ const hold = (e: Event) => {
 };
 addEventListener("DOMContentLoaded", hold, true);
 addEventListener("load", hold, true);
-addEventListener("message", (e: MessageEvent) => {
-  const m = e.data as Init | undefined;
-  if (e.source !== parent || m?.masu !== "init" || ready) return;
-  app = e.origin;
-  for (const [k, v] of m.items) items.set(k, v);
-  // (only a folder on this frame's own origin: the reads go nowhere else)
-  if (m.base && new URL(m.base, location.href).origin === location.origin) {
-    folder.base = m.base;
-    for (const n of m.names) folder.names.add(n);
-  }
-  // (NW.js: once the synchronous reads' worker runs, over the app's port; in a task of its own:
-  // a read spun on in the task of the worker's first message is never answered, in Chromium)
-  if (node) void frameReady(e.ports[0]).then(() => setTimeout(go, 0));
-  else go();
-});
-const go = () => {
+// (once, whichever init or timeout comes first: FrameStart)
+const starting = new FrameStart(() => {
   ready = true;
   for (const t of again) clearTimeout(t);
+  const s = starting.state;
+  if (s.kind === "failed") console.error(`masu: ${s.why}; the game goes on`);
   for (const ev of held)
     if (ev.type === "load") dispatchEvent(new Event("load"));
     else document.dispatchEvent(new Event("DOMContentLoaded", { bubbles: true }));
-};
+});
+addEventListener("message", (e: MessageEvent) => {
+  const m = e.data as Init | undefined;
+  if (e.source !== parent || m?.masu !== "init") return;
+  starting.init(m, async () => {
+    app = e.origin;
+    for (const [k, v] of m.items) items.set(k, v);
+    // (only a folder on this frame's own origin: the reads go nowhere else)
+    if (m.base && new URL(m.base, location.href).origin === location.origin) {
+      folder.base = m.base;
+      for (const n of m.names) folder.names.add(n);
+    }
+    // (with Node: once the synchronous reads' worker runs, over the app's port; in a task of its
+    // own: a read spun on in the task of the worker's first message is never answered, in Chromium)
+    if (!node) return "none";
+    const r = await frameReady(e.ports[0]);
+    await new Promise((ok) => setTimeout(ok, 0));
+    return r;
+  });
+});
 post({ masu: "hello" });
 // (the app's page may not have heard the first: its listener came late, or the frame was put
 // back from the back-forward cache; before, the game stayed blank for good)
 const again = HELLO_AGAIN.map((ms) => setTimeout(() => ready || post({ masu: "hello" }), ms));
 again.push(
   setTimeout(() => {
-    if (ready) return;
-    console.error(`masu: no saves from the app after ${HELLO_WAIT_MS} ms; the game goes on without them`);
-    keep = false;
-    go();
+    if (starting.gaveUp()) {
+      console.error(`masu: no saves from the app after ${HELLO_WAIT_MS} ms`);
+      keep = false;
+    }
   }, HELLO_WAIT_MS),
 );
 

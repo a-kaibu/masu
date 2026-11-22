@@ -315,6 +315,54 @@ pub(super) fn snorm_targets(tree: &Tree) -> Hits {
     out
 }
 
+// --- kura-review-6852be1 ------------------------------------------------------------------------
+
+/// What the review of kura at 6852be1 found wrong, fixed (2026-11-22), each by its spelling in
+/// the code (comments left out): (file, text it must hold, what is wrong without it).
+pub(super) const REVIEW_6852BE1_HAS: [(&str, &str, &str); 12] = [
+    ("crates/kura/src/d3d11/hazards.rs", "out.extend(st.so.iter()", "stream output targets are not outputs: a vertex buffer of one stays bound (D3D11 unbinds it)"),
+    ("crates/kura/src/d3d11/hazards.rs", "for vb in st.vbs.iter_mut()", "the vertex buffers checked are not all 32 slots"),
+    ("crates/kura/src/d3d11/mod.rs", "hazards::after_outputs(d, st);\n        }\n        35 => {", "OMSetRenderTargetsAndUnorderedAccessViews with KEEP render targets does not resolve its new UAVs"),
+    ("crates/kura/src/jit.rs", "struct SharedCache", "the shared JIT cache's byte count is kept apart from its map (it drifted)"),
+    ("crates/kura/src/jit.rs", "jit::TABLE_SLOTS", "the JIT table's size is not koji's (the loader's 20-bit index)"),
+    ("host/vnjit.js", "VNJIT.slots", "vnjitRoom does not refuse a table index past the slots the loader encodes"),
+    ("crates/kura/src/vfs.rs", "fn change<R: Refused>", "a change of the shared namespace answers success whether or not it was published"),
+    ("crates/kura/src/vfs/shared.rs", "fs.undo();", "a change the shared buffer could not take is kept here (lost at the next snapshot)"),
+    ("crates/kura/src/vfs.rs", "x.allows(Use::Read, false)?", "a handle is read without the access it was opened with"),
+    ("crates/kura/src/d3d9/gpu.rs", "pub struct Readback(u32)", "readback ids are a number each device counts (two devices waited on each other's)"),
+    ("crates/kura/src/snap.rs", "fn wait_resume(", "a stop the page gave up on waits for RESUME for ever"),
+    ("web/src/savestate.ts", "word(CANCEL)", "the page does not cancel a stop request it gave up on"),
+];
+
+/// (file, text it must not hold, what is wrong with it)
+pub(super) const REVIEW_6852BE1_NOT: [(&str, &str, &str); 7] = [
+    ("crates/kura/src/d3d11/hazards.rs", "0..16", "a fixed slot count: the slots past it are not checked"),
+    ("crates/kura/src/d3d11/hazards.rs", "0..128", "a fixed slot count: the slots past it are not checked"),
+    ("crates/kura/src/jit.rs", "SHARED_BYTES", "a byte count of the shared cache apart from what the map holds"),
+    ("host/vnjit.js", "1 << 20", "a table limit of its own, not the loader's (VNJIT.slots)"),
+    ("crates/kura/src/vfs.rs", "fn with<R>(", "an operation whose result does not say that its change was not published"),
+    ("crates/kura/src/snap.rs", "wait_cmd(CMD_RESUME)", "a wait for RESUME the page cannot cancel"),
+    ("crates/kura/src/adec.rs", "LIST_FROM", "the stream list's start kept between calls (a page of it taken for the whole)"),
+];
+
+/// a fix of the review of 6852be1 taken back
+pub(super) fn review_6852be1(tree: &Tree) -> Hits {
+    let mut out = Hits::new();
+    let sites = REVIEW_6852BE1_HAS.iter().map(|x| (x, true)).chain(REVIEW_6852BE1_NOT.iter().map(|x| (x, false)));
+    for ((path, needle, why), has) in sites {
+        let f = Rel::new(path);
+        if tree.is_made_up() && !tree.has(&f) {
+            continue;
+        }
+        let code = tree.code(&f, true);
+        if code.contains(needle) != has {
+            let line = if has { 1 } else { code.split(needle).next().map_or(1, |b| b.lines().count().max(1)) };
+            out.push((f, line, (*why).to_owned()));
+        }
+    }
+    out
+}
+
 // --- d3d9-status-codes ------------------------------------------------------------------------
 
 /// d3d9.h's codes by name: MAKE_D3DHRESULT(code) = 0x8876_0000 | code (D3DERR_), MAKE_D3DSTATUS

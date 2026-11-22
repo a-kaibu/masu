@@ -89,7 +89,10 @@ export function readSync(
 }
 
 let shared: Shared | null | undefined;
-let ready: Promise<void> = Promise.resolve();
+/** How the frame's worker started: running, not within READY_MS, or none to start (not
+ * cross-origin isolated, no port). */
+export type ReadsStart = "ready" | "timeout" | "unavailable";
+let ready: Promise<ReadsStart> = Promise.resolve("unavailable");
 
 /** How long the frame's worker may take to start. */
 const READY_MS = 10_000;
@@ -104,7 +107,7 @@ export function frameShared(): Shared | null {
  * (a worker starts with the page's main thread's help: the page must not spin on one that has
  * not yet), at once when there is none.
  */
-export function frameReady(reads?: MessagePort): Promise<void> {
+export function frameReady(reads?: MessagePort): Promise<ReadsStart> {
   if (shared !== undefined) return ready;
   if (
     typeof crossOriginIsolated === "undefined" ||
@@ -114,13 +117,14 @@ export function frameReady(reads?: MessagePort): Promise<void> {
   ) {
     console.error("masu: the frame is not cross-origin isolated: the game's synchronous reads fail");
     shared = null;
+    ready = Promise.resolve("unavailable");
     return ready;
   }
   shared = makeShared();
   const w = new Worker("/frame-read.js");
-  ready = new Promise<void>((resolve) => {
-    w.onmessage = () => resolve();
-    setTimeout(resolve, READY_MS);
+  ready = new Promise<ReadsStart>((resolve) => {
+    w.onmessage = () => resolve("ready");
+    setTimeout(() => resolve("timeout"), READY_MS);
   });
   w.postMessage({ port: reads, ...shared }, [reads]);
   return ready;

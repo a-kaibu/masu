@@ -178,6 +178,8 @@ impl Dirt {
         add_range(&mut m.bytes, lo, hi, MAX_RANGES);
     }
     pub(super) fn is_empty(&self) -> bool { self.nodes.is_empty() }
+    /// Nothing changed (an operation taken back: vfs/undo.rs).
+    pub(super) fn clear(&mut self) { self.nodes.clear(); }
 }
 
 /// What a process has of the shared buffer: its generation, the snapshot's number, and where in
@@ -496,24 +498,38 @@ impl Guard {
                 }
                 return Self { enabled: false };
             }
+            fs.undo = Some(super::undo::Undo::begin(fs));
             return Self { enabled: true };
         }
         #[cfg(not(target_arch = "wasm32"))]
         { let _ = fs; Self { enabled: false } }
     }
-    pub(super) fn publish(&self, fs: &mut Fs) {
+    /// Publishes what the operation changed; false when it does not fit the buffer: then the
+    /// operation is taken back whole (vfs/undo.rs), every process keeping the namespace as it was.
+    pub(super) fn publish(&self, fs: &mut Fs) -> bool {
         #[cfg(target_arch = "wasm32")]
-        if self.enabled && !fs.sync_out(&mut Host) {
-            // (past the buffer's maximum: this process goes on with its own files; the
-            // others keep the last namespace that fitted rather than the game stopping)
-            static TOLD: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
-            if !TOLD.swap(true, std::sync::atomic::Ordering::Relaxed) {
-                eprintln!("kura: the shared file system does not fit its buffer; the other processes keep the previous one");
-            }
+        if self.enabled {
+            return publish_or_undo(fs, &mut Host);
         }
-        #[cfg(not(target_arch = "wasm32"))]
-        { let _ = (self.enabled, fs); }
+        let _ = (self.enabled, &fs);
+        true
     }
+}
+
+/// sync_out, or the operation taken back when it does not fit.
+pub(super) fn publish_or_undo(fs: &mut Fs, r: &mut dyn Region) -> bool {
+    if fs.sync_out(r) {
+        fs.undo = None;
+        return true;
+    }
+    static TOLD: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+    if !TOLD.swap(true, std::sync::atomic::Ordering::Relaxed) {
+        eprintln!("kura: a change to the shared file system does not fit its buffer; it is not made (ENOSPC)");
+    }
+    fs.undo();
+    false
+}
+impl Guard {
 }
 impl Drop for Guard { fn drop(&mut self) { #[cfg(target_arch = "wasm32")] if self.enabled { unsafe { vnhost_vfs_shared_unlock(); } } } }
 

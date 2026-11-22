@@ -8,6 +8,7 @@
 // but the file exists empty from its creation on: an empty one reads as not there (no chunk is
 // empty).
 
+import { pool } from "./jobs";
 /** What net.ts, offline.ts and play.ts use of the device's chunks. */
 export interface ChunkStore {
   match(request: Key): Promise<Response | undefined>;
@@ -28,19 +29,11 @@ export interface Kept {
 const LIST_AT_ONCE = 16;
 
 /** Runs `f` over `xs`, `width` at a time, in order of the results. */
-async function batched<T, R>(xs: readonly T[], width: number, f: (x: T) => Promise<R>): Promise<R[]> {
-  const out: R[] = Array.from({ length: xs.length });
-  let next = 0;
-  await Promise.all(
-    Array.from({ length: Math.min(width, xs.length) }, async () => {
-      while (next < xs.length) {
-        const i = next++;
-        out[i] = await f(xs[i]!);
-      }
-    }),
+const batched = <T, R>(xs: readonly T[], width: number, f: (x: T) => Promise<R>): Promise<R[]> =>
+  pool(
+    width,
+    xs.map((x) => () => f(x)),
   );
-  return out;
-}
 
 /** What `store` keeps with sizes and times. */
 export function listChunks(store: ChunkStore): Promise<Kept[]> {

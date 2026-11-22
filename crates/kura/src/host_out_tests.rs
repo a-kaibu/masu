@@ -140,11 +140,11 @@ proptest! {
         let a: Vec<u32> = (0..streams).filter_map(|k| adec::open("opus", 48000, 1 + k as u32 % 2, &[1, 2, 3])).collect();
         prop_assert_eq!(a.len(), streams);
         let mut n = 0;
-        let rows = guarded(10 * 16, C32 ^ 4, C32, |p| n = unsafe { adec::vnhost_adec_list(p, max) });
+        let rows = guarded(10 * 16, C32 ^ 4, C32, |p| n = unsafe { adec::vnhost_adec_list(p, max, 0) });
         prop_assert!(n <= max);
         prop_assert!(n as usize >= streams.min(max as usize), "{} of {} listed, max {}", n, streams, max);
         prop_assert!(rows[10 * n as usize..].iter().all(|&w| w == C32 ^ 4));
-        guarded(10 * max as usize, 0, C32, |p| unsafe { adec::vnhost_adec_list(p, max); });
+        guarded(10 * max as usize, 0, C32, |p| unsafe { adec::vnhost_adec_list(p, max, 0); });
         for id in a {
             adec::close(id);
         }

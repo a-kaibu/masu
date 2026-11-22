@@ -1,5 +1,6 @@
 import { expect, test } from "vite-plus/test";
-import { Budget, pool } from "./ahead";
+import { Budget } from "./ahead";
+import { pool } from "./jobs";
 
 const tick = (ms: number) => new Promise((r) => setTimeout(r, ms));
 

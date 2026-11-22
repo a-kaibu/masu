@@ -1,5 +1,15 @@
-import { afterAll, beforeAll, describe, expect, it } from "vite-plus/test";
-import { checkUpdate, installUpdate, parseUpdate, sameVersion, waitForVersion } from "./server-update";
+import { afterAll, beforeAll, describe, expect, it, test } from "vite-plus/test";
+import {
+  checkUpdate,
+  installUpdate,
+  parseUpdate,
+  sameVersion,
+  UpdateJob,
+  waitForVersion,
+  type UpdateInfo,
+} from "./server-update";
+import { PageGame } from "./session";
+import { seeds, simulate } from "./test/simulation";
 
 const g = globalThis as unknown as { location?: unknown };
 const oldLocation = g.location;
@@ -142,4 +152,72 @@ describe("waitForVersion", () => {
       expect(calls).toBe(Math.ceil(10_000 / 700));
     }
   });
+});
+
+const newer: UpdateInfo = { current: "v1", latest: "v2", newer: true, supported: true, error: "" };
+
+function job(game: PageGame, waits: number[]) {
+  const calls = { install: 0, reload: 0, check: 0, inFlight: 0, most: 0, underGame: 0 };
+  const j = new UpdateJob({
+    check: async () => (calls.check++, newer),
+    install: () => {
+      calls.most = Math.max(calls.most, ++calls.inFlight);
+      return new Promise((ok) => setTimeout(() => (calls.install++, calls.inFlight--, ok("v2")), waits[0]));
+    },
+    wait: () => new Promise((ok) => setTimeout(() => ok(true), waits[1])),
+    refresh: () => new Promise((ok) => setTimeout(ok, waits[2])),
+    reload: () => {
+      const inGame = game.started;
+      const did = game.reload(() => calls.reload++);
+      if (did && inGame) calls.underGame++;
+      return did;
+    },
+  });
+  return { j, calls };
+}
+
+test("a game started while the server restarts is not reloaded under; the job goes on with no screen (review 22bb061 §6)", async () => {
+  await simulate(async (sim) => {
+    const game = new PageGame();
+    const { j, calls } = job(game, [100, 300, 10]);
+    j.shown();
+    await sim.advance(0);
+    expect(j.step).toEqual({ s: "ready", info: newer });
+    void j.update(newer);
+    // (the screen is closed: nothing listens; the player picks a game meanwhile)
+    await sim.advance(200);
+    game.begin();
+    await sim.advance(1000);
+    expect(calls).toMatchObject({ install: 1, reload: 0, check: 1 });
+    expect(j.step).toEqual({ s: "restarted", info: newer, version: "v2" });
+    // (opened again: the step is kept, not checked again)
+    j.shown();
+    expect(j.step.s).toBe("restarted");
+  });
+});
+
+test("property: whatever the order of updates, checks, screens and a game's start, one install at a time and a reload only with no game (seeded)", async () => {
+  for (const seed of [...seeds, ...Array.from({ length: 200 }, (_, i) => i + 1)])
+    await simulate(async (sim) => {
+      const game = new PageGame();
+      const waits = [sim.randomBelow(200), sim.randomBelow(400), sim.randomBelow(20)];
+      const { j, calls } = job(game, waits);
+      let gameAt = Infinity;
+      for (let t = 0; t < 40; t++) {
+        const what = sim.randomBelow(5);
+        if (what === 0) j.shown();
+        if (what === 1) void j.check();
+        if (what === 2) void j.update(newer);
+        if (what === 3 && !game.started) {
+          game.begin();
+          gameAt = t;
+        }
+        await sim.advance(sim.randomBelow(100));
+      }
+      await sim.advance(2000);
+      expect(calls.most, `seed ${seed}`).toBeLessThanOrEqual(1);
+      expect(calls.underGame, `seed ${seed}`).toBe(0);
+      if (j.step.s === "restarted") expect(gameAt, `seed ${seed}`).toBeLessThan(Infinity);
+      if (gameAt === Infinity) expect(j.step.s, `seed ${seed}`).not.toBe("restarted");
+    }, seed);
 });
