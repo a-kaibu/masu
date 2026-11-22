@@ -1,0 +1,7 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc a5b69058d5c7febecb64b631187ed4a30576b6029f2f7f5ccee9704d2257ad4f # shrinks to calls = [Srvs(25, 0, [])]

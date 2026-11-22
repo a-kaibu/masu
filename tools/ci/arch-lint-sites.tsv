@@ -420,7 +420,6 @@ constant-method	crates/kura/src/d3d11/mod.rs	11..=18 => S_OK,	escape: implement 
 constant-method	crates/kura/src/d3d11/mod.rs	112 => return 0,	escape: implement Windows' behavior (this thread)
 constant-method	crates/kura/src/d3d11/mod.rs	113 => return 0,	escape: implement Windows' behavior (this thread)
 constant-method	crates/kura/src/d3d11/mod.rs	114 => return DXGI_ERROR_INVALID_CALL,	escape: implement Windows' behavior (this thread)
-constant-method	crates/kura/src/d3d11/mod.rs	117 | 118 | 133 => {}	escape: implement Windows' behavior (this thread)
 constant-method	crates/kura/src/d3d11/mod.rs	13 => 1,	escape: implement Windows' behavior (this thread)
 constant-method	crates/kura/src/d3d11/mod.rs	13 | 17 => 0,	escape: implement Windows' behavior (this thread)
 constant-method	crates/kura/src/d3d11/mod.rs	134..=139 | 141..=143 => {}	escape: implement Windows' behavior (this thread)

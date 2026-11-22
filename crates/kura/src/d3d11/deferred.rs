@@ -12,31 +12,23 @@
 //! - Map on a deferred context: only WRITE_DISCARD of dynamic resources (then WRITE_NO_OVERWRITE
 //!   of a buffer already discarded in the list); what is written is recorded at Unmap.
 //!
-//! A recorded call keeps copies of what its pointers point to, and private references to the
-//! objects it names, until the list goes.
+//! A recorded call is the [`ContextOp`] the immediate context applies (op.rs): it owns copies
+//! of what its pointers pointed to, and the list holds private references to the objects it
+//! names ([`ContextOp::objects`]) until it goes.
 
 use kome::num::*;
-use crate::guest::{gc, gp};
+use crate::guest::gc;
 use super::*;
+use super::op::MAX_BLOB;
 
 /// D3D11_ERROR_DEFERRED_CONTEXT_MAP_WITHOUT_INITIAL_DISCARD
 const MAP_WITHOUT_DISCARD: u32 = 0x887c_0004;
-
-/// The most a recorded call copies from one pointer (an UpdateSubresource of 256 MB)
-const MAX_BLOB: u64 = 1 << 28;
-
-pub struct Rec {
-    m: u32,
-    args: [u32; 16],
-    /// (argument, the bytes it pointed to)
-    blobs: Vec<(usize, Box<[u8]>)>,
-}
 
 pub struct CmdList {
     /// the state the list starts from (held privately)
     start: State,
     /// (shared: a list executed runs its calls where they are, without copying them)
-    recs: std::sync::Arc<Vec<Rec>>,
+    recs: std::sync::Arc<Vec<ContextOp<'static>>>,
     /// objects the calls name (held privately)
     held: Vec<u32>,
 }
@@ -113,124 +105,34 @@ pub(super) unsafe fn create(d: &mut D11, flags: u32, out: u32) -> u32 {
     S_OK
 }
 
-/// What a call's pointers point to: (argument, bytes); None: more than it can be (a size
-/// that does not fit, or over MAX_BLOB)
-unsafe fn pointed(d: &D11, m: u32, a: &dyn Fn(usize) -> u32) -> Option<Vec<(usize, u32)>> {
-    let ps = ptr();
-    let n = |i: usize| a(i).min(128);
-    Some(match m {
-        // *Set{ConstantBuffers, ShaderResources, Samplers}(start, n, objects)
-        7 | 8 | 10 | 16 | 22 | 25 | 26 | 31 | 32 | 59 | 61 | 62 | 63 | 65 | 66 | 67 | 70 | 71 => vec![(3, n(2) * ps)],
-        // *SetShader(shader, class instances, n)
-        9 | 11 | 23 | 60 | 64 | 69 => vec![(2, n(3) * ps)],
-        18 => vec![(3, n(2) * ps), (4, 4 * n(2)), (5, 4 * n(2))],
-        33 => vec![(2, n(1).min(8) * ps)],
-        34 => {
-            let keep = |v: u32| if v == 0xffff_ffff { 0 } else { v.min(8) };
-            vec![(2, keep(a(1)) * ps), (6, keep(a(5)) * ps), (7, 4 * keep(a(5)))]
-        }
-        35 | 50 | 51 | 52 => vec![(2, 16)],
-        37 => vec![(2, n(1).min(4) * ps), (3, 4 * n(1).min(4))],
-        44 => vec![(2, 24 * n(1))],
-        45 => vec![(2, 16 * n(1))],
-        46 | 115 => vec![(8, 24)],
-        48 | 116 => vec![(3, 24), (4, update_size(d, a)?)],
-        68 => vec![(3, n(2) * ps), (4, 4 * n(2))],
-        119..=124 => vec![(3, n(2) * ps), (4, 4 * n(2)), (5, 4 * n(2))],
-        132 => vec![(2, 16), (3, 16 * n(4))],
-        _ => vec![],
-    })
-}
-
-/// The bytes UpdateSubresource(resource, sub, box, data, row pitch, depth pitch) reads: as
-/// update_subresource and upload_texture read them (a texture's box from its block's corner).
-unsafe fn update_size(d: &D11, a: &dyn Fn(usize) -> u32) -> Option<u32> {
-    let bx = (a(3) != 0).then(|| [rd(a(3), 0), rd(a(3), 1), rd(a(3), 2), rd(a(3), 3), rd(a(3), 4), rd(a(3), 5)]);
-    let size: u64 = match d.objs.get(&d.id_of(a(1))).map(|o| &o.data) {
-        Some(Data::Buffer(b)) => u64::from(bx.map_or(b.size, |x| x[3].min(b.size).saturating_sub(x[0]))),
-        Some(Data::Texture(t)) => {
-            let level = a(2) % t.mips.max(1);
-            let (lw, lh) = ((t.w >> level).max(1), (t.h >> level).max(1));
-            let ld = if t.dim == 3 { (t.layers >> level).max(1) } else { 1 };
-            let block = format::info(t.fmt).map_or(1, |f| f.block.max(1));
-            let [x0, y0, z0, x1, y1, z1] = bx.unwrap_or([0, 0, 0, lw, lh, ld]);
-            let (x0, y0) = (x0 / block * block, y0 / block * block);
-            let (w, h, dp) = (x1.min(lw).saturating_sub(x0), y1.min(lh).saturating_sub(y0), z1.min(ld).saturating_sub(z0));
-            if w == 0 || h == 0 || dp == 0 {
-                return Some(0);
-            }
-            let (row, rows) = format::pitch_rows(t.fmt, w, h);
-            // (in 64 bits: the pitches are the application's)
-            (u64::from(dp) - 1) * u64::from(a(6)) + (u64::from(rows) - 1) * u64::from(a(5)) + u64::from(row)
-        }
-        _ => 0,
-    };
-    (size <= MAX_BLOB && u64::from(a(4)) + size <= 1 << 32).then_some(lo32(size))
-}
-
 /// A call onto the list being recorded (nobody else has it yet).
-fn push(l: &mut CmdList, r: Rec) {
+fn push(l: &mut CmdList, op: ContextOp<'static>) {
     if let Some(v) = std::sync::Arc::get_mut(&mut l.recs) {
-        v.push(r);
+        v.push(op);
     }
 }
 
-/// Records a call (copies of what it points to, references to what it names).
-unsafe fn record(d: &mut D11, this: u32, m: u32, a: &dyn Fn(usize) -> u32) {
-    // (only the arguments the method has: the caller's array is no longer than that)
-    let mut args = [0u32; 16];
-    args.copy_from_slice(&super::args_of(IF_CONTEXT, m, a, 16));
-    let Some(ptrs) = pointed(d, m, a) else {
-        // (data past what any resource takes, or past the address space: not recorded)
+/// Records `op` (it owns its copies; the list holds what it names).
+fn record(d: &mut D11, this: u32, op: ContextOp<'_>) {
+    // (what changes nothing is not kept)
+    if op == ContextOp::Nothing {
+        return;
+    }
+    let Some(op) = op.owned() else {
+        // (data past what any resource takes: not recorded)
         if d.trace {
-            eprintln!("d3d11: deferred call {m} with data too large to record, dropped");
+            eprintln!("d3d11: deferred call with data too large to record, dropped");
         }
         return;
     };
-    let mut blobs = Vec::new();
-    for (i, size) in ptrs {
-        if a(i) != 0 && size != 0 {
-            blobs.push((i, Box::from(std::slice::from_raw_parts(gc::<u8>(a(i)), us(size)))));
-        }
-    }
-    hold(d, this, m, &args, &blobs);
-    if let Some(Data::Deferred(x)) = d.objs.get_mut(&this).map(|o| &mut o.data) {
-        push(&mut x.list, Rec { m, args, blobs });
-    }
-}
-
-/// Which arguments of a call are objects, and which of its pointers point to arrays of them.
-fn objects(m: u32) -> (&'static [usize], &'static [usize]) {
-    match m {
-        7 | 8 | 10 | 16 | 22 | 25 | 26 | 31 | 32 | 59 | 61 | 62 | 63 | 65 | 66 | 67 | 70 | 71 | 18 | 68 | 119..=124 => (&[], &[3]),
-        9 | 11 | 23 | 60 | 64 | 69 => (&[1], &[2]),
-        33 => (&[3], &[2]),
-        34 => (&[3], &[2, 6]),
-        37 => (&[], &[2]),
-        17 | 19 | 27 | 28 | 30 | 35 | 36 | 39 | 40 | 42 | 43 | 48 | 50..=55 | 58 | 116..=118 | 132 | 133 => (&[1], &[]),
-        46 | 115 => (&[1, 6], &[]),
-        47 => (&[1, 2], &[]),
-        49 | 57 => (&[1, 3], &[]),
-        _ => (&[], &[]),
-    }
-}
-
-/// The objects a recorded call names, held by the list being recorded.
-fn hold(d: &mut D11, this: u32, m: u32, args: &[u32; 16], blobs: &[(usize, Box<[u8]>)]) {
-    let ps = us(ptr());
-    let (singles, arrays) = objects(m);
-    let mut ids: Vec<u32> = singles.iter().map(|&i| d.id_of(args[i])).collect();
-    for (i, b) in blobs {
-        if arrays.contains(i) {
-            ids.extend(b.chunks_exact(ps).map(|c| d.id_of(u32::from_le_bytes([c[0], c[1], c[2], c[3]]))));
-        }
-    }
-    ids.retain(|&i| i != 0 && i != this);
+    let mut ids = op.objects();
+    ids.retain(|&i| i != this);
     for &i in &ids {
         d.bind(i);
     }
     if let Some(Data::Deferred(x)) = d.objs.get_mut(&this).map(|o| &mut o.data) {
         x.list.held.extend(ids);
+        push(&mut x.list, op);
     }
 }
 
@@ -248,8 +150,71 @@ fn with_deferred<R>(d: &mut D11, this: u32, f: impl FnOnce(&mut D11, &mut Deferr
     Some(r)
 }
 
-/// A method of a deferred context.
+/// A method of a deferred context: what sets state applied to its own and recorded, drawing,
+/// clearing, copying, updating, queries' Begin/End and ExecuteCommandList recorded only.
 pub(super) unsafe fn call(d: &mut D11, this: u32, m: u32, a: &dyn Fn(usize) -> u32, after: &mut After) -> u32 {
+    // SAFETY: call's own contract: the method's arguments as the guest gave them
+    if let Some(op) = unsafe { ContextOp::read(d, m, a) } {
+        match &op {
+            // ExecuteCommandList(list, restore): of a list only; the state is cleared unless
+            // restore
+            ContextOp::Execute { list, restore } => {
+                if !matches!(d.objs.get(list).map(|o| &o.data), Some(Data::CmdList(_))) {
+                    return S_OK;
+                }
+                let restore = *restore;
+                record(d, this, op);
+                if !restore {
+                    with_deferred(d, this, |d, x| {
+                        let old = std::mem::replace(&mut x.st, default_state());
+                        unbind_state(d, &old);
+                    });
+                }
+            }
+            ContextOp::ConstantBuffers { .. }
+            | ContextOp::ShaderResources { .. }
+            | ContextOp::Samplers { .. }
+            | ContextOp::Shader { .. }
+            | ContextOp::InputLayout(_)
+            | ContextOp::VertexBuffers { .. }
+            | ContextOp::IndexBuffer { .. }
+            | ContextOp::Topology(_)
+            | ContextOp::Draw { .. }
+            | ContextOp::DrawIndirect { .. }
+            | ContextOp::DrawAuto
+            | ContextOp::Dispatch(_)
+            | ContextOp::DispatchIndirect { .. }
+            | ContextOp::Query { .. }
+            | ContextOp::Predication { .. }
+            | ContextOp::Targets { .. }
+            | ContextOp::ComputeUavs { .. }
+            | ContextOp::Blend { .. }
+            | ContextOp::DepthStencil { .. }
+            | ContextOp::Raster(_)
+            | ContextOp::StreamOutput { .. }
+            | ContextOp::Viewports(_)
+            | ContextOp::Scissors(_)
+            | ContextOp::CopyRegion { .. }
+            | ContextOp::CopyResource { .. }
+            | ContextOp::Update { .. }
+            | ContextOp::CopyStructureCount { .. }
+            | ContextOp::ClearTarget { .. }
+            | ContextOp::ClearUav { .. }
+            | ContextOp::ClearDepth { .. }
+            | ContextOp::GenerateMips(_)
+            | ContextOp::Resolve { .. }
+            | ContextOp::ClearView { .. }
+            | ContextOp::ClearState
+            | ContextOp::Nothing => {
+                if op.sets_state() {
+                    // SAFETY: the objects it names are this device's (read just now)
+                    with_deferred(d, this, |d, x| unsafe { op.apply(d, &mut x.st, after) });
+                }
+                record(d, this, op);
+            }
+        }
+        return S_OK;
+    }
     match m {
         3 => {
             let dev = d.device;
@@ -258,12 +223,7 @@ pub(super) unsafe fn call(d: &mut D11, this: u32, m: u32, a: &dyn Fn(usize) -> u
             S_OK
         }
         4..=6 => private_data(d, m, this, a),
-        // state: set (and recorded), read
-        7..=11 | 16..=19 | 22..=26 | 30..=37 | 43..=45 | 59..=71 | 110 | 119..=124 => {
-            let r = with_deferred(d, this, |d, x| context_call2(d, &mut x.st, m, a, after)).unwrap_or(E_FAIL);
-            record(d, this, m, a);
-            r
-        }
+        // reads of the state
         72..=109 | 125..=130 => with_deferred(d, this, |d, x| context_call2(d, &mut x.st, m, a, after)).unwrap_or(E_FAIL),
         14 => map(d, this, a(1), a(2), a(3), a(5)),
         15 => {
@@ -272,20 +232,6 @@ pub(super) unsafe fn call(d: &mut D11, this: u32, m: u32, a: &dyn Fn(usize) -> u
         }
         // queries' data is the immediate context's to give
         29 => DXGI_ERROR_INVALID_CALL,
-        58 => {
-            // ExecuteCommandList(list, restore): recorded; the state is cleared unless restore
-            if !matches!(d.objs.get(&d.id_of(a(1))).map(|o| &o.data), Some(Data::CmdList(_))) {
-                return S_OK;
-            }
-            record(d, this, m, a);
-            if a(2) == 0 {
-                with_deferred(d, this, |d, x| {
-                    let old = std::mem::replace(&mut x.st, default_state());
-                    unbind_state(d, &old);
-                });
-            }
-            S_OK
-        }
         111 => S_OK,
         112 => 1, // D3D11_DEVICE_CONTEXT_DEFERRED
         113 => 0,
@@ -297,11 +243,8 @@ pub(super) unsafe fn call(d: &mut D11, this: u32, m: u32, a: &dyn Fn(usize) -> u
             }
             S_OK
         }
-        // drawing, clearing, copying, updating, queries' Begin/End: recorded
-        12 | 13 | 20 | 21 | 27 | 28 | 38..=42 | 46..=57 | 115..=118 | 132 | 133 => {
-            record(d, this, m, a);
-            S_OK
-        }
+        // GetResourceMinLOD (Windows' device keeps no MinLOD: 0, as on the immediate context)
+        56 => 0,
         134..=139 | 141..=143 => S_OK,
         140 => 0,
         // Flush1 / hardware protection on a deferred context: nothing to do
@@ -341,53 +284,34 @@ unsafe fn finish(d: &mut D11, this: u32, restore: u32, out: u32) -> u32 {
     S_OK
 }
 
-/// ExecuteCommandList(list, restore) on the immediate context (`st` its state).
-pub(super) unsafe fn execute(d: &mut D11, st: &mut State, list: u32, restore: u32, after: &mut After) {
-    let id = d.id_of(list);
-    let Some(Data::CmdList(l)) = d.objs.get(&id).map(|o| &o.data) else { return };
+/// Runs list `id` on `st`: from the list's start state, its operations in order. The state `st`
+/// had, given back (None: no list, `st` as it was).
+pub(super) unsafe fn run(d: &mut D11, st: &mut State, id: u32, after: &mut After) -> Option<State> {
+    let Some(Data::CmdList(l)) = d.objs.get(&id).map(|o| &o.data) else { return None };
     let (start, recs) = (l.start.clone(), l.recs.clone());
     // (the list is held while it runs: a call in it may let go of the last reference)
     d.bind(id);
     let start = clone_state(d, &start);
     let saved = std::mem::replace(st, start);
-    for r in recs.iter() {
-        replay(d, st, r, after);
+    for op in recs.iter() {
+        // SAFETY: the objects it names are this device's, held by the list
+        unsafe { op.apply(d, st, after) };
     }
-    if restore != 0 {
+    d.unbind(id);
+    Some(saved)
+}
+
+/// ExecuteCommandList(list, restore) on the immediate context (`st` its state).
+pub(super) unsafe fn execute(d: &mut D11, st: &mut State, id: u32, restore: bool, after: &mut After) {
+    // SAFETY: execute's own contract
+    let Some(saved) = (unsafe { run(d, st, id, after) }) else { return };
+    if restore {
         let ran = std::mem::replace(st, saved);
         unbind_state(d, &ran);
     } else {
         let ran = std::mem::replace(st, default_state());
         unbind_state(d, &ran);
         unbind_state(d, &saved);
-    }
-    d.unbind(id);
-}
-
-/// One recorded call, on `st`: its copies put back in guest memory for it.
-unsafe fn replay(d: &mut D11, st: &mut State, r: &Rec, after: &mut After) {
-    let mut args = r.args;
-    let mut mem = Vec::new();
-    let mut have = true;
-    for (i, b) in &r.blobs {
-        let p = d.guest_alloc(lo32(b.len()));
-        // (nothing from the allocator: the call is dropped, its copies not written to address 0)
-        if p == 0 {
-            have = false;
-            continue;
-        }
-        std::ptr::copy_nonoverlapping(b.as_ptr(), gp::<u8>(p), b.len());
-        args[*i] = p;
-        mem.push(p);
-    }
-    // (an update reads no more than was copied for it: its box is the copy's)
-    let a = |i: usize| args[i];
-    let fits = have && (!matches!(r.m, 48 | 116) || update_size(d, &a).is_some_and(|n| n <= r.blobs.iter().find(|b| b.0 == 4).map_or(0, |b| lo32(b.1.len()))));
-    if fits {
-        context_call2(d, st, r.m, &a, after);
-    }
-    for p in mem {
-        d.guest_free(p);
     }
 }
 
@@ -454,19 +378,33 @@ unsafe fn unmap(d: &mut D11, this: u32, res: u32, sub: u32) {
         // (not mapped here: nothing, as Windows does)
         return;
     };
-    let args = [0, res, sub, 0, 0, pitch, depth, 0, 0, 0, 0, 0, 0, 0, 0, 0];
-    let blobs: Vec<(usize, Box<[u8]>)> = vec![(4, Box::from(std::slice::from_raw_parts(gc::<u8>(mem), us(size))))];
-    hold(d, this, 48, &args, &blobs);
-    if let Some(Data::Deferred(x)) = d.objs.get_mut(&this).map(|o| &mut o.data) {
-        push(&mut x.list, Rec { m: 48, args, blobs });
-    }
+    // SAFETY: the scratch memory map gave for it, `size` bytes
+    let data = unsafe { std::slice::from_raw_parts(gc::<u8>(mem), us(size)) };
+    record(d, this, ContextOp::Update { res: id, sub, bx: None, data: std::borrow::Cow::Borrowed(data), pitch, slice: depth });
 }
 
-/// (tests: the calls recorded so far on a deferred context, the bytes they copied)
+/// (tests: the calls recorded so far on a deferred context, the bytes of updates they copied)
 #[cfg(test)]
 pub(super) fn recorded(d: &D11, this: u32) -> (usize, usize) {
     match d.objs.get(&this).map(|o| &o.data) {
-        Some(Data::Deferred(x)) => (x.list.recs.len(), x.list.recs.iter().flat_map(|r| r.blobs.iter()).map(|b| b.1.len()).sum()),
+        Some(Data::Deferred(x)) => (x.list.recs.len(), x.list.recs.iter().map(|op| if let ContextOp::Update { data, .. } = op { data.len() } else { 0 }).sum()),
         _ => (0, 0),
     }
+}
+
+/// (tests: a deferred context's own state)
+#[cfg(test)]
+pub(super) fn state_of(d: &D11, this: u32) -> Option<&State> {
+    match d.objs.get(&this).map(|o| &o.data) {
+        Some(Data::Deferred(x)) => Some(&x.st),
+        _ => None,
+    }
+}
+
+/// (tests: what a list holds: its start state's objects and what its operations name)
+#[cfg(test)]
+pub(super) fn list_objects(l: &CmdList) -> Vec<u32> {
+    let mut v = state_objects(&l.start);
+    v.extend(l.recs.iter().flat_map(ContextOp::objects));
+    v
 }

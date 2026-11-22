@@ -300,7 +300,7 @@ fn deferred_update_sizes() {
     let bx2 = mem(6);
     put(bx2, &[56, 0, 0, 1000, 1, 1]);
     call1(m(IF_CONTEXT, 48), &[def, buf, 0, bx2, src, 0, 0]);
-    assert_eq!(recorded(def), (2, 24 + 16 + 24 + 8));
+    assert_eq!(recorded(def), (2, 16 + 8));
     // the source changes after recording: the list has its own copy
     put(src, &[0xffff_ffff; 16]);
     let list = c.finish(def, 0);
@@ -326,7 +326,7 @@ fn deferred_update_sizes() {
     // ... and one that fits: 63 rows of 256 + one row of 64 texels of 4 bytes
     let big = unsafe { alloc(63 * 256 + 256) } as u32;
     call1(m(IF_CONTEXT, 48), &[def, tex, 0, tb, big, 256, 0]);
-    assert_eq!(recorded(def), (1, 24 + 63 * 256 + 256));
+    assert_eq!(recorded(def), (1, 63 * 256 + 256));
     let list = c.finish(def, 0);
     c.execute(c.imm, list, 0);
     assert_eq!(release(list), 0);
@@ -737,8 +737,8 @@ fn call_short(id: u32, args: &[u32]) -> u32 {
 
 /// The host's allocator giving nothing (the review: Map, a deferred Map and a deferred list's
 /// replay wrote to address 0): Map fails with E_OUTOFMEMORY and clears pData, a deferred Map
-/// too, a list replayed while it gives nothing drops the update, and every one works again
-/// once it gives memory. Any size that fails, any order: a model of the resource's contents.
+/// too, and every one works again once it gives memory; a list replayed while it gives nothing
+/// still applies its update (its ContextOp owns the bytes: nothing of the guest's is taken). Any size that fails, any order: a model of the resource's contents.
 #[test]
 fn allocator_gives_nothing() {
     use proptest::prelude::*;
@@ -785,12 +785,10 @@ fn allocator_gives_nothing() {
                 let v: Vec<u32> = (0..16).map(|i| k * 100 + i).collect();
                 put(rd1(out), &v);
                 call1(m(IF_CONTEXT, 15), &[def, dynamic, 0]);
-                if k % 3 != 0 {
-                    **model = v;
-                }
+                **model = v;
             }
             let list = c.finish(def, 0);
-            // replayed while the allocator gives nothing: the update's copy is not made
+            // replayed while the allocator gives nothing (k % 3 == 0): the same
             SHORT_FROM.store(if k % 3 == 0 { 16 } else { u32::MAX }, std::sync::atomic::Ordering::Relaxed);
             unsafe { call(m(IF_CONTEXT, 58), [c.imm, list, 1].as_ptr(), &SHORT) };
             SHORT_FROM.store(u32::MAX, std::sync::atomic::Ordering::Relaxed);

@@ -1327,7 +1327,7 @@ mod tests {
     /// A `.vnv` written to a file of its own (removed when dropped).
     struct TempVnv(std::path::PathBuf);
     impl TempVnv {
-        fn new(d: &[u8]) -> TempVnv {
+        fn new(_held: &crate::vfs::tests::HostFiles, d: &[u8]) -> TempVnv {
             static N: AtomicI32 = AtomicI32::new(0);
             let p = std::env::temp_dir().join(format!("kura-video-{}-{}.vnv", std::process::id(), N.fetch_add(1, Ordering::Relaxed)));
             std::fs::write(&p, d).unwrap();
@@ -1345,7 +1345,7 @@ mod tests {
     fn raw_frames_from_a_file() {
         let d = raw(5, 3, 300, 128, 128);
         let _fs = crate::vfs::tests::host_files();
-        let f = TempVnv::new(&d);
+        let f = TempVnv::new(&_fs, &d);
         let (id, i) = open_file(&f.0).unwrap();
         assert_eq!(i, info(&d).unwrap());
         let mut px = vec![0u8; 6 * 4 * 3];
@@ -1379,7 +1379,7 @@ mod tests {
             }
             let d = crate::vnv::write(32, 16, &tracks, None).unwrap();
             let _fs = crate::vfs::tests::host_files();
-            let f = TempVnv::new(&d);
+            let f = TempVnv::new(&_fs, &d);
             let (id, i) = open_file(&f.0).unwrap();
             // (closed however the case ends: a failing case must not leave streams to the others)
             struct Closing(u32);
@@ -1858,7 +1858,8 @@ mod tests {
     #[cfg_attr(miri, ignore)]
     fn prefetch_once_per_step() {
         let d = raw(64, 64, 600, 128, 128);
-        let f = TempVnv::new(&d);
+        let _fs = crate::vfs::tests::host_files();
+        let f = TempVnv::new(&_fs, &d);
         let (id, _) = open_file(&f.0).unwrap();
         let mut px = vec![0u8; 64 * 64 * 4];
         let p0 = prefetches(id);
@@ -1895,7 +1896,7 @@ mod tests {
             d[at..at + 4].copy_from_slice(&(base + k as u32 * mib).to_le_bytes());
             d[at + 4..at + 8].copy_from_slice(&mib.to_le_bytes());
         }
-        let f = TempVnv::new(&d);
+        let f = TempVnv::new(&_fs, &d);
         std::fs::OpenOptions::new().write(true).open(&f.0).unwrap().set_len(base as u64 + 81 * mib as u64).unwrap();
         let (id, _) = open_file(&f.0).unwrap();
         fill(id, 10);

@@ -686,7 +686,7 @@ pub const REQUIRED: [(&str, &str, &str); 52] = [
     ("crates/kura/src/d3d9/device.rs", "                send_gamma(Some(&r));", "a full-screen Direct3D 9 device's SetGammaRamp reaches the display (it was answered S_OK and dropped; 2026-11-21)"),
     ("crates/kura/src/d3d9/device.rs", "                    let (hr, bytes) = q.get_data(if a(1) == 0 { 0 } else { a(2) }, a(3));", "IDirect3DQuery9::GetData answers what the page measured (it wrote 1000 samples and TRUE at once; 2026-11-21)"),
     ("crates/kura/src/render/d3d.rs", "                    self.query_end(a(1), QueryEnd::of_word(a(2)));", "queries are measured on the page's GPU (occlusion and timestamp query sets, render/d3d/query.rs)"),
-    ("crates/kura/src/d3d11/mod.rs", "    if matches!(m, 12 | 13 | 20 | 21 | 38..=42 | 46..=48 | 50..=54 | 57 | 132) && predicated_off(d, st) {", "SetPredication turns rendering off by the predicate's measured answer (draws were never predicated; 2026-11-21)"),
+    ("crates/kura/src/d3d11/op.rs", "        if self.predicated() && predicated_off(d, st) {", "SetPredication turns rendering off by the predicate's measured answer (draws were never predicated; 2026-11-21)"),
     ("crates/kura/src/render/mod.rs", "@group(0) @binding(3) var ramp: texture_2d<f32>;", "the screen is drawn through the display's gamma ramp (GAMMA)"),
     ("crates/kura/src/d3d9/device.rs", "    pub dirty: [Option<[u32; 6]>; 6],", "a Direct3D 9 texture keeps its dirty regions: UpdateTexture copies only them, as Windows (a lock with D3DLOCK_NO_DIRTY_UPDATE is not copied; 2026-11-21)"),
     ("crates/kura/src/d3d9/device.rs", "    make_bound_mips(d);", "a D3DUSAGE_AUTOGENMIPMAP texture's levels are made from its top before a draw reads them (they were never made; 2026-11-21)"),
