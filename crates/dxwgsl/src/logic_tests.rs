@@ -113,10 +113,13 @@ fn store_wgsl_parses() {
     for sign in [Sign::Unsigned, Sign::Signed] {
         for bits in [[8, 8, 8, 8], [16, 16, 0, 0], [32, 0, 0, 0], [10, 10, 10, 2]] {
             for op in Op::ALL {
-                for mark in [Mark::Slot(4), Mark::Carried { by: 3, channel: 2, bit: 0 }, Mark::Carried { by: 1, channel: 0, bit: 10 }] {
+                for mark in [Mark::Slot(4), Mark::Slot(3), Mark::Carried { by: 3, channel: 2, bit: 0 }, Mark::Carried { by: 1, channel: 0, bit: 10 }] {
                     let l = Logic { target: 3, store: Store::Stash { op, mark }, bits, sign, multisampled: true };
                     let src = resolve_wgsl(&l).unwrap();
                     crate::valid_wgsl(&src);
+                    // (target 3 at the mark's location: its source from LOGIC_SRC by the pixel)
+                    assert_eq!(l.buffered(), mark == Mark::Slot(3));
+                    assert_eq!(src.contains("var<storage, read> stash: array<u32>"), l.buffered(), "{src}");
                     let (ch, bit) = mark.flag();
                     assert!(src.contains(&format!(")[{ch}] >> {bit}u) & 1u) == 0u) {{ discard; }}")), "{src}");
                 }

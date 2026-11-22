@@ -60,12 +60,12 @@ static const char *SRC =
     "O2w ps_count(float4 p : SV_Position) { uint o; cnt.InterlockedAdd(0, 1, o); return o2w(src); }\n"
     /* sample (x % 4) of pixel (x / 4, y) of the 2 multisampled targets, as 4 words */
     "Texture2DMS<uint4> m0 : register(t0); Texture2DMS<uint4> m1 : register(t1);\n"
-    /* eight 4x R8G8B8A8_UINT targets: each its own source; sample (x % 4) of pixel (x / 4, y)
-     * of one of them as a word */
+    /* eight 4x R8G8B8A8_UINT or R16G16B16A16_UINT targets: each its own source; sample (x % 4)
+     * of pixel (x / 4, y) of one of them */
     "struct O8 { uint4 t0 : SV_Target0; uint4 t1 : SV_Target1; uint4 t2 : SV_Target2; uint4 t3 : SV_Target3; uint4 t4 : SV_Target4; uint4 t5 : SV_Target5; uint4 t6 : SV_Target6; uint4 t7 : SV_Target7; };\n"
     "O8 ps8(float4 p : SV_Position) { O8 o; o.t0 = src; o.t1 = src ^ 0x11; o.t2 = src ^ 0x22; o.t3 = src ^ 0x33; o.t4 = src ^ 0x44; o.t5 = src ^ 0x55; o.t6 = src ^ 0x66; o.t7 = src ^ 0x77; return o; }\n"
     "Texture2DMS<uint4> m8 : register(t0);\n"
-    "uint4 ps_read8(float4 p : SV_Position) : SV_Target { uint x = (uint)p.x; uint4 a = m8.Load(int2(x / 4, (int)p.y), x % 4); return uint4(a.x | a.y << 8 | a.z << 16 | a.w << 24, 0, 0, 0); }\n"
+    "uint4 ps_read8(float4 p : SV_Position) : SV_Target { uint x = (uint)p.x; return m8.Load(int2(x / 4, (int)p.y), x % 4); }\n"
     "uint4 ps_read(float4 p : SV_Position) : SV_Target { uint x = (uint)p.x; int2 q = int2(x / 4, (int)p.y); uint k = x % 4; uint4 a = m0.Load(q, k), b = m1.Load(q, k); return uint4(a.x | a.y << 16, a.z | a.w << 16, b.x | b.y << 16, b.z | b.w << 16); }\n";
 
 static ID3DBlob *compile(const char *entry, const char *target) {
@@ -587,9 +587,11 @@ int main(void) {
                 puts("");
             }
         }
-        puts("eight 4x multisampled R8G8B8A8_UINT targets, half triangle (each pixel: a target's 4 samples, the first word of each)");
-        {
-            D3D11_TEXTURE2D_DESC ed = { W, H, 1, 1, DXGI_FORMAT_R8G8B8A8_UINT, { 4, 0 }, D3D11_USAGE_DEFAULT, D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE, 0, 0 };
+        static const DXGI_FORMAT efmts[2] = { DXGI_FORMAT_R8G8B8A8_UINT, DXGI_FORMAT_R16G16B16A16_UINT };
+        static const char *efnames[2] = { "R8G8B8A8_UINT", "R16G16B16A16_UINT" };
+        for (int ef = 0; ef < 2; ef++) {
+            printf("eight 4x multisampled %s targets, half triangle (each pixel: a target's 4 samples, their channels)\n", efnames[ef]);
+            D3D11_TEXTURE2D_DESC ed = { W, H, 1, 1, efmts[ef], { 4, 0 }, D3D11_USAGE_DEFAULT, D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE, 0, 0 };
             ID3D11Texture2D *et[8];
             ID3D11RenderTargetView *ev[8];
             ID3D11ShaderResourceView *es[8];

@@ -36,6 +36,21 @@ fn targets_of_integer_formats_only() {
     assert_eq!(ops.iter().map(|l| (l.store, l.sign, l.bits)).collect::<Vec<_>>(), vec![(Store::Direct(Op::Or), Sign::Signed, [8, 8, 8, 8]), (Store::Direct(Op::Or), Sign::Signed, [32, 0, 0, 0])]);
 }
 
+#[test]
+fn eight_rgba16_targets_buffer_one_source() {
+    let mut b = vec![0, 0];
+    for _ in 0..8 {
+        b.extend_from_slice(&[0, 2, 1, 1, 2, 1, 1, 0xf]);
+    }
+    b.extend_from_slice(&[1, 10]);
+    let (out, _) = targets(&b, &[f::P_RGBA16UI; 8], &[true; 8], false);
+    assert_eq!(out.len(), 8);
+    for l in &out {
+        assert_eq!(l.store, Store::Stash { op: Op::Xor, mark: Mark::Slot(0) });
+        assert_eq!(l.buffered(), l.target == 0);
+    }
+}
+
 proptest::proptest! {
     /// Every target's store follows WARP's rules: none for a format without integer channels,
     /// plain without the op, kept for NOOP, a stash only for a multisampled target with an op
@@ -85,14 +100,14 @@ fn primitives_of_each_topology() {
     assert!(primitives(4, 2, &[]).is_empty());
 }
 
-const INTS: [u32; 7] = [f::P_RGBA8UI, f::P_RG8UI, f::P_R8UI, f::P_RGBA16UI, f::P_RG16UI, f::P_RGB10A2UI, f::P_RGBA8SI];
+const INTS: [u32; 9] = [f::P_RGBA8UI, f::P_RG8UI, f::P_R8UI, f::P_RGBA16UI, f::P_RG16UI, f::P_RGB10A2UI, f::P_RGBA8SI, f::P_RGBA16UI, f::P_RGBA16SI];
 
 proptest::proptest! {
     /// Eight targets: no location free, the mark carried by the first stash that can carry it,
     /// every stash pointing at that one, its stash format one the page multisamples; with no
-    /// stash that can carry it, the ops are the shader's.
+    /// stash that can carry it, at the first stash's location, that one's source buffered.
     #[test]
-    fn eight_targets_carry_the_mark(pages in proptest::collection::vec(0usize..7, 8), ops in proptest::collection::vec(0u32..16, 8)) {
+    fn eight_targets_carry_the_mark(pages in proptest::collection::vec(0usize..9, 8), ops in proptest::collection::vec(0u32..16, 8)) {
         let mut b = vec![0, 1];
         for _ in 0..8 {
             b.extend_from_slice(&[0, 2, 1, 1, 2, 1, 1, 0xf]);
@@ -104,18 +119,24 @@ proptest::proptest! {
         let (out, _) = targets(&b, &fmts, &[true; 8], false);
         let stashes: Vec<&Logic> = out.iter().filter(|l| matches!(l.store, Store::Stash { .. })).collect();
         let wanted: Vec<&Logic> = out.iter().filter(|l| Op::of(ops[usize::try_from(l.target).unwrap()]).is_some_and(Op::reads_dst)).collect();
+        // (every op that reads its target a stash, the shader once a pixel)
+        proptest::prop_assert_eq!(stashes.len(), wanted.len());
         let carrier = wanted.iter().find(|l| dxwgsl::logic::carry(l.bits).is_some());
-        match carrier {
-            Some(c) => {
-                proptest::prop_assert_eq!(stashes.len(), wanted.len());
-                for l in &stashes {
-                    let Store::Stash { mark: Mark::Carried { by, .. }, .. } = l.store else { return Err(proptest::test_runner::TestCaseError::fail("a slot of its own past 8 targets")) };
+        for l in &stashes {
+            match (carrier, l.store) {
+                (Some(c), Store::Stash { mark: Mark::Carried { by, .. }, .. }) => {
                     proptest::prop_assert_eq!(by, c.target);
                     let page = uint_page(l.stash_bits());
                     proptest::prop_assert!(page.is_some_and(crate::render::d3d::page_multisamples), "{:?}", l);
                 }
+                // (none can carry it: the first stash's location the mark's, its source buffered)
+                (None, Store::Stash { mark: Mark::Slot(at), .. }) => {
+                    proptest::prop_assert_eq!(at, stashes[0].target);
+                    proptest::prop_assert_eq!(l.buffered(), l.target == at);
+                    proptest::prop_assert!(uint_page(l.stash_bits()).is_some_and(crate::render::d3d::page_multisamples), "{:?}", l);
+                }
+                (_, store) => return Err(proptest::test_runner::TestCaseError::fail(format!("{store:?} with carrier {carrier:?}"))),
             }
-            None => proptest::prop_assert!(stashes.is_empty()),
         }
     }
 }

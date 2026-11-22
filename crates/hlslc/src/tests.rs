@@ -730,6 +730,40 @@ float4 ps(float4 pos : SV_Position, uint si : SV_SampleIndex) : SV_Target {
     }
 }
 
+/// A pixel shader of 8 integer targets with logic ops, every way dxwgsl writes a target
+/// (plain, direct, a stash, a stash carrying the mark, a stash whose location is the mark's
+/// and whose source goes to LOGIC_SRC), to WGSL that naga accepts.
+#[test]
+fn logic_stores() {
+    use dxwgsl::logic::{Logic, Mark, Op, Sign, Store};
+    const SRC: &str = "cbuffer C : register(b0) { uint4 s; };
+struct O { uint4 a : SV_Target0; uint4 b : SV_Target1; int4 c : SV_Target2; uint4 d : SV_Target3; uint4 e : SV_Target4; uint4 f : SV_Target5; uint4 g : SV_Target6; uint4 h : SV_Target7; };
+O ps(float4 p : SV_Position) { O o; o.a = s; o.b = s ^ 1; o.c = int4(s); o.d = s; o.e = s; o.f = s; o.g = s; o.h = s; return o; }";
+    let code = compile(SRC, "ps", "ps_5_0");
+    let t = |target, store, bits, sign| Logic { target, store, bits, sign, multisampled: true };
+    for mark in [Mark::Slot(0), Mark::Carried { by: 1, channel: 2, bit: 0 }] {
+        let st = |op| Store::Stash { op, mark };
+        let logic = [
+            t(0, st(Op::Xor), [16; 4], Sign::Unsigned),
+            t(1, st(Op::And), [8, 8, 0, 0], Sign::Unsigned),
+            t(2, st(Op::Or), [16; 4], Sign::Signed),
+            t(3, Store::Plain, [8; 4], Sign::Unsigned),
+            t(4, Store::Direct(Op::Copy), [8; 4], Sign::Unsigned),
+            t(5, st(Op::Nand), [16; 4], Sign::Unsigned),
+            t(6, st(Op::Xor), [16; 4], Sign::Unsigned),
+            t(7, st(Op::Xor), [16; 4], Sign::Unsigned),
+        ];
+        let w = dxwgsl::translate_logic(&code, &[], &logic).unwrap_or_else(|e| panic!("{e}"));
+        let m = naga::front::wgsl::parse_str(&w.code).unwrap_or_else(|e| panic!("{}\n{}", e.emit_to_string(&w.code), w.code));
+        naga::valid::Validator::new(naga::valid::ValidationFlags::all(), naga::valid::Capabilities::all()).validate(&m).unwrap_or_else(|e| panic!("{e:?}\n{}", w.code));
+        let buffered = matches!(mark, Mark::Slot(0));
+        assert_eq!(w.code.contains("lg_src"), buffered, "{}", w.code);
+        assert_eq!(w.bindings.contains(&(dxwgsl::logic::LOGIC_SRC, dxwgsl::Binding::StorageBuffer(true))), buffered);
+        // (8 locations: no mark of its own past them; never the sample index)
+        assert!(!w.code.contains("@location(8)") && !w.code.contains("sample_index"), "{}", w.code);
+    }
+}
+
 /// SV_Coverage as a pixel shader input (shader model 5): vCoverage declared, one component,
 /// read as WGSL's sample_mask (winref d3d11logic: 0xf of a covered pixel of a 4x target, 0xc
 /// on a triangle's edge); shader model 4 has none.

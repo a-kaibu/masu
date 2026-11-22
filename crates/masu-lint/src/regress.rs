@@ -238,7 +238,7 @@ pub(super) fn ps_quads(tree: &Tree) -> Hits {
 
 /// Direct3D 11.1's logic ops (2026-11-22: kura answered OutputMergerLogicOp 0 and drew a
 /// logic-op blend state as a plain write, known.txt holding WARP's 1 as a difference)
-const LOGIC_SITES: [(&str, &str, &str); 17] = [
+const LOGIC_SITES: [(&str, &str, &str); 19] = [
     ("crates/kura/src/d3d11/mod.rs", "for k in 0..10 {", "D3D11_OPTIONS does not answer every BOOL from OutputMergerLogicOp (0) on"),
     ("crates/kura/src/d3d11/mod.rs", "dxwgsl::translate_logic(", "the pixel shader of a draw with logic ops is not dxwgsl::translate_logic"),
     ("crates/kura/src/d3d11/mod.rs", "logic::targets(", "a draw's logic ops are not taken from its blend state (logic::targets)"),
@@ -250,6 +250,8 @@ const LOGIC_SITES: [(&str, &str, &str); 17] = [
     ("crates/kura/src/d3d11/logic.rs", "f::P_RGBA8SI => ([8, 8, 8, 8], s),", "SINT targets get no logic ops (WARP applies them, though FORMAT_SUPPORT2 lists UINT formats only)"),
     ("crates/dxwgsl/src/logic.rs", "None => saturate(bits, l.sign, sv),", "an integer target's plain write is not saturated (WARP: min of the value and the channel's largest)"),
     ("crates/kura/src/d3d11/logic.rs", "dxwgsl::logic::carry(l.bits)", "eight multisampled targets have no location for a stash's mark and it is not carried by a stash (dxwgsl::logic::carry)"),
+    ("crates/kura/src/d3d11/logic.rs", "stashes().next().map(|l| Mark::Slot(l.target))", "eight targets whose stashes cannot carry the mark get no mark (the shader would have to run per sample, Windows runs it per pixel): the first stash's location is the mark's, its source in LOGIC_SRC"),
+    ("crates/dxwgsl/src/wgsl.rs", "var<storage, read_write> lg_src: array<u32>", "a stash at the mark's location does not write its source to LOGIC_SRC"),
     ("host/vngpu.js", "maxColorAttachmentBytesPerSample", "the page's device keeps WebGPU's 32 color bytes a sample (Direct3D 11 draws to 8 targets of 16 bytes, a stash's mark adds to them)"),
     ("crates/kura/src/render/d3d.rs", "LOGIC_RESOLVE => {", "the page does not do LOGIC_RESOLVE (a multisampled target's op per sample)"),
     ("crates/dxwgsl/src/wgsl.rs", "logic_output(l, r, k,", "a logic target's output does not go through logic_output"),

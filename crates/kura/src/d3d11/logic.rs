@@ -54,8 +54,8 @@ pub fn int_bits(page: u32) -> Option<([u32; 4], Sign)> {
 /// each integer target, and the targets left as they are (NOOP: their write mask 0). A
 /// multisampled target with an op that reads it under a pixel-rate shader is a stash, its
 /// mark at the first location no target takes (`formats.len()`), or with 8 targets in the
-/// first stash that can carry it (dxwgsl::logic::carry). Eight targets whose stashes are all
-/// of four 16-bit channels have no place for a mark: their ops are the shader's, per sample.
+/// first stash that can carry it (dxwgsl::logic::carry), or at the first stash's own location
+/// (its source then in a storage buffer, dxwgsl::logic::LOGIC_SRC).
 pub fn targets(blend: &[u32], formats: &[u32], multisampled: &[bool], sample_rate: bool) -> (Vec<Logic>, Vec<u32>) {
     let independent = blend.get(1).copied().unwrap_or(0) != 0;
     // (placeholder until the stashes are known)
@@ -79,13 +79,13 @@ pub fn targets(blend: &[u32], formats: &[u32], multisampled: &[bool], sample_rat
         out.push(Logic { target, store, bits, sign, multisampled: ms });
     }
     if formats.len() >= 8 {
-        let carrier = out.iter().filter(|l| matches!(l.store, Store::Stash { .. })).find_map(|l| dxwgsl::logic::carry(l.bits).map(|(_, channel, bit)| Mark::Carried { by: l.target, channel, bit }));
+        let stashes = || out.iter().filter(|l| matches!(l.store, Store::Stash { .. }));
+        // (none can carry it: the first stash's location the mark's, its source in LOGIC_SRC)
+        let carrier = stashes().find_map(|l| dxwgsl::logic::carry(l.bits).map(|(_, channel, bit)| Mark::Carried { by: l.target, channel, bit }));
+        let mark = carrier.or_else(|| stashes().next().map(|l| Mark::Slot(l.target)));
         for l in &mut out {
-            if let Store::Stash { op, .. } = l.store {
-                l.store = match carrier {
-                    Some(mark) => Store::Stash { op, mark },
-                    None => Store::Direct(op),
-                };
+            if let (Store::Stash { op, .. }, Some(mark)) = (l.store, mark) {
+                l.store = Store::Stash { op, mark };
             }
         }
     }
@@ -183,6 +183,21 @@ pub fn unbound(b: u32, multisampled: bool, sign: Sign) -> [u32; 8] {
 const COPY_OF: u32 = 0;
 const STASH_OF: u32 = 0x100;
 const MARK: u32 = 0x200;
+const SRC_OF: u32 = 0x300;
+
+/// The LOGIC_SRC buffer of a target of `w` x `h` (made the first time: word 0 the width).
+fn src_buffer(d: &mut D11, w: u32, h: u32) -> u32 {
+    *d.logic_scratch.entry((SRC_OF, w, h, 0, false)).or_insert_with(|| {
+        let id = super::page_id();
+        let size = lo32(u64::from(w).saturating_mul(u64::from(h)).saturating_mul(16).saturating_add(16).min(u64::from(u32::MAX)));
+        gpu::record(|q| {
+            let off = q.blob(&w.to_le_bytes());
+            q.cmd(&[gpu::CREATE_BUFFER, id, size]);
+            q.cmd(&[gpu::WRITE_BUFFER, id, 0, off, 4]);
+        });
+        id
+    })
+}
 
 /// The copy for target view `rtv` with logic op `l` (its scratch texture by the target's slot:
 /// two targets of one size and format have a copy each).
@@ -203,7 +218,9 @@ pub fn copy_of(d: &mut D11, rtv: u32, l: &Logic) -> Option<Copy> {
 pub struct Stash {
     pub targets: Vec<u32>,
     pub clear: [u32; 11],
-    pub resolves: Vec<[u32; 14]>,
+    pub resolves: Vec<[u32; 15]>,
+    /// the pixel shader's LOGIC_SRC entry (a stash at the mark's location)
+    pub src: Option<[u32; 8]>,
 }
 
 /// The stash passes of a draw to targets `colors` (SET_TARGETS2's (tex level layer) words)
@@ -216,18 +233,29 @@ pub fn stash_of(d: &mut D11, rtvs: &[u32], colors: &[u32], depth: [u32; 3], stas
     let mut targets = colors.to_vec();
     let mut resolves = Vec::new();
     let mut stash_tex = Vec::new();
+    let mut src = None;
     for l in stashes {
         let rtv = rtvs.get(usize::try_from(l.target).ok()?).copied()?;
         let (_, _, _, _, tw, th, _) = target_texture(d, rtv)?;
-        let stash = scratch(d, (STASH_OF | l.target, tw, th, uint_page(l.stash_bits())?, true));
+        let stash = if l.buffered() {
+            let b = src_buffer(d, tw, th);
+            src = Some([dxwgsl::logic::LOGIC_SRC, 10, b, 0, 0, 0, 0, 0]);
+            b
+        } else {
+            let s = scratch(d, (STASH_OF | l.target, tw, th, uint_page(l.stash_bits())?, true));
+            let at = usize::try_from(l.target).ok()?.checked_mul(3)?;
+            targets.get_mut(at..at.checked_add(3)?)?.copy_from_slice(&[s, 0, 0]);
+            s
+        };
         stash_tex.push((l.target, stash));
-        let at = usize::try_from(l.target).ok()?.checked_mul(3)?;
-        targets.get_mut(at..at.checked_add(3)?)?.copy_from_slice(&[stash, 0, 0]);
     }
     let mark_tex = match mark {
-        Mark::Slot(_) => {
+        Mark::Slot(at) => {
             let m = scratch(d, (MARK, w, h, f::P_R8UI, true));
-            targets.extend_from_slice(&[m, 0, 0]);
+            match usize::try_from(at).ok()?.checked_mul(3) {
+                Some(k) if k < targets.len() => targets.get_mut(k..k.checked_add(3)?)?.copy_from_slice(&[m, 0, 0]),
+                _ => targets.extend_from_slice(&[m, 0, 0]),
+            }
             m
         }
         Mark::Carried { by, .. } => stash_tex.iter().find(|s| s.0 == by)?.1,
@@ -244,14 +272,14 @@ pub fn stash_of(d: &mut D11, rtvs: &[u32], colors: &[u32], depth: [u32; 3], stas
             Sign::Signed => 1,
         };
         let op_word = Op::ALL.iter().position(|&o| o == op).map_or(0, lo32);
-        resolves.push([gpu::LOGIC_RESOLVE, tex, copy, stash, mark_tex, mask, op_word, l.bits[0], l.bits[1], l.bits[2], l.bits[3], sign, ch, bit]);
+        resolves.push([gpu::LOGIC_RESOLVE, tex, copy, stash, mark_tex, mask, op_word, l.bits[0], l.bits[1], l.bits[2], l.bits[3], sign, ch, bit, u32::from(l.buffered())]);
     }
     let mut set = vec![gpu::SET_TARGETS2, lo32(targets.len() / 3)];
     set.extend_from_slice(&targets);
     set.extend_from_slice(&depth);
     // (before each primitive the mark's texture, its own or the carrier's stash, cleared to 0:
     // no sample marked)
-    Some(Stash { targets: set, clear: [gpu::CLEAR_VIEW, mark_tex, 0, 0, 1, 0, 0, 0, 0, 0, 0], resolves })
+    Some(Stash { targets: set, clear: [gpu::CLEAR_VIEW, mark_tex, 0, 0, 1, 0, 0, 0, 0, 0, 0], resolves, src })
 }
 
 /// Which of the `count` indices from `start` of the bound index buffer are a strip's restart

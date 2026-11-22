@@ -2822,7 +2822,8 @@ fn translate_with(code: &[u8], pixel: bool, ps: Option<&[u8]>, sprite: Option<f3
         // (a pixel-rate shader over a multisampled target with a logic op: the mark of the
         // samples it writes, for the resolve pass)
         if let Some(mark) = logic.iter().find_map(|l| match l.store {
-            crate::logic::Store::Stash { mark: crate::logic::Mark::Slot(mark), .. } => Some(mark),
+            crate::logic::Store::Stash { mark: crate::logic::Mark::Slot(mark), .. } if !logic.iter().any(|t| t.target == mark) => Some(mark),
+            crate::logic::Store::Stash { mark: crate::logic::Mark::Slot(_), .. } => None,
             crate::logic::Store::Stash { mark: crate::logic::Mark::Carried { .. }, .. } | crate::logic::Store::Plain | crate::logic::Store::Direct(_) => None,
         }) {
             fields.push(format!("@location({mark}) lg_mark: u32"));
@@ -2966,7 +2967,23 @@ fn logic_output(l: &crate::logic::Logic, r: u32, k: K, params: &mut Vec<String>,
                 }
                 crate::logic::Mark::Carried { .. } | crate::logic::Mark::Slot(_) => String::new(),
             };
-            post.push(format!("out.c{r} = ({o} & {max}){flag};"));
+            if l.buffered() {
+                // (the source to LOGIC_SRC by the pixel, the location the mark's)
+                let b = crate::logic::LOGIC_SRC;
+                m.push_str(&format!("@group(1) @binding({b}) var<storage, read_write> lg_src: array<u32>;\n"));
+                bindings.push((b, Binding::StorageBuffer(true)));
+                let found = params.iter().find(|p| p.contains("@builtin(position)")).and_then(|p| p.split_whitespace().nth(1)).map(|n| n.trim_end_matches(':').to_owned());
+                let pos = found.unwrap_or_else(|| {
+                    params.push("@builtin(position) lg_pos: vec4<f32>".to_owned());
+                    "lg_pos".to_owned()
+                });
+                post.push(format!("let lg_s{r} = {o} & {max};"));
+                post.push(format!("let lg_i{r} = 4u + (u32({pos}.y) * lg_src[0] + u32({pos}.x)) * 4u;"));
+                post.push(format!("if (lg_i{r} + 3u < arrayLength(&lg_src)) {{ lg_src[lg_i{r}] = lg_s{r}.x; lg_src[lg_i{r} + 1u] = lg_s{r}.y; lg_src[lg_i{r} + 2u] = lg_s{r}.z; lg_src[lg_i{r} + 3u] = lg_s{r}.w; }}"));
+                post.push(format!("out.c{r} = vec4<u32>(1u);"));
+            } else {
+                post.push(format!("out.c{r} = ({o} & {max}){flag};"));
+            }
         }
         // (an op of the source alone (CLEAR SET COPY COPY_INVERTED): no copy read, no sample
         // index (which would make the shader run per sample))
