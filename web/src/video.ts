@@ -6,6 +6,7 @@
 
 import { watchDoorbell } from "./doorbell";
 import { memGate, type Gate } from "./memgate";
+import { Lifetime } from "./session";
 
 export interface VideoWasm {
   wasmMemory: WebAssembly.Memory;
@@ -75,7 +76,8 @@ export class Video {
   }
 
   /** wakes at once when the guest asks for a frame (Atomics.waitAsync on the doorbell) */
-  private stopped = false;
+  /** the process's: over once it ended (stop) */
+  private readonly life = new Lifetime();
 
   private watch(): Promise<void> {
     return watchDoorbell(
@@ -83,20 +85,21 @@ export class Video {
       this.doorbell,
       () => this.tick(),
       this.note,
-      () => this.stopped,
+      () => this.life.over,
       "video",
     );
   }
 
   /** The process ended (play.ts): no more looks, and the decoders and frames closed. */
   stop(): void {
-    this.stopped = true;
+    this.life.end();
     for (const s of this.streams.values()) this.close(s);
     this.streams.clear();
   }
 
   /** Called every frame (and on each request): new and closed streams, decoding ahead. */
   tick(): void {
+    if (this.life.over) return;
     // (a save state is being taken: the memory stays as it is; the next tick looks again)
     if (this.gate.closed) return;
     const n = this.wasm._vnhost_video_list(this.io, 16);
@@ -187,9 +190,13 @@ export class Video {
         codedHeight: s.h,
         optimizeForLatency: true,
       };
-      if (!(await VideoDecoder.isConfigSupported(config)).supported) {
+      const supported = (await VideoDecoder.isConfigSupported(config)).supported;
+      // (the process ended, or the guest closed this stream, while the browser answered: no
+      // decoder for it, and nothing said to the guest; review 22bb061 §5)
+      if (!this.current(s)) return;
+      if (!supported) {
         this.note(`video ${s.id}: ${t.codec} not supported`);
-        this.gate.run(() => this.fail(s));
+        this.gate.run(() => this.current(s) && this.fail(s));
         return;
       }
       t.config = config;
@@ -198,7 +205,13 @@ export class Video {
       this.note(`video ${s.id}: ${t.codec} ${s.w}x${s.h}`);
     }
     void ptr;
-    this.gate.run(() => s.want >= 0 && this.serve(s, s.want), s.held.serve);
+    this.gate.run(() => this.current(s) && s.want >= 0 && this.serve(s, s.want), s.held.serve);
+  }
+
+  /** `s` is still a stream of this live process (not closed by the guest, not a stream before
+   * the same id's). */
+  private current(s: Stream): boolean {
+    return !this.life.over && this.streams.get(s.id) === s;
   }
 
   private decoder(s: Stream, t: Track): VideoDecoder {

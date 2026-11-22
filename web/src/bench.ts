@@ -14,6 +14,7 @@
 // `GET /bench-results` gives them all back for the comparison.
 
 import { PLAN_KEYS, writePlan } from "./launch-plan";
+import { NO_STATUS } from "./status";
 import { getUi, setBench, setStart, setUi } from "./ui/store";
 import { renderShell } from "./ui/Shell";
 import {
@@ -176,7 +177,7 @@ async function pastRuns(): Promise<BenchRun[]> {
 /** The start screen: the profiles, and the past runs of every device. */
 async function startScreen(): Promise<void> {
   setStart({ shown: false });
-  setUi({ status: "" });
+  setUi({ status: NO_STATUS });
   const past = await pastRuns();
   const rows: string[][] = [
     [
@@ -445,7 +446,7 @@ async function end(run: BenchRun): Promise<void> {
   }
   const past = await pastRuns();
   const rows = compareRows(run, past);
-  setUi({ status: "" });
+  setUi({ status: NO_STATUS });
   const text = JSON.stringify(run);
   setBench({
     phase: saved

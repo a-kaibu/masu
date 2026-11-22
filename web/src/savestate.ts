@@ -71,7 +71,10 @@ const CMD = 8,
   MSG = 36,
   MSG_LEN = 40,
   STIRRED = 88,
-  STIRS = 92;
+  STIRS = 92,
+  REQ = 96,
+  SERVING = 100,
+  CANCEL = 104;
 const CMD_PAUSE = 3;
 const ST_RUNNING = 0,
   ST_READY = 2,
@@ -227,7 +230,8 @@ export interface Stopped {
 /** Stops every thread of `m`: for a state (`pause` false: the GPU read back, the memory
  * listed; the page's own writes held meanwhile, memgate.ts) or only to stand still (a hidden
  * tab). Throws when it could not. */
-export async function stopAll(m: SnapModule, pause = false): Promise<Stopped> {
+/** `patience`: ms the coordinator gets to stop (a test's shorter one). */
+export async function stopAll(m: SnapModule, pause = false, patience = 30_000): Promise<Stopped> {
   // (one stop of a module at a time: a save from the dialog and a hidden tab's)
   const mine = locks.get(m) ?? Promise.resolve();
   let release!: () => void;
@@ -238,7 +242,7 @@ export async function stopAll(m: SnapModule, pause = false): Promise<Stopped> {
   );
   await mine;
   try {
-    return await stopOnce(m, pause, release);
+    return await stopOnce(m, pause, release, patience);
   } catch (e) {
     release();
     throw e;
@@ -246,10 +250,38 @@ export async function stopAll(m: SnapModule, pause = false): Promise<Stopped> {
 }
 const locks = new WeakMap<SnapModule, Promise<void>>();
 
-async function stopOnce(m: SnapModule, pause: boolean, release: () => void): Promise<Stopped> {
+/** The requests' numbers (Ctl.req): nonzero, this page's own. */
+let lastRequest = 0;
+const nextRequest = () => (lastRequest = (lastRequest % 0x7fff_ffff) + 1);
+
+/** Waits until the coordinator answers request `id` (READY or FAILED with `serving` = id) or
+ * `ms` passed: the state then, or -1 when no answer of its own came (a READY or FAILED of a
+ * request given up on before is not this one's). */
+async function answerTo(
+  i32: Int32Array,
+  word: (off: number) => number,
+  id: number,
+  ms: number,
+): Promise<number> {
+  const t0 = performance.now();
+  for (;;) {
+    const st = await stateNot(i32, word(STATE), [ST_RUNNING, 1], Math.max(0, ms - (performance.now() - t0)));
+    if (Atomics.load(i32, word(SERVING)) === id && (st === ST_READY || st === ST_FAILED)) return st;
+    if (performance.now() - t0 >= ms) return -1;
+    await wait(5);
+  }
+}
+
+async function stopOnce(
+  m: SnapModule,
+  pause: boolean,
+  release: () => void,
+  patience: number,
+): Promise<Stopped> {
   const ctl = m._vnhost_snap_ctl() >>> 0;
   const i32 = new Int32Array(m.wasmMemory.buffer);
   const word = (off: number) => (ctl + off) >>> 2;
+  const id = nextRequest();
   if (!pause) await memGate.close();
   const t0 = performance.now();
   let resumed = false;
@@ -264,15 +296,22 @@ async function stopOnce(m: SnapModule, pause: boolean, release: () => void): Pro
     await stateNot(i32, word(STATE), [ST_READY, 1], 5000);
     // (an earlier one that failed: its word is the coordinator's again only once it takes this)
     Atomics.compareExchange(i32, word(STATE), ST_FAILED, ST_RUNNING);
+    Atomics.store(i32, word(REQ), id);
     Atomics.store(i32, word(CMD), pause ? CMD_PAUSE : 1);
     Atomics.notify(i32, word(CMD));
-    const st = await stateNot(i32, word(STATE), [ST_RUNNING, 1], 30000);
+    const st = await answerTo(i32, word, id, patience);
     if (st === ST_FAILED) {
       const p = i32[word(MSG)]! >>> 0,
         n = i32[word(MSG_LEN)]!;
       throw new Error(new TextDecoder().decode(new Uint8Array(m.wasmMemory.buffer, p, n).slice()));
     }
-    if (st !== ST_READY) throw new Error("止まりませんでした");
+    if (st !== ST_READY) {
+      // (given up: the coordinator ends this request wherever it is, the threads going again;
+      // no RESUME will come for it, crates/kura/src/snap.rs Ctl::cancel)
+      Atomics.store(i32, word(CANCEL), id);
+      Atomics.notify(i32, word(CMD));
+      throw new Error("止まりませんでした");
+    }
   } catch (e) {
     if (!pause) memGate.open();
     throw e;

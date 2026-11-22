@@ -51,6 +51,7 @@ import {
   type MetaStatus,
 } from "../meta-source";
 import { api } from "../library-data";
+import { Latest } from "../latest";
 import {
   brandOf,
   GROUPS,
@@ -500,15 +501,20 @@ function Candidates({
   const [q, setQ] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  // (only the newest search's answer is shown: Enter while one is out starts another)
+  const asks = useRef(new Latest());
+  useEffect(() => () => asks.current.end(), []);
   const look = async () => {
+    const ask = asks.current.begin();
     setLoading(true);
     setError("");
     try {
-      setList(await candidates(game.id, q));
+      const found = await candidates(game.id, q, ask.signal);
+      if (ask.current()) setList(found);
     } catch (e) {
-      setError(String(e instanceof Error ? e.message : e));
+      if (ask.current()) setError(String(e instanceof Error ? e.message : e));
     } finally {
-      setLoading(false);
+      if (ask.current()) setLoading(false);
     }
   };
   return (

@@ -12,19 +12,28 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import * as nodeModule from 'node:module';
+import { bridgeScript } from '../host/bridge-source.mjs';
 const pw = await import(process.env.PLAYWRIGHT ?? 'playwright');
 const { chromium } = pw.default ?? pw;
-const bridge = await readFile(new URL('../host/fetch-bridge.js', import.meta.url), 'utf8');
+// (as sake.js has it: host/net-core.mjs before it)
+const bridge = bridgeScript(
+  await readFile(new URL('../host/net-core.mjs', import.meta.url), 'utf8'),
+  await readFile(new URL('../host/fetch-bridge.js', import.meta.url), 'utf8'),
+);
 // (budget.ts as the page runs it: node's own type stripping, else web/'s TypeScript)
 const ts = await readFile(new URL('../web/src/budget.ts', import.meta.url), 'utf8');
-const budget = nodeModule.stripTypeScriptTypes
+const budget = (nodeModule.stripTypeScriptTypes
   ? nodeModule.stripTypeScriptTypes(ts)
-  : nodeModule.createRequire(new URL('../web/package.json', import.meta.url))('typescript').transpileModule(ts, { compilerOptions: { target: 99, module: 99 } }).outputText;
+  : nodeModule.createRequire(new URL('../web/package.json', import.meta.url))('typescript').transpileModule(ts, { compilerOptions: { target: 99, module: 99 } }).outputText
+).replace('"../../host/net-core.mjs"', '"/net-core.mjs"');
+// (its steps and constants: host/net-core.mjs, the module the page imports)
+const core = await readFile(new URL('../host/net-core.mjs', import.meta.url), 'utf8');
 
 const server = createServer((req, res) => {
   // (SharedArrayBuffer: cross-origin isolated, as masu serve's pages)
   const h = { 'cross-origin-opener-policy': 'same-origin', 'cross-origin-embedder-policy': 'require-corp' };
   if (req.url === '/budget.js') res.writeHead(200, { ...h, 'content-type': 'text/javascript' }).end(budget);
+  else if (req.url === '/net-core.mjs') res.writeHead(200, { ...h, 'content-type': 'text/javascript' }).end(core);
   else if (req.url === '/bridge.js') res.writeHead(200, { ...h, 'content-type': 'text/javascript' }).end(bridge);
   else res.writeHead(200, { ...h, 'content-type': 'text/html' }).end('<!doctype html><title>budget</title>');
 }).listen(0, '127.0.0.1');
