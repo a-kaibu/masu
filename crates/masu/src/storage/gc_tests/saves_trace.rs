@@ -77,7 +77,7 @@ async fn run(seed: u64) -> Vec<Step> {
             } else {
                 c.execute_batch(TRIGGERS[t].1).unwrap();
             }
-            on[t] = !on[t];
+            on[t].toggle();
             continue;
         }
         // (a few refusals, which the retries absorb, or more than they try)
