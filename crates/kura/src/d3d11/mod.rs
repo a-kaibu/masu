@@ -412,6 +412,10 @@ pub enum Data {
     /// an unordered access view of a buffer
     BufferUav(BufferUav),
     Other,
+    /// a shared resource another device opened (OpenSharedResource): an object of that
+    /// device's, of its own references, private data and GetDevice, for resource `.0` (kept)
+    /// in everything else
+    Opened(u32),
 }
 
 /// An unordered access view of a buffer: its range and flags (D3D11_BUFFER_UAV_FLAG RAW 1,
@@ -698,7 +702,7 @@ impl D11 {
             Data::Device(_) => this,
             Data::SwapChain(s) => s.device,
             Data::Factory | Data::Adapter(_) | Data::Output => return,
-            Data::Context(_) | Data::Buffer(_) | Data::Texture(_) | Data::View(_) | Data::Shader(_) | Data::Layout(_) | Data::State(_) | Data::Query(_) | Data::Deferred(_) | Data::CmdList(_) | Data::CtxState(_) | Data::BufferUav(_) | Data::Other => o.dev,
+            Data::Context(_) | Data::Buffer(_) | Data::Texture(_) | Data::View(_) | Data::Shader(_) | Data::Layout(_) | Data::State(_) | Data::Query(_) | Data::Deferred(_) | Data::CmdList(_) | Data::CtxState(_) | Data::BufferUav(_) | Data::Other | Data::Opened(_) => o.dev,
         };
         if let Some(Data::Device(v)) = self.objs.get(&dev).map(|o| &o.data) {
             (self.device, self.context) = (dev, v.context);
@@ -750,7 +754,17 @@ impl D11 {
         a
     }
 
+    /// The object at `addr` as an argument: a resource another device opened is the resource.
     fn id_of(&self, addr: u32) -> u32 {
+        let id = self.own_id(addr);
+        match self.objs.get(&id).map(|o| &o.data) {
+            Some(Data::Opened(of)) => *of,
+            Some(_) | None => id,
+        }
+    }
+
+    /// The object at `addr` itself (an opened resource's own object: `Data::Opened`).
+    fn own_id(&self, addr: u32) -> u32 {
         if addr == 0 {
             return 0;
         }
@@ -931,6 +945,9 @@ impl D11 {
                 unbind_state(self, &c.st);
                 self.unbind(c.st_owner);
             }
+            Data::Opened(of) => {
+                self.unbind(of);
+            }
             Data::Factory | Data::Adapter(_) | Data::Output | Data::Layout(_) | Data::State(_) | Data::CtxState(_) | Data::Other => {}
             Data::BufferUav(u) => {
                 self.unbind(u.buf);
@@ -1025,15 +1042,23 @@ pub unsafe fn call(id: u32, args: *const u32, calls: *const HostCalls) -> u32 {
             }
             _ => {
                 let (iface, m) = (id >> 8, id & 0xff);
-                let this = d.id_of(a(0));
-                d.enter(this);
+                let own = d.own_id(a(0));
+                d.enter(own);
+                // (an opened resource answers for itself what any object does, what a device
+                // child and a DXGI object do of their own — GetDevice, private data,
+                // GetParent — and is its resource for the rest)
+                let mine = match iface {
+                    IF_DXGIRES | IF_SURFACE => (3..=7).contains(&m),
+                    _ => (3..=6).contains(&m),
+                };
+                let this = if mine { own } else { d.id_of(a(0)) };
                 let r = if this == 0 {
                     E_INVALIDARG
                 } else {
                     match m {
-                        0 => query_interface(d, this, iface, a(1), a(2)),
-                        1 => d.add_ref(this),
-                        2 => d.release(this),
+                        0 => query_interface(d, own, iface, a(1), a(2)),
+                        1 => d.add_ref(own),
+                        2 => d.release(own),
                         _ => method(d, iface, m, this, args, &mut after),
                     }
                 };
@@ -1089,7 +1114,8 @@ unsafe fn query_interface(d: &mut D11, id: u32, iface: u32, riid: u32, out: u32)
     // (a resource's IDXGIObject, IDXGIDeviceSubObject and IDXGIResource are one face, its
     // IDXGISurface another, only for a texture of one level and one layer (1D or 2D))
     if matches!(primary, IF_BUFFER | IF_TEX1D | IF_TEX2D | IF_TEX3D) {
-        let surface = matches!(d.objs.get(&id).map(|o| &o.data), Some(Data::Texture(t)) if t.mips == 1 && t.layers == 1 && t.dim != 3);
+        let res = d.id_of(d.addr_of(id));
+        let surface = matches!(d.objs.get(&res).map(|o| &o.data), Some(Data::Texture(t)) if t.mips == 1 && t.layers == 1 && t.dim != 3);
         let want = match first {
             0xaec22fb8 | 0x3d3e0379 | 0x035f3ab4 => IF_DXGIRES,
             0xcafcb56c | 0x4ae63092 | 0xaba496dd if surface => IF_SURFACE,
@@ -2544,8 +2570,8 @@ unsafe fn device_call(d: &mut D11, m: u32, this: u32, a: &dyn Fn(usize) -> u32) 
         26 => E_INVALIDARG,
         27 => deferred::create(d, a(1), a(2)),
         28 | 48 => {
-            // OpenSharedResource(handle, riid, out), OpenSharedResource1: the texture itself, the
-            // one object whichever device opens it (its GetDevice: the device that made it)
+            // OpenSharedResource(handle, riid, out), OpenSharedResource1: on the device that
+            // made it, the texture itself; on another, an object of that device's for it
             if a(3) == 0 {
                 return E_INVALIDARG;
             }
@@ -2553,8 +2579,18 @@ unsafe fn device_call(d: &mut D11, m: u32, this: u32, a: &dyn Fn(usize) -> u32) 
             let id = a(1).wrapping_sub(SHARED_BASE);
             match d.objs.get(&id) {
                 Some(o) if a(1) >= SHARED_BASE && matches!(&o.data, Data::Texture(t) if t.misc & 0x902 != 0) => {
-                    let iface = o.iface;
-                    query_interface(d, id, iface, a(2), a(3))
+                    let (iface, dev) = (o.iface, o.dev);
+                    if dev == d.device {
+                        return query_interface(d, id, iface, a(2), a(3));
+                    }
+                    // (it keeps the resource alive, not counted among the resource's references)
+                    d.bind(id);
+                    let alias = d.new_obj(iface, Data::Opened(id));
+                    let alias = d.own_id(alias);
+                    // SAFETY: a(2) and a(3), the guest's riid and out pointer (checked above)
+                    let r = unsafe { query_interface(d, alias, iface, a(2), a(3)) };
+                    d.release(alias);
+                    r
                 }
                 _ => E_INVALIDARG,
             }

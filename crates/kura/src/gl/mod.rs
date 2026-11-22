@@ -292,6 +292,23 @@ pub(crate) struct Fbo {
     depth: Att,
 }
 
+/// Which framebuffers a name is one of: GL 3.0 / ARB_framebuffer_object's, each context's
+/// own (container objects are not shared), or EXT_framebuffer_object's, shared by the share
+/// group (its spec: "framebuffer objects are shared").
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub(crate) enum Fbos {
+    #[default]
+    Core,
+    Ext,
+}
+
+/// A framebuffer binding: the name, 0 for the window's, and whose name it is.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub(crate) struct FboRef {
+    pub(crate) kind: Fbos,
+    pub(crate) name: u32,
+}
+
 #[derive(Default)]
 pub(crate) struct Renderbuffer {
     gpu: u32,
@@ -339,8 +356,13 @@ pub(crate) struct Ctx {
     draw: u32,
     w: u32,
     h: u32,
-    fbo_draw: u32,
-    fbo_read: u32,
+    fbo_draw: FboRef,
+    fbo_read: FboRef,
+    /// its own framebuffers (Fbos::Core), and those of its names a Gen gave that no Bind used
+    /// yet, and the last name it gave less one
+    fbos: HashMap<u32, Fbo>,
+    fbos_reserved: HashSet<u32>,
+    next_fbo: u32,
     rb: u32,
     caps: HashSet<u32>,
     viewport: [i32; 4],
@@ -400,8 +422,11 @@ impl Ctx {
             draw: 0,
             w: 0,
             h: 0,
-            fbo_draw: 0,
-            fbo_read: 0,
+            fbo_draw: FboRef::default(),
+            fbo_read: FboRef::default(),
+            fbos: HashMap::new(),
+            fbos_reserved: HashSet::new(),
+            next_fbo: 0,
             rb: 0,
             caps: HashSet::new(),
             viewport: [0; 4],
@@ -846,7 +871,7 @@ fn proc_of(n: &str) -> Option<*const c_void> {
         glReadBuffer, glDrawBuffer, glFlush, glFinish, glHint, glShadeModel, glPolygonMode, glLineWidth,
         glPointSize, glPolygonOffset, glGenBuffers, glDeleteBuffers, glBindBuffer, glIsBuffer, glBufferData,
         glBufferSubData, glMapBuffer, glUnmapBuffer, glGenFramebuffers, glDeleteFramebuffers, glBindFramebuffer,
-        glIsFramebuffer, glFramebufferTexture2D, glFramebufferTexture, glCheckFramebufferStatus, glGenRenderbuffers,
+        glIsFramebuffer, glGenFramebuffersEXT, glDeleteFramebuffersEXT, glBindFramebufferEXT, glIsFramebufferEXT, glFramebufferTexture2D, glFramebufferTexture, glCheckFramebufferStatus, glGenRenderbuffers,
         glDeleteRenderbuffers, glIsRenderbuffer, glBindRenderbuffer, glRenderbufferStorage, glRenderbufferStorageMultisample,
         glFramebufferRenderbuffer, glGetFramebufferAttachmentParameteriv, glGetTexLevelParameteriv,
         glGetTexParameteriv,
@@ -933,8 +958,8 @@ fn get(g: &Gl, c: &Ctx, pname: u32) -> Option<Vec<f64>> {
         0x821D => vec![EXTENSIONS.split(' ').count() as f64],
         0x821B => vec![2.0],
         0x821C => vec![1.0],
-        0x8CA6 => vec![f64::from(c.fbo_draw)],
-        0x8CAA => vec![f64::from(c.fbo_read)],
+        0x8CA6 => vec![f64::from(c.fbo_draw.name)],
+        0x8CAA => vec![f64::from(c.fbo_read.name)],
         0x8CA7 => vec![f64::from(c.rb)],
         0x8894 => vec![f64::from(c.array_buffer)],
         0x8895 => vec![f64::from(c.element_buffer)],
@@ -1574,16 +1599,31 @@ pub(crate) fn target(g: &mut Gl, c: &Ctx) -> Option<(u32, u32, u32, u32, u32)> {
     target_of(g, c, c.fbo_draw)
 }
 
-/// `target` of framebuffer `fbo` (0: the window's) of context `c`
-fn target_of(g: &mut Gl, c: &Ctx, fbo: u32) -> Option<(u32, u32, u32, u32, u32)> {
-    if fbo == 0 {
+/// Framebuffer `f` of context `c`: its own, or its share group's.
+fn fbo<'a>(g: &'a Gl, c: &'a Ctx, f: FboRef) -> Option<&'a Fbo> {
+    match f.kind {
+        Fbos::Core => c.fbos.get(&f.name),
+        Fbos::Ext => g.objs.fbos.get(&f.name),
+    }
+}
+
+fn fbo_mut<'a>(g: &'a mut Gl, c: &'a mut Ctx, f: FboRef) -> Option<&'a mut Fbo> {
+    match f.kind {
+        Fbos::Core => c.fbos.get_mut(&f.name),
+        Fbos::Ext => g.objs.fbos.get_mut(&f.name),
+    }
+}
+
+/// `target` of framebuffer `f` (name 0: the window's) of context `c`
+fn target_of(g: &mut Gl, c: &Ctx, f: FboRef) -> Option<(u32, u32, u32, u32, u32)> {
+    if f.name == 0 {
         if c.draw == 0 {
             return None;
         }
         let d = drawable(g, c.draw, c.w.max(1), c.h.max(1));
         return Some((d.color, 0, d.depth, d.w, d.h));
     }
-    let f = g.objs.fbos.get(&fbo)?;
+    let f = fbo(g, c, f)?;
     let (color, depth) = (f.color, f.depth);
     let att = |g: &Gl, a: Att| -> Option<(u32, u32, u32, u32)> {
         match a {
@@ -1918,8 +1958,10 @@ impl Gl {
     /// A texture or renderbuffer going away: no framebuffer attaches it any more. (GL keeps it
     /// alive, without its name, in the framebuffers that are not bound; here it is detached
     /// from those too.)
-    fn detach(&mut self, gone: impl Fn(&Att) -> bool) {
-        for f in self.objs.fbos.values_mut() {
+    fn detach(&mut self, c: &mut Ctx, gone: impl Fn(&Att) -> bool) {
+        let group = c.group;
+        let others = self.ctxs.values_mut().filter(|o| o.group == group).flat_map(|o| o.fbos.values_mut());
+        for f in self.objs.fbos.values_mut().chain(c.fbos.values_mut()).chain(others) {
             for a in [&mut f.color, &mut f.depth] {
                 if gone(a) {
                     *a = Att::None;
@@ -1951,7 +1993,7 @@ unsafe extern "C" fn glDeleteTextures(n: i32, names: *const u32) {
                 for u in c.units.iter_mut().filter(|u| u.bound == id) {
                     u.bound = 0;
                 }
-                g.detach(|a| matches!(a, Att::Tex(t, _) if *t == id));
+                g.detach(c, |a| matches!(a, Att::Tex(t, _) if *t == id));
             }
         }
     })
@@ -2552,32 +2594,76 @@ extern "C" fn glUnmapBuffer(target: u32) -> u8 {
 
 // ---- framebuffers ----
 
-unsafe extern "C" fn glGenFramebuffers(n: i32, out: *mut u32) {
-    gen_names(K_FBO, n, out, |g, id| {
-        g.objs.fbos.insert(id, Fbo::default());
-    })
-}
-unsafe extern "C" fn glDeleteFramebuffers(n: i32, names: *const u32) {
-    let ids = self::names(n, names);
-    with(|g, c| {
-        for id in &ids {
-            g.objs.reserved.remove(&(K_FBO, *id));
-            g.objs.fbos.remove(id);
-            if c.fbo_draw == *id {
-                c.fbo_draw = 0;
+/// glGenFramebuffers(EXT).
+///
+/// # Safety
+/// `out` has room for `n` names.
+unsafe fn gen_fbos(kind: Fbos, n: i32, out: *mut u32) {
+    match kind {
+        // SAFETY: gen_fbos' contract, gen_names': `n` names' room at `out`
+        Fbos::Ext => unsafe {
+            gen_names(K_FBO, n, out, |g, id| {
+                g.objs.fbos.insert(id, Fbo::default());
+            })
+        },
+        Fbos::Core => with(|_, c| {
+            let Ok(n) = usize::try_from(n) else { return c.err(GL_INVALID_VALUE) };
+            for k in 0..n {
+                let id = (c.next_fbo.saturating_add(1)..=u32::MAX).find(|i| !c.fbos.contains_key(i)).unwrap_or(u32::MAX);
+                c.next_fbo = id;
+                c.fbos.insert(id, Fbo::default());
+                c.fbos_reserved.insert(id);
+                // SAFETY: gen_fbos' contract: `n` names' room at `out`, k < n
+                let at = unsafe { out.add(k) };
+                // SAFETY: as above
+                unsafe { at.write(id) };
             }
-            if c.fbo_read == *id {
-                c.fbo_read = 0;
+        }),
+    }
+}
+/// glDeleteFramebuffers(EXT).
+///
+/// # Safety
+/// `names` holds `n` names.
+unsafe fn delete_fbos(kind: Fbos, n: i32, names: *const u32) {
+    // SAFETY: delete_fbos' contract
+    let ids = unsafe { self::names(n, names) };
+    with(|g, c| {
+        for &name in &ids {
+            match kind {
+                Fbos::Core => {
+                    c.fbos_reserved.remove(&name);
+                    c.fbos.remove(&name);
+                }
+                Fbos::Ext => {
+                    g.objs.reserved.remove(&(K_FBO, name));
+                    g.objs.fbos.remove(&name);
+                }
+            }
+            let gone = FboRef { kind, name };
+            for b in [&mut c.fbo_draw, &mut c.fbo_read] {
+                if *b == gone {
+                    *b = FboRef::default();
+                }
             }
         }
     })
 }
-extern "C" fn glBindFramebuffer(target: u32, f: u32) {
+fn bind_fbo(kind: Fbos, target: u32, name: u32) {
     with(|g, c| {
-        if f != 0 {
-            g.objs.fbos.entry(f).or_default();
+        if name != 0 {
+            match kind {
+                Fbos::Core => {
+                    c.fbos.entry(name).or_default();
+                    c.fbos_reserved.remove(&name);
+                }
+                Fbos::Ext => {
+                    g.objs.fbos.entry(name).or_default();
+                    g.objs.reserved.remove(&(K_FBO, name));
+                }
+            }
         }
-        g.objs.reserved.remove(&(K_FBO, f));
+        let f = FboRef { kind, name };
         if target == GL_FRAMEBUFFER || target == GL_DRAW_FRAMEBUFFER {
             c.fbo_draw = f;
         }
@@ -2586,8 +2672,41 @@ extern "C" fn glBindFramebuffer(target: u32, f: u32) {
         }
     })
 }
+fn is_fbo(kind: Fbos, name: u32) -> u8 {
+    with(|g, c| {
+        u8::from(match kind {
+            Fbos::Core => c.fbos.contains_key(&name) && !c.fbos_reserved.contains(&name),
+            Fbos::Ext => g.objs.fbos.contains_key(&name) && !g.objs.reserved.contains(&(K_FBO, name)),
+        })
+    })
+}
+unsafe extern "C" fn glGenFramebuffers(n: i32, out: *mut u32) {
+    // SAFETY: the GL contract: `n` names' room at `out`
+    unsafe { gen_fbos(Fbos::Core, n, out) }
+}
+unsafe extern "C" fn glDeleteFramebuffers(n: i32, names: *const u32) {
+    // SAFETY: the GL contract: `n` names at `names`
+    unsafe { delete_fbos(Fbos::Core, n, names) }
+}
+extern "C" fn glBindFramebuffer(target: u32, f: u32) {
+    bind_fbo(Fbos::Core, target, f)
+}
 extern "C" fn glIsFramebuffer(f: u32) -> u8 {
-    with(|g, _| u8::from(g.objs.fbos.contains_key(&f) && !g.objs.reserved.contains(&(K_FBO, f))))
+    is_fbo(Fbos::Core, f)
+}
+unsafe extern "C" fn glGenFramebuffersEXT(n: i32, out: *mut u32) {
+    // SAFETY: the GL contract: `n` names' room at `out`
+    unsafe { gen_fbos(Fbos::Ext, n, out) }
+}
+unsafe extern "C" fn glDeleteFramebuffersEXT(n: i32, names: *const u32) {
+    // SAFETY: the GL contract: `n` names at `names`
+    unsafe { delete_fbos(Fbos::Ext, n, names) }
+}
+extern "C" fn glBindFramebufferEXT(target: u32, f: u32) {
+    bind_fbo(Fbos::Ext, target, f)
+}
+extern "C" fn glIsFramebufferEXT(f: u32) -> u8 {
+    is_fbo(Fbos::Ext, f)
 }
 fn attach(target: u32, point: u32, a: Att) {
     with(|g, c| {
@@ -2601,7 +2720,7 @@ fn attach(target: u32, point: u32, a: Att) {
         if !exists {
             return c.err(GL_INVALID_OPERATION);
         }
-        let Some(f) = g.objs.fbos.get_mut(&id) else { return c.err(GL_INVALID_OPERATION) };
+        let Some(f) = fbo_mut(g, c, id) else { return c.err(GL_INVALID_OPERATION) };
         match point {
             GL_COLOR_ATTACHMENT0 => f.color = a,
             GL_DEPTH_ATTACHMENT | GL_STENCIL_ATTACHMENT | GL_DEPTH_STENCIL_ATTACHMENT => f.depth = a,
@@ -2624,7 +2743,7 @@ extern "C" fn glCheckFramebufferStatus(_target: u32) -> u32 {
 unsafe extern "C" fn glGetFramebufferAttachmentParameteriv(target: u32, point: u32, p: u32, out: *mut i32) {
     *out = with(|g, c| {
         let id = if target == GL_READ_FRAMEBUFFER { c.fbo_read } else { c.fbo_draw };
-        let Some(f) = g.objs.fbos.get(&id) else { return 0 };
+        let Some(f) = fbo(g, c, id) else { return 0 };
         let a = if point == GL_COLOR_ATTACHMENT0 { f.color } else { f.depth };
         match (p, a) {
             (0x8CD0, Att::Tex(..)) => 0x1702,
@@ -2651,7 +2770,7 @@ unsafe extern "C" fn glDeleteRenderbuffers(n: i32, names: *const u32) {
                 if c.rb == id {
                     c.rb = 0;
                 }
-                g.detach(|a| matches!(a, Att::Rb(r) if *r == id));
+                g.detach(c, |a| matches!(a, Att::Rb(r) if *r == id));
             }
         }
     })
