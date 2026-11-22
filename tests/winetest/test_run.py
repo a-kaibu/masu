@@ -89,5 +89,83 @@ class Plan(unittest.TestCase):
         self.assertIn("test program missing", p.stdout)
 
 
+class Combine(unittest.TestCase):
+    """--repeat: a test is recorded by its worst run and judged by its best."""
+
+    @staticmethod
+    def r(status, failures=0):
+        return {"status": status, "failures": failures}
+
+    def test_mixed_runs(self):
+        worst, best = run.combine([self.r("ok"), self.r("fail", 3), self.r("ok")])
+        self.assertEqual((worst["status"], best["status"]), ("fail", "ok"))
+
+    def test_failure_counts_order_within_a_status(self):
+        worst, best = run.combine([self.r("fail", 2), self.r("fail", 9), self.r("fail", 5)])
+        self.assertEqual((worst["failures"], best["failures"]), (9, 2))
+
+    def test_crash_is_worse_than_fail(self):
+        worst, best = run.combine([self.r("fail", 50), self.r("crash")])
+        self.assertEqual((worst["status"], best["status"]), ("crash", "fail"))
+
+    def test_one_run(self):
+        worst, best = run.combine([self.r("timeout")])
+        self.assertIs(worst, best)
+
+    def test_repeat_needs_native(self):
+        import subprocess
+        p = subprocess.run([sys.executable, os.path.join(os.path.dirname(__file__), "run.py"), "--suite", "rostests", "--repeat", "3"],
+                           capture_output=True, text=True, check=False)
+        self.assertEqual(p.returncode, 2, p.stderr)
+        self.assertIn("only with --native", p.stderr)
+
+
+class Adopt(unittest.TestCase):
+    """rostests on sake run what Windows passes, and a test Windows was not asked fails the run."""
+
+    JOBS = [("kernel32", "k.exe", "lstrlen"), ("kernel32", "k.exe", "Pipes"), ("kernel32", "k.exe", "FLS")]
+
+    def test_windows_failures_are_not_run(self):
+        win = {"kernel32:lstrlen": ("ok", 0, 9), "kernel32:Pipes": ("fail", 2, 40), "kernel32:FLS": ("crash", 0, 0)}
+        keep, dropped, problems = run.adopt(self.JOBS, win)
+        self.assertEqual([t for _, _, t in keep], ["lstrlen"])
+        self.assertEqual(dropped, ["kernel32:Pipes", "kernel32:FLS"])
+        self.assertEqual(problems, [])
+
+    def test_test_windows_did_not_run_fails(self):
+        keep, _, problems = run.adopt(self.JOBS, {"kernel32:lstrlen": ("ok", 0, 9)})
+        self.assertEqual([t for _, _, t in keep], ["lstrlen"])
+        self.assertEqual(len(problems), 2, problems)
+        self.assertTrue(all("not measured on Windows" in p for p in problems), problems)
+
+    def test_nothing_adopted_leaves_nothing_planned(self):
+        keep, dropped, _ = run.adopt(self.JOBS[:1], {"kernel32:lstrlen": ("timeout", 0, 0)})
+        self.assertEqual((keep, dropped), ([], ["kernel32:lstrlen"]))
+
+    def test_main_needs_the_windows_file(self):
+        import subprocess
+        import tempfile
+        with tempfile.TemporaryDirectory() as w:
+            os.makedirs(os.path.join(w, "bin", "i386"))
+            p = subprocess.run([sys.executable, os.path.join(os.path.dirname(__file__), "run.py"), "--suite", "rostests",
+                                "--arch", "nonexistent-arch", "kernel32"],
+                               env=dict(os.environ, ROSTESTS=w, SAKE="/nonexistent/sake.js"),
+                               capture_output=True, text=True, check=False)
+        self.assertNotEqual(p.returncode, 0, p.stdout + p.stderr)
+        self.assertIn("windows-nonexistent-arch.tsv", p.stderr)
+
+
+class DllList(unittest.TestCase):
+    def test_only_keeps_a_line_to_its_arch(self):
+        import tempfile
+        with tempfile.NamedTemporaryFile("w", suffix=".txt", delete=False) as f:
+            f.write("# note\nkernel32\ncrtdll  only:i386\ncompiler   SEH tests only: a note\n\n")
+        try:
+            self.assertEqual(run.dll_list(f.name, "i386"), ["kernel32", "crtdll", "compiler"])
+            self.assertEqual(run.dll_list(f.name, "x86_64"), ["kernel32", "compiler"])
+        finally:
+            os.unlink(f.name)
+
+
 if __name__ == "__main__":
     unittest.main()

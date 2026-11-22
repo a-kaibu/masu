@@ -115,24 +115,108 @@ fn writes_cost_what_they_write() {
     assert!(r < 3 * (64 << 20) + (8 << 20), "{} MiB were read back", r >> 20);
 }
 
+/// One operation as vfs::change runs it, its publish allowed to fail: then taken back.
+fn try_op<R>(fs: &mut Fs, m: &mut Mem, f: impl FnOnce(&mut Fs) -> R) -> (R, bool) {
+    fs.dirt.on = true;
+    fs.sync_in(m).unwrap();
+    fs.undo = Some(super::super::undo::Undo::begin(fs));
+    let r = f(fs);
+    let ok = publish_or_undo(fs, m);
+    (r, ok)
+}
+
+/// A change the buffer cannot take is not made: the process that made it has the namespace the
+/// others have, its file as before (review of 6852be1 §1: the write answered success and stayed
+/// here only).
 #[test]
 fn a_buffer_too_small_keeps_the_last_namespace() {
     let (mut a, root) = rooted();
     let mut m = Mem::new(400);
     op(&mut a, &mut m, |fs| fs.put_file("/x", vec![1; 10], 1));
     let generation = m.generation;
-    a.dirt.on = true;
-    a.sync_in(&m).unwrap();
     let ino = a.walk(root, "x").unwrap();
-    a.write_upper(ino, &[2; 1000], 0).unwrap();
-    assert!(!a.sync_out(&mut m));
+    let before = a.shared_snapshot();
+    let (_, ok) = try_op(&mut a, &mut m, |fs| fs.write_upper(ino, &[2; 1000], 0).unwrap());
+    assert!(!ok);
     assert_eq!(m.generation, generation);
+    assert_eq!(a.shared_snapshot(), before);
+    assert_eq!(a.file_size(ino), 10);
     let mut b = Fs::default();
     b.sync_in(&m).unwrap();
-    assert_eq!(b.file_size(ino), 10);
-    // (and the process that could not publish keeps its own files)
+    assert_eq!(b.shared_snapshot(), before);
+}
+
+/// The review's case: A's write of 1000 bytes does not fit; B then writes a new snapshot; A
+/// takes it in. A was told ENOSPC, and no write it was told succeeded is lost: what it has is
+/// what B published, A's own earlier writes in it.
+#[test]
+fn a_refused_write_is_not_lost_later() {
+    let (mut a, root) = rooted();
+    let mut m = Mem::new(400);
+    op(&mut a, &mut m, |fs| fs.put_file("/x", vec![1; 10], 1));
+    let ino = a.walk(root, "x").unwrap();
+    op(&mut a, &mut m, |fs| fs.write_upper(ino, b"ok", 0).unwrap());
+    let mut b = Fs::default();
+    b.sync_in(&m).unwrap();
+    let (_, ok) = try_op(&mut a, &mut m, |fs| fs.write_upper(ino, &[2; 1000], 0).unwrap());
+    assert!(!ok);
+    // (B's changes until one makes a new snapshot: the journal past the snapshot's size)
+    let base = b.shared.base;
+    for i in 0..20 {
+        op(&mut b, &mut m, |fs| fs.write_upper(ino, &[i], 9).unwrap());
+        if b.shared.base != base { break; }
+    }
+    assert_ne!(b.shared.base, base);
     a.sync_in(&m).unwrap();
-    assert_eq!(a.file_size(ino), 1000);
+    assert_eq!(a.shared_snapshot(), b.shared_snapshot());
+    let mut got = [0u8; 10];
+    let Some(Node { data: Data::File(Content::Upper(v)), .. }) = a.node(ino) else { panic!("not a file in memory") };
+    v.read(0, &mut got);
+    assert_eq!(&got[..9], b"ok\x01\x01\x01\x01\x01\x01\x01");
+}
+
+/// Every kind of change taken back: new nodes, freed ones, renamed names, bytes written over,
+/// past the end and cut, counts, handles opened and closed; the process is as it was, bit for
+/// bit, and its free slots are the empty ones.
+#[test]
+fn everything_an_operation_changed_is_taken_back() {
+    let (mut a, root) = rooted();
+    let mut m = Mem::new(1 << 20);
+    op(&mut a, &mut m, |fs| {
+        fs.put_file("/d/f", (0..=255u8).collect(), 1);
+        fs.put_file("/d/g", vec![7; 30], 1);
+        fs.put_file("/e/h", vec![9; 5], 1);
+    });
+    let (f, g) = (a.walk(root, "d/f").unwrap(), a.walk(root, "d/g").unwrap());
+    let h0 = op(&mut a, &mut m, |fs| fs.new_handle(g, 0));
+    let generation = m.generation;
+    let snap = a.shared_snapshot();
+    let (next, free, handles) = (a.next_handle, a.free.clone(), a.handles.keys().copied().collect::<Vec<_>>());
+    // (a buffer that takes nothing more)
+    m.full();
+    let (_, ok) = try_op(&mut a, &mut m, |fs| {
+        fs.write_upper(f, &[0xee; 40], 200).unwrap();
+        fs.write_upper(f, &[0xdd; 3], 10).unwrap();
+        fs.set_upper_size(f, 50).unwrap();
+        fs.write_upper(f, &[0xcc; 4], 100).unwrap();
+        let h = fs.new_handle(f, 0);
+        fs.close_handle(h0);
+        let e = fs.walk(root, "e").unwrap();
+        fs.unlink_name(e, "h");
+        fs.unlink_name(fs.walk(root, "d").unwrap(), "g");
+        fs.put_file("/n/new", vec![1; 3], 5);
+        fs.mkdir_p(root, "n/m/o");
+        fs.close_handle(h);
+    });
+    assert!(!ok);
+    assert_eq!(m.generation, generation);
+    assert_eq!(a.shared_snapshot(), snap);
+    assert_eq!((a.next_handle, a.free.clone()), (next, free));
+    assert_eq!(a.handles.keys().copied().collect::<Vec<_>>(), handles);
+    let empty: Vec<Ino> = (0..a.nodes.len() as Ino).filter(|&i| a.nodes[i as usize].is_none()).collect();
+    let mut fr = a.free.clone(); fr.sort();
+    assert_eq!(fr, empty);
+    assert!(a.dirt.is_empty());
 }
 
 fn ops() -> impl Strategy<Value = Vec<(u8, Vec<Op>)>> {
@@ -158,13 +242,8 @@ proptest! {
     fn processes_agree(ops in ops(), limit in prop_oneof![Just(1usize << 24), 2000usize..20000]) {
         let mut sim = Sim::new(limit);
         for (who, batch) in ops {
-            match sim.step(who as usize, &batch) {
-                Ok(true) => {}
-                // (past the buffer: the others keep what they had; this one goes on alone, so
-                // the comparison ends here)
-                Ok(false) => return Ok(()),
-                Err(e) => prop_assert!(false, "{}", e),
-            }
+            // (past the buffer: the batch is taken back, and the processes go on together)
+            if let Err(e) = sim.step(who as usize, &batch) { prop_assert!(false, "{}", e); }
         }
     }
 

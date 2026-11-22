@@ -606,7 +606,7 @@ fn reg_builtin() -> HashMap<String, KeyData> {
     }
     // the installed fonts (DirectWrite's system collection reads this list)
     if let Some(dir) = crate::files::resolve("C:\\windows\\Fonts\\") {
-        let mut files: Vec<String> = kura::fs::read_dir(dir).into_iter().flatten().flatten().filter_map(|e| e.file_name().into_string().ok()).collect();
+        let mut files: Vec<String> = crate::shortname::read_dir(dir).into_iter().flatten().flatten().filter_map(|e| e.file_name().into_string().ok()).collect();
         files.sort();
         for f in files.iter().filter(|f| [".ttf", ".ttc", ".otf"].iter().any(|x| f.to_ascii_lowercase().ends_with(x))) {
             let stem = f.rsplit_once('.').map_or(f.as_str(), |x| x.0);
@@ -3304,7 +3304,7 @@ fn sh_expand(src: &str, files_only: bool) -> Vec<(String, bool)> {
         return crate::files::resolve(src).and_then(|h| kura::fs::metadata(&h).ok()).map_or_default(|m| vec![(src.to_string(), m.is_dir())]);
     }
     let Some(h) = crate::files::resolve(dir) else { return Vec::new() };
-    let mut out: Vec<(String, bool)> = kura::fs::read_dir(&h).into_iter().flatten().flatten().filter_map(|e| {
+    let mut out: Vec<(String, bool)> = crate::shortname::read_dir(&h).into_iter().flatten().flatten().filter_map(|e| {
         let name = e.file_name().into_string().ok()?;
         let is_dir = e.metadata().ok()?.is_dir();
         (wild_match(last, &name) && !(files_only && is_dir)).then(|| (format!("{dir}\\{name}"), is_dir))
@@ -3319,7 +3319,7 @@ fn sh_copy(src: &str, is_dir: bool, to: &str, recurse: bool) -> bool {
     }
     crate::files::make_dirs(to);
     let mut ok = true;
-    for e in kura::fs::read_dir(&h).into_iter().flatten().flatten() {
+    for e in crate::shortname::read_dir(&h).into_iter().flatten().flatten() {
         let (Ok(name), Ok(m)) = (e.file_name().into_string(), e.metadata()) else { continue };
         if m.is_dir() && !recurse {
             continue;
@@ -3333,11 +3333,11 @@ fn sh_delete(src: &str, is_dir: bool) -> bool {
     if !is_dir {
         return kura::fs::remove_file(&h).is_ok();
     }
-    for e in kura::fs::read_dir(&h).into_iter().flatten().flatten() {
+    for e in crate::shortname::read_dir(&h).into_iter().flatten().flatten() {
         let (Ok(name), Ok(m)) = (e.file_name().into_string(), e.metadata()) else { continue };
         sh_delete(&format!("{src}\\{name}"), m.is_dir());
     }
-    kura::fs::remove_dir(&h).is_ok()
+    crate::shortname::remove_dir(&h).is_ok()
 }
 /// SHFileOperation(&SHFILEOPSTRUCT): FO_MOVE 1, FO_COPY 2, FO_DELETE 3, FO_RENAME 4 of the
 /// double-NUL lists pFrom / pTo (FOF_MULTIDESTFILES 1: a destination per source; FOF_FILESONLY

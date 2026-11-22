@@ -53,3 +53,76 @@ test("node's states (host/snap.js) have the page's magic", async () => {
   const js = readFileSync(new URL("../../host/snap.js", import.meta.url), "utf8");
   expect(/MAGIC: '([^']*)'/.exec(js)?.[1]).toBe(MAGIC);
 });
+
+// ---- the stop's protocol (crates/kura/src/snap.rs Ctl: req, serving, cancel)
+
+/** A module whose coordinator follows snap.rs's protocol in JS: takes CMD with its REQ, says
+ * whose it is (SERVING after PAUSING), stands still only once `ready` says so, ends a request
+ * the page cancels wherever it is (FAILED; from READY: RUNNING), RESUME after READY. */
+function coordinator() {
+  const memory = new WebAssembly.Memory({ initial: 1, maximum: 1, shared: true });
+  const i32 = new Int32Array(memory.buffer);
+  const CTL = 4096;
+  const w = (off: number) => (CTL + off) >>> 2;
+  const st = { ready: false, paused: false, served: [] as number[] };
+  let serving = 0;
+  const step = () => {
+    const cmd = Atomics.load(i32, w(8));
+    const state = Atomics.load(i32, w(12));
+    if (state === 0 || state === 3) {
+      if (cmd === 1 || cmd === 3) {
+        Atomics.store(i32, w(8), 0);
+        serving = Atomics.load(i32, w(96));
+        Atomics.store(i32, w(12), 1);
+        Atomics.store(i32, w(100), serving);
+        st.served.push(serving);
+        st.paused = true;
+      }
+      return;
+    }
+    const cancelled = serving !== 0 && Atomics.load(i32, w(104)) === serving;
+    if (state === 1) {
+      if (cancelled) {
+        st.paused = false;
+        Atomics.store(i32, w(12), 3);
+      } else if (st.ready) Atomics.store(i32, w(12), 2);
+    } else if (state === 2 && (cancelled || cmd === 2)) {
+      if (cmd === 2) Atomics.store(i32, w(8), 0);
+      st.paused = false;
+      Atomics.store(i32, w(12), 0);
+    }
+    Atomics.notify(i32, w(12));
+  };
+  const timer = setInterval(step, 1);
+  const m = {
+    wasmMemory: memory,
+    _malloc: () => 0,
+    _free: () => {},
+    _vnhost_snap_ctl: () => CTL,
+    _vnhost_render_shot: () => 0,
+  };
+  return { m, st, i32, w, stop: () => clearInterval(timer) };
+}
+
+test("a stop the coordinator does not finish in time is cancelled: the threads go again, and the next stop is answered as itself", async () => {
+  const { stopAll } = await import("./savestate");
+  const c = coordinator();
+  try {
+    // (the threads never stand still: given up, cancelled, the coordinator lets them go)
+    await expect(stopAll(c.m, true, 60)).rejects.toThrow();
+    const first = c.st.served[0]!;
+    expect(Atomics.load(c.i32, c.w(104))).toBe(first);
+    await expect.poll(() => c.st.paused).toBe(false);
+    // (the next: its own number; the FAILED of the one given up is not its answer)
+    c.st.ready = true;
+    const s = await stopAll(c.m, true, 2000);
+    expect(c.st.served).toHaveLength(2);
+    expect(c.st.served[1]).not.toBe(first);
+    expect(Atomics.load(c.i32, c.w(100))).toBe(c.st.served[1]);
+    expect(c.st.paused).toBe(true);
+    await s.resume();
+    expect(c.st.paused).toBe(false);
+  } finally {
+    c.stop();
+  }
+});

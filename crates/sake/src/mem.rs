@@ -1965,3 +1965,7 @@ mod review_b07_tests {
 #[cfg(test)]
 #[path = "mem_conversion_tests.rs"]
 mod conversion_tests;
+
+#[cfg(kani)]
+#[path = "mem_proofs.rs"]
+mod proofs;

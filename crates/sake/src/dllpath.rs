@@ -262,8 +262,18 @@ pub fn app_dir() -> String {
     exe.rsplit_once('\\').map_or_default(|(d, _)| d.to_string())
 }
 
-fn dll_directory() -> Option<String> {
-    crate::pe::DLL_DIRS.locked().first().cloned()
+/// SetDllDirectory's folder (None: none set)
+static DLL_DIRECTORY: Mutex<Option<String>> = Mutex::new(None);
+
+/// SetDllDirectory(dir): the folder; Some("") takes the current folder out of the search with
+/// no folder in its place, None (NULL) is the default search again
+pub fn set_dll_directory(dir: Option<String>) {
+    *DLL_DIRECTORY.locked() = dir;
+}
+
+/// The folder SetDllDirectory set (WITH_DLL_DIRECTORY's DllDirectory)
+pub fn dll_directory() -> Option<String> {
+    DLL_DIRECTORY.locked().clone()
 }
 
 fn path_var() -> String {
@@ -296,6 +306,17 @@ pub fn dll_path(module: Option<&str>, flags: u32) -> Result<String, u32> {
     let (app, user, pv) = (app_dir(), user_dirs(), path_var());
     let p = Parts { app: &app, module: plan.module.and_then(module_dir), dll_directory: dd.as_deref(), user_dirs: &user, path_var: &pv };
     Ok(compute(&plan.elems, &p))
+}
+
+/// The folders a load searches for a DLL named without a path, in order: LdrGetDllPath's text
+/// for the same module and flags, split at ';' ("." the current folder). The loader takes no
+/// list of its own: the folders searched are the ones the text names (review b5dacf4 2.1: the
+/// loader had its own order, SetDefaultDllDirectories and LoadLibraryEx's flags never reached
+/// it).
+pub fn dll_folders(module: Option<&str>, flags: u32) -> Result<Vec<String>, u32> {
+    let cwd = crate::files::cwd();
+    let cwd = cwd.trim_end_matches('\\');
+    Ok(dll_path(module, flags)?.split(';').filter(|d| !d.is_empty()).map(|d| if d == "." { cwd.to_string() } else { d.to_string() }).collect())
 }
 
 /// The path's guest copy, as RtlpGetCachedPath hands it out: the text 0x50 bytes into its

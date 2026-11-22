@@ -17,6 +17,7 @@ import type { TreeReader } from "./treeread";
 import { openTree } from "./treesource";
 import { loadSaves, movedSaves, settled, storeSaves } from "./saves";
 import { SAVE_SOON_MS, SaveItems } from "./webstore";
+import { NO_STATUS, type Status } from "./status";
 
 /** The program's tree and folder in it, from &run and the &mount that holds it. */
 function where(run: string, mounts: string[]): { tree: string; dir: string } | null {
@@ -126,7 +127,7 @@ export async function startWebGame(
   run: string,
   mounts: string[],
   saveName: string | null,
-  log: (line: string) => void,
+  say: (status: Status) => void,
   oldSaves: string | null = null,
 ): Promise<boolean> {
   const at = where(run, mounts);
@@ -144,7 +145,7 @@ export async function startWebGame(
   // the main thread, which this page shares with it; made once the program is a web game)
   const reads = new Worker(new URL("./tree-worker.ts", import.meta.url), { type: "module" });
   reads.postMessage({ tree: at.tree, page: location.href } satisfies TreeWorkerAsk);
-  log("Web ゲームとして開いています");
+  say({ phase: "working", text: "Web ゲームとして開いています" });
   const origin = await gameOrigin();
 
   // saves: the page's localStorage (and fs writes), as one JSON blob
@@ -183,7 +184,7 @@ export async function startWebGame(
         savedGeneration = current;
       })
       .catch((e: unknown) => {
-        log(`セーブを保存できません: ${String(e)}`);
+        say({ phase: "notice", text: `セーブを保存できません: ${String(e)}` });
       })
       .finally(() => {
         pending = undefined;
@@ -205,6 +206,8 @@ export async function startWebGame(
     for (const { path } of tree.files.values())
       if (path.startsWith(at.dir)) names.push(path.slice(at.dir.length));
 
+  // (this start: the frame starts on its first init only, FrameStart)
+  const launch = crypto.randomUUID();
   const frame = document.createElement("iframe");
   frame.id = "frame";
   // (cross-origin-isolated: its synchronous reads wait on a SharedArrayBuffer, sync-read.ts)
@@ -234,14 +237,15 @@ export async function startWebGame(
       ]);
     } else if (m?.masu === "hello") {
       // (each page of the game asks: a reload gets the saves as they are now)
-      const init: Init = { masu: "init", items: [...items], base, names };
+      const init: Init = { masu: "init", launch, items: [...items], base, names };
       // (a page with Node: a port to the tree's worker for the synchronous reads, sync-read.ts)
       const ch = new MessageChannel();
       if (wiring.syncReads) reads.postMessage({ port: ch.port1 } satisfies TreeWorkerAsk, [ch.port1]);
       frame.contentWindow!.postMessage(init, origin, wiring.syncReads ? [ch.port2] : []);
     } else if (m?.masu === "set") {
       if (!saves.set(m.key, m.value)) {
-        if (!refused) log("ゲームのセーブが大きすぎるため、これ以上は保存しません");
+        if (!refused)
+          say({ phase: "notice", text: "ゲームのセーブが大きすぎるため、これ以上は保存しません" });
         refused = true;
         return;
       }
@@ -255,7 +259,7 @@ export async function startWebGame(
   document.querySelector<HTMLCanvasElement>("#screen")!.hidden = true;
   document.body.append(frame);
   frame.addEventListener("load", () => {
-    log("");
+    say(NO_STATUS);
     frame.focus();
     dispatchEvent(new Event("vnvm-frame"));
   });

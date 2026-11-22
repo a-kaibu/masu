@@ -333,6 +333,9 @@ mod proofs {
         } else {
             assert!(r == 0 && d[..c] == s[..c] && d[c..] == orig[c..]);
         }
+        kani::cover!(c == 0, "nothing to copy");
+        kani::cover!(c > 0 && dn < c, "a destination too small");
+        kani::cover!(c > 0 && dn > c, "a copy into a larger buffer");
     }
 
     /// memmove_s: memcpy_s's result, but an error leaves the buffer alone; a NULL source or
@@ -361,6 +364,9 @@ mod proofs {
         let r = memcpy_s(Some(&mut z[..dn]), None, c);
         assert!(if c == 0 { r == 0 && z == orig } else { r == EINVAL && z[..dn].iter().all(|&b| b == 0) });
         assert!(memcpy_s(None, Some(&s[..c]), c) == if c == 0 { 0 } else { EINVAL });
+        kani::cover!(c > 0 && snull, "a NULL source");
+        kani::cover!(c > 0 && !snull && dn < c, "a destination too small");
+        kani::cover!(c > 0 && !snull && dn >= c, "a move");
     }
 }
 

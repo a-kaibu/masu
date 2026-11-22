@@ -10,13 +10,15 @@
 
 import { watchDoorbell } from "./doorbell";
 import { memGate, type Gate } from "./memgate";
+import { Lifetime } from "./session";
 
 export interface AdecWasm {
   wasmMemory: WebAssembly.Memory;
   _malloc(size: number): number;
   _free(ptr: number): void;
   _vnhost_adec_doorbell(): number;
-  _vnhost_adec_list(out: number, max: number): number;
+  /** one page: up to `max` open streams with ids `from` and up, in id order (fewer: the last) */
+  _vnhost_adec_list(out: number, max: number, from: number): number;
   _vnhost_adec_chunk(id: number, gen: number, size: number, seq: number): number;
   _vnhost_adec_pcm(id: number, gen: number, pcm: number, frames: number, channels: number): void;
   _vnhost_adec_done(id: number, gen: number, seq: number): void;
@@ -100,7 +102,8 @@ export class AudioDecode {
     if (watch) void this.watch();
   }
 
-  private stopped = false;
+  /** the process's: over once it ended (stop) */
+  private readonly life = new Lifetime();
 
   private watch(): Promise<void> {
     return watchDoorbell(
@@ -108,14 +111,14 @@ export class AudioDecode {
       this.doorbell,
       () => this.tick(),
       this.note,
-      () => this.stopped,
+      () => this.life.over,
       "adec",
     );
   }
 
   /** The process ended (play.ts): no more looks, and the decoders closed. */
   stop(): void {
-    this.stopped = true;
+    this.life.end();
     for (const s of this.streams.values()) this.drop(s);
     this.streams.clear();
     for (const [, d] of this.held.splice(0)) d.close();
@@ -123,25 +126,32 @@ export class AudioDecode {
 
   /** New and closed streams, and chunks to feed (on each doorbell). */
   tick(): void {
+    if (this.life.over) return;
     // (a save state is being taken: the memory stays as it is; the next doorbell looks again)
     if (this.gate.closed) return;
-    const n = this.wasm._vnhost_adec_list(this.io, MAX);
-    const u32 = new Uint32Array(this.wasm.wasmMemory.buffer, this.io, n * ROW);
+    // (every open stream: page after page of MAX until a short one; only a stream on none of
+    // them is closed: one page is not the whole list)
     const live = new Set<number>();
-    for (let k = 0; k < n; k++) {
-      const r = u32.subarray(k * ROW, k * ROW + ROW);
-      const [id, gen] = [r[0]!, r[1]!];
-      live.add(id);
-      let s = this.streams.get(id);
-      if (s && s.gen !== gen) {
-        this.drop(s);
-        s = undefined;
+    for (let from = 0; ;) {
+      const n = this.wasm._vnhost_adec_list(this.io, MAX, from);
+      const u32 = new Uint32Array(this.wasm.wasmMemory.buffer, this.io, n * ROW);
+      for (let k = 0; k < n; k++) {
+        const r = u32.subarray(k * ROW, k * ROW + ROW);
+        const [id, gen] = [r[0]!, r[1]!];
+        live.add(id);
+        let s = this.streams.get(id);
+        if (s && s.gen !== gen) {
+          this.drop(s);
+          s = undefined;
+        }
+        if (!s) {
+          s = this.open(id, gen, r);
+          this.streams.set(id, s);
+        }
+        this.feed(s);
       }
-      if (!s) {
-        s = this.open(id, gen, r);
-        this.streams.set(id, s);
-      }
-      this.feed(s);
+      if (n < MAX) break;
+      from = u32[(n - 1) * ROW]! + 1;
     }
     for (const [id, s] of this.streams)
       if (!live.has(id)) {

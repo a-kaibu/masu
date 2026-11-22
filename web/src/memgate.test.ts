@@ -506,7 +506,7 @@ test("video: a decoder that breaks is made again once in software, fed from the 
   }
 });
 
-test("video: a copy that ends after the guest closed the stream tells the guest nothing and lets the frame go", async () => {
+test("video: a copy that ends after the guest closed the stream gives the slot back (ok 0: the frame not taken) and lets the frame go", async () => {
   const m = videoModule(4);
   const decs: FakeDec[] = [];
   const restore = fakeVideo((d) => decs.push(d));
@@ -536,7 +536,10 @@ test("video: a copy that ends after the guest closed the stream tells the guest 
     w._vnhost_video_list = list;
     done();
     await tick(5);
-    expect(m.calls.some((c) => c.startsWith("ready"))).toBe(false);
+    // (kura's slot is lent until this answer: without it the closed stream stayed for good)
+    const ready = m.calls.filter((c) => c.startsWith("ready"));
+    expect(ready).toHaveLength(1);
+    expect(ready[0]!.endsWith(" 0")).toBe(true);
     expect(closed).toBeGreaterThanOrEqual(1);
   } finally {
     restore();

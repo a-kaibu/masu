@@ -71,6 +71,9 @@ struct Res {
     dim: u32,
     ret: K,
     depth: bool,
+    /// a multisampled texture whose SRV is 8-bit SNORM and whose page texture its SINT twin
+    /// (kura's logic::snorm_ms_page): its channels (1, 2 or 4), 0 for any other
+    snorm: u32,
 }
 
 /// A raw or structured buffer view (dcl_resource_raw/structured, dcl_uav_raw/structured) or
@@ -322,6 +325,8 @@ struct W {
     /// sampled with them
     addr: Vec<crate::addr::Addr>,
     addr_used: std::collections::BTreeSet<(u32, u32)>,
+    /// whether a load reads one (the module then has crate::snorm::helpers)
+    snorm_used: bool,
 }
 
 type R<T> = Result<T, String>;
@@ -495,7 +500,7 @@ fn declarations(w: &mut W, p: &Program) -> R<()> {
                     Some(4) => K::U,
                     _ => K::F,
                 };
-                w.res.insert(i.ops[0].reg(), Res { dim: i.ctl & 0xf, ret, depth: false });
+                w.res.insert(i.ops[0].reg(), Res { dim: i.ctl & 0xf, ret, depth: false, snorm: 0 });
             }
             Opcode::DclSampler => {
                 w.samplers.insert(i.ops[0].reg(), i.ctl & 0xf == 1);
@@ -1077,6 +1082,7 @@ impl W {
             uav_formats: BTreeMap::new(),
             split: false,
             addr: Vec::new(),
+            snorm_used: false,
             addr_used: Default::default(),
             pixel,
             isgn,
@@ -1627,8 +1633,15 @@ impl W {
             (None, None) => args.push("0".into()),
         }
         let (args, ok) = (args.join(", "), ok.join(" && "));
+        let snorm = self.res.get(&t).map_or(0, |r| r.snorm);
         if depth {
             self.vec4_result(i, format!("select(vec4<f32>(), vec4<f32>(textureLoad({tv}, {args}), 0.0f, 0.0f, 1.0f), {ok})"), K::F, swz)
+        } else if snorm != 0 && i.op == Opcode::LdMs {
+            // (an SNORM texture on its SINT twin: its bytes as the format's floats, a channel
+            // the format has not 0, alpha 1)
+            let have: Vec<&str> = (0..4u32).map(|c| if c < snorm { "true" } else { "false" }).collect();
+            self.snorm_used = true;
+            self.vec4_result(i, format!("select(vec4<f32>(), select(vec4<f32>(0.0f, 0.0f, 0.0f, 1.0f), sn_load(textureLoad({tv}, {args})), vec4<bool>({})), {ok})", have.join(", ")), K::F, swz)
         } else {
             self.vec4_result(i, format!("select(vec4<{}>(), textureLoad({tv}, {args}), {ok})", k.s()), k, swz)
         }
@@ -2407,6 +2420,15 @@ fn same_place(d: &Operand, srcs: &[Operand]) -> bool {
 }
 
 fn texture_type(dim: u32, k: K, depth: bool) -> R<(String, u32)> {
+    texture_type_of(dim, k, depth, 0)
+}
+
+/// [`texture_type`] of a resource `snorm` says is an SNORM one on its SINT twin: a
+/// multisampled one of i32.
+fn texture_type_of(dim: u32, k: K, depth: bool, snorm: u32) -> R<(String, u32)> {
+    if snorm != 0 && matches!(dim, 4 | 9) {
+        return Ok(("texture_multisampled_2d<i32>".into(), 6));
+    }
     // (1D textures and arrays are 2D ones of height 1 on the page: WebGPU's 1D textures have no
     // levels or layers)
     let vd = match dim {
@@ -2512,6 +2534,11 @@ pub fn uav_slots(code: &[u8]) -> R<Vec<(u32, u32, u32)>> {
 /// u<n> taken before the dispatch (texture_2d.., read with textureLoad). Groupshared memory is
 /// var<workgroup>.
 pub fn translate_compute(code: &[u8], uav_formats: &[(u32, &str)]) -> R<Wgsl> {
+    translate_compute_views(code, uav_formats, &[])
+}
+
+/// [`translate_compute`] with the SRVs `snorm_ms` on SNORM twins ([`translate_views`]).
+pub fn translate_compute_views(code: &[u8], uav_formats: &[(u32, &str)], snorm_ms: &[(u32, u32)]) -> R<Wgsl> {
     let (c, p) = parse(code)?;
     if p.kind != tpf::COMPUTE {
         return Err(format!("program type {} for a compute shader", p.kind));
@@ -2522,6 +2549,7 @@ pub fn translate_compute(code: &[u8], uav_formats: &[(u32, &str)]) -> R<Wgsl> {
         w.uav_formats.insert(n, f.to_string());
     }
     declarations(&mut w, &p)?;
+    mark_snorm_ms(&mut w, snorm_ms);
     if !w.inputs.is_empty() || !w.outputs.is_empty() {
         return Err("a compute shader with input/output registers".into());
     }
@@ -2541,6 +2569,9 @@ pub fn translate_compute(code: &[u8], uav_formats: &[(u32, &str)]) -> R<Wgsl> {
     let mut bindings = Vec::new();
     let mut temps = String::new();
     module_decls(&mut w, &mut m, &mut bindings, 0, Some(&mut temps))?;
+    if w.snorm_used {
+        snorm_helpers(&mut m);
+    }
     for &n in &w.used_u {
         let u = &w.uavs[&n];
         let (ty, vd) = storage_type(u.dim)?;
@@ -2623,10 +2654,12 @@ fn module_decls(w: &mut W, m: &mut String, bindings: &mut Vec<(u32, Binding)>, g
     }
     for &n in &w.used_t {
         let r = &w.res[&n];
-        let (ty, vd) = texture_type(r.dim, r.ret, r.depth)?;
+        let (ty, vd) = texture_type_of(r.dim, r.ret, r.depth, r.snorm)?;
         let _ = writeln!(m, "@group({group}) @binding({}) var t{n}: {ty};", 16 + n);
         let st = if r.depth {
             3
+        } else if r.snorm != 0 && matches!(r.dim, 4 | 9) {
+            2
         } else {
             match r.ret {
                 K::U => 1,
@@ -2737,7 +2770,25 @@ fn module_decls(w: &mut W, m: &mut String, bindings: &mut Vec<(u32, Binding)>, g
 }
 
 #[allow(clippy::too_many_arguments)]
+/// Marks the resources `snorm_ms` names (t register, channels) that are float multisampled
+/// textures as SNORM ones on their SINT twins ([`Res::snorm`]).
+fn mark_snorm_ms(w: &mut W, snorm_ms: &[(u32, u32)]) {
+    for &(t, ch) in snorm_ms {
+        if let Some(r) = w.res.get_mut(&t).filter(|r| matches!(r.dim, 4 | 9) && r.ret == K::F) {
+            r.snorm = ch.clamp(1, 4);
+        }
+    }
+}
+
 fn translate_with(code: &[u8], pixel: bool, ps: Option<&[u8]>, sprite: Option<f32>, addr: &[crate::addr::Addr], logic: &[crate::logic::Logic], setup: Option<u32>) -> R<Wgsl> {
+    translate_views(code, pixel, ps, sprite, addr, logic, setup, &[])
+}
+
+/// [`translate_with`] with the SRVs `snorm_ms` (t register, channels) that are multisampled
+/// 8-bit SNORM textures on their SINT twins (kura's logic::snorm_ms_page): their loads read
+/// i32 bytes and give the format's floats (crate::snorm::load).
+#[allow(clippy::too_many_arguments)]
+pub fn translate_views(code: &[u8], pixel: bool, ps: Option<&[u8]>, sprite: Option<f32>, addr: &[crate::addr::Addr], logic: &[crate::logic::Logic], setup: Option<u32>, snorm_ms: &[(u32, u32)]) -> R<Wgsl> {
     let (c, p) = parse(code)?;
     if p.kind != if pixel { tpf::PIXEL } else { tpf::VERTEX } {
         return Err(format!("program type {} for a {} shader", p.kind, if pixel { "pixel" } else { "vertex" }));
@@ -2745,6 +2796,7 @@ fn translate_with(code: &[u8], pixel: bool, ps: Option<&[u8]>, sprite: Option<f3
     let mut w = W::new(pixel, c.signature(false), c.signature(true));
     w.addr = addr.to_vec();
     declarations(&mut w, &p)?;
+    mark_snorm_ms(&mut w, snorm_ms);
     for i in &p.insts {
         w.inst(i)?;
     }
@@ -2755,6 +2807,9 @@ fn translate_with(code: &[u8], pixel: bool, ps: Option<&[u8]>, sprite: Option<f3
     let mut m = String::from("diagnostic(off, derivative_uniformity);\n\n");
     let mut bindings = Vec::new();
     module_decls(&mut w, &mut m, &mut bindings, group, None)?;
+    if w.snorm_used {
+        snorm_helpers(&mut m);
+    }
     let _ = write!(m, "\nfn shader_main() {{\n{}}}\n\n", w.body);
     // the entry point
     let mut params = Vec::new();
@@ -2809,9 +2864,16 @@ fn translate_with(code: &[u8], pixel: bool, ps: Option<&[u8]>, sprite: Option<f3
                 // (an integer target: its output as the target stores it, the attachment's type)
                 Some(l) => {
                     // (a stash is UINT whatever the target's sign)
-                    let scalar = if matches!(l.store, crate::logic::Store::Stash { .. }) { "u32" } else { l.scalar() };
+                    // (an SNORM stash's location: the mark's, or nothing written)
+                    let scalar = match l.store {
+                        crate::logic::Store::Stash { .. } => "u32",
+                        crate::logic::Store::SnormStash { mark, .. } if mark == crate::logic::Mark::Slot(r) => "u32",
+                        crate::logic::Store::SnormStash { .. } | crate::logic::Store::Plain | crate::logic::Store::Direct(_) | crate::logic::Store::Snorm(_) => l.scalar(),
+                    };
                     fields.push(format!("@location({r}) c{r}: vec4<{scalar}>"));
-                    logic_output(l, r, k, &mut params, &mut post, &mut m, &mut bindings);
+                    // (an SNORM target's blend may read SV_Target1, the second source)
+                    let src1 = if w.outputs.contains_key(&1) { "bitcast<vec4<f32>>(o1)" } else { "vec4<f32>()" };
+                    logic_output(l, r, k, src1, &mut params, &mut post, &mut m, &mut bindings);
                 }
                 None => {
                     fields.push(format!("@location({r}) c{r}: {}", vty(k, 4)));
@@ -2822,9 +2884,9 @@ fn translate_with(code: &[u8], pixel: bool, ps: Option<&[u8]>, sprite: Option<f3
         // (a pixel-rate shader over a multisampled target with a logic op: the mark of the
         // samples it writes, for the resolve pass)
         if let Some(mark) = logic.iter().find_map(|l| match l.store {
-            crate::logic::Store::Stash { mark: crate::logic::Mark::Slot(mark), .. } if !logic.iter().any(|t| t.target == mark) => Some(mark),
-            crate::logic::Store::Stash { mark: crate::logic::Mark::Slot(_), .. } => None,
-            crate::logic::Store::Stash { mark: crate::logic::Mark::Carried { .. }, .. } | crate::logic::Store::Plain | crate::logic::Store::Direct(_) => None,
+            crate::logic::Store::Stash { mark: crate::logic::Mark::Slot(mark), .. } | crate::logic::Store::SnormStash { mark: crate::logic::Mark::Slot(mark), .. } if !logic.iter().any(|t| t.target == mark) => Some(mark),
+            crate::logic::Store::Stash { mark: crate::logic::Mark::Slot(_), .. } | crate::logic::Store::SnormStash { .. } => None,
+            crate::logic::Store::Stash { mark: crate::logic::Mark::Carried { .. }, .. } | crate::logic::Store::Plain | crate::logic::Store::Direct(_) | crate::logic::Store::Snorm(_) => None,
         }) {
             fields.push(format!("@location({mark}) lg_mark: u32"));
             post.push("out.lg_mark = 1u;".into());
@@ -2949,10 +3011,12 @@ fn translate_with(code: &[u8], pixel: bool, ps: Option<&[u8]>, sprite: Option<f3
 }
 
 /// An integer target's output (crate::logic): saturated (`Plain`), the op's result over the
-/// target's copy at the pixel (the sample, multisampled: `Direct`), or the source's bits into
-/// the stash and the mark (`Stash`). The pixel's position and sample index are the entry
-/// point's own parameters when the shader reads them already.
-fn logic_output(l: &crate::logic::Logic, r: u32, k: K, params: &mut Vec<String>, post: &mut Vec<String>, m: &mut String, bindings: &mut Vec<(u32, Binding)>) {
+/// target's copy at the pixel (the sample, multisampled: `Direct`), the source's bits into
+/// the stash and the mark (`Stash`), or an SNORM target's bytes, blended over its copy or not
+/// (`Snorm`, crate::snorm; `src1` the second source, a vec4<f32>). The pixel's position and
+/// sample index are the entry point's own parameters when the shader reads them already.
+#[allow(clippy::too_many_arguments)]
+fn logic_output(l: &crate::logic::Logic, r: u32, k: K, src1: &str, params: &mut Vec<String>, post: &mut Vec<String>, m: &mut String, bindings: &mut Vec<(u32, Binding)>) {
     use crate::logic::Store;
     let o = if k == K::U { format!("o{r}") } else { format!("bitcast<vec4<u32>>(o{r})") };
     let max = l.max_wgsl();
@@ -2985,6 +3049,43 @@ fn logic_output(l: &crate::logic::Logic, r: u32, k: K, params: &mut Vec<String>,
                 post.push(format!("out.c{r} = ({o} & {max}){flag};"));
             }
         }
+        // (the sources by the pixel to the target's buffer; at the mark's location the mark, at
+        // another nothing: the pipeline writes no channel of it)
+        Store::SnormStash { mark, .. } => {
+            let b = crate::logic::SNORM_SRC.saturating_add(r);
+            m.push_str(&format!("@group(1) @binding({b}) var<storage, read_write> sn_src{r}: array<u32>;\n"));
+            bindings.push((b, Binding::StorageBuffer(true)));
+            let found = params.iter().find(|p| p.contains("@builtin(position)")).and_then(|p| p.split_whitespace().nth(1)).map(|n| n.trim_end_matches(':').to_owned());
+            let pos = found.unwrap_or_else(|| {
+                params.push("@builtin(position) lg_pos: vec4<f32>".to_owned());
+                "lg_pos".to_owned()
+            });
+            let s1 = format!("bitcast<vec4<u32>>({src1})");
+            post.push(format!("let sn_i{r} = 4u + (u32({pos}.y) * sn_src{r}[0] + u32({pos}.x)) * 8u;"));
+            post.push(format!(
+                "if (sn_i{r} + 7u < arrayLength(&sn_src{r})) {{ let a = {o}; let b = {s1}; sn_src{r}[sn_i{r}] = a.x; sn_src{r}[sn_i{r} + 1u] = a.y; sn_src{r}[sn_i{r} + 2u] = a.z; sn_src{r}[sn_i{r} + 3u] = a.w; sn_src{r}[sn_i{r} + 4u] = b.x; sn_src{r}[sn_i{r} + 5u] = b.y; sn_src{r}[sn_i{r} + 6u] = b.z; sn_src{r}[sn_i{r} + 7u] = b.w; }}"
+            ));
+            post.push(if mark == crate::logic::Mark::Slot(r) { format!("out.c{r} = vec4<u32>(1u);") } else { format!("out.c{r} = vec4<i32>();") });
+        }
+        Store::Snorm(blend) => {
+            snorm_helpers(m);
+            let src = format!("bitcast<vec4<f32>>({o})");
+            match blend {
+                None => post.push(format!("out.c{r} = sn_store({src});")),
+                Some(b) => {
+                    if b.reads_constant() && !bindings.iter().any(|(_, x)| *x == Binding::BlendConstant) {
+                        m.push_str(&format!("@group(1) @binding({}) var<uniform> sn_kv: vec4<f32>;\n", crate::snorm::SNORM_CONSTANT));
+                        bindings.push((crate::snorm::SNORM_CONSTANT, Binding::BlendConstant));
+                    }
+                    let dst = if b.reads_dst() { target_copy(l, r, params, m, bindings) } else { "vec4<i32>()".to_owned() };
+                    // (sn_k: the constant clamped to the format's range as WARP takes it (winref
+                    // d3d11snorm: 1.5 blends as 1); unbound when the blend reads none: 0)
+                    let k = if b.reads_constant() { "let sn_k = sn_clamp(sn_kv);" } else { "let sn_k = vec4<f32>();" };
+                    let body = crate::snorm::blend_wgsl(&b, &src, src1, &dst, &format!("out.c{r}"));
+                    post.push(format!("{{ {k} {} }}", body.join(" ")));
+                }
+            }
+        }
         // (an op of the source alone (CLEAR SET COPY COPY_INVERTED): no copy read, no sample
         // index (which would make the shader run per sample))
         Store::Direct(op) if !op.reads_dst() => {
@@ -2993,28 +3094,41 @@ fn logic_output(l: &crate::logic::Logic, r: u32, k: K, params: &mut Vec<String>,
             post.push(format!("out.c{r} = {};", l.bits_out_wgsl(&format!("({v}) & {max}"))));
         }
         Store::Direct(op) => {
-            let b = crate::logic::LOGIC_DST.saturating_add(r);
-            let sk = l.scalar();
-            let ty = if l.multisampled { format!("texture_multisampled_2d<{sk}>") } else { format!("texture_2d<{sk}>") };
-            m.push_str(&format!("@group(1) @binding({b}) var lgd{r}: {ty};\n"));
-            bindings.push((b, Binding::LogicDst { multisampled: l.multisampled, sign: l.sign }));
-            let builtin = |params: &mut Vec<String>, what: &str, name: &str, ty: &str| -> String {
-                let found = params.iter().find(|p| p.contains(&format!("@builtin({what})"))).and_then(|p| p.split_whitespace().nth(1)).map(|n| n.trim_end_matches(':').to_owned());
-                found.unwrap_or_else(|| {
-                    params.push(format!("@builtin({what}) {name}: {ty}"));
-                    name.to_owned()
-                })
-            };
-            let pos = builtin(params, "position", "lg_pos", "vec4<f32>");
-            let index = if l.multisampled { builtin(params, "sample_index", "lg_si", "u32") } else { "0".to_owned() };
+            let load = target_copy(l, r, params, m, bindings);
             post.push(format!("let lg_s{r} = {o} & {max};"));
-            let zero = format!("vec4<{sk}>()");
-            let load = format!("select({zero}, textureLoad(lgd{r}, vec2<i32>({pos}.xy), {index}), all(vec2<u32>({pos}.xy) < textureDimensions(lgd{r})))");
             post.push(format!("let lg_d{r} = {};", l.bits_in_wgsl(&load)));
             let v = op.wgsl(&format!("lg_s{r}"), &format!("lg_d{r}"));
             post.push(format!("out.c{r} = {};", l.bits_out_wgsl(&format!("({v}) & {max}"))));
         }
     }
+}
+
+/// crate::snorm's WGSL helpers in the module, once.
+fn snorm_helpers(m: &mut String) {
+    if !m.contains("fn sn_store(") {
+        m.push_str(&crate::snorm::helpers());
+    }
+}
+
+/// The WGSL expression of target `r`'s copy at the pixel (its sample, multisampled), the copy
+/// declared at LOGIC_DST + r (the attachment's type: vec4<u32> or vec4<i32>).
+fn target_copy(l: &crate::logic::Logic, r: u32, params: &mut Vec<String>, m: &mut String, bindings: &mut Vec<(u32, Binding)>) -> String {
+    let b = crate::logic::LOGIC_DST.saturating_add(r);
+    let sk = l.scalar();
+    let ty = if l.multisampled { format!("texture_multisampled_2d<{sk}>") } else { format!("texture_2d<{sk}>") };
+    m.push_str(&format!("@group(1) @binding({b}) var lgd{r}: {ty};\n"));
+    bindings.push((b, Binding::LogicDst { multisampled: l.multisampled, sign: l.sign }));
+    let builtin = |params: &mut Vec<String>, what: &str, name: &str, ty: &str| -> String {
+        let found = params.iter().find(|p| p.contains(&format!("@builtin({what})"))).and_then(|p| p.split_whitespace().nth(1)).map(|n| n.trim_end_matches(':').to_owned());
+        found.unwrap_or_else(|| {
+            params.push(format!("@builtin({what}) {name}: {ty}"));
+            name.to_owned()
+        })
+    };
+    let pos = builtin(params, "position", "lg_pos", "vec4<f32>");
+    let index = if l.multisampled { builtin(params, "sample_index", "lg_si", "u32") } else { "0".to_owned() };
+    let zero = format!("vec4<{sk}>()");
+    format!("select({zero}, textureLoad(lgd{r}, vec2<i32>({pos}.xy), {index}), all(vec2<u32>({pos}.xy) < textureDimensions(lgd{r})))")
 }
 
 pub mod expand;

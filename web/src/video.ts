@@ -6,6 +6,7 @@
 
 import { watchDoorbell } from "./doorbell";
 import { memGate, type Gate } from "./memgate";
+import { Lifetime } from "./session";
 
 export interface VideoWasm {
   wasmMemory: WebAssembly.Memory;
@@ -75,7 +76,8 @@ export class Video {
   }
 
   /** wakes at once when the guest asks for a frame (Atomics.waitAsync on the doorbell) */
-  private stopped = false;
+  /** the process's: over once it ended (stop) */
+  private readonly life = new Lifetime();
 
   private watch(): Promise<void> {
     return watchDoorbell(
@@ -83,20 +85,21 @@ export class Video {
       this.doorbell,
       () => this.tick(),
       this.note,
-      () => this.stopped,
+      () => this.life.over,
       "video",
     );
   }
 
   /** The process ended (play.ts): no more looks, and the decoders and frames closed. */
   stop(): void {
-    this.stopped = true;
+    this.life.end();
     for (const s of this.streams.values()) this.close(s);
     this.streams.clear();
   }
 
   /** Called every frame (and on each request): new and closed streams, decoding ahead. */
   tick(): void {
+    if (this.life.over) return;
     // (a save state is being taken: the memory stays as it is; the next tick looks again)
     if (this.gate.closed) return;
     const n = this.wasm._vnhost_video_list(this.io, 16);
@@ -187,9 +190,13 @@ export class Video {
         codedHeight: s.h,
         optimizeForLatency: true,
       };
-      if (!(await VideoDecoder.isConfigSupported(config)).supported) {
+      const supported = (await VideoDecoder.isConfigSupported(config)).supported;
+      // (the process ended, or the guest closed this stream, while the browser answered: no
+      // decoder for it, and nothing said to the guest; review 22bb061 §5)
+      if (!this.current(s)) return;
+      if (!supported) {
         this.note(`video ${s.id}: ${t.codec} not supported`);
-        this.gate.run(() => this.fail(s));
+        this.gate.run(() => this.current(s) && this.fail(s));
         return;
       }
       t.config = config;
@@ -198,7 +205,13 @@ export class Video {
       this.note(`video ${s.id}: ${t.codec} ${s.w}x${s.h}`);
     }
     void ptr;
-    this.gate.run(() => s.want >= 0 && this.serve(s, s.want), s.held.serve);
+    this.gate.run(() => this.current(s) && s.want >= 0 && this.serve(s, s.want), s.held.serve);
+  }
+
+  /** `s` is still a stream of this live process (not closed by the guest, not a stream before
+   * the same id's). */
+  private current(s: Stream): boolean {
+    return !this.life.over && this.streams.get(s.id) === s;
   }
 
   private decoder(s: Stream, t: Track): VideoDecoder {
@@ -321,6 +334,10 @@ export class Video {
     how: { fmt: number; opts: VideoFrameCopyToOptions; need: number }[],
     buf: number,
   ): Promise<void> {
+    // The slot at `buf` is lent by vnhost_video_begin until vnhost_video_ready gives it back:
+    // given back here on every way out (copied, failed, or the stream closed or broken while
+    // the copy ran: its result then not taken, ok 0). A close with no answer kept the slot
+    // "writing" in kura for good, and the stream and its buffers with it (review of 6852be1).
     const layout = new Uint32Array(14);
     let ok = 1;
     try {
@@ -341,25 +358,23 @@ export class Video {
       this.note(`video ${s.id}: copy of frame ${n}: ${String(e)}`);
       ok = 0;
     }
-    // (the guest closed the stream while the copy ran: not told of a frame of a stream gone)
-    if (this.streams.get(s.id) !== s || s.broken) {
+    // (the guest closed the stream while the copy ran: the frame is not taken, the slot goes back)
+    const current = this.streams.get(s.id) === s && !s.broken;
+    try {
+      new Uint32Array(this.wasm.wasmMemory.buffer, this.layoutBuf, 14).set(
+        current ? layout : new Uint32Array(14),
+      );
+      this.wasm._vnhost_video_ready(s.id, buf, this.layoutBuf, current ? ok : 0);
+    } finally {
       s.copying.delete(n);
       for (const [t, f] of fs.entries()) {
         f.close();
         s.tracks[t]?.out.delete(n);
       }
-      return;
-    }
-    new Uint32Array(this.wasm.wasmMemory.buffer, this.layoutBuf, 14).set(layout);
-    this.wasm._vnhost_video_ready(s.id, buf, this.layoutBuf, ok);
-    s.copying.delete(n);
-    for (const [t, f] of fs.entries()) {
-      f.close();
-      s.tracks[t]!.out.delete(n);
     }
     // more to decode and copy (the guest took the slot it waited for); after the state when one
     // is waiting for this copy
-    if (this.streams.has(s.id)) this.gate.run(() => this.serve(s, s.want), s.held.serve);
+    if (current && this.streams.has(s.id)) this.gate.run(() => this.serve(s, s.want), s.held.serve);
   }
 
   /** The guest stops waiting for this stream's frames (it keeps its old pixels). */

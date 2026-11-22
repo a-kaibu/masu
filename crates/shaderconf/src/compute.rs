@@ -197,7 +197,115 @@ pub fn cases() -> Result<String, String> {
     out.extend(buffer_cases()?);
     out.extend(ps_cases());
     out.extend(setup_cases()?);
+    out.push(div_case());
+    out.push(lerp_case());
     Ok(format!("[\n{}\n]\n", out.join(",\n")))
+}
+
+/// ps_div (WGSL) against IEEE 754's f32 division (Rust's `/`): random bit patterns, quotients
+/// near every rounding boundary, subnormals in and out, overflow, zeros, infinities, NaN (every
+/// NaN compared as the one quiet NaN: its payload is the implementation's).
+fn div_case() -> String {
+    use dxwgsl::expand::ps;
+    const N: u32 = 1 << 16;
+    let mut rng = Rng(0x1234_5679);
+    let specials = [0u32, 0x8000_0000, 1, 0x8000_0001, 0x007f_ffff, 0x0080_0000, 0x7f7f_ffff, 0x7f80_0000, 0xff80_0000, 0x7fc0_0000, 0x3f80_0000, 0xbf80_0000, 0x3f7f_ffff, 0x0040_0000];
+    let mut ins = Vec::new();
+    for i in 0..N {
+        let pick = |rng: &mut Rng| -> u32 {
+            match rng.next() % 8 {
+                0 => specials.get(kome::num::to_usize(rng.next() % 14)).copied().unwrap_or(0),
+                // (small exponents: subnormal quotients and inputs)
+                1 => rng.next() & 0x81ff_ffff,
+                // (large ones: overflow)
+                2 => rng.next() | 0x7e00_0000,
+                // (short mantissas: exact quotients and ties' neighbours)
+                3 => (rng.next() & 0xfff8_0000) | 0x3f00_0000,
+                _ => rng.next(),
+            }
+        };
+        let (a, b) = (pick(&mut rng), pick(&mut rng));
+        // (every 16th: a = q * b for a random q, the quotient next to a representable one)
+        let a = if i % 16 == 0 { (f32::from_bits(rng.next() & 0x3fff_ffff | 0x3f00_0000) * f32::from_bits(b)).to_bits() } else { a };
+        ins.extend([a, b]);
+    }
+    let canon = |v: u32| if v & 0x7f80_0000 == 0x7f80_0000 && v & 0x007f_ffff != 0 { 0x7fc0_0000 } else { v };
+    let want: Vec<u32> = ins.as_chunks::<2>().0.iter().map(|&[a, b]| canon((f32::from_bits(a) / f32::from_bits(b)).to_bits())).collect();
+    let mut m = String::new();
+    m.push_str(ps::DIV);
+    m.push_str(&format!(
+        "@group(0) @binding(1) var<storage, read_write> ins: array<u32>;\n@group(0) @binding(2) var<storage, read_write> outs: array<u32>;\n\
+         @compute @workgroup_size(64) fn main(@builtin(global_invocation_id) g: vec3<u32>) {{\n  let i = g.y * 65535u * 64u + g.x;\n  if (i >= {N}u) {{ return; }}\n\
+           var v = bitcast<u32>(ps_div(bitcast<f32>(ins[i * 2u]), bitcast<f32>(ins[i * 2u + 1u])));\n\
+           if ((v & 0x7f800000u) == 0x7f800000u && (v & 0x7fffffu) != 0u) {{ v = 0x7fc00000u; }}\n  outs[i] = v;\n}}\n"
+    ));
+    let b = [format!(r#"{{"binding":1,"buffer":{{"words":[{}]}}}}"#, list(&ins)), format!(r#"{{"binding":2,"buffer":{{"words":[{}]}}}}"#, list(&vec![0u32; kome::num::to_usize(N)]))];
+    format!(
+        r#"{{"name":"ps_div (WGSL) = IEEE 754 f32 division","dispatch":[{},1,1],"out":[2],"want":[{}],"variants":[{{"name":"masu","wgsl":{}}}],"bindings":[{}]}}"#,
+        N.div_ceil(64),
+        list(&words_bytes(&want)),
+        string(&m),
+        b.join(",")
+    )
+}
+
+/// The clipper's lerp2 (WGSL: WARP's double, emulated in integers) against ps::lerp (Rust, f64)
+/// over random, special and cancelling operands, NaNs' bits as the processor's.
+fn lerp_case() -> String {
+    use dxwgsl::expand::{ps, xd, B_XD, XD_VECS};
+    const N: u32 = 1 << 16;
+    let mut rng = Rng(0x2545_f491);
+    let specials = [0u32, 0x8000_0000, 1, 0x8000_0001, 0x007f_ffff, 0x0080_0000, 0x7f7f_ffff, 0x7f80_0000, 0xff80_0000, 0x7fc0_0000, 0xffc1_2345, 0x3f80_0000, 0xbf80_0000, 0x3f7f_ffff, 0x0040_0000, 0x7fa0_0001];
+    let mut ins = Vec::new();
+    for i in 0..N {
+        let pick = |rng: &mut Rng| -> u32 {
+            match rng.next() % 8 {
+                0 => specials.get(kome::num::to_usize(rng.next() % 16)).copied().unwrap_or(0),
+                1 => rng.next() & 0x81ff_ffff,
+                2 => rng.next() | 0x7e00_0000,
+                3 => (rng.next() & 0xfff8_0000) | 0x3f00_0000,
+                4 => (rng.next() & 0x80ff_ffff) | 0x3e00_0000,
+                _ => rng.next(),
+            }
+        };
+        let (a, b, d, n) = (pick(&mut rng), pick(&mut rng), pick(&mut rng), pick(&mut rng));
+        // (every 8th: a near the quotient's negative, the sum cancelling)
+        let a = if i % 8 == 1 {
+            let (fa, fb, fd, fn_) = (f32::from_bits(a), f32::from_bits(b), f32::from_bits(d), f32::from_bits(n));
+            let q = kome::num::to_f32(f64::from(fb - fa) * f64::from(fd) / f64::from(fn_));
+            (-q).to_bits() ^ (rng.next() & 3)
+        } else {
+            a
+        };
+        ins.extend([a, b, d, n]);
+    }
+    let want: Vec<u32> = ins.as_chunks::<4>().0.iter().map(|&[a, b, d, n]| ps::lerp(f32::from_bits(a), f32::from_bits(b), f32::from_bits(d), f32::from_bits(n)).to_bits()).collect();
+    let mut m = String::new();
+    m.push_str(&format!("@group(0) @binding({B_XD}) var<uniform> xd: array<vec4<u32>, {XD_VECS}>;\n"));
+    m.push_str("fn xw(i: u32) -> u32 { return xd[i / 4u][i % 4u]; }\n");
+    for (name, w) in xd::NAMED {
+        m.push_str(&format!("const XD_{name} = {w}u;\n"));
+    }
+    m.push_str(ps::WGSL);
+    m.push_str(ps::DIV);
+    m.push_str(&format!(
+        "@group(0) @binding(1) var<storage, read_write> ins: array<vec4<u32>>;\n@group(0) @binding(2) var<storage, read_write> outs: array<u32>;\n\
+         @compute @workgroup_size(64) fn main(@builtin(global_invocation_id) g: vec3<u32>) {{\n{}  let i = g.x;\n  if (i >= {N}u) {{ return; }}\n\
+           let v = bitcast<vec4<f32>>(ins[i]);\n  outs[i] = bitcast<u32>(lerp2(v.x, v.y, v.z, v.w));\n}}\n",
+        ps::ENTRY
+    ));
+    let b = [
+        format!(r#"{{"binding":{B_XD},"uniform":[{}]}}"#, list(&vec![0u32; kome::num::to_usize(XD_VECS).saturating_mul(4)])),
+        format!(r#"{{"binding":1,"buffer":{{"words":[{}]}}}}"#, list(&ins)),
+        format!(r#"{{"binding":2,"buffer":{{"words":[{}]}}}}"#, list(&vec![0u32; kome::num::to_usize(N)])),
+    ];
+    format!(
+        r#"{{"name":"lerp2 (WGSL) = ps::lerp (Rust, f64)","dispatch":[{},1,1],"out":[2],"want":[{}],"variants":[{{"name":"masu","wgsl":{}}}],"bindings":[{}]}}"#,
+        N.div_ceil(64),
+        list(&words_bytes(&want)),
+        string(&m),
+        b.join(",")
+    )
 }
 
 /// Words a buffer starts with where a shader leaves it alone.
@@ -427,11 +535,13 @@ fn ps_cases() -> Vec<String> {
             m.push_str(&format!("const XD_{name} = {w}u;\n"));
         }
         m.push_str(ps::WGSL);
+        m.push_str(ps::DIV);
         m.push_str(&format!(
             "@group(0) @binding(1) var<storage, read_write> prims: array<vec4<u32>>;\n@group(0) @binding(2) var<storage, read_write> pairs: array<u32>;\n\
-             @compute @workgroup_size(64) fn main(@builtin(global_invocation_id) g: vec3<u32>) {{\n  let i = g.x;\n  if (i >= {N}u) {{ return; }}\n\
+             @compute @workgroup_size(64) fn main(@builtin(global_invocation_id) g: vec3<u32>) {{\n{}  let i = g.x;\n  if (i >= {N}u) {{ return; }}\n\
                let p = array<vec4<f32>, 3>(bitcast<vec4<f32>>(prims[i * 4u]), bitcast<vec4<f32>>(prims[i * 4u + 1u]), bitcast<vec4<f32>>(prims[i * 4u + 2u]));\n\
-               pairs[i] = ps_pairs(p, prims[i * 4u + 3u].x) * 2u;\n}}\n"
+               pairs[i] = ps_pairs(p, prims[i * 4u + 3u].x) * 2u;\n}}\n",
+            ps::ENTRY
         ));
         let b = [
             format!(r#"{{"binding":{B_XD},"uniform":[{}]}}"#, list(&xw)),
@@ -463,13 +573,10 @@ fn setup_cases() -> Result<Vec<String>, String> {
     let psc = hlslc::compile(src, &[], &mut |_, _| None, "ps", "ps_5_0", 0).map_err(|e| format!("setup ps: {e}"))?;
     let osgn = dxwgsl::signature(&vs, true);
     let regs = dxwgsl::expand::store_regs(&osgn, 0);
-    let store = Store::Vertex { regs, corners: 3 };
     let layout = setup::Layout::of(&psc)?;
-    let wgsl = setup::setup_pass(&store, &osgn, Some(&psc))?;
     let stride = layout.stride();
     let reg_of = |name: &str| osgn.iter().find(|e| e.name.eq_ignore_ascii_case(name)).map_or(0, |e| e.reg);
     let (rp, rc) = (reg_of("SV_Position"), reg_of("SV_ClipDistance"));
-    let slots = setup::slots(1);
     let modes: Vec<setup::Mode> = layout.inputs.iter().map(|i| i.mode).collect();
     let states: [([f32; 6], ps::Cull, bool, bool); 4] = [
         ([0.0, 0.0, 64.0, 64.0, 0.0, 1.0], ps::Cull::None, false, true),
@@ -479,6 +586,11 @@ fn setup_cases() -> Result<Vec<String>, String> {
     ];
     const N: u32 = 512;
     let mut out = Vec::new();
+    for prim in [setup::Prim::Triangle, setup::Prim::Wire, setup::Prim::Line, setup::Prim::Point] {
+    let corners_of = prim.corners();
+    let store = Store::Vertex { regs, corners: corners_of };
+    let wgsl = setup::setup_pass(&store, &osgn, Some(&psc), prim)?;
+    let slots = prim.slots(1);
     for (k, &(vp, cull, ccw, dc)) in states.iter().enumerate() {
         let r = setup::Raster { viewport: vp, cull, front_ccw: ccw, depth_clip: dc };
         let mut xw = vec![0u32; kome::num::to_usize(XD_VECS).saturating_mul(4)];
@@ -495,12 +607,12 @@ fn setup_cases() -> Result<Vec<String>, String> {
         put(xd::RASTER, cull.word() | u32::from(ccw) << 2 | u32::from(dc) << 3 | 1 << 4);
         put(xd::ITEMS, N);
         let mut rng = Rng(0x2545_f491 ^ kome::num::u32_of(k).wrapping_mul(0x9e37_79b9) | 1);
-        let mut vout = vec![0u32; kome::num::to_usize(N.saturating_mul(3).saturating_mul(regs).saturating_mul(4))];
+        let mut vout = vec![0u32; kome::num::to_usize(N.saturating_mul(corners_of).saturating_mul(regs).saturating_mul(4))];
         let mut want = vec![0u32; kome::num::to_usize(N.saturating_mul(slots).saturating_mul(stride).saturating_mul(4))];
         for t in 0..N {
-            let mut corners: [setup::Corner; 3] = Default::default();
+            let mut corners: Vec<setup::Corner> = vec![setup::Corner::default(); kome::num::to_usize(corners_of)];
             for (c, corner) in corners.iter_mut().enumerate() {
-                let e = t.saturating_mul(3).saturating_add(kome::num::u32_of(c));
+                let e = t.saturating_mul(corners_of).saturating_add(kome::num::u32_of(c));
                 let mut pos = rng.pos();
                 // (a third of the triangles well inside: what most draws are)
                 if t % 3 == 0 {
@@ -540,29 +652,72 @@ fn setup_cases() -> Result<Vec<String>, String> {
                     d.copy_from_slice(&words);
                 }
             }
-            for (f, fan) in (0u32..).zip(setup::triangle(&corners, &modes, &r)) {
+            // the slots the model gives the primitive: (corners drawn, rhw and depth planes with
+            // their w, the line's words, the inputs' planes)
+            type Slot = ([[f32; 4]; 3], setup::Plane, u32, setup::Plane, u32, [f32; 4], Vec<setup::Plane>);
+            let of_line = |l: &setup::Line| -> Slot { (setup::line_region(l, &r), l.rhw, l.hi_col.to_bits(), l.z, l.hi_row.to_bits(), [l.x0, l.y0, l.dx, l.dy], l.attrs.clone()) };
+            let tri = |c: &[setup::Corner]| -> [setup::Corner; 3] { [c[0].clone(), c[1].clone(), c[2].clone()] };
+            let mut made: Vec<(u32, Slot)> = Vec::new();
+            match prim {
+                setup::Prim::Triangle => {
+                    for (f, fan) in (0u32..).zip(setup::triangle(&tri(&corners), &modes, &r)) {
+                        made.push((f, (fan.pos, fan.rhw, 0, fan.z, 0, [0.0; 4], fan.attrs)));
+                    }
+                }
+                setup::Prim::Wire => {
+                    if !setup::triangle(&tri(&corners), &modes, &r).is_empty() {
+                        for (f, (a, b)) in (0u32..).zip([(0, 1), (1, 2), (2, 0)]) {
+                            if let Some(l) = setup::line(&[corners[a].clone(), corners[b].clone()], &modes, &r) {
+                                made.push((f, of_line(&l)));
+                            }
+                        }
+                    }
+                }
+                setup::Prim::Line => {
+                    if let Some(l) = setup::line(&[corners[0].clone(), corners[1].clone()], &modes, &r) {
+                        made.push((0, of_line(&l)));
+                    }
+                }
+                setup::Prim::Point => {
+                    if let Some(d) = setup::point(&corners[0], &modes, &r) {
+                        let flat = |v: f32| setup::Plane { gx: 0.0, gy: 0.0, c: v };
+                        let attrs: Vec<setup::Plane> = (0..d.attrs.len()).map(|k| match modes.get(k / 4) {
+                            Some(setup::Mode::Constant) => setup::Plane { gx: 0.0, gy: 0.0, c: f32::from_bits(corners[0].attrs.get(k).copied().unwrap_or(0)) },
+                            _ => flat(d.attrs.get(k).copied().unwrap_or(0.0)),
+                        }).collect();
+                        for (f, sq) in (0u32..).zip(setup::dot_squares(&d, &r)) {
+                            made.push((f, (sq, flat(d.rhw), 0, flat(d.z), 0, [0.0; 4], attrs.clone())));
+                        }
+                    }
+                }
+            }
+            for (f, (pos, rhw, rw, z, zw, lw, attrs)) in made {
                 let base = kome::num::to_usize(t.saturating_mul(slots).saturating_add(f).saturating_mul(stride).saturating_mul(4));
                 let mut put = |vec: u32, comp: u32, v: u32| {
                     if let Some(w) = want.get_mut(base.saturating_add(kome::num::to_usize(vec.saturating_mul(4).saturating_add(comp)))) {
                         *w = v;
                     }
                 };
-                for (c, p) in (0u32..).zip(fan.pos) {
+                for (c, p) in (0u32..).zip(pos) {
                     for (q, v) in (0u32..).zip(p) {
                         put(c, q, v.to_bits());
                     }
                 }
-                for (vec, pl) in [(3u32, fan.rhw), (4, fan.z)] {
+                for (vec, pl, w) in [(3u32, rhw, rw), (4, z, zw)] {
                     put(vec, 0, pl.gx.to_bits());
                     put(vec, 1, pl.gy.to_bits());
                     put(vec, 2, pl.c.to_bits());
+                    put(vec, 3, w);
+                }
+                for (q, v) in (0u32..).zip(lw) {
+                    put(5, q, v.to_bits());
                 }
                 for (i, inp) in (0u32..).zip(&layout.inputs) {
                     for comp in 0..4u32 {
                         if inp.mask >> comp & 1 == 0 {
                             continue;
                         }
-                        let pl = fan.attrs.get(kome::num::to_usize(i.saturating_mul(4).saturating_add(comp))).copied().unwrap_or_default();
+                        let pl = attrs.get(kome::num::to_usize(i.saturating_mul(4).saturating_add(comp))).copied().unwrap_or_default();
                         let o = setup::HEADER.saturating_add(i.saturating_mul(3));
                         put(o, comp, pl.gx.to_bits());
                         put(o.saturating_add(1), comp, pl.gy.to_bits());
@@ -571,7 +726,7 @@ fn setup_cases() -> Result<Vec<String>, String> {
                 }
             }
         }
-        let prims: Vec<u32> = (0..N.saturating_mul(3)).collect();
+        let prims: Vec<u32> = (0..N.saturating_mul(corners_of)).collect();
         let b = [
             format!(r#"{{"binding":{B_XD},"uniform":[{}]}}"#, list(&xw)),
             format!(r#"{{"binding":{B_VOUT},"buffer":{{"words":[{}]}}}}"#, list(&vout)),
@@ -580,13 +735,14 @@ fn setup_cases() -> Result<Vec<String>, String> {
         ];
         out.push(format!(
             r#"{{"name":{},"dispatch":[{},1,1],"out":[{}],"want":[{}],"variants":[{{"name":"masu","wgsl":{}}}],"bindings":[{}]}}"#,
-            string(&format!("setup pass (WGSL) = setup::triangle (Rust), state {k}")),
+            string(&format!("setup pass (WGSL) = the setup model (Rust), {prim:?}, state {k}")),
             N.div_ceil(64),
             setup::B_SETUP,
             list(&words_bytes(&want)),
             string(&wgsl.code),
             b.join(",")
         ));
+    }
     }
     Ok(out)
 }

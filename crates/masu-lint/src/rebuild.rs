@@ -76,20 +76,28 @@ pub(super) fn needles(tree: &Tree, want: &[Needle], not: &[Needle]) -> Hits {
 // --- run-plan --------------------------------------------------------------------------------
 
 /// The runners write their plan before running, compare.py and run.py fail on a plan problem.
-pub const RUN_PLAN: [Needle; 7] = [
+pub const RUN_PLAN: [Needle; 13] = [
     ("tests/winref/run.sh", "> \"$OUT/.plan/$runner\"", "run.sh writes no plan: a run that ran nothing compares 0 probes and passes"),
     ("tests/winref/run-browser.mjs", "writeFileSync(join(outDir, \".plan\", runner)", "run-browser.mjs writes no plan: a lost shard passes"),
     ("tests/winref/compare.py", "sys.exit(1 if failed or plan_errors else 0)", "compare.py does not fail on a plan problem (0 compared, a planned probe without a result, a lost shard)"),
     ("tests/winref/compare.py", "plan.problems(plans, required, got)", "compare.py does not check the run's plan"),
     ("tests/winetest/run.py", "all_jobs, unplanned = plan(", "run.py does not plan its tests before sharding: a missing test program passes with 0 run"),
     ("tests/winetest/run.py", "if unplanned:", "run.py does not fail on what it could not plan"),
+    ("tests/winetest/run.py", "all_jobs, not_adopted, missing = adopt(all_jobs, read_tsv(win_path))", "rostests run on sake without Windows' answers: a ReactOS expectation Windows itself fails would be held against sake"),
+    ("tests/winetest/run.py", "unplanned += missing", "a rostests test Windows was never asked about runs on sake as if Windows passed it"),
+    ("tests/winetest/run.py", "if not os.path.isfile(win_path):\n            raise FileNotFoundError(win_path)", "rostests without tests/rostests/windows-<arch>.tsv pass with no Windows answer to hold sake to"),
+    ("tests/winetest/run.py", "results[k], judged[k] = combine(rs)", "--repeat records a test by one of its runs, not by its worst and judged by its best: a test Windows passes only sometimes is adopted, or one bad Windows run fails CI"),
+    (".github/workflows/conformance.yml", "run.py --suite rostests --native --repeat 3", "Windows runs each ReactOS test once in CI: a test Windows passes only sometimes (RegEnumKey, EmptyClipboard) turns windows-<arch>.tsv into a coin toss"),
+    (".github/workflows/conformance.yml", "run.py --suite rostests --native", "Windows no longer runs ReactOS's tests in CI: tests/rostests/windows-<arch>.tsv is never checked against Windows"),
     (".github/workflows/winref.yml", "--require-plan browser-0of4", "the final winref comparison does not require each browser shard's plan: a lost shard passes"),
 ];
 
 /// The two spellings that made a run without results pass.
-pub const RUN_PLAN_NOT: [Needle; 2] = [
+pub const RUN_PLAN_NOT: [Needle; 4] = [
     ("tests/winref/compare.py", "continue  # (not run: a filtered run.sh)", "a probe without a result skipped as if filtered out: an empty result directory passed"),
     ("tests/winetest/run.py", "print(f\"missing {exe}\", file=sys.stderr)\n            continue", "a missing test program printed and skipped: the run passed with nothing run"),
+    ("tests/winetest/run.py", "read_tsv(win_path) if os.path.exists(win_path)", "Windows' answers read only when present: without them every ReactOS test ran on sake unchecked"),
+    ("tests/winetest/run.py", "with open(path, \"w\") as f:", "a result file written in the locale's encoding: on Windows (cp1252) the report stopped at the first test message outside it and the --native run failed after its results"),
 ];
 
 /// The body of `fn name(` in `code` (from its `{` to the matching `}`), None when the file has
@@ -276,16 +284,17 @@ const PE: &str = "crates/sake/src/pe.rs";
 pub const LIFETIMES: [Needle; 6] = [
     (PE, "pub fn init_dlls(cpu: &mut Cpu) -> Result<(), InitFailed> {", "init_dlls does not say that a DllMain answered FALSE"),
     (PE, "return Err(InitFailed(base));", "a DllMain that answered FALSE is passed over"),
-    (PE, "pub fn load_library(cpu: &mut Cpu, name: &str) -> Result<u32, LoadFail> {", "LoadLibrary cannot fail for a DllMain's FALSE"),
+    (PE, "fn init_loaded(cpu: &mut Cpu, b: u32) -> Result<u32, LoadFailure> {", "LoadLibrary cannot fail for a DllMain's FALSE"),
     (PE, "Ok(b) => init_loaded(cpu, b),", "LoadLibrary of a DLL file answers it whatever its DllMain said"),
     (K32, "let last = crate::lives::ends(t.tid);", "a thread's end does not ask whether it was the program's last"),
     ("crates/sake/src/lib.rs", "if let Err(pe::InitFailed(b)) = pe::init_dlls(cpu) {", "the process starts though a DLL it imports answered FALSE"),
 ];
 
 /// The spellings that were the bug.
-pub const LIFETIMES_NOT: [Needle; 2] = [
+pub const LIFETIMES_NOT: [Needle; 3] = [
     (K32, "if t.tid == crate::process::first_tid(crate::pid()) {\n        // the main thread: the process", "the process ends with its first thread, whatever else runs"),
     (PE, "Ok(b) => {\n            init_dlls(cpu);\n            b\n        }", "LoadLibrary answers the DLL whatever its DllMain said"),
+    (PE, "Ok(b) => {\n            init_dlls(cpu);\n            Ok(b)\n        }", "LoadLibrary answers the DLL whatever its DllMain said"),
 ];
 
 pub(super) fn lifetimes(tree: &Tree) -> Hits {

@@ -1443,7 +1443,7 @@ crates/kura/src/jit.rs	masu-from_raw_parts	let idx = unsafe { std::slice::from_r
 crates/kura/src/jit.rs	masu-from_raw_parts	let wasm = unsafe { std::slice::from_raw_parts(wasm, wasm_len) };
 crates/kura/src/jit.rs	masu-leak	LatePart { wasm: Vec::leak(wasm), idx: Vec::leak(idx) }
 crates/kura/src/jit.rs	masu-leak	LatePart { wasm: Vec::leak(wasm), idx: Vec::leak(idx) }
-crates/kura/src/jit.rs	masu-leak	let m: &'static [std::sync::atomic::AtomicU8] = Box::leak((0..1 << 19).map(|_| std::sync::atomic::AtomicU8::new(0)).collect());
+crates/kura/src/jit.rs	masu-leak	STORE.get_or_init(|| Box::leak((0..1 << 19).map(|_| std::sync::atomic::AtomicU8::new(0)).collect()))
 crates/kura/src/jit.rs	missing_safety_doc	pub unsafe extern "C" fn vnhost_jit_callmiss(cpu: u32, slot: u32, target: u32) -> u32 {
 crates/kura/src/jit.rs	missing_safety_doc	pub unsafe extern "C" fn vnhost_jit_eflags(cpu: u32) -> u32 {
 crates/kura/src/jit.rs	missing_safety_doc	pub unsafe extern "C" fn vnhost_jit_step(cpu: u32) -> i32 {

@@ -144,6 +144,10 @@ jobs:
         env:
           PLAYWRIGHT: ${{ runner.temp }}/masu-browser/node_modules/playwright/index.mjs
         run: node tests/idec-browser.mjs
+      - name: Keys typed in the page's own fields and dialogs stay the page's (session.ts inputTarget)
+        env:
+          PLAYWRIGHT: ${{ runner.temp }}/masu-browser/node_modules/playwright/index.mjs
+        run: node tests/input-target-browser.mjs
       - name: Save state slots from two devices at once (content-named files, merged index)
         env:
           PLAYWRIGHT: ${{ runner.temp }}/masu-browser/node_modules/playwright/index.mjs

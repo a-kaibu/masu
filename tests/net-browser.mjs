@@ -5,9 +5,14 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
+import { bridgeScript } from '../host/bridge-source.mjs';
 const pw = await import(process.env.PLAYWRIGHT ?? 'playwright');
 const { chromium } = pw.default ?? pw;
-const source = await readFile(new URL('../host/fetch-bridge.js', import.meta.url), 'utf8');
+// (as sake.js has it: host/net-core.mjs before it)
+const source = bridgeScript(
+  await readFile(new URL('../host/net-core.mjs', import.meta.url), 'utf8'),
+  await readFile(new URL('../host/fetch-bridge.js', import.meta.url), 'utf8'),
+);
 const body = Buffer.from(Array.from({ length: 300000 }, (_, i) => i % 251));
 const hits = new Map();
 const server = createServer((req, res) => {

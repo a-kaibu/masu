@@ -14,6 +14,7 @@ pub mod d3d9;
 pub mod d3d9ff;
 pub mod dxbc;
 pub mod logic;
+pub mod snorm;
 pub mod tpf;
 mod wgsl;
 
@@ -75,6 +76,9 @@ pub enum Binding {
     /// a pixel shader target's copy (crate::logic, LOGIC_DST + its slot): the texel the target
     /// held before the primitive; multisampled or not, its channels' sign
     LogicDst { multisampled: bool, sign: logic::Sign },
+    /// the blend state's constant for SNORM targets' blends (crate::snorm, SNORM_CONSTANT): a
+    /// uniform vec4<f32>
+    BlendConstant,
 }
 
 pub struct Wgsl {
@@ -89,7 +93,7 @@ pub fn translate(code: &[u8], pixel: bool, ps: Option<&[u8]>) -> Result<Wgsl, St
     crate::wgsl::translate(code, pixel, ps)
 }
 
-pub use crate::wgsl::{BUFFER_RANGES, LOAD_TEXTURES, translate_addr, translate_logic, translate_setup, sample_rate, translate_compute, translate_point_sprite, thread_group, uav_slots, GsDecl, Phase, TessDecl, TessFactor, PATCH_CONSTANTS};
+pub use crate::wgsl::{BUFFER_RANGES, LOAD_TEXTURES, translate_addr, translate_logic, translate_setup, translate_views, sample_rate, translate_compute, translate_compute_views, translate_point_sprite, thread_group, uav_slots, GsDecl, Phase, TessDecl, TessFactor, PATCH_CONSTANTS};
 /// Geometry shaders, stream output and clipper counts as compute passes (wgsl/expand.rs).
 pub use crate::wgsl::expand;
 

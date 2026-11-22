@@ -84,6 +84,17 @@ pub const GEN_MIPS_POINT: u32 = 42; // tex
 /// sample is marked where bit `bit` of channel `ch` of its mark texel is 1 (dxwgsl::logic::Mark);
 /// `buffered` 1: `stash` a page buffer of the sources by pixel (dxwgsl::logic::LOGIC_SRC).
 pub const LOGIC_RESOLVE: u32 = 43; // tex copy stash mark mask op bits0 bits1 bits2 bits3 sign ch bit buffered
+/// An SNORM target's blend on a multisampled target under a pixel-rate shader (d3d11/logic.rs,
+/// dxwgsl::logic::Store::SnormStash): each sample of `tex` (the SINT twin, 4 samples) that
+/// `mark` marks (bit `bit` of channel `ch`) gets the blend (the six D3D11 words) of the pixel's
+/// sources in page buffer `src` (dxwgsl::logic::SNORM_SRC's layout) over its bytes in `copy`
+/// (the target before the primitive), with the constant in page buffer `constant` (16 bytes),
+/// under write mask `mask` (dxwgsl::snorm::resolve_wgsl).
+pub const SNORM_RESOLVE: u32 = 44; // tex copy src mark mask src_blend dst_blend op src_alpha dst_alpha op_alpha ch bit constant
+/// ResolveSubresource of a multisampled 8-bit SNORM texture (its SINT twin `src`, 4 samples)
+/// into `dst`, a single-sampled SINT texture of its size: each pixel's samples resolved as
+/// WARP does (dxwgsl::snorm::resolve, ms_resolve_wgsl).
+pub const RESOLVE_SNORM: u32 = 45; // dst src
 
 /// What a QUERY_END ends.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]

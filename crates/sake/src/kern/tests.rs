@@ -927,3 +927,81 @@ proptest! {
         prop_assert_eq!((count(a), count(b)), (model[0], model[1]));
     }
 }
+
+/// One file handle two processes hold (an inherited one): their reads, writes and seeks of the
+/// shared file pointer reach each other through the stored kernel (each process works on its
+/// copy, stored only when the generation moved), and the record goes with its last holder
+#[derive(Clone, Debug)]
+enum FileOp {
+    Move(bool, u64),
+    Hold(bool),
+    Close(bool),
+}
+proptest! {
+    #[test]
+    fn a_shared_file_pointer_reaches_the_other_process(ops in prop::collection::vec(prop_oneof![
+        (any::<bool>(), 0u64..1 << 40).prop_map(|(w, p)| FileOp::Move(w, p)),
+        any::<bool>().prop_map(FileOp::Hold),
+        any::<bool>().prop_map(FileOp::Close),
+    ], 1..40)) {
+        use enc::Enc as _;
+        let (a, b) = (ROOT_PID, ROOT_PID + PID_STEP);
+        let mut k = Kern::default();
+        let id = k.share_file("/x/f.tst", true, 7, a);
+        k.add_file_ref(id, b);
+        let mut shared = Vec::new();
+        k.put(&mut shared);
+        let mut holds = [1u32, 1u32];
+        let mut pos = 7u64;
+        for op in ops {
+            let mut copy = Kern::get(&mut shared.as_slice()).unwrap();
+            let before = copy.generation;
+            match op {
+                FileOp::Move(w, p) => {
+                    let w = usize::from(w);
+                    if holds[w] == 0 { continue; }
+                    copy.set_file_pos(id, p);
+                    if p == pos { prop_assert_eq!(copy.generation, before); } else { prop_assert_ne!(copy.generation, before, "a moved pointer must be stored"); }
+                    pos = p;
+                }
+                FileOp::Hold(w) => {
+                    let w = usize::from(w);
+                    if holds.iter().all(|&h| h == 0) { continue; }
+                    copy.add_file_ref(id, [a, b][w]);
+                    holds[w] += 1;
+                    prop_assert_ne!(copy.generation, before);
+                }
+                FileOp::Close(w) => {
+                    let w = usize::from(w);
+                    if holds[w] == 0 { continue; }
+                    copy.release_file(id, [a, b][w]);
+                    holds[w] -= 1;
+                    prop_assert_ne!(copy.generation, before);
+                }
+            }
+            let mut out = Vec::new();
+            copy.put(&mut out);
+            shared = out;
+            let k = Kern::get(&mut shared.as_slice()).unwrap();
+            if holds.iter().all(|&h| h == 0) {
+                prop_assert!(k.file(id).is_none(), "the last holder's close drops it");
+                break;
+            }
+            let f = k.file(id).unwrap();
+            prop_assert_eq!((f.pos, f.path.as_str(), f.write), (pos, "/x/f.tst", true));
+        }
+    }
+
+    /// a process that ends lets go of every shared file it held
+    #[test]
+    fn an_ended_process_lets_go_of_shared_files(n in 1u32..5) {
+        let (a, b) = (ROOT_PID, ROOT_PID + PID_STEP);
+        let mut k = Kern::default();
+        let id = k.share_file("/x/f.tst", false, 0, a);
+        for _ in 0..n { k.add_file_ref(id, b); }
+        k.release_process(b);
+        prop_assert!(k.file(id).is_some());
+        k.release_process(a);
+        prop_assert!(k.file(id).is_none());
+    }
+}

@@ -1,6 +1,12 @@
 import { expect, test } from "vite-plus/test";
-import source from "../../host/fetch-bridge.js?raw";
+import bridgeJs from "../../host/fetch-bridge.js?raw";
+import core from "../../host/net-core.mjs?raw";
+import { bridgeScript } from "../../host/bridge-source.mjs";
+
 import { chunkFileName, EMPTY_STALE_MS, listChunks, opfsStore } from "./chunkstore";
+
+// (as sake.js has it: host/net-core.mjs before it)
+const source = bridgeScript(core, bridgeJs);
 
 // An OPFS folder as Chromium's behaves for what the stores use: a file exists (empty) from its
 // creation, a writable's bytes land whole at close (abort: none), removeEntry of a file with an

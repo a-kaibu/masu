@@ -18,6 +18,9 @@ pub(super) struct Mem {
 }
 impl Mem {
     pub(super) fn new(max: usize) -> Self { Mem { max, ..Default::default() } }
+    /// Takes no more writes (what it holds stays).
+    #[cfg(test)]
+    pub(super) fn full(&mut self) { self.max = 0; }
 }
 impl Region for Mem {
     fn len(&self) -> usize { self.len }
@@ -73,15 +76,18 @@ impl Sim {
         Sim { m, ps: vec![first, Fs::default(), Fs::default()], root, lower, handles: vec![vec![]; 3] }
     }
 
-    /// Process `p` does `batch` under one publish; Err(what differs) if another process then
-    /// does not have the same namespace; Ok(false) when the publish did not fit the buffer (the
-    /// processes go separate ways from there: nothing more to compare).
+    /// Process `p` does `batch` under one publish as vfs::change does; Err(what differs) if
+    /// another process then does not have the same namespace; Ok(false) when the publish did not
+    /// fit the buffer: then the batch was taken back whole (vfs/undo.rs), the process exactly as
+    /// before it, its handles too, and the processes still agree.
     pub(super) fn step(&mut self, p: usize, batch: &[Op]) -> Result<bool, String> {
         let (root, lower) = (self.root, self.lower);
         let fs = &mut self.ps[p];
         let handles = &mut self.handles[p];
         fs.dirt.on = true;
         fs.sync_in(&self.m).map_err(|e| format!("process {p}: {e:?}"))?;
+        let was = Was::of(fs, handles);
+        fs.undo = Some(super::super::undo::Undo::begin(fs));
         for o in batch {
             match o {
                 Op::Put(n, d) => fs.put_file(&name(*n), d.clone(), *n as i64),
@@ -93,9 +99,19 @@ impl Sim {
                 Op::Mkdir(n) => { fs.mkdir_p(root, &format!("d{}/sub{n}", n % 3)); }
             }
         }
-        if !fs.sync_out(&mut self.m) {
+        if !publish_or_undo(fs, &mut self.m) {
+            let now = Was::of(fs, &was.ids);
+            if now != was { return Err(format!("process {p}: {batch:?} not taken back whole")); }
+            *handles = was.ids;
+            self.agree(p, batch)?;
             return Ok(false);
         }
+        self.agree(p, batch)?;
+        Ok(true)
+    }
+
+    /// Every process, having taken in what is new, has process `p`'s namespace.
+    fn agree(&mut self, p: usize, batch: &[Op]) -> Result<(), String> {
         let want = self.ps[p].shared_snapshot();
         for q in 0..self.ps.len() {
             let fs = &mut self.ps[q];
@@ -106,7 +122,24 @@ impl Sim {
             let empty: Vec<Ino> = (0..fs.nodes.len() as Ino).filter(|&i| fs.nodes[i as usize].is_none()).collect();
             if free != empty { return Err(format!("process {q}: free slots {free:?}, empty {empty:?}")); }
         }
-        Ok(true)
+        Ok(())
+    }
+}
+
+/// A process as an operation found it: its namespace, its handles, its free slots in order.
+#[derive(PartialEq, Debug)]
+struct Was {
+    snapshot: Vec<u8>,
+    ids: Vec<u32>,
+    handles: Vec<(u32, Ino, u64, c_int)>,
+    next_handle: u32,
+    free: Vec<Ino>,
+}
+impl Was {
+    fn of(fs: &Fs, ids: &[u32]) -> Was {
+        let mut handles: Vec<_> = fs.handles.iter().map(|(&id, h)| (id, h.ino, h.pos, h.flags)).collect();
+        handles.sort();
+        Was { snapshot: fs.shared_snapshot(), ids: ids.to_vec(), handles, next_handle: fs.next_handle, free: fs.free.clone() }
     }
 }
 
@@ -140,10 +173,6 @@ pub fn fuzz(data: &[u8]) {
             });
             k = b[2];
         }
-        match sim.step(p, &batch) {
-            Ok(true) => {}
-            Ok(false) => return,
-            Err(e) => panic!("{e}"),
-        }
+        if let Err(e) = sim.step(p, &batch) { panic!("{e}"); }
     }
 }

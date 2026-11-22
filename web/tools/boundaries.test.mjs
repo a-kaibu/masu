@@ -1,6 +1,6 @@
 import ts from "typescript";
 import { expect, test } from "vitest";
-import { check } from "./boundaries.mjs";
+import { check, checkNetCore } from "./boundaries.mjs";
 
 test("save metadata writes and unchecked runtime bytes stay with their callers", () => {
   const files = {
@@ -134,4 +134,182 @@ test("the runtime's files are named in runtime.ts alone", () => {
     "/src/offline.ts:1: snapz.mjs is named by runtime.ts only (its manifest)",
     "/src/savestate.ts:1: jit-version.txt is named by runtime.ts only (its manifest)",
   ]);
+});
+
+test("SaveTransport.load does not keep a revision", () => {
+  const files = {
+    "/src/save-transport.ts": `
+      export class SaveTransport {
+        private revisions = new Map<string, string>();
+        async load(url: string) { const r = "x"; this.revisions.set(url, r); return r; }
+        adopt(url: string, r: string) { this.revisions.set(url, r); }
+      }
+    `,
+  };
+  const options = { noLib: true, module: ts.ModuleKind.ESNext };
+  const host = ts.createCompilerHost(options);
+  host.fileExists = (f) => f in files;
+  host.directoryExists = (dir) => dir === "/src";
+  host.getSourceFile = (f) =>
+    files[f] === undefined ? undefined : ts.createSourceFile(f, files[f], ts.ScriptTarget.Latest, true);
+  const findings = check(ts.createProgram(Object.keys(files), options, host)).filter((f) =>
+    f.includes("must not"),
+  );
+  expect(findings).toEqual(["/src/save-transport.ts:4: load must not touch this.revisions"]);
+});
+
+test("the page's key handler asks where each key goes", () => {
+  const run = (code) => {
+    const files = { "/src/play.ts": code };
+    const options = { noLib: true, module: ts.ModuleKind.ESNext };
+    const host = ts.createCompilerHost(options);
+    host.fileExists = (f) => f in files;
+    host.directoryExists = (dir) => dir === "/src";
+    host.getSourceFile = (f) =>
+      files[f] === undefined ? undefined : ts.createSourceFile(f, files[f], ts.ScriptTarget.Latest, true);
+    return check(ts.createProgram(Object.keys(files), options, host)).filter((f) => f.includes("key"));
+  };
+  expect(run("function a() { const key = (k) => (e) => { push(k); }; }")).toEqual([
+    "/src/play.ts: key must call inputTarget",
+  ]);
+  expect(
+    run(
+      "function a() { const key = (k) => (e) => { if (inputTarget(e.target) === 'overlay') return; push(k); }; }",
+    ),
+  ).toEqual([]);
+  expect(run("const other = 1;")).toEqual(["play.ts: missing declaration key"]);
+});
+
+test("the decoders end with a Lifetime, not a flag of their own", () => {
+  const files = {
+    "/src/video.ts": "export class Video { private stopped = false; private life = 1; }",
+    "/src/adec.ts": "export class AudioDecode { private life = 1; }",
+  };
+  const options = { noLib: true, module: ts.ModuleKind.ESNext };
+  const host = ts.createCompilerHost(options);
+  host.fileExists = (f) => f in files;
+  host.directoryExists = (dir) => dir === "/src";
+  host.getSourceFile = (f) =>
+    files[f] === undefined ? undefined : ts.createSourceFile(f, files[f], ts.ScriptTarget.Latest, true);
+  expect(
+    check(ts.createProgram(Object.keys(files), options, host)).filter((f) => f.includes("field")),
+  ).toEqual(['/src/video.ts:1: no "stopped" field: a Lifetime']);
+});
+
+test("an abort listener comes with a look at whether its signal was aborted already", () => {
+  const files = {
+    "/src/a.ts": [
+      "declare const s: { addEventListener(t: string, f: () => void): void; aborted: boolean; throwIfAborted(): void };",
+      "export function bad() { s.addEventListener('abort', () => {}); }",
+      "export function good() { if (s.aborted) return; s.addEventListener('abort', () => {}); }",
+      "export function thrown(o?: typeof s) { o?.throwIfAborted(); o?.addEventListener('abort', () => {}); }",
+      "export function inner() { if (s.aborted) return; return () => s.addEventListener('abort', () => {}); }",
+      "export function other() { s.addEventListener('message', () => {}); }",
+    ].join("\n"),
+  };
+  const options = { noLib: true, module: ts.ModuleKind.ESNext };
+  const host = ts.createCompilerHost(options);
+  host.fileExists = (f) => f in files;
+  host.directoryExists = (dir) => dir === "/src";
+  host.getSourceFile = (f) =>
+    files[f] === undefined ? undefined : ts.createSourceFile(f, files[f], ts.ScriptTarget.Latest, true);
+  expect(
+    check(ts.createProgram(Object.keys(files), options, host)).filter((f) => f.includes("abort")),
+  ).toEqual([
+    '/src/a.ts:2: an "abort" listener on s without a look at s.aborted first',
+    '/src/a.ts:5: an "abort" listener on s without a look at s.aborted first',
+  ]);
+});
+
+test("the page reloads only from play.ts, PageGame, or a click", () => {
+  const files = {
+    "/src/a.tsx": [
+      "declare const location: { reload(): void };",
+      "declare const window: { location: { reload(): void } };",
+      "export function after() { location.reload(); }",
+      "export const button = <button onClick={() => location.reload()} />;",
+      "export function deep() { window.location.reload(); }",
+      "export const other = <div title={String(location.reload)} />;",
+    ].join("\n"),
+    "/src/play.ts":
+      "declare const location: { reload(): void }; export function leave() { location.reload(); }",
+  };
+  const options = { noLib: true, module: ts.ModuleKind.ESNext, jsx: ts.JsxEmit.Preserve };
+  const host = ts.createCompilerHost(options);
+  host.fileExists = (f) => f in files;
+  host.directoryExists = (dir) => dir === "/src";
+  host.getSourceFile = (f) =>
+    files[f] === undefined ? undefined : ts.createSourceFile(f, files[f], ts.ScriptTarget.Latest, true);
+  expect(
+    check(ts.createProgram(Object.keys(files), options, host)).filter((f) => f.includes("reloads")),
+  ).toEqual([
+    "/src/a.tsx:3: the page reloads by the player's click or pageGame.reload only",
+    "/src/a.tsx:5: the page reloads by the player's click or pageGame.reload only",
+    "/src/a.tsx:6: the page reloads by the player's click or pageGame.reload only",
+  ]);
+});
+
+test("the status line is told apart by its phase, not a regex over its words", () => {
+  const files = {
+    "/src/ui/a.ts": [
+      "declare const ui: { status: string; name: string };",
+      "export const a = /^エラー|ません/.test(ui.status);",
+      "export const b = ui.status.match(/x/);",
+      "export const c = /x/.test(ui.name);",
+      "export const d = ui.name.match(/x/);",
+    ].join("\n"),
+    "/src/b.ts": "declare const status: string; export const e = /x/.test(status);",
+  };
+  const options = { noLib: true, module: ts.ModuleKind.ESNext };
+  const host = ts.createCompilerHost(options);
+  host.fileExists = (f) => f in files;
+  host.directoryExists = (dir) => dir === "/src" || dir === "/src/ui";
+  host.getSourceFile = (f) =>
+    files[f] === undefined ? undefined : ts.createSourceFile(f, files[f], ts.ScriptTarget.Latest, true);
+  expect(
+    check(ts.createProgram(Object.keys(files), options, host)).filter((f) => f.includes("phase")),
+  ).toEqual([
+    "/src/ui/a.ts:2: a status is told apart by its phase, not by a regex over its words",
+    "/src/ui/a.ts:3: a status is told apart by its phase, not by a regex over its words",
+  ]);
+});
+
+test("runners side by side go through jobs.ts", () => {
+  const files = {
+    "/src/a.ts": [
+      "declare const Promise: { all(x: unknown): unknown };",
+      "declare const Array: { from(...x: unknown[]): unknown[] };",
+      "declare const one: () => void;",
+      "export const a = Promise.all(Array.from({ length: 4 }, one));",
+      "export const b = Promise.all(Array.from(new Set([1]).values()));",
+      "export const c = Promise.all([one(), one()]);",
+    ].join("\n"),
+    "/src/jobs.ts": [
+      "declare const Promise: { all(x: unknown): unknown };",
+      "declare const Array: { from(...x: unknown[]): unknown[] };",
+      "export const d = Promise.all(Array.from({ length: 4 }, () => 0));",
+    ].join("\n"),
+  };
+  const options = { noLib: true, module: ts.ModuleKind.ESNext };
+  const host = ts.createCompilerHost(options);
+  host.fileExists = (f) => f in files;
+  host.directoryExists = (dir) => dir === "/src";
+  host.getSourceFile = (f) =>
+    files[f] === undefined ? undefined : ts.createSourceFile(f, files[f], ts.ScriptTarget.Latest, true);
+  expect(
+    check(ts.createProgram(Object.keys(files), options, host)).filter((f) => f.includes("runners")),
+  ).toEqual(["/src/a.ts:4: runners side by side are jobs.ts workers (all stopped before the end)"]);
+});
+
+test("net-core.mjs is the one source: the bridge copies none of it, and its worker takes each function", () => {
+  const core = "export var MASU_A = 1;\nexport function masuF() {}\nexport async function masuG() {}\n";
+  const good = "var MASU_B = 2;\nfunction masuWorker() { masuF(); }\nconst fns = [masuF, masuG, masuWorker];\n";
+  expect(checkNetCore(core, good)).toEqual([]);
+  const bad = "var MASU_A = 1;\nfunction masuF() {}\nfunction masuFx() {}\nconst fns = [masuF, masuFx];\n";
+  expect(checkNetCore(core, bad)).toEqual([
+    "host/fetch-bridge.js: MASU_A is host/net-core.mjs's (one source)",
+    "host/fetch-bridge.js: masuF is host/net-core.mjs's (one source)",
+    "host/fetch-bridge.js: the network worker's source lacks masuG (masuFetchWorkerSource)",
+  ]);
+  expect(checkNetCore(core, "")).toEqual(["host/fetch-bridge.js: masuFetchWorkerSource's fns list not found"]);
 });

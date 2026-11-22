@@ -3,6 +3,7 @@
 // from the device (OPFS, chunkstore.ts) or straight from the bucket (direct.ts: presigned URL,
 // AES-GCM, zstd, BLAKE3), never through the server. The game's frame (another origin) gets them
 // from its service worker (game-sw.ts), which asks this page over a MessagePort (gameport.ts).
+import { workers } from "./jobs";
 
 /** A store chunk's name: 32 lower-case hex digits (the first 16 bytes of its BLAKE3). */
 export type ChunkHex = string & { readonly __chunkHex: unique symbol };
@@ -155,8 +156,8 @@ export class TreeReader {
     const last = chunkAt(f, end - 1);
     const out = new Uint8Array(end - from);
     let next = first;
-    const one = async () => {
-      while (next <= last) {
+    const one = async (_: number, signal: AbortSignal) => {
+      while (next <= last && !signal.aborted) {
         const c = f.chunks[next++]!;
         const d = await this.chunk(c);
         const a = Math.max(from, c.start);
@@ -164,7 +165,7 @@ export class TreeReader {
         out.set(d.subarray(a - c.start, b - c.start), a - from);
       }
     };
-    await Promise.all(Array.from({ length: Math.min(AHEAD, last - first + 1) }, one));
+    await workers(Math.min(AHEAD, last - first + 1), one);
     return out;
   }
 

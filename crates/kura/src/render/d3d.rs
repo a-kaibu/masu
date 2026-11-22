@@ -1018,6 +1018,11 @@ pub struct D3d {
     /// LOGIC_RESOLVE's pipelines (logic_resolve): by its words after the textures and the
     /// target's format; pipeline, its bind group layout
     logic_pipes: HashMap<([u32; 10], Tf), (Id, Id)>,
+    /// SNORM_RESOLVE's pipelines (snorm_resolve): by the blend's words, the mark's channel and
+    /// bit, the write mask and the target's format; pipeline, its bind group layout
+    snorm_pipes: HashMap<([u32; 9], Tf), (Id, Id)>,
+    /// RESOLVE_SNORM's pipelines (resolve_snorm) by the target's format: pipeline, layout
+    snorm_resolve_pipes: HashMap<Tf, (Id, Id)>,
     /// Direct3D 11 depth textures a shader reads as floats (R16_UNORM, R32_FLOAT and the like
     /// views of typeless ones): depth texture -> (its r32float copy, the depth texture's stamp
     /// when copied); see depth_twin
@@ -1126,6 +1131,8 @@ impl D3d {
             resolve_module: 0,
             resolve_pipes: HashMap::new(),
             logic_pipes: HashMap::new(),
+            snorm_pipes: HashMap::new(),
+            snorm_resolve_pipes: HashMap::new(),
             twins: HashMap::new(),
             next_twin: TWIN_IDS,
             twin_pipe: [(0, 0); 2],
@@ -1616,6 +1623,16 @@ impl D3d {
                     self.logic_resolve(a(1), a(2), a(3), a(4), w);
                     i = i.saturating_add(15);
                 }
+                RESOLVE_SNORM => {
+                    self.resolve_snorm(a(1), a(2));
+                    i = i.saturating_add(3);
+                }
+                SNORM_RESOLVE => {
+                    // (the write mask, the blend's six words, the mark's channel and bit)
+                    let w: [u32; 9] = std::array::from_fn(|k| a(k.saturating_add(5)));
+                    self.snorm_resolve([a(1), a(2), a(3), a(4), a(14)], w);
+                    i = i.saturating_add(15);
+                }
                 QUERY_BEGIN => {
                     self.query_begin(a(1));
                     i = i.saturating_add(2);
@@ -1732,7 +1749,7 @@ impl D3d {
             WRITE_TEXTURE | WRITE_TEXTURE_MEM if c[2] == 0 => self.touch_box(c[1], Some([c[3], c[4], c[3].saturating_add(c[5]), c[4].saturating_add(c[6])])),
             CREATE_TEXTURE | CREATE_TEXTURE2 | DESTROY_TEXTURE | WRITE_TEXTURE | WRITE_TEXTURE_MEM | WRITE_TEXTURE2 | FILL | GEN_MIPS | GEN_MIPS_POINT => self.touch(c[1]),
             COPY => self.touch(c[7]),
-            RESOLVE | LOGIC_RESOLVE => self.touch(c[1]),
+            RESOLVE | LOGIC_RESOLVE | SNORM_RESOLVE | RESOLVE_SNORM => self.touch(c[1]),
             _ => {}
         }
     }
@@ -3449,6 +3466,122 @@ impl D3d {
         STATS[2].fetch_add(1, Relaxed);
     }
 
+    /// SNORM_RESOLVE (d3d11/logic.rs): the blend of the sources in page buffer `src` over copy
+    /// `copy` (the target before the primitive) into multisampled target `tex` (an SNORM
+    /// texture's SINT twin), at the samples mark texture `mark` marks, the constant in page
+    /// buffer `constant`; `w`: the target's write mask, the blend's six D3D11 words, the mark's
+    /// channel and bit.
+    fn snorm_resolve(&mut self, [tex, copy, src, mark, constant]: [u32; 5], w: [u32; 9]) {
+        let ok = |t: Option<&Tex>| t.is_some_and(|t| t.samples > 1);
+        let (Some(sb), Some(kb)) = (self.buffers.get(&src).copied(), self.buffers.get(&constant).copied()) else { return };
+        if !(ok(self.textures.get(&tex)) && ok(self.textures.get(&copy)) && ok(self.textures.get(&mark))) {
+            return;
+        }
+        let Some(fmt) = self.textures.get(&tex).map(|t| t.format) else { return };
+        let textures = [tex, copy, mark];
+        for &id in &textures {
+            self.settle(id);
+        }
+        self.end_pass();
+        let Some((pipe, layout)) = self.snorm_pipe(w, fmt) else { return };
+        let view = |s: &Self, id: u32| s.textures.get(&id).map_or(0, |t| t.view);
+        let group = gpu::bind_group(
+            layout,
+            &[
+                (dxwgsl::logic::LOGIC_DST, Res::Obj(view(self, copy))),
+                (dxwgsl::logic::LOGIC_STASH, Res::Buffer(sb.0, 0, sb.1)),
+                (dxwgsl::logic::LOGIC_MARK, Res::Obj(view(self, mark))),
+                (dxwgsl::snorm::SNORM_CONSTANT, Res::Buffer(kb.0, 0, 16)),
+            ],
+        );
+        let dv = self.view2(tex, 1, 0, 1, 0, 1, false);
+        for &id in &textures {
+            self.use_tex(id);
+        }
+        self.traffic(tex, 0, true, true);
+        self.open = true;
+        gpu::begin_pass(&format!(r#"{{"colorAttachments":[{{"view":{dv},"loadOp":"load","storeOp":"store"}}]}}"#));
+        gpu::set_pipeline(pipe);
+        gpu::set_bind_group(0, group, &[]);
+        gpu::draw(3, 1, 0, 0);
+        gpu::end_pass();
+        gpu::drop(group);
+        self.touch(tex);
+        STATS[2].fetch_add(1, Relaxed);
+    }
+
+    /// RESOLVE_SNORM: multisampled `src` (an SNORM texture's SINT twin) resolved into
+    /// single-sampled SINT texture `dst` of its size (dxwgsl::snorm::ms_resolve_wgsl).
+    fn resolve_snorm(&mut self, dst: u32, src: u32) {
+        let (Some(s), Some(t)) = (self.textures.get(&src), self.textures.get(&dst)) else { return };
+        if src == dst || s.samples < 2 || t.samples != 1 || !s.format.is_sint() || !t.format.is_sint() || (s.w, s.h) != (t.w, t.h) {
+            return;
+        }
+        let (sview, fmt) = (s.view, t.format);
+        self.settle(src);
+        self.settle(dst);
+        self.end_pass();
+        self.touch(dst);
+        let pipe = match self.snorm_resolve_pipes.get(&fmt) {
+            Some(&p) => p,
+            None => {
+                let m = gpu::shader(&dxwgsl::snorm::ms_resolve_wgsl());
+                let layout = gpu::bind_group_layout(r#"{"entries":[{"binding":0,"visibility":2,"texture":{"sampleType":"sint","viewDimension":"2d","multisampled":true}}]}"#);
+                let pl = gpu::pipeline_layout(&format!(r#"{{"bindGroupLayouts":[{layout}]}}"#));
+                let p = gpu::render_pipeline(&format!(
+                    r#"{{"layout":{pl},"vertex":{{"module":{m},"entryPoint":"vs"}},"fragment":{{"module":{m},"entryPoint":"fs","targets":[{{"format":{}}}]}},"primitive":{{"topology":"triangle-list"}}}}"#,
+                    qf(fmt)
+                ));
+                gpu::drop(pl);
+                gpu::drop(m);
+                self.snorm_resolve_pipes.insert(fmt, (p, layout));
+                (p, layout)
+            }
+        };
+        let dv = self.view2(dst, 1, 0, 1, 0, 1, false);
+        self.use_tex(src);
+        self.use_tex(dst);
+        self.traffic(src, 0, true, false);
+        self.open = true;
+        let group = gpu::bind_group(pipe.1, &[(0, Res::Obj(sview))]);
+        gpu::begin_pass(&format!(r#"{{"colorAttachments":[{{"view":{dv},"loadOp":"clear","storeOp":"store"}}]}}"#));
+        gpu::set_pipeline(pipe.0);
+        gpu::set_bind_group(0, group, &[]);
+        gpu::draw(3, 1, 0, 0);
+        gpu::end_pass();
+        gpu::drop(group);
+        STATS[2].fetch_add(1, Relaxed);
+    }
+
+    /// SNORM_RESOLVE's pipeline for words `w` (see snorm_resolve) into a target of `format`:
+    /// pipeline, its bind group layout. None: words of no blend.
+    fn snorm_pipe(&mut self, w: [u32; 9], format: Tf) -> Option<(Id, Id)> {
+        if let Some(&p) = self.snorm_pipes.get(&(w, format)) {
+            return Some(p);
+        }
+        let [mask, s, d, o, sa, da, oa, channel, bit] = w;
+        let b = dxwgsl::snorm::Blend::of([s, d, o, sa, da, oa])?;
+        let m = gpu::shader(&dxwgsl::snorm::resolve_wgsl(&b, channel.min(3), bit.min(31)));
+        let e = |b: u32, k: &str| format!(r#"{{"binding":{b},"visibility":2,"texture":{{"sampleType":"{k}","viewDimension":"2d","multisampled":true}}}}"#);
+        let layout = gpu::bind_group_layout(&format!(
+            r#"{{"entries":[{},{{"binding":{},"visibility":2,"buffer":{{"type":"read-only-storage"}}}},{},{{"binding":{},"visibility":2,"buffer":{{"type":"uniform"}}}}]}}"#,
+            e(dxwgsl::logic::LOGIC_DST, "sint"),
+            dxwgsl::logic::LOGIC_STASH,
+            e(dxwgsl::logic::LOGIC_MARK, "uint"),
+            dxwgsl::snorm::SNORM_CONSTANT
+        ));
+        let pl = gpu::pipeline_layout(&format!(r#"{{"bindGroupLayouts":[{layout}]}}"#));
+        let p = gpu::render_pipeline(&format!(
+            r#"{{"layout":{pl},"vertex":{{"module":{m},"entryPoint":"vs_resolve"}},"fragment":{{"module":{m},"entryPoint":"fs_resolve","targets":[{{"format":{},"writeMask":{}}}]}},"primitive":{{"topology":"triangle-list"}},"multisample":{{"count":4}}}}"#,
+            qf(format),
+            mask & 0xf
+        ));
+        gpu::drop(pl);
+        gpu::drop(m);
+        self.snorm_pipes.insert((w, format), (p, layout));
+        Some((p, layout))
+    }
+
     /// LOGIC_RESOLVE's pipeline for words `w` (see logic_resolve) into a target of `format`:
     /// pipeline, its bind group layout. None: words of no op.
     fn logic_pipe(&mut self, w: [u32; 10], format: Tf) -> Option<(Id, Id)> {
@@ -4825,7 +4958,11 @@ mod proofs {
         let vp: [f32; 6] = kani::any();
         let sc: [u32; 4] = kani::any();
         let clip: Option<[u32; 4]> = kani::any();
-        if let Some((v, s)) = super::rects9(tw, th, vp, sc, clip) {
+        let got = super::rects9(tw, th, vp, sc, clip);
+        kani::cover!(got.is_some(), "a viewport WebGPU takes");
+        kani::cover!(got.is_none(), "one drawn as nothing");
+        kani::cover!(got.is_some() && clip.is_some() && !(vp[4] >= 0.0), "a clipped draw with a NaN or negative MinZ");
+        if let Some((v, s)) = got {
             assert!(v.iter().all(|x| x.is_finite()));
             assert!(v[0] >= 0.0 && v[1] >= 0.0 && v[2] > 0.0 && v[3] > 0.0);
             assert!(v[0] as f64 + v[2] as f64 <= tw as f64 && v[1] as f64 + v[3] as f64 <= th as f64);
@@ -4841,7 +4978,11 @@ mod proofs {
         kani::assume(tw >= 1 && tw <= 16384 && th >= 1 && th <= 16384);
         let vp: [f32; 6] = kani::any();
         let sc: [u32; 4] = kani::any();
-        if let Some((v, s)) = super::rects11(tw, th, vp, sc, kani::any()) {
+        let got = super::rects11(tw, th, vp, sc, kani::any());
+        kani::cover!(got.is_some(), "a viewport WebGPU takes");
+        kani::cover!(got.is_none(), "one drawn as nothing");
+        kani::cover!(got.is_some() && vp[0] < 0.0, "a viewport starting left of the target");
+        if let Some((v, s)) = got {
             assert!(v.iter().all(|x| x.is_finite()));
             assert!(v[0] >= 0.0 && v[1] >= 0.0 && v[2] > 0.0 && v[3] > 0.0);
             assert!(v[0] as f64 + v[2] as f64 <= tw as f64 && v[1] as f64 + v[3] as f64 <= th as f64);

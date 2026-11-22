@@ -9,18 +9,31 @@
 use std::io::Read;
 
 /// Sizes of the chunks: none shorter than `min` (but a file's last), none longer than `max`,
-/// about `avg` on average.
+/// about `avg` on average. Made only by [`Params::new`] (or [`Params::with_avg`]), which holds
+/// the cutter's contract: `min < max` (with `min == max` a chunk cut at `min` would be one byte
+/// past `max`), `avg` a power of two (its zero bits make the masks). What the Verus proof of
+/// [`Cutter::next`] (formal/verus/cdc.rs) assumes is this and nothing more.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Params {
-    pub min: u64,
-    pub avg: u64,
-    pub max: u64,
+    min: u64,
+    avg: u64,
+    max: u64,
 }
 
 impl Params {
-    /// min avg/4, max avg*4 (avg a power of two, at least 64 KiB).
+    /// `None` unless `min < max` and `avg` is a power of two.
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub fn new(min: u64, avg: u64, max: u64) -> Option<Params> {
+        (min < max && avg.is_power_of_two()).then_some(Params { min, avg, max })
+    }
+
+    pub fn avg(&self) -> u64 {
+        self.avg
+    }
+
+    /// min avg/4, max avg*4 (avg a power of two, at least 64 KiB, at most 2^60 so that max fits).
     pub fn with_avg(avg: u64) -> Params {
-        let avg = avg.max(64 << 10).next_power_of_two();
+        let avg = avg.clamp(64 << 10, 1 << 60).next_power_of_two();
         Params { min: avg / 4, avg, max: avg * 4 }
     }
 }
@@ -79,17 +92,19 @@ impl Cutter {
         let mut i = 0;
         // (no cut before min: the hash is not even kept there)
         if self.len < self.p.min {
-            let skip = ((self.p.min - self.len) as usize).min(buf.len());
+            // (what is short of min, or all the bytes: no cast of a u64 that may not fit usize)
+            let need = self.p.min - self.len;
+            let skip: usize = if need < buf.len() as u64 { need as usize } else { buf.len() };
             self.len += skip as u64;
             i = skip;
             if self.len < self.p.min {
                 return None;
             }
         }
-        let g = &*GEAR;
+        let gear = &*GEAR;
         let mut h = self.h;
         while i < buf.len() {
-            h = (h << 1).wrapping_add(g[buf[i] as usize]);
+            h = (h << 1).wrapping_add(gear[buf[i] as usize]);
             self.len += 1;
             i += 1;
             let m = if self.len < self.p.avg { self.small } else { self.large };
@@ -136,12 +151,13 @@ fn lengths_with(r: &mut impl Read, p: Params, buf: &mut [u8]) -> std::io::Result
         while at < n {
             match c.next(&buf[at..n]) {
                 Some(k) => {
-                    out.push(cur + k as u64);
+                    // (a usize always fits a u64 on the targets masu builds for)
+                    out.push(cur + u64::try_from(k).unwrap_or(u64::MAX));
                     cur = 0;
                     at += k;
                 }
                 None => {
-                    cur += (n - at) as u64;
+                    cur += u64::try_from(n - at).unwrap_or(u64::MAX);
                     at = n;
                 }
             }
@@ -252,7 +268,7 @@ mod tests {
     /// inside its own read gets its own buffer and the same lengths
     #[test]
     fn a_reader_chunking_inside_its_read() {
-        let p = Params { min: 16, avg: 64, max: 256 };
+        let p = Params::new(16, 64, 256).unwrap();
         let data = bytes(5000, 3);
         let want = lengths(&mut &data[..], p).unwrap();
         struct Nested<'a>(&'a [u8], Params, Vec<u64>);
@@ -267,6 +283,50 @@ mod tests {
         let mut n = Nested(&data, p, vec![]);
         assert_eq!(lengths(&mut n, p).unwrap(), want);
         assert_eq!(n.2, want);
+    }
+
+    /// The Verus proof (formal/verus/cdc.rs) is of this cutter: its `next` is Cutter::next's
+    /// body but for the names (self.p.min, self.len there c.min, c.len), `a += b` there written
+    /// `a = a + b`, the shift's `1u64`, the gear table a parameter and the loop's invariant. Any
+    /// other change to either fails here, so that the two are changed together.
+    #[test]
+    fn the_verus_proof_is_of_this_code() {
+        /// the lines of the body of the `pub fn next(` in `src`, without comments or blank lines
+        fn body(src: &str) -> Vec<String> {
+            let lines: Vec<&str> = src.lines().collect();
+            let at = lines.iter().position(|l| l.trim_start().starts_with("pub fn next(")).expect("a pub fn next");
+            let indent = lines[at].len() - lines[at].trim_start().len();
+            let open = (at..lines.len()).find(|&i| lines[i].trim_end().ends_with('{') && (lines[i].len() - lines[i].trim_start().len() == indent)).expect("its body");
+            let close = (open + 1..lines.len()).find(|&i| lines[i].len() - lines[i].trim_start().len() == indent && lines[i].trim() == "}").expect("its end");
+            lines[open + 1..close].iter().map(|l| l.split("//").next().unwrap_or("").trim().to_string()).filter(|l| !l.is_empty()).collect()
+        }
+        let real: Vec<String> = body(include_str!("cdc.rs"))
+            .into_iter()
+            .filter(|l| l != "let gear = &*GEAR;")
+            .map(|l| {
+                let l = l.replace("self.p.", "c.").replace("self.", "c.").replace("(h << 1)", "(h << 1u64)");
+                match l.split_once(" += ") {
+                    Some((a, b)) => format!("{a} = {a} + {b}"),
+                    None => l,
+                }
+            })
+            .collect();
+        let mut proof = Vec::new();
+        let mut spec = false;
+        for l in body(include_str!("../../../formal/verus/cdc.rs")) {
+            // (the loop's invariant, from `invariant` to its `decreases`, is the proof's own)
+            if l == "invariant" {
+                spec = true;
+            } else if spec {
+                spec = !l.starts_with("decreases");
+            } else if l == "{" && let Some(last) = proof.last_mut() {
+                // (the loop's `{`, on a line of its own after the invariant)
+                *last += " {";
+            } else {
+                proof.push(l);
+            }
+        }
+        assert_eq!(real, proof);
     }
 
     /// Any bytes, any small parameters, fed in reads of any sizes: lengths add up, each but the
@@ -286,7 +346,7 @@ mod tests {
             }
         }
         proptest!(|(data in proptest::collection::vec(any::<u8>(), 0..6000), reads in proptest::collection::vec(1usize..700, 0..40), k in 4u32..8)| {
-            let p = Params { min: 1 << (k - 2), avg: 1 << k, max: 1 << (k + 2) };
+            let p = Params::new(1 << (k - 2), 1 << k, 1 << (k + 2)).unwrap();
             let l = lengths(&mut Reads(&data, reads, 0), p).unwrap();
             prop_assert_eq!(l.iter().sum::<u64>(), data.len() as u64);
             for (i, &x) in l.iter().enumerate() {

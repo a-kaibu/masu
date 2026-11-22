@@ -464,7 +464,7 @@ pub(crate) fn get_class(cpu: &mut koji::Cpu, clsid: u32, iid: u32, out: crate::a
     out.put(0);
     if context & 3 != 0 && let Some(path) = crate::misc::registry_string(&format!("hkcr\\clsid\\{}\\inprocserver32", text(&wire(clsid))), "") {
         // (HRESULT_FROM_WIN32 of LoadLibrary's error: ERROR_MOD_NOT_FOUND, ERROR_DLL_INIT_FAILED)
-        let base = match crate::pe::load_library(cpu, &path) { Ok(b) => b, Err(e) => return 0x8007_0000 | e.code() };
+        let base = match crate::pe::load_library(cpu, &path) { Ok(b) => b, Err(e) => return 0x8007_0000 | e.error() };
         let Some(entry) = crate::pe::proc_address(base, crate::pe::Import::Name("DllGetClassObject")) else { return 0x8007_007f };
         return crate::call(cpu, entry, &crate::api::words![clsid, iid, out]);
     }

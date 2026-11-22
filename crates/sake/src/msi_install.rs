@@ -729,7 +729,7 @@ fn remove_files(p: &Arc<Mutex<Package>>) -> u32 {
         let dir = pk.prop(&r.get(3).text());
         let pat = long_name(&r.get(2).text()).to_lowercase();
         let Some(hd) = crate::files::resolve(dir.trim_end_matches('\\')) else { continue };
-        for e in kura::fs::read_dir(&hd).into_iter().flatten().flatten() {
+        for e in crate::shortname::read_dir(&hd).into_iter().flatten().flatten() {
             let n = e.file_name().to_string_lossy().to_lowercase();
             if wildcard(&pat, &n) && kura::fs::metadata(e.path()).is_ok_and(|m| m.is_file()) {
                 let _ = kura::fs::remove_file(e.path());
@@ -823,7 +823,7 @@ fn remove_empty(pk: &Package, dirs: Vec<String>) {
         todo.pop()
     } {
         let Some(h) = crate::files::resolve(d.trim_end_matches('\\')) else { continue };
-        if kura::fs::remove_dir(&h).is_ok() && let Some((parent, _)) = d.trim_end_matches('\\').rsplit_once('\\') {
+        if crate::shortname::remove_dir(&h).is_ok() && let Some((parent, _)) = d.trim_end_matches('\\').rsplit_once('\\') {
             let parent = format!("{parent}\\");
             if own.contains(&parent.to_lowercase()) && !todo.contains(&parent) {
                 todo.push(parent);

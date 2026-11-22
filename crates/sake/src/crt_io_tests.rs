@@ -436,6 +436,26 @@ proptest! {
     }
 }
 
+proptest! {
+    /// a block cut short keeps its handles where the count put them (after all the flags):
+    /// the entries whose flag and handle both fit are as they went, one whose handle is cut is
+    /// none (msvcrt:file test_file_inherit's "small size block": cbReserved2 - 3)
+    #[test]
+    fn a_cut_block_keeps_its_handles_in_place(fds in prop::collection::vec((any::<u8>(), 0u32..0x10000), 1..12), cut in 0usize..40, x64 in any::<bool>()) {
+        let fds: Vec<Inherited> = fds.into_iter().map(|(flags, handle)| Inherited { flags, handle }).collect();
+        let b = encode_inherited(&fds, x64);
+        let keep = b.len().saturating_sub(cut).max(4);
+        let got = decode_inherited(&b[..keep], x64);
+        let hs = if x64 { 8 } else { 4 };
+        prop_assert_eq!(got.len(), fds.len().min((keep - 4) / (hs + 1)));
+        for (i, g) in got.iter().enumerate() {
+            prop_assert_eq!(g.flags, fds[i].flags);
+            let end = 4 + fds.len() + (i + 1) * hs;
+            prop_assert_eq!(g.handle, if end <= keep { fds[i].handle } else { u32::MAX });
+        }
+    }
+}
+
 /// The C runtime's layout, 32-bit: count 2, flags 0x09 0x89, handles 0x10 0x14
 #[test]
 fn reserved2_layout_is_the_crts() {

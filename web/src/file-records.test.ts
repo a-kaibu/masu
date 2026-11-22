@@ -220,3 +220,59 @@ test("same: true exactly when the bytes are, at any offsets (property, different
   expect(same(null, new Uint8Array(0))).toBe(false);
   expect(same(new Uint8Array(3), new Uint8Array(4))).toBe(false);
 });
+
+describe("every kind of record kura writes (testdata/saves/records.hex)", () => {
+  const load = async () => {
+    // (node's fs, out of the web types' sight)
+    const { readFileSync } = (await import(/* @vite-ignore */ ["node", "fs"].join(":"))) as {
+      readFileSync: (u: URL, e: string) => string;
+    };
+    const lines = readFileSync(new URL("../../testdata/saves/records.hex", import.meta.url), "utf8")
+      .trim()
+      .split("\n");
+    const hex = lines.pop()!;
+    const blob = new Uint8Array(hex.length / 2);
+    for (let i = 0; i < blob.length; i++) blob[i] = parseInt(hex.slice(2 * i, 2 * i + 2), 16);
+    return { paths: lines.map((l) => l.slice(l.indexOf(" ") + 1)), blob };
+  };
+  const pathsOf = (b: Uint8Array) => {
+    const seen: string[] = [];
+    selectRecords(b, (p) => (seen.push(p), true));
+    return seen;
+  };
+  it("reads each record's path as kura wrote it, gone names and directories too", async () => {
+    const { paths, blob } = await load();
+    expect(paths.length).toBe(7);
+    expect(pathsOf(blob)).toEqual(paths);
+    expect(selectRecords(blob, () => true)).toBe(blob);
+    const b = selectRecords(blob, (p) => p.startsWith("/b/"))!;
+    expect(pathsOf(b)).toEqual(paths.filter((p) => p.startsWith("/b/")));
+  });
+  it("moves the path of every kind and keeps the rest of the record", async () => {
+    const { paths, blob } = await load();
+    const moved = renameRecords(blob, (p) => p.replace(/^\/b\//, "/longer-name/"))!;
+    expect(pathsOf(moved)).toEqual(paths.map((p) => p.replace(/^\/b\//, "/longer-name/")));
+    expect(renameRecords(moved, (p) => p.replace(/^\/longer-name\//, "/b/"))).toEqual(blob);
+  });
+  it("refuses a set cut anywhere but between two records", async () => {
+    const { blob } = await load();
+    // (where each record ends: its own length from a set of it alone)
+    const ends = new Set<number>();
+    let at = 0;
+    pathsOf(blob).forEach((_, k) => {
+      let i = 0;
+      at += selectRecords(blob, () => i++ === k)!.length;
+      ends.add(at);
+    });
+    expect(at).toBe(blob.length);
+    for (let i = 1; i < blob.length; i++) {
+      let whole = true;
+      try {
+        selectRecords(blob.slice(0, i), () => true);
+      } catch {
+        whole = false;
+      }
+      expect(whole).toBe(ends.has(i));
+    }
+  });
+});

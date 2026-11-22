@@ -55,8 +55,7 @@ pub fn install(pp: u32) {
 /// A new reference for the full path `dir` (files::set_cwd): a handle opened on it, the path
 /// with its '\' into the buffer, the old handle closed
 pub fn publish(dir: &str) {
-    let mut c = CUR.locked();
-    if c.pp == 0 {
+    if CUR.locked().pp == 0 {
         return;
     }
     let mut w: Vec<u16> = dir.encode_utf16().collect();
@@ -64,10 +63,13 @@ pub fn publish(dir: &str) {
         w.push(u16::from(b'\\'));
     }
     w.truncate(usize::from(MAX_BYTES / 2).saturating_sub(1));
+    // (opened before the reference is taken: opening makes the name full, which reads the
+    // current reference, dos_path)
     let handle = match crate::files::open_shared(dir, ACCESS, 3, Some(SHARE)) {
         Ok((f, _)) if f.dir => crate::obj::add(crate::obj::Obj::File(std::sync::Arc::new(f))),
         _ => 0,
     };
+    let mut c = CUR.locked();
     for (i, &u) in w.iter().enumerate() {
         mem::w16(mem::ga(c.buf).at(kome::num::u32_of(i), 2), u);
     }

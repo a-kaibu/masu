@@ -3,7 +3,7 @@
 // play statistics, with a reset), 保存 (what is on the device and being saved there: ui/Storage.tsx) and 設定 (the server's version and an update to the newest
 // release, installing the page as an app, the DMM account).
 
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useSyncExternalStore, type ReactNode } from "react";
 import {
   BarChart3,
   CircleCheck,
@@ -21,12 +21,10 @@ import { Sheet, SheetContent, SheetDescription, SheetTitle } from "@/components/
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import type { GameEntry } from "../launcher";
 import { useApp } from "../pwa";
-import { checkUpdate, installUpdate, waitForVersion, type UpdateInfo } from "../server-update";
+import { serverUpdate, type UpdateInfo } from "../server-update";
 import { AccountSettings } from "./AccountSettings";
 import { Statistics } from "./Personal";
 import { StorageOverview } from "./Storage";
-
-const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
 function Part({ title, icon, children }: { title: string; icon: ReactNode; children: ReactNode }) {
   return (
@@ -40,46 +38,14 @@ function Part({ title, icon, children }: { title: string; icon: ReactNode; child
   );
 }
 
-type Step =
-  | { s: "checking" }
-  | { s: "ready"; info: UpdateInfo }
-  | { s: "installing" }
-  | { s: "restarting"; version: string }
-  | { s: "failed"; error: string; info?: UpdateInfo };
-
-/** The running server's version, and 更新 when a newer release is out. */
+/** The running server's version, and 更新 when a newer release is out: the update is the page's
+ * job (server-update.ts UpdateJob), shown here, and goes on when this closes. */
 function ServerUpdate({ build }: { build: string }) {
-  const [step, setStep] = useState<Step>({ s: "checking" });
-  const check = () => {
-    setStep({ s: "checking" });
-    checkUpdate().then(
-      (info) => setStep({ s: "ready", info }),
-      (e: unknown) => setStep({ s: "failed", error: message(e) }),
-    );
-  };
-  useEffect(check, []);
-  const update = async (info: UpdateInfo) => {
-    setStep({ s: "installing" });
-    try {
-      const version = await installUpdate();
-      setStep({ s: "restarting", version });
-      if (!(await waitForVersion(version)))
-        return setStep({
-          s: "failed",
-          error: "サーバーが再起動から戻りません。しばらくして再読み込みしてください",
-          info,
-        });
-      // (the page's service worker takes the new build's files on the reload)
-      await navigator.serviceWorker
-        ?.getRegistration()
-        .then((r) => r?.update())
-        .catch(() => undefined);
-      location.reload();
-    } catch (e) {
-      setStep({ s: "failed", error: message(e), info });
-    }
-  };
-  const info = step.s === "ready" ? step.info : step.s === "failed" ? step.info : undefined;
+  const step = useSyncExternalStore(serverUpdate.subscribe, () => serverUpdate.step);
+  useEffect(() => serverUpdate.shown(), []);
+  const check = () => void serverUpdate.check();
+  const update = (info: UpdateInfo) => void serverUpdate.update(info);
+  const info = step.s === "ready" || step.s === "failed" ? step.info : undefined;
   return (
     <div className="grid gap-2 text-sm" data-testid="server-update">
       <p>
@@ -103,7 +69,7 @@ function ServerUpdate({ build }: { build: string }) {
             <span className="font-medium tabular-nums">v{info.latest.replace(/^v/, "")}</span> があります。
           </p>
           {info.supported ? (
-            <Button className="justify-self-start" onClick={() => void update(info)}>
+            <Button className="justify-self-start" onClick={() => update(info)}>
               <RefreshCw /> v{info.latest.replace(/^v/, "")} に更新
             </Button>
           ) : (
@@ -119,6 +85,12 @@ function ServerUpdate({ build }: { build: string }) {
       {step.s === "restarting" && (
         <p role="status" className="flex items-center gap-2">
           <Loader2 className="size-4 animate-spin" /> v{step.version.replace(/^v/, "")} で再起動しています…
+        </p>
+      )}
+      {step.s === "restarted" && (
+        <p role="status" className="flex items-center gap-2">
+          <CircleCheck className="size-4 text-emerald-600" /> v{step.version.replace(/^v/, "")}{" "}
+          で再起動しました。ゲームを終えて一覧に戻ると新しい版で読み込み直します
         </p>
       )}
       {step.s === "failed" && (

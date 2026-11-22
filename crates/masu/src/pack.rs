@@ -1249,7 +1249,7 @@ fn pack_tree(store: &Path, root: &Path, name: &str, follow: bool, chunking: Para
     for (line, text) in done {
         lines[line] = text;
     }
-    let mut out = format!("{}\n", tree_list::Header { avg: chunking.avg });
+    let mut out = format!("{}\n", tree_list::Header { avg: chunking.avg() });
     // (the lines of movies left without a copy stay empty: not listed)
     for l in lines.into_iter().filter(|l| !l.is_empty()) {
         out.push_str(&l);

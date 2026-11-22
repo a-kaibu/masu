@@ -45,10 +45,16 @@ VO main(VI v) { VO o; o.p = float4(v.p, 1) + v.i; o.c = v.c + float4(v.t, 0, 0);
 // that interpolates goes through the setup's passes, expand.rs, which the model does not run)
 const PS: &str = "float4 main(float4 p : SV_Position, nointerpolation float4 c : COLOR) : SV_Target { return c; }";
 
+/// PS for an integer target
+const PS_UINT: &str = "uint4 main(float4 p : SV_Position, nointerpolation float4 c : COLOR) : SV_Target { return asuint(c); }";
+
 /// (semantic, index, DXGI format, bytes)
 const ELEMS: [(&str, u32, u32, u32); 4] = [("POSITION", 0, 6, 12), ("TEXCOORD", 0, 16, 8), ("COLOR", 0, 28, 4), ("TEXCOORD", 1, 2, 16)];
 
-/// D3D11's primitives of `topology` over vertex numbers (None: a strip cut).
+/// D3D11's primitives of `topology` over vertex numbers (None: a strip cut); an adjacency
+/// topology's are its corners (the adjacent vertices only a geometry shader reads), an odd
+/// triangle of a strip with adjacency's in the order Direct3D gives them a geometry shader
+/// (winref d3d11gs)
 fn d3d_prims(topology: u32, v: &[Option<i64>]) -> Vec<Vec<i64>> {
     let mut out = Vec::new();
     for run in v.split(|x| x.is_none()) {
@@ -58,13 +64,29 @@ fn d3d_prims(topology: u32, v: &[Option<i64>]) -> Vec<Vec<i64>> {
             2 => out.extend(run.chunks_exact(2).map(|c| c.to_vec())),
             3 => out.extend(run.windows(2).map(|c| c.to_vec())),
             4 => out.extend(run.chunks_exact(3).map(|c| c.to_vec())),
-            _ => out.extend(run.windows(3).enumerate().map(|(i, w)| if i % 2 == 0 { w.to_vec() } else { vec![w[1], w[0], w[2]] })),
+            5 => out.extend(run.windows(3).enumerate().map(|(i, w)| if i % 2 == 0 { w.to_vec() } else { vec![w[1], w[0], w[2]] })),
+            10 => out.extend(run.chunks_exact(4).map(|c| vec![c[1], c[2]])),
+            11 => out.extend(run.windows(4).map(|c| vec![c[1], c[2]])),
+            12 => out.extend(run.chunks_exact(6).map(|c| vec![c[0], c[2], c[4]])),
+            13 => {
+                let n = run.len().saturating_sub(4) / 2;
+                out.extend((0..n).map(|i| if i % 2 == 0 { vec![run[2 * i], run[2 * i + 2], run[2 * i + 4]] } else { vec![run[2 * i], run[2 * i + 4], run[2 * i + 2]] }));
+            }
+            t => panic!("topology {t}"),
         }
     }
     out
 }
 
-fn run(seed: u64, vs: &[u8], ps: &[u8], ten: bool) {
+/// What a run draws into: an R8G8B8A8_UNORM target, or (`logic`) an R8G8B8A8_UINT one with a
+/// logic op that reads it (XOR), each primitive then drawn by itself (logic.rs split)
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Target {
+    Unorm,
+    Logic,
+}
+
+fn run(seed: u64, vs: &[u8], ps: &[u8], ten: bool, target: Target) {
     let mut r = Rng(seed.wrapping_mul(0x9e37_79b9_7f4a_7c15) | 3);
     attach_page();
     model::with(|m| m.prims = Some(Vec::new()));
@@ -86,12 +108,16 @@ fn run(seed: u64, vs: &[u8], ps: &[u8], ten: bool) {
     let cc = |m11: u32, a: &[u32]| call1(m(ictx, cm(m11)), a);
     let o = mem(2);
     // a render target and its view, the viewport
+    let fmt = match target {
+        Target::Unorm => 28,
+        Target::Logic => 30,
+    };
     let d = mem(11);
-    put(d, &[64, 64, 1, 1, 28, 1, 0, 0, 0x20, 0, 0]);
+    put(d, &[64, 64, 1, 1, fmt, 1, 0, 0, 0x20, 0, 0]);
     assert_eq!(dc(5, &[dev, d, 0, o]), 0);
     let rt = rd1(o);
     let vd = mem(4);
-    put(vd, &[28, 4, 0, 0]);
+    put(vd, &[fmt, 4, 0, 0]);
     assert_eq!(dc(9, &[dev, rt, vd, o]), 0);
     let rtv = rd1(o);
     let arr = mem(4);
@@ -118,6 +144,22 @@ fn run(seed: u64, vs: &[u8], ps: &[u8], ten: bool) {
     let psh = rd1(o);
     cc(11, &[ctx, vsh, 0, 0]);
     cc(9, &[ctx, psh, 0, 0]);
+    if target == Target::Logic {
+        // CreateBlendState1: LogicOpEnable, D3D11_LOGIC_OP_XOR (10) on target 0
+        let b1 = mem(82);
+        let mut v = vec![0, 0];
+        for t in 0..8 {
+            v.extend([0, 0, 2, 1, 1, 2, 1, 1, 0, 0xf]);
+            if t == 0 {
+                let at = v.len() - 10;
+                v[at + 1] = 1;
+                v[at + 8] = 10;
+            }
+        }
+        put(b1, &v);
+        assert_eq!(call1(m(IF_DEVICE, 45), &[dev, b1, o]), 0);
+        cc(35, &[ctx, rd1(o), 0, 0xffff_ffff]);
+    }
     // three vertex buffers of random bytes (finite floats), one index buffer per format
     const VB: u32 = 4096;
     let mut vbs = Vec::new();
@@ -176,7 +218,7 @@ fn run(seed: u64, vs: &[u8], ps: &[u8], ten: bool) {
         put(strides, &stride);
         put(offs, &offset);
         cc(18, &[ctx, 0, 3, bufs, strides, offs]);
-        let topology = 1 + r.below(5) as u32;
+        let topology = [1, 2, 3, 4, 5, 10, 11, 12, 13][r.below(9) as usize];
         cc(24, &[ctx, topology]);
         let count = r.below(10) as u32;
         let indexed = r.chance(50);
@@ -191,7 +233,7 @@ fn run(seed: u64, vs: &[u8], ps: &[u8], ten: bool) {
         let ib_off = 4 * r.below(4) as u32;
         // the vertex numbers D3D11 reads (None: a cut, in strips)
         let verts: Vec<Option<i64>> = if indexed {
-            ix[start as usize..].iter().map(|&i| if i == cut { if topology == 3 || topology == 5 { None } else { Some(-1) } } else { Some(base as i64 + i as i64) }).collect()
+            ix[start as usize..].iter().map(|&i| if i == cut { if matches!(topology, 3 | 5 | 11 | 13) { None } else { Some(-1) } } else { Some(base as i64 + i as i64) }).collect()
         } else {
             (0..count).map(|k| Some(start as i64 + k as i64)).collect()
         };
@@ -255,8 +297,26 @@ fn run(seed: u64, vs: &[u8], ps: &[u8], ten: bool) {
                     .collect()
             })
             .collect();
-        let api = if ten { "D3D10" } else { "D3D11" };
+        let api = match (ten, target) {
+            (true, _) => "D3D10",
+            (false, Target::Unorm) => "D3D11",
+            (false, Target::Logic) => "D3D11 logic op",
+        };
         let what = format!("{api} seed {seed} step {step}: topology {topology} count {count} indexed {indexed} (start {start} base {base} 32-bit {i32} offset {ib_off} {ix:?}) instances {instances} from {start_instance} per-instance {inst}");
+        // (a logic op's primitives are drawn each by itself: a strip's odd triangle as a list
+        // of its vertices in strip order, its front face the other way; the same vertices)
+        let (got, want) = match target {
+            Target::Unorm => (got, want),
+            Target::Logic => {
+                let sorted = |v: Vec<Vec<Vec<Vec<u8>>>>| -> Vec<Vec<Vec<Vec<u8>>>> {
+                    v.into_iter().map(|mut p| {
+                        p.sort();
+                        p
+                    }).collect()
+                };
+                (sorted(got), sorted(want))
+            }
+        };
         assert_eq!(got.len(), want.len(), "{what}: primitives");
         for (k, (g, w)) in got.iter().zip(&want).enumerate() {
             assert!(g == w, "{what}: primitive {k} differs\n got  {g:?}\n want {w:?}");
@@ -317,7 +377,23 @@ fn d3d11_draws_read_what_direct3d_reads() {
     put(vt, &(1..=256).map(|i| 0x1000 * i).collect::<Vec<_>>());
     call1(INIT, &[vt, 256]);
     for seed in 0..6 {
-        run(seed, &vs, &ps, false);
+        run(seed, &vs, &ps, false, Target::Unorm);
+    }
+}
+
+/// The same draws into an integer target with a logic op that reads it: each primitive drawn by
+/// itself, an adjacency topology's triangles as triangles (review b5dacf4 3.1: they went to the
+/// page as lines, two indices a draw)
+#[test]
+fn d3d11_draws_with_a_logic_op_assemble_what_direct3d_assembles() {
+    let _g = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+    let vs = hlslc::compile(VS, &[], &mut |_, _| None, "main", "vs_4_0", 0).expect("vs");
+    let ps = hlslc::compile(PS_UINT, &[], &mut |_, _| None, "main", "ps_4_0", 0).expect("ps");
+    let vt = mem(256);
+    put(vt, &(1..=256).map(|i| 0x1000 * i).collect::<Vec<_>>());
+    call1(INIT, &[vt, 256]);
+    for seed in 0..6 {
+        run(seed, &vs, &ps, false, Target::Logic);
     }
 }
 
@@ -331,7 +407,7 @@ fn d3d10_draws_read_what_direct3d_reads() {
         put(vt, &(1..=256).map(|i| 0x1000 * i).collect::<Vec<_>>());
         call1(INIT, &[vt, 256]);
         for seed in 0..4 {
-            run(seed, &vs, &ps, true);
+            run(seed, &vs, &ps, true, Target::Unorm);
         }
     });
 }

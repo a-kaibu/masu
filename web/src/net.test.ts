@@ -310,3 +310,44 @@ test("what the start screen waits on is given up after BOOT_GIVE_UP_MS, not 15 m
     vi.useRealTimers();
   }
 });
+
+test("a signal already aborted sends no request, with or without a budget (review 22bb061 §6)", async () => {
+  for (const budget of [undefined, 3]) {
+    let n = 0;
+    const request: typeof fetch = async () => (n++, new Response(bytes(10)));
+    const gone = new AbortController();
+    gone.abort(new Error("left the screen"));
+    await expect(fetchRetry("/x", {}, { request, signal: gone.signal, budget })).rejects.toThrow(
+      "left the screen",
+    );
+    expect(n, `budget ${budget}`).toBe(0);
+  }
+});
+
+test("property: whenever the ask is cancelled, no try starts after it (seeded)", async () => {
+  vi.useFakeTimers();
+  try {
+    for (let seed = 1; seed <= 200; seed++) {
+      let r = seed;
+      const rnd = (k: number) => ((r = (r * 1103515245 + 12345) >>> 0) >>> 8) % k;
+      const gone = new AbortController();
+      const cancelAt = rnd(8);
+      let n = 0;
+      let after = 0;
+      const request: typeof fetch = async (_u, init) => {
+        if (gone.signal.aborted || init?.signal?.aborted) after++;
+        if (n++ === cancelAt) gone.abort(new Error("cancelled"));
+        return rnd(2)
+          ? new Response(null, { status: 503 })
+          : Promise.reject(new TypeError("Failed to fetch"));
+      };
+      const p = fetchRetry("/x", {}, { request, signal: gone.signal }).catch((e: unknown) => e);
+      await vi.advanceTimersByTimeAsync(120_000);
+      expect(String(await p), `seed ${seed}`).toContain("cancelled");
+      expect(after, `seed ${seed}`).toBe(0);
+      expect(n, `seed ${seed}`).toBe(cancelAt + 1);
+    }
+  } finally {
+    vi.useRealTimers();
+  }
+});

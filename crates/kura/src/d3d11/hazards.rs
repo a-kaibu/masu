@@ -49,11 +49,10 @@ fn refused(d: &D11, st: &State, srv: u32) -> bool {
 /// After SRVs were set in `stage` from `start` (`n` slots): the ones that read an output are
 /// NULL.
 pub fn after_srvs(d: &mut D11, st: &mut State, stage: usize, start: u32, n: u32) {
-    let Some(slots) = st.srvs.get(stage).map(|x| x.len()) else { return };
-    for s in us(start)..us(start.saturating_add(n)).min(slots) {
-        let v = st.srvs[stage][s];
-        if v != 0 && refused(d, st, v) {
-            st.srvs[stage][s] = 0;
+    let set: Vec<(usize, u32)> = st.srvs.get(stage).into_iter().flatten().copied().enumerate().skip(us(start)).take(us(n)).collect();
+    for (s, v) in set {
+        if v != 0 && refused(d, st, v) && let Some(slot) = st.srvs.get_mut(stage).and_then(|x| x.get_mut(s)) {
+            *slot = 0;
             d.unbind(v);
         }
     }
@@ -68,14 +67,16 @@ pub fn after_outputs(d: &mut D11, st: &mut State) {
     if outs.is_empty() {
         return;
     }
-    for stage in 0..st.srvs.len() {
-        for s in 0..st.srvs[stage].len() {
-            let v = st.srvs[stage][s];
-            if v != 0 && span(d, v).is_some_and(|x| outs.iter().any(|o| overlap(*o, x))) {
-                st.srvs[stage][s] = 0;
-                d.unbind(v);
-            }
+    let mut gone = Vec::new();
+    for slot in st.srvs.iter_mut().flatten() {
+        let v = *slot;
+        if v != 0 && span(d, v).is_some_and(|x| outs.iter().any(|o| overlap(*o, x))) {
+            *slot = 0;
+            gone.push(v);
         }
+    }
+    for v in gone {
+        d.unbind(v);
     }
 }
 
@@ -84,11 +85,14 @@ pub fn after_outputs(d: &mut D11, st: &mut State) {
 /// after, it is refused).
 pub fn after_buffers(d: &mut D11, st: &mut State) {
     let outs = outputs(d, st);
-    for s in 0..st.vbs.len() {
-        let vb = st.vbs[s].0;
-        if vb != 0 && outs.iter().any(|o| o.0 == vb) {
-            st.vbs[s].0 = 0;
-            d.unbind(vb);
+    let mut gone = Vec::new();
+    for vb in st.vbs.iter_mut() {
+        if vb.0 != 0 && outs.iter().any(|o| o.0 == vb.0) {
+            gone.push(vb.0);
+            vb.0 = 0;
         }
+    }
+    for b in gone {
+        d.unbind(b);
     }
 }
