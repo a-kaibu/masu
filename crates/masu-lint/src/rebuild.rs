@@ -49,8 +49,9 @@ pub const RUN_PLAN: [Needle; 11] = [
 ];
 
 /// The two spellings that made a run without results pass.
-pub const RUN_PLAN_NOT: [Needle; 3] = [
+pub const RUN_PLAN_NOT: [Needle; 4] = [
     ("tests/winref/compare.py", "continue  # (not run: a filtered run.sh)", "a probe without a result skipped as if filtered out: an empty result directory passed"),
     ("tests/winetest/run.py", "print(f\"missing {exe}\", file=sys.stderr)\n            continue", "a missing test program printed and skipped: the run passed with nothing run"),
     ("tests/winetest/run.py", "read_tsv(win_path) if os.path.exists(win_path)", "Windows' answers read only when present: without them every ReactOS test ran on sake unchecked"),
+    ("tests/winetest/run.py", "with open(path, \"w\") as f:", "a result file written in the locale's encoding: on Windows (cp1252) the report stopped at the first test message outside it and the --native run failed after its results"),
 ];

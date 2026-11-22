@@ -2,16 +2,20 @@
  *  - a pixel shader's float output as the channel's byte: sweeps of 256 floats (consecutive
  *    bit patterns) around the ties of v * 127 = k + 0.5, around 1 and -1, and specials (NaN,
  *    infinities, -0, denormals, values past -1 and 1);
- *  - ClearRenderTargetView of the same specials and ties;
+ *  - ClearRenderTargetView of the same specials and ties (and of R16G16_SNORM's and
+ *    R8G8B8A8_UNORM's ties);
  *  - blending: every color blend factor pair (alpha ONE/ZERO) and every alpha factor pair
  *    (color ONE/ZERO) under each blend op, for three source/destination pairs (destinations
  *    with -128 and -127, sources past the range), dual-source factors (SRC1_*), BlendFactor
  *    past -1 and 1;
+ *  - NaN and infinite sources (SV_Target0 and 1) blended;
+ *  - which MIN / MAX blends with dual-source factors CreateBlendState takes;
  *  - two triangles of one draw blended over the same pixels; a write mask with blending;
  *  - an SNORM target beside an R8G8B8A8_UNORM one, both blended;
  *  - what was drawn read back by a shader (Texture2D Load) and by CopyResource;
  *  - 4x multisampled R8G8B8A8_SNORM: a half-covered triangle blended, every sample read
- *    through Texture2DMS, and ResolveSubresource.
+ *    through Texture2DMS, and ResolveSubresource; the resolve of samples each written by a
+ *    per-sample shader (SV_SampleIndex) with its own bytes.
  * WARP or hardware on the Windows runner.
  * libs: -ld3d11 -ld3dcompiler_47
  * run: browser (sake's Direct3D 11 runs in the page: tests/winref/run-browser.mjs) */
@@ -41,7 +45,13 @@ static const char *SRC =
     "uint4 ps_load(float4 p : SV_Position) : SV_Target { return asuint(t0.Load(int3(p.xy, 0))); }\n"
     /* sample (x % 4) of pixel (x / 4, y) */
     "Texture2DMS<float4> m0 : register(t0);\n"
-    "uint4 ps_ms(float4 p : SV_Position) : SV_Target { uint x = (uint)p.x; return asuint(m0.Load(int2(x / 4, (int)p.y), x % 4)); }\n";
+    "uint4 ps_ms(float4 p : SV_Position) : SV_Target { uint x = (uint)p.x; return asuint(m0.Load(int2(x / 4, (int)p.y), x % 4)); }\n"
+    /* per sample: byte ((pixel * 4 + sample) * k + seed) % 255 - 127 of each channel (k 37 53 71 97,
+     * seed sweep.x), as that byte / 127 */
+    "float4 ps_samples(float4 p : SV_Position, uint s : SV_SampleIndex) : SV_Target {\n"
+    "  uint i = ((uint)p.y * 4 + (uint)p.x) * 4 + s;\n"
+    "  int4 b = (int4)((i * uint4(37, 53, 71, 97) + sweep.x) % 255) - 127;\n"
+    "  return (float4)b / 127.0; }\n";
 
 static ID3DBlob *compile(const char *entry, const char *target) {
     ID3DBlob *b = NULL, *err = NULL;
@@ -138,6 +148,37 @@ static ID3D11BlendState *blend2(BOOL on, int sc, int dc, int oc, int sa, int da,
     return s;
 }
 
+/* a color factor's alpha twin (*_COLOR as *_ALPHA) */
+static int alpha_of(int f) {
+    switch (f) {
+    case 3: return 5;
+    case 4: return 6;
+    case 9: return 7;
+    case 10: return 8;
+    case 16: return 18;
+    case 17: return 19;
+    default: return f;
+    }
+}
+
+/* whether CreateBlendState takes the blend (o) or refuses it (x) */
+static char takes(int sc, int dc, int oc, int sa, int da, int oa) {
+    D3D11_BLEND_DESC b;
+    memset(&b, 0, sizeof b);
+    b.RenderTarget[0].BlendEnable = TRUE;
+    b.RenderTarget[0].SrcBlend = (D3D11_BLEND)sc;
+    b.RenderTarget[0].DestBlend = (D3D11_BLEND)dc;
+    b.RenderTarget[0].BlendOp = (D3D11_BLEND_OP)oc;
+    b.RenderTarget[0].SrcBlendAlpha = (D3D11_BLEND)sa;
+    b.RenderTarget[0].DestBlendAlpha = (D3D11_BLEND)da;
+    b.RenderTarget[0].BlendOpAlpha = (D3D11_BLEND_OP)oa;
+    b.RenderTarget[0].RenderTargetWriteMask = 0xf;
+    ID3D11BlendState *s = NULL;
+    HRESULT hr = ID3D11Device_CreateBlendState(dev, &b, &s);
+    if (s) ID3D11BlendState_Release(s);
+    return SUCCEEDED(hr) ? 'o' : 'x';
+}
+
 static const int CF[17] = { 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 14, 15, 16, 17, 18, 19 };
 static const char *CFN[17] = { "zero", "one", "src_color", "inv_src_color", "src_alpha", "inv_src_alpha", "dest_alpha", "inv_dest_alpha", "dest_color", "inv_dest_color", "src_alpha_sat", "blend_factor", "inv_blend_factor", "src1_color", "inv_src1_color", "src1_alpha", "inv_src1_alpha" };
 /* (the factors an alpha blend takes: no *_COLOR) */
@@ -153,13 +194,13 @@ int main(void) {
         return 0;
     }
     if (fl < D3D_FEATURE_LEVEL_10_0) { puts("skip feature level below 10_0"); return 0; }
-    static const char *names[] = { "vs_full", "vs_twice", "vs_half", "ps", "ps_sweep", "ps_load", "ps_ms" };
-    static const char *kinds[] = { "vs_4_0", "vs_4_0", "vs_4_0", "ps_4_0", "ps_4_0", "ps_4_0", "ps_4_1" };
-    ID3DBlob *bl[7];
-    for (int i = 0; i < 7; i++)
+    static const char *names[] = { "vs_full", "vs_twice", "vs_half", "ps", "ps_sweep", "ps_load", "ps_ms", "ps_samples" };
+    static const char *kinds[] = { "vs_4_0", "vs_4_0", "vs_4_0", "ps_4_0", "ps_4_0", "ps_4_0", "ps_4_1", "ps_4_1" };
+    ID3DBlob *bl[8];
+    for (int i = 0; i < 8; i++)
         if (!(bl[i] = compile(names[i], kinds[i]))) return 0;
     ID3D11VertexShader *vs_full, *vs_twice, *vs_half;
-    ID3D11PixelShader *ps, *ps_sweep, *ps_load, *ps_ms;
+    ID3D11PixelShader *ps, *ps_sweep, *ps_load, *ps_ms, *ps_samples;
     ID3D11Device_CreateVertexShader(dev, ID3D10Blob_GetBufferPointer(bl[0]), ID3D10Blob_GetBufferSize(bl[0]), NULL, &vs_full);
     ID3D11Device_CreateVertexShader(dev, ID3D10Blob_GetBufferPointer(bl[1]), ID3D10Blob_GetBufferSize(bl[1]), NULL, &vs_twice);
     ID3D11Device_CreateVertexShader(dev, ID3D10Blob_GetBufferPointer(bl[2]), ID3D10Blob_GetBufferSize(bl[2]), NULL, &vs_half);
@@ -167,6 +208,7 @@ int main(void) {
     ID3D11Device_CreatePixelShader(dev, ID3D10Blob_GetBufferPointer(bl[4]), ID3D10Blob_GetBufferSize(bl[4]), NULL, &ps_sweep);
     ID3D11Device_CreatePixelShader(dev, ID3D10Blob_GetBufferPointer(bl[5]), ID3D10Blob_GetBufferSize(bl[5]), NULL, &ps_load);
     ID3D11Device_CreatePixelShader(dev, ID3D10Blob_GetBufferPointer(bl[6]), ID3D10Blob_GetBufferSize(bl[6]), NULL, &ps_ms);
+    ID3D11Device_CreatePixelShader(dev, ID3D10Blob_GetBufferPointer(bl[7]), ID3D10Blob_GetBufferSize(bl[7]), NULL, &ps_samples);
     {
         D3D11_BUFFER_DESC bd = { 48, D3D11_USAGE_DEFAULT, D3D11_BIND_CONSTANT_BUFFER, 0, 0, 0 };
         ID3D11Device_CreateBuffer(dev, &bd, NULL, &cb);
@@ -248,6 +290,26 @@ int main(void) {
         show(&t, 1, 1, 1);
         puts("");
     }
+    puts("ClearRenderTargetView of R16G16_SNORM and R8G8B8A8_UNORM: halves of a step (the first pair each, as bits)");
+    {
+        struct target s16, u8;
+        if (!target(&s16, DXGI_FORMAT_R16G16_SNORM, 4, W, H)) return 0;
+        if (!target(&u8, DXGI_FORMAT_R8G8B8A8_UNORM, 4, W, H)) return 0;
+        static const float c16[][4] = { { 0.5f / 32767, 1.5f / 32767, 0, 0 }, { 2.5f / 32767, -2.5f / 32767, 0, 0 }, { 16383.5f / 32767, -16383.5f / 32767, 0, 0 } };
+        static const float cu[][4] = { { 0.5f / 255, 1.5f / 255, 2.5f / 255, 3.5f / 255 }, { 126.5f / 255, 127.5f / 255, 128.5f / 255, 254.5f / 255 } };
+        for (int i = 0; i < 3; i++) {
+            ID3D11DeviceContext_ClearRenderTargetView(ctx, s16.v, c16[i]);
+            printf("  r16g16_snorm %08x %08x:", fbits(c16[i][0]), fbits(c16[i][1]));
+            show(&s16, 1, 1, 1);
+            puts("");
+        }
+        for (int i = 0; i < 2; i++) {
+            ID3D11DeviceContext_ClearRenderTargetView(ctx, u8.v, cu[i]);
+            printf("  rgba8_unorm %08x %08x %08x %08x:", fbits(cu[i][0]), fbits(cu[i][1]), fbits(cu[i][2]), fbits(cu[i][3]));
+            show(&u8, 1, 1, 1);
+            puts("");
+        }
+    }
 
     /* (source, second source, destination) sets */
     static const float srcs[3][4] = { { 0.25f, -0.5f, 0.75f, 0.6f }, { 1.5f, -2.0f, -0.3f, -0.4f }, { 0.1f, 0.9f, -0.95f, 1.0f } };
@@ -295,6 +357,46 @@ int main(void) {
                 puts("");
                 if (op >= 4) break;
             }
+        }
+    }
+
+    puts("NaN and infinite sources blended over 3081c040 (factor 0.3 -0.5 1.5 0.75): src, src1 as bits, then each blend (src dst op, alpha the same)");
+    {
+        static const UINT ns[4][8] = {
+            { 0x7fc00000, 0x3f000000, 0xffc00000, 0x7f800001, 0x3f000000, 0x3e800000, 0x3f000000, 0x3f000000 },
+            { 0x7f800000, 0xff800000, 0x7fc00000, 0x3f000000, 0x7fc00000, 0xffc00000, 0x7f800000, 0x7fc00000 },
+            { 0x3f000000, 0x7fc00000, 0x3e800000, 0x7fc00000, 0x3e800000, 0x3f000000, 0xff800000, 0x3f000000 },
+            { 0xffc00000, 0x7f800000, 0xff800000, 0x3e800000, 0x7fc00000, 0x7fc00000, 0x7fc00000, 0x7fc00000 },
+        };
+        static const int bl[9][3] = { { 2, 1, 1 }, { 2, 2, 1 }, { 5, 6, 1 }, { 9, 1, 1 }, { 16, 1, 1 }, { 1, 18, 1 }, { 2, 2, 2 }, { 2, 1, 4 }, { 2, 1, 5 } };
+        for (int i = 0; i < 4; i++) {
+            for (int k = 0; k < 8; k++) cbd[k] = ns[i][k];
+            upload();
+            printf("  %08x %08x %08x %08x / %08x %08x %08x %08x:", ns[i][0], ns[i][1], ns[i][2], ns[i][3], ns[i][4], ns[i][5], ns[i][6], ns[i][7]);
+            for (int j = 0; j < 9; j++) {
+                int a0 = alpha_of(bl[j][0]), a1 = alpha_of(bl[j][1]);
+                fill(&t, 0x3081c040);
+                ID3D11BlendState *st = blend2(TRUE, bl[j][0], bl[j][1], bl[j][2], a0, a1, bl[j][2], 0xf, FALSE);
+                ID3D11DeviceContext_OMSetBlendState(ctx, st, bf, 0xffffffff);
+                ID3D11DeviceContext_Draw(ctx, 3, 0);
+                show(&t, 2, 1, 0);
+                if (st) ID3D11BlendState_Release(st);
+            }
+            puts("");
+        }
+    }
+
+    puts("MIN / MAX with every factor pair: what CreateBlendState takes (o) or refuses (x), each src factor's row of dest factors");
+    for (int op = 4; op <= 5; op++) {
+        for (int a = 0; a < 17; a++) {
+            printf("  %s color %s: ", OPN[op - 1], CFN[a]);
+            for (int b = 0; b < 17; b++) putchar(takes(CF[a], CF[b], op, 2, 1, 1));
+            puts("");
+        }
+        for (int a = 0; a < 11; a++) {
+            printf("  %s alpha %s: ", OPN[op - 1], AFN[a]);
+            for (int b = 0; b < 11; b++) putchar(takes(2, 1, 1, AF[a], AF[b], op));
+            puts("");
         }
     }
 
@@ -480,6 +582,19 @@ int main(void) {
         printf("  resolved:");
         for (int i = 0; i < W * H; i++) show(&t, i % W, i / W, 0);
         puts("");
+        puts("  ResolveSubresource of samples each its own (ps_samples: each seed's pixels' resolved words)");
+        ID3D11DeviceContext_VSSetShader(ctx, vs_full, NULL, 0);
+        ID3D11DeviceContext_PSSetShader(ctx, ps_samples, NULL, 0);
+        ID3D11DeviceContext_OMSetRenderTargets(ctx, 1, &mv, NULL);
+        for (UINT seed = 0; seed < 255; seed += 17) {
+            cbd[8] = seed;
+            upload();
+            ID3D11DeviceContext_Draw(ctx, 3, 0);
+            ID3D11DeviceContext_ResolveSubresource(ctx, (ID3D11Resource *)t.t, 0, (ID3D11Resource *)mt, 0, DXGI_FORMAT_R8G8B8A8_SNORM);
+            printf("  seed %u:", seed);
+            for (int i = 0; i < W * H; i++) show(&t, i % W, i / W, 0);
+            puts("");
+        }
         ID3D11Texture2D_Release(ft);
         ID3D11Texture2D_Release(fs);
         ID3D11RenderTargetView_Release(fv);

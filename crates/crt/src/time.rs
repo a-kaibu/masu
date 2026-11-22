@@ -232,6 +232,9 @@ mod proofs {
         let (y, m, day) = civil_from_days(d);
         assert!((1..=12).contains(&m) && (1..=31).contains(&day));
         assert_eq!(days_from_civil(y, m, day), d);
+        kani::cover!(m == 2 && day == 29, "a leap day");
+        kani::cover!(d < 0, "a day before 1970");
+        kani::cover!(m == 12 && day == 31, "a year's last day");
     }
 
     /// tm_of gives fields in range, and its weekday steps with the day.
@@ -244,6 +247,9 @@ mod proofs {
         assert!((1..=31).contains(&tm[3]) && (0..12).contains(&tm[4]) && (0..7).contains(&tm[6]) && (0..366).contains(&tm[7]));
         let next = tm_of(t + 86_400);
         assert_eq!(next[6], (tm[6] + 1) % 7);
+        kani::cover!(tm[7] == 365, "the last day of a leap year");
+        kani::cover!(t < 0, "a time before 1970");
+        kani::cover!(tm[6] == 6 && next[6] == 0, "Saturday to Sunday");
     }
 }
 

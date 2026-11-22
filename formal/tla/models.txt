@@ -49,3 +49,6 @@ BudgetLock BudgetLockNoGrace.cfg violation
 KernLock KernLock.cfg ok
 KernLock KernLockOld.cfg violation
 KernLock KernLockNoTimeout.cfg violation
+SaveCommit SaveCommit.cfg ok
+SaveCommit SaveCommitNoLock.cfg violation
+SaveCommit SaveCommitUseful.cfg violation

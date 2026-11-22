@@ -247,6 +247,8 @@ mod proofs {
             assert_eq!(v, 0);
             assert_eq!(b.pos, pos);
         }
+        kani::cover!(n == 32 && pos % 8 != 0 && pos + 32 <= len * 8, "32 bits across 5 bytes");
+        kani::cover!(n > 0 && pos + n as usize > len * 8, "a read past the end");
     }
 
     /// peek_non_zero leaves the position as it was; skip_bytes and next_start_code never go
@@ -268,9 +270,12 @@ mod proofs {
             b.skip_bytes(kani::any());
             assert!(b.pos <= len * 8);
             let at = b.pos;
-            if let Some(_) = b.next_start_code() {
+            let found = b.next_start_code();
+            if found.is_some() {
                 assert!(b.pos <= len * 8 && b.pos > at);
             }
+            kani::cover!(found.is_some(), "a start code found");
+            kani::cover!(found.is_none() && at < len * 8, "none in the bytes left");
         }
     }
 }

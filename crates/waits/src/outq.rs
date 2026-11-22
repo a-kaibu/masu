@@ -296,5 +296,7 @@ mod proofs {
         let o = 3 + la;
         assert!(out[o] == 2 && out[o + 1] as usize == lb && out[o + 2] == 0);
         assert!(out[o + 3] == b[0] && (lb == 1 || out[o + 4] == b[1]));
+        kani::cover!(s + la + lb + 6 > 10, "the records wrap around the ring's end");
+        kani::cover!(n1 > 0 && n2 > 0, "taken in two parts");
     }
 }

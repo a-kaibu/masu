@@ -9,6 +9,8 @@
 //!   SNORM to -1..1, times 2^n - 1 (2^(n-1) - 1), rounded to the nearest even, NaN 0; an sRGB
 //!   format's color through the linear-to-sRGB curve first); on an integer format a Float
 //!   clear does nothing (None).
+//! - SNORM, as Windows does it (winref d3d11snorm): the product in f32, its halves away from
+//!   zero (2.5 / 127 is 3, not 2).
 //! - What Windows does beyond the documents (winref d3d11clear): 16-bit and the 11- and 10-bit
 //!   floats are rounded toward zero (past the largest finite value: the largest, 70000 is
 //!   0x7bff; an infinity stays one); a 16-bit NaN is the quiet 0x7e00 with its sign, an
@@ -216,15 +218,17 @@ fn int_trunc(v: f32, n: u32, signed: bool) -> u32 {
 }
 
 /// a float to an n-bit UNORM or SNORM value (documented: clamped, scaled, rounded to the
-/// nearest even; NaN is 0)
+/// nearest even; NaN is 0; SNORM's product in f32 and its halves away from zero, winref
+/// d3d11snorm)
 fn norm(v: f32, n: u32, signed: bool) -> u32 {
-    let v = f64::from(if v.is_nan() { 0.0 } else { v });
+    let v = if v.is_nan() { 0.0 } else { v };
     if signed {
-        let max = f64::from(mask(n.saturating_sub(1)));
-        let q = trunc_i64((v.clamp(-1.0, 1.0) * max).round_ties_even());
+        // (2^(n-1) - 1 up to 16 bits: exact in f32)
+        let max = kome::num::to_f32(mask(n.saturating_sub(1)));
+        let q = trunc_i64(f64::from((v.clamp(-1.0, 1.0) * max).round()));
         lo32(q) & mask(n)
     } else {
-        trunc_u32((v.clamp(0.0, 1.0) * f64::from(mask(n))).round_ties_even())
+        trunc_u32((f64::from(v).clamp(0.0, 1.0) * f64::from(mask(n))).round_ties_even())
     }
 }
 
@@ -285,8 +289,9 @@ mod tests {
         // BGRA: B first; X 0
         assert_eq!(texel(87, Values::Float([1.0, 0.0, 0.25, 1.0])), Some(vec![64, 0, 255, 255]));
         assert_eq!(texel(88, Values::Float([1.0, 0.0, 0.25, 1.0])), Some(vec![64, 0, 255, 0]));
-        // SNORM: -1 is -127
+        // SNORM: -1 is -127; halves away from zero (winref d3d11snorm)
         assert_eq!(texel(31, Values::Float([-1.0, 1.0, 0.0, -2.0])), Some(vec![0x81, 0x7f, 0, 0x81]));
+        assert_eq!(texel(31, Values::Float([2.5 / 127.0, -2.5 / 127.0, 63.5 / 127.0, f32::NAN])), Some(vec![3, 0xfd, 64, 0]));
         // a Float clear of an integer format does nothing; a Uint clear of a float one is bits
         assert_eq!(texel(42, Values::Float([1.0; 4])), None);
         assert_eq!(texel(41, Values::Uint([0x3f80_0000, 0, 0, 0])), Some(1f32.to_le_bytes().to_vec()));

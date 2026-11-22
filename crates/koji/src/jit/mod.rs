@@ -330,6 +330,8 @@ pub fn module_head(module: &mut Module, long: bool) {
         module.types.push(FuncType { params: x87, results: alloc::vec![] });
         module.imports.push(Import::Func("x87", 3));
         module.imports.push(Import::Table("table"));
+        // (every module imports it, checking pages or not: the bundles merge both)
+        module.imports.push(Import::Global("pages"));
     }
     // (long mode: FN64's call cache misses, see long::Gen::call_fn)
     if long && module.types.len() == 4 {
@@ -588,6 +590,9 @@ pub struct Region {
     pub sites: Vec<u32>,
     /// [`MX_EXACT`] was on when it was translated (it has the MXCSR flag checks)
     pub exact: bool,
+    /// made with the page checks or not (what [`PAGE_CHECK`] was when it began: one turned on
+    /// meanwhile leaves it unchecked, so never run once they are on)
+    pub pages: Pages,
 }
 
 /// Debugging: count block entries (a u32 per block, leaked) and fill [`Region::profile`].
@@ -841,30 +846,57 @@ fn nocheck() -> bool {
     NOCHECK.load(core::sync::atomic::Ordering::Relaxed)
 }
 
-/// Guest pages an access faults on (PAGE_NOACCESS, PAGE_GUARD): the host address of a byte
-/// per page of [0, GUEST_HI), nonzero for such a page; 0 while there are none (then nothing
-/// is checked). Set by the host when the first such page appears (it drops what was
-/// translated before); from then on every access checks its pages and leaves the block when
-/// one is marked, so that the interpreter raises the fault. Accesses through ESP (the stack)
-/// are not checked.
-pub static PAGE_MAP: core::sync::atomic::AtomicUsize = core::sync::atomic::AtomicUsize::new(0);
+/// Guest pages an access faults on (PAGE_NOACCESS, PAGE_GUARD): whether translated code checks
+/// them. The host turns it on when the first such page appears (it drops what was translated
+/// before); from then on every access checks its pages and leaves the block when one is marked,
+/// so that the interpreter raises the fault. Accesses through ESP (the stack) are not checked.
+/// Where the marks are is not written into the code: every module imports it as the global
+/// "pages" ([`PAGES`]), the host address of a byte per page of [0, GUEST_HI), nonzero for such
+/// a page (kura's fault map). A translation is then the same bytes in every run, whatever the
+/// host's heap gave the map, and one made with the checks is kept across runs and used again
+/// (review of 6852be1, §2: the address was an immediate, so saved code was never used once a
+/// thread's stack guard page turned the checks on, that is in every run).
+pub static PAGE_CHECK: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
 
-/// Whether accesses check [`PAGE_MAP`].
+/// Whether a translation checks the page marks: what it was made with ([`PAGE_CHECK`] then),
+/// kept with it (saved::Entry, the host's caches), and what decides where it may run: one made
+/// without the checks only while they are off.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Hash)]
+pub enum Pages {
+    Unchecked,
+    Checked,
+}
+
+impl Pages {
+    /// What translations are made with now.
+    pub fn now() -> Pages {
+        if page_check() { Pages::Checked } else { Pages::Unchecked }
+    }
+    /// Whether a translation made with `self` may run now: a checked one always (with no page
+    /// marked it checks and finds none), an unchecked one only while the checks are off.
+    pub fn runs_now(self) -> bool {
+        match self {
+            Pages::Checked => true,
+            Pages::Unchecked => !page_check(),
+        }
+    }
+}
+
+/// The global every module imports first: the page marks' host address ([`PAGE_CHECK`]).
+pub const PAGES: u32 = 0;
+
+/// Whether accesses check the page marks ([`PAGE_CHECK`]).
 pub fn page_check() -> bool {
-    page_map() != 0
+    PAGE_CHECK.load(core::sync::atomic::Ordering::Relaxed)
 }
 
-fn page_map() -> u32 {
-    lo32(PAGE_MAP.load(core::sync::atomic::Ordering::Relaxed))
-}
-
-/// Pushes whether [the address on local `t`, + `size`) touches a page marked in [`PAGE_MAP`]
-/// for the access of `ins` (nonzero: it does); `t` must be inside the guest range already. A
-/// page byte has bit 0 where reads fault, bit 1 where writes do (kura's fault_pages).
+/// Pushes whether [the address on local `t`, + `size`) touches a page marked in the page marks
+/// ([`PAGE_CHECK`]) for the access of `ins` (nonzero: it does); `t` must be inside the guest
+/// range already. A page byte has bit 0 where reads fault, bit 1 where writes do (kura's
+/// fault_pages).
 fn pages_marked(c: &mut Code, t: u32, size: u32, ins: &Instruction) {
-    let map = page_map();
-    c.get(t).i32c(12).shr_u().load8u(map);
-    c.get(t).i32c(lo32(size.max(1)).cast_signed() - 1).add().i32c(12).shr_u().load8u(map);
+    c.get(t).i32c(12).shr_u().global_get(PAGES).add().load8u(0);
+    c.get(t).i32c(lo32(size.max(1)).cast_signed() - 1).add().i32c(12).shr_u().global_get(PAGES).add().load8u(0);
     c.or();
     if !writes_memory(ins) {
         c.i32c(1).and();
@@ -1854,7 +1886,7 @@ impl<'a> Gen<'a> {
         t
     }
 
-    /// Leaves the block when [local `t`, + `size`) touches a marked page (see [`PAGE_MAP`]).
+    /// Leaves the block when [local `t`, + `size`) touches a marked page (see [`PAGE_CHECK`]).
     fn guard_pages(&mut self, t: u32, size: u32) {
         if !page_check() {
             return;
@@ -5863,6 +5895,7 @@ fn translate_seen<M: Memory>(
     ran: &dyn Fn(u32) -> bool,
 ) -> Option<Region> {
     let exact = mx_exact();
+    let pages = Pages::now();
     let mem = &mut mem;
     let fnm = fn_trap.is_some();
     // blocks of small callees to inline (functions)
@@ -6378,7 +6411,7 @@ fn translate_seen<M: Memory>(
         Vec::new()
     };
     let text = code_text(mem, &code);
-    Some(Region { starts, instructions: count, code, text, layout, profile, sites, exact })
+    Some(Region { starts, instructions: count, code, text, layout, profile, sites, exact, pages })
 }
 
 #[cfg(test)]

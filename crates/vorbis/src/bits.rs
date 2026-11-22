@@ -194,6 +194,8 @@ mod proofs {
             assert!(r.is_none());
             assert_eq!(b.pos(), len * 8);
         }
+        kani::cover!(have == n && n == 32 && len == 4 && pos == 0, "all 32 bits of the packet");
+        kani::cover!(have < n && pos < len * 8, "a read running out part way");
     }
 
     /// The 8-byte load (packets of 8 bytes or more) gives the bits LSB first as five byte
@@ -215,5 +217,6 @@ mod proofs {
         let want = (want >> pos) as u32;
         let mask = if n == 32 { u32::MAX } else { (1u32 << n) - 1 };
         assert_eq!(v, want & mask);
+        kani::cover!(pos == 8 && n == 32, "32 bits from the last bit position, into the fifth byte");
     }
 }
