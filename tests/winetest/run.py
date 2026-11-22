@@ -174,7 +174,7 @@ def parse(test, out, timed_out, secs):
 def read_tsv(path):
     res = {}
     if os.path.exists(path):
-        for l in open(path):
+        for l in open(path, encoding="utf-8"):
             if l.startswith("#") or not l.strip():
                 continue
             k, status, failures, *rest = l.rstrip("\n").split("\t")
@@ -357,7 +357,7 @@ def main():
     new = sorted(k for k in results if k not in expected)
 
     def tsv(path):
-        with open(path, "w") as f:
+        with open(path, "w", encoding="utf-8", errors="replace") as f:
             where = "on Windows" if a.native else "on sake"
             f.write(f"# tests/winetest/run.py --suite {a.suite} --arch {a.arch}{' --native' if a.native else ''}: "
                     f"<dll>:<test> status failures executed ({suite['title']} {where})\n")
@@ -402,7 +402,7 @@ def report(path, title, arch, results, worse, better, not_adopted=()):
     for r in results.values():
         unimpl.update(r["unimpl"])
         unimpl_tests.update(r["unimpl"].keys())
-    with open(path, "w") as f:
+    with open(path, "w", encoding="utf-8", errors="replace") as f:
         f.write(f"# {title} ({arch})\n\n")
         f.write("| dll | tests | ok | fail | crash | timeout | checks run | failed checks |\n|---|---|---|---|---|---|---|---|\n")
         tot = collections.Counter()

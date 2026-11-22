@@ -14,6 +14,7 @@ pub mod d3d9;
 pub mod d3d9ff;
 pub mod dxbc;
 pub mod logic;
+pub mod snorm;
 pub mod tpf;
 mod wgsl;
 
@@ -75,6 +76,9 @@ pub enum Binding {
     /// a pixel shader target's copy (crate::logic, LOGIC_DST + its slot): the texel the target
     /// held before the primitive; multisampled or not, its channels' sign
     LogicDst { multisampled: bool, sign: logic::Sign },
+    /// the blend state's constant for SNORM targets' blends (crate::snorm, SNORM_CONSTANT): a
+    /// uniform vec4<f32>
+    BlendConstant,
 }
 
 pub struct Wgsl {

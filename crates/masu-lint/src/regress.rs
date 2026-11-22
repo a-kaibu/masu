@@ -276,6 +276,45 @@ pub(super) fn logic_ops(tree: &Tree) -> Hits {
     out
 }
 
+// --- snorm-targets ------------------------------------------------------------------------------
+
+/// 8-bit SNORM render targets (2026-11-22: kura dropped every clear of and draw to them,
+/// WebGPU rendering to no SNORM format)
+const SNORM_SITES: [(&str, &str, &str); 16] = [
+    ("crates/kura/src/d3d11/mod.rs", "logic::twin_of(", "a draw to an SNORM target is not drawn to its SINT twin (logic::twin_of)"),
+    ("crates/kura/src/d3d11/mod.rs", "logic::snorm_twin(*fmt).is_some()", "ClearRenderTargetView of an SNORM view does not write its texels (the page clears no SNORM pass)"),
+    ("crates/kura/src/d3d11/mod.rs", "logic::split(&w, &copies, stash.as_ref(), &twins,", "a draw's SNORM twins are not loaded before its primitives and stored back after (logic::split)"),
+    ("crates/kura/src/d3d11/logic.rs", "31 => Some((f::P_RGBA8SI, [8, 8, 8, 8])),", "R8G8B8A8_SNORM views have no SINT twin"),
+    ("crates/kura/src/d3d11/logic.rs", "51 => Some((f::P_RG8SI, [8, 8, 0, 0])),", "R8G8_SNORM views have no SINT twin"),
+    ("crates/kura/src/d3d11/logic.rs", "63 => Some((f::P_R8SI, [8, 0, 0, 0])),", "R8_SNORM views have no SINT twin"),
+    ("crates/kura/src/d3d11/logic.rs", "store: Store::Snorm(b)", "an SNORM target's store does not carry its blend (logic::targets)"),
+    ("crates/dxwgsl/src/wgsl.rs", "Store::Snorm(blend) =>", "an SNORM target's output does not go through logic_output's store and blend"),
+    ("crates/dxwgsl/src/snorm.rs", "kome::num::trunc_i8((clamp_src(v) * 127.0).round())", "an SNORM store no longer rounds WARP's way (the f32 product, halves away from zero; winref d3d11snorm)"),
+    ("crates/dxwgsl/src/snorm.rs", "if v.is_nan() { -1.0 } else { v.clamp(-1.0, 1.0) }", "a NaN output to an SNORM target is not -127 (WARP writes NaN as -127; winref d3d11snorm)"),
+    ("crates/kura/src/d3d11/clear.rs", "let q = trunc_i64(f64::from((v.clamp(-1.0, 1.0) * max).round()));", "an SNORM clear no longer rounds halves away from zero (winref d3d11snorm: 2.5 / 127 clears to 3)"),
+    ("crates/dxwgsl/src/snorm.rs", "format!(\"sn_r1({s} * {}, sn_z)\", e.src.wgsl(c))", "an SNORM blend's products are no longer kept from fusing with the add (an FMA rounds once: 1.9 * -5/127 blends to -10, WARP to -9)"),
+    ("crates/dxwgsl/src/snorm.rs", "const SN_LOAD = array<u32, 256>(", "the shader's SNORM load divides (WGSL's division is not exact: the blend's last bit differs from WARP's); it reads load()'s table"),
+    ("crates/dxwgsl/src/wgsl.rs", "\"let sn_k = sn_clamp(sn_kv);\"", "an SNORM blend's constant is not clamped to -1..1 in the shader (WARP blends 1.5 as 1; winref d3d11snorm)"),
+    ("crates/kura/src/d3d11/mod.rs", "and_then(dxwgsl::snorm::Blend::of).is_some_and(|b| b.takes()))?;", "CreateBlendState takes MIN / MAX with a dual-source factor (WARP: E_INVALIDARG; winref d3d11snorm)"),
+    ("crates/dxwgsl/src/snorm.rs", "#[path = \"snorm_tests.rs\"]", "the SNORM conversions and blend are no longer checked against WARP's answers (snorm_tests.rs)"),
+];
+
+/// SNORM targets dropped
+pub(super) fn snorm_targets(tree: &Tree) -> Hits {
+    let mut out = Hits::new();
+    for (path, needle, why) in SNORM_SITES {
+        let f = Rel::new(path);
+        if tree.is_made_up() && !tree.has(&f) {
+            continue;
+        }
+        let code = tree.code(&f, true);
+        if !code.contains(needle) {
+            out.push((f, 1, why.to_owned()));
+        }
+    }
+    out
+}
+
 // --- kura-review-6852be1 ------------------------------------------------------------------------
 
 /// What the review of kura at 6852be1 found wrong, fixed (2026-11-22), each by its spelling in

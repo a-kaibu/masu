@@ -1,0 +1,212 @@
+//! The SNORM conversions and blend: against WARP's answers (winref d3d11snorm's golden output,
+//! every row of it), their properties, and their WGSL (naga reads and validates it).
+use proptest::prelude::*;
+
+use super::*;
+
+const FACTORS: [Factor; 17] = [
+    Factor::Zero,
+    Factor::One,
+    Factor::SrcColor,
+    Factor::InvSrcColor,
+    Factor::SrcAlpha,
+    Factor::InvSrcAlpha,
+    Factor::DestAlpha,
+    Factor::InvDestAlpha,
+    Factor::DestColor,
+    Factor::InvDestColor,
+    Factor::SrcAlphaSat,
+    Factor::BlendFactor,
+    Factor::InvBlendFactor,
+    Factor::Src1Color,
+    Factor::InvSrc1Color,
+    Factor::Src1Alpha,
+    Factor::InvSrc1Alpha,
+];
+const OPS: [BlendOp; 5] = [BlendOp::Add, BlendOp::Subtract, BlendOp::RevSubtract, BlendOp::Min, BlendOp::Max];
+
+/// D3D11_BLEND's values in d3d11.h order (12 and 13 none)
+#[test]
+fn factors_are_d3d11s() {
+    let values = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 14, 15, 16, 17, 18, 19];
+    for (f, v) in FACTORS.iter().zip(values) {
+        assert_eq!(Factor::of(v), Some(*f));
+    }
+    for v in [0, 12, 13, 20, u32::MAX] {
+        assert_eq!(Factor::of(v), None);
+    }
+    for (i, o) in OPS.iter().enumerate() {
+        assert_eq!(BlendOp::of(u32::try_from(i).unwrap() + 1), Some(*o));
+    }
+    assert_eq!(BlendOp::of(0), None);
+    assert_eq!(BlendOp::of(6), None);
+}
+
+/// what each factor reads, by its value: a factor that reads the destination changes with it,
+/// one that does not stays (so the draw reads the target's copy exactly when it must)
+#[test]
+fn factors_read_what_they_say() {
+    let (s, s1, k) = ([0.25, -0.5, 0.75, 0.5], [0.1, 0.2, -0.3, 0.4], [0.3, -0.6, 0.9, 0.2]);
+    let (d0, d1) = ([0.0; 4], [0.5, -0.25, 1.0, -0.75]);
+    for f in FACTORS {
+        for c in 0..4 {
+            let dst_changes = f.value(c, s, s1, d0, k) != f.value(c, s, s1, d1, k);
+            let src1_changes = f.value(c, s, s1, d0, k) != f.value(c, s, [0.0; 4], d0, k);
+            let k_changes = f.value(c, s, s1, d0, k) != f.value(c, s, s1, d0, [0.0; 4]);
+            if dst_changes {
+                assert!(f.reads_dst(), "{f:?} channel {c}");
+            }
+            if src1_changes {
+                assert!(f.reads_src1(), "{f:?} channel {c}");
+            }
+            if k_changes {
+                assert!(f.reads_constant(), "{f:?} channel {c}");
+            }
+        }
+    }
+}
+
+proptest! {
+    /// a store is the nearest of the 255 values (-127..=127) to the clamped value (of the f32
+    /// product), halves away from zero; NaN -127; a load of it the value again
+    #[test]
+    fn store_is_nearest(bits in any::<u32>()) {
+        let v = f32::from_bits(bits);
+        let b = store(v);
+        prop_assert!(b >= -127);
+        if v.is_nan() {
+            prop_assert_eq!(b, -127);
+        } else {
+            let x = f64::from(v.clamp(-1.0, 1.0) * 127.0);
+            let e = (f64::from(b) - x).abs();
+            prop_assert!(e < 0.5 || (e == 0.5 && f64::from(b).abs() > x.abs()), "{} -> {}", v, b);
+        }
+        prop_assert_eq!(store(load(b)), b);
+    }
+
+    /// the shader's hidden zero (snorm::helpers' sn_r): bit 30 of every clamped value is 0, so
+    /// or-ing it into a product's bits leaves the product
+    #[test]
+    fn clamped_values_have_no_bit_30(bits in any::<u32>()) {
+        prop_assert_eq!(clamp_src(f32::from_bits(bits)).to_bits() & 0x4000_0000, 0);
+    }
+
+    /// a blend that reads no destination gives the same bytes over any destination, one with
+    /// ONE ZERO ADD everywhere the source's store
+    #[test]
+    fn blend_reads_dst_only_when_it_says(sc in 0usize..17, dc in 0usize..17, oc in 0usize..5, sa in 0usize..17, da in 0usize..17, oa in 0usize..5, s in any::<[f32; 4]>(), s1 in any::<[f32; 4]>(), k in any::<[f32; 4]>(), d0 in any::<[i8; 4]>(), d1 in any::<[i8; 4]>()) {
+        let b = Blend { color: Equation { src: FACTORS[sc], dst: FACTORS[dc], op: OPS[oc] }, alpha: Equation { src: FACTORS[sa], dst: FACTORS[da], op: OPS[oa] } };
+        if !b.reads_dst() {
+            prop_assert_eq!(blend(&b, s, s1, d0, k), blend(&b, s, s1, d1, k));
+        }
+        if !b.reads_src1() {
+            prop_assert_eq!(blend(&b, s, s1, d0, k), blend(&b, s, [0.0; 4], d0, k));
+        }
+        if !b.reads_constant() {
+            prop_assert_eq!(blend(&b, s, s1, d0, k), blend(&b, s, s1, d0, [0.0; 4]));
+        }
+        let copy = Blend { color: Equation { src: Factor::One, dst: Factor::Zero, op: BlendOp::Add }, alpha: Equation { src: Factor::One, dst: Factor::Zero, op: BlendOp::Add } };
+        prop_assert_eq!(blend(&copy, s, s1, d0, k), s.map(store));
+    }
+
+    /// every blend's WGSL parses and validates
+    #[test]
+    fn blend_wgsl_validates(sc in 0usize..17, dc in 0usize..17, oc in 0usize..5, sa in 0usize..17, da in 0usize..17, oa in 0usize..5) {
+        let b = Blend { color: Equation { src: FACTORS[sc], dst: FACTORS[dc], op: OPS[oc] }, alpha: Equation { src: FACTORS[sa], dst: FACTORS[da], op: OPS[oa] } };
+        let body = blend_wgsl(&b, "s", "s1", "d", "o");
+        let src = format!("{}fn f(s: vec4<f32>, s1: vec4<f32>, d: vec4<i32>, sn_k: vec4<f32>) -> vec4<i32> {{ var o: vec4<i32>; {} return o; }}\n", helpers(), body.join(" "));
+        let m = naga::front::wgsl::parse_str(&src).unwrap_or_else(|e| panic!("{b:?}: {}\n{src}", e.emit_to_string(&src)));
+        naga::valid::Validator::new(naga::valid::ValidationFlags::all(), naga::valid::Capabilities::all()).validate(&m).unwrap_or_else(|e| panic!("{b:?}: {e:?}\n{src}"));
+    }
+}
+
+/// One row of winref d3d11snorm's golden output.
+fn golden(name: &str) -> Option<String> {
+    let p = format!("{}/../../tests/winref/golden/{name}/stdout.txt", env!("CARGO_MANIFEST_DIR"));
+    std::fs::read_to_string(p).ok()
+}
+
+fn hex(s: &str) -> u32 {
+    u32::from_str_radix(s, 16).unwrap()
+}
+
+fn bytes(w: u32) -> [i8; 4] {
+    w.to_le_bytes().map(u8::cast_signed)
+}
+
+fn word(b: [i8; 4]) -> u32 {
+    u32::from_le_bytes(b.map(i8::cast_unsigned))
+}
+
+/// Every answer WARP gave in winref d3d11snorm (both builds): the sweeps' bytes, the clears,
+/// and every blend of every factor pair and op over the three sets.
+#[test]
+fn warp_answers() {
+    let mut checked = 0;
+    for name in ["d3d11snorm-32", "d3d11snorm-64"] {
+        let Some(out) = golden(name) else { continue };
+        let mut set: Option<([f32; 4], [f32; 4], u32)> = None;
+        let mut alpha = false;
+        let k = [0.3f32, -0.5, 1.5, 0.75];
+        for line in out.lines() {
+            let t: Vec<&str> = line.split_whitespace().collect();
+            match t.as_slice() {
+                // a sweep: format, first bits, step, then the bytes
+                [f @ ("r8" | "rg8" | "rgba8"), from, step, row] => {
+                    let ch = match *f {
+                        "r8" => 1,
+                        "rg8" => 2,
+                        _ => 4,
+                    };
+                    let (from, step) = (hex(from.trim_end_matches(':')), hex(step.trim_end_matches(':')));
+                    for x in 0..256u32 {
+                        let v = f32::from_bits(from.wrapping_add(x.wrapping_mul(step)));
+                        for c in 0..ch {
+                            let at = usize::try_from(x * ch + c).unwrap() * 2;
+                            let got = u8::from_str_radix(&row[at..at + 2], 16).unwrap().cast_signed();
+                            assert_eq!(store(v), got, "{name}: {f} {v:e} ({:08x})", v.to_bits());
+                            checked += 1;
+                        }
+                    }
+                }
+                ["blend", "set", _, "src", r @ ..] => {
+                    let f = |i: usize| r[i].parse::<f32>().unwrap();
+                    set = Some(([f(0), f(1), f(2), f(3)], [f(5), f(6), f(7), f(8)], hex(r[10])));
+                }
+                ["color", ..] => alpha = false,
+                ["alpha", ..] => alpha = true,
+                [op, src, words @ ..] if set.is_some() && OP_NAMES.contains(op) && src.ends_with(':') => {
+                    let (s, s1, d) = set.unwrap();
+                    let op = OPS[OP_NAMES.iter().position(|o| o == op).unwrap()];
+                    let names: &[&str] = if alpha { &ALPHA_NAMES } else { &COLOR_NAMES };
+                    let factors: Vec<Factor> = names.iter().map(|n| FACTORS[COLOR_NAMES.iter().position(|c| c == n).unwrap()]).collect();
+                    let sf = factors[names.iter().position(|n| *n == src.trim_end_matches(':')).unwrap()];
+                    // (min and max: one row, their factors ignored; an entry WARP refused:
+                    // "CreateBlendState failed <hr> <what the target held>")
+                    let mut words = words.iter();
+                    for df in factors.iter().copied() {
+                        let e = Equation { src: sf, dst: df, op };
+                        let plain = Equation { src: Factor::One, dst: Factor::Zero, op: BlendOp::Add };
+                        let b = if alpha { Blend { color: plain, alpha: e } } else { Blend { color: e, alpha: plain } };
+                        let what = format!("{name}: {} {op:?} {sf:?} {df:?} over {d:08x}", if alpha { "alpha" } else { "color" });
+                        let w = words.next().unwrap_or_else(|| panic!("{what}: no answer"));
+                        if *w == "CreateBlendState" {
+                            assert!(!b.takes(), "{what}: WARP refuses it");
+                            words.nth(2);
+                        } else {
+                            assert!(b.takes(), "{what}: WARP takes it");
+                            assert_eq!(word(blend(&b, s, s1, bytes(d), k)), hex(w), "{what}");
+                        }
+                        checked += 1;
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    eprintln!("{checked} answers checked");
+}
+
+const OP_NAMES: [&str; 5] = ["add", "subtract", "rev_subtract", "min", "max"];
+const COLOR_NAMES: [&str; 17] = ["zero", "one", "src_color", "inv_src_color", "src_alpha", "inv_src_alpha", "dest_alpha", "inv_dest_alpha", "dest_color", "inv_dest_color", "src_alpha_sat", "blend_factor", "inv_blend_factor", "src1_color", "inv_src1_color", "src1_alpha", "inv_src1_alpha"];
+const ALPHA_NAMES: [&str; 11] = ["zero", "one", "src_alpha", "inv_src_alpha", "dest_alpha", "inv_dest_alpha", "src_alpha_sat", "blend_factor", "inv_blend_factor", "src1_alpha", "inv_src1_alpha"];
