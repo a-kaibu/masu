@@ -134,8 +134,10 @@ fn read(p: &tpf::Program, reg: u32) -> u32 {
     m
 }
 
-/// vec4s before the inputs' planes in a slot: the three corners, the rhw plane, the depth plane.
-pub const HEADER: u32 = 5;
+/// vec4s before the inputs' planes in a slot: the three corners drawn, the rhw plane (w: an
+/// aliased line's hiCol, 0 for a triangle), the depth plane (w: the line's hiRow), the line's
+/// nudged start and extent (X0, Y0, DX, DY).
+pub const HEADER: u32 = 6;
 
 impl Layout {
     /// A pixel shader's layout.
@@ -176,10 +178,47 @@ impl Layout {
     }
 }
 
-/// Fan triangles a primitive can make with `user` clip distances: a polygon of at most 3 +
-/// planes points.
-pub fn slots(user: u32) -> u32 {
-    user.saturating_add(7)
+/// What the setup makes of a list primitive: a solid triangle's fan, a triangle's edges as
+/// aliased lines (WIREFRAME), an aliased line, a point.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Hash)]
+pub enum Prim {
+    Triangle,
+    Wire,
+    Line,
+    Point,
+}
+
+impl Prim {
+    /// The primitive of a store's `corners` (wireframe fill or solid), None for none.
+    pub fn of(corners: u32, wire: bool) -> Option<Prim> {
+        match (corners, wire) {
+            (3, false) => Some(Prim::Triangle),
+            (3, true) => Some(Prim::Wire),
+            (2, _) => Some(Prim::Line),
+            (1, _) => Some(Prim::Point),
+            _ => None,
+        }
+    }
+
+    pub fn corners(self) -> u32 {
+        match self {
+            Prim::Triangle | Prim::Wire => 3,
+            Prim::Line => 2,
+            Prim::Point => 1,
+        }
+    }
+
+    /// The slots (each a triangle drawn) one primitive takes with `user` clip distances: a
+    /// fan of a polygon of at most 3 + planes points; a line's one triangle over its region,
+    /// each of the 3 edges' for wireframe; a point's square of 2.
+    pub fn slots(self, user: u32) -> u32 {
+        match self {
+            Prim::Triangle => user.saturating_add(7),
+            Prim::Wire => 3,
+            Prim::Line => 1,
+            Prim::Point => 2,
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -517,6 +556,26 @@ pub struct Line {
     pub rhw: Plane,
     pub z: Plane,
     pub attrs: Vec<Plane>,
+    /// the snapped ends (pixels)
+    pub ends: [(f32, f32); 2],
+}
+
+/// The viewport's clip space position (w 1) of a pixel position at window depth z (the depth
+/// range's 0..1, clamped).
+fn clip_at(x: f32, y: f32, z: f32, r: &Raster) -> [f32; 4] {
+    let [vx, vy, vw, vh, n, f] = r.viewport;
+    let (hx, ox, hy, oy) = (vw * 0.5, vw * 0.5 + vx, -vh * 0.5, vh * 0.5 + vy);
+    let dz = if f == n { 0.0 } else { ((z - n) / (f - n)).clamp(0.0, 1.0) };
+    [(x - ox) / hx, (y - oy) / hy, dz, 1.0]
+}
+
+/// The triangle a line's slot draws: over its pixels and one more on every side (the pixel
+/// shader's coverage test decides), its depth the line's plane at its corners.
+pub fn line_region(l: &Line, r: &Raster) -> [[f32; 4]; 3] {
+    let [(x0, y0), (x1, y1)] = l.ends;
+    let (bx0, by0) = (x0.min(x1).floor() - 1.0, y0.min(y1).floor() - 1.0);
+    let (bx1, by1) = (x0.max(x1).ceil() + 1.0, y0.max(y1).ceil() + 1.0);
+    [(bx0, by0), (bx0 + 2.0 * (bx1 - bx0), by0), (bx0, by0 + 2.0 * (by1 - by0))].map(|(x, y)| clip_at(x, y, line_at(l.z, x, y), r))
 }
 
 /// ceil(v) - 0.5 as WARP computes it (round to nearest, up when below)
@@ -651,7 +710,7 @@ pub fn line(c: &[Corner; 2], modes: &[Mode], r: &Raster) -> Option<Line> {
             }
         })
         .collect();
-    Some(Line { x0: sx, y0: sy, dx: sdx, dy: sdy, hi_col, hi_row, rhw: axis(rhw[0], rhw[1]), z: axis(z[0], z[1]), attrs })
+    Some(Line { x0: sx, y0: sy, dx: sdx, dy: sdy, hi_col, hi_row, rhw: axis(rhw[0], rhw[1]), z: axis(z[0], z[1]), attrs, ends: [(x0, y0), (x1, y1)] })
 }
 
 /// Each table point's value of one component on a line (the corners as given, new points by
@@ -730,6 +789,15 @@ pub fn point(c: &Corner, modes: &[Mode], r: &Raster) -> Option<Dot> {
     Some(Dot { pixel: (px(sx), px(sy)), rhw, z, attrs })
 }
 
+/// The two triangles a point's slots draw: a square inside its pixel holding the centre and
+/// every standard sample position, at its depth.
+pub fn dot_squares(d: &Dot, r: &Raster) -> [[[f32; 4]; 3]; 2] {
+    let (px, py) = (f32_of(i128::from(d.pixel.0)), f32_of(i128::from(d.pixel.1)));
+    let (lo, hi) = ((px + 0.0625, py + 0.0625), (px + 0.9375, py + 0.9375));
+    let q = [lo, (hi.0, lo.1), (lo.0, hi.1), hi].map(|(x, y)| clip_at(x, y, d.z, r));
+    [[q[0], q[1], q[2]], [q[1], q[3], q[2]]]
+}
+
 /// A point's component at its pixel (bits).
 pub fn dot_eval(d: &Dot, k: usize, mode: Mode) -> u32 {
     let v = d.attrs.get(k).copied().unwrap_or(0.0);
@@ -754,6 +822,15 @@ pub const B_SETUP: u32 = 460;
 
 /// Exact integer to f32 conversions (WGSL leaves which neighbour an inexact one takes to the
 /// implementation), WARP's setup of a fan triangle and of one component's planes.
+/// A product passed through sx_r is rounded on its own: sx_k is a 0 no compiler can see (the
+/// entry point sets it from a runtime word whose bit it keeps is never set), so the product
+/// is never fused with the add that takes it (WGSL leaves contraction to the implementation;
+/// WARP rounds the product and the sum each).
+const SX_ROUND: &str = "var<private> sx_k = 0u;
+fn sx_r(v: f32) -> f32 { return bitcast<f32>(bitcast<u32>(v) | sx_k); }
+fn sx_r3(v: vec3<f32>) -> vec3<f32> { return bitcast<vec3<f32>>(bitcast<vec3<u32>>(v) | vec3<u32>(sx_k)); }
+";
+
 const SETUP_WGSL: &str = r#"
 fn sx_u64_f32(hi: u32, lo: u32) -> f32 {
     if (hi == 0u && lo < 0x1000000u) { return f32(lo); }
@@ -803,7 +880,7 @@ fn sx_geometry(s0: vec2<i32>, s1: vec2<i32>, s2: vec2<i32>) -> bool {
     let det = sx_det(s2.y - s0.y, s1.x - s0.x, s0.y - s1.y, s0.x - s2.x);
     if (det.x == 0u && det.y == 0u) { return false; }
     let e = 0.00390625f;
-    let inv = 1.0f / (sx_i64_f32(det) * 0.0000152587890625f);
+    let inv = ps_div(1.0f, sx_i64_f32(det) * 0.0000152587890625f);
     sx_ga = vec4<f32>(sx_i32_f32(s0.x) * e, sx_i32_f32(s0.y) * e, sx_i32_f32(s1.x - s0.x) * e, sx_i32_f32(s0.x - s2.x) * e);
     sx_gb = vec4<f32>(sx_i32_f32(s0.y - s1.y) * e, sx_i32_f32(s2.y - s0.y) * e, inv, 0.0f);
     let bits = xw(XD_RASTER);
@@ -815,14 +892,14 @@ fn sx_geometry(s0: vec2<i32>, s1: vec2<i32>, s2: vec2<i32>) -> bool {
 fn sx_plane(a0: f32, a1: f32, a2: f32) -> vec3<f32> {
     let d10 = a1 - a0;
     let d20 = a2 - a0;
-    let gx = (d10 * sx_gb.y + d20 * sx_gb.x) * sx_gb.z;
-    let gy = (d10 * sx_ga.w + d20 * sx_ga.z) * sx_gb.z;
-    return vec3<f32>(gx, gy, (a0 - gx * sx_ga.x) - gy * sx_ga.y);
+    let gx = sx_r((sx_r(d10 * sx_gb.y) + sx_r(d20 * sx_gb.x)) * sx_gb.z);
+    let gy = sx_r((sx_r(d10 * sx_ga.w) + sx_r(d20 * sx_ga.z)) * sx_gb.z);
+    return vec3<f32>(gx, gy, (a0 - sx_r(gx * sx_ga.x)) - sx_r(gy * sx_ga.y));
 }
 fn sx_screen_s(w_in: f32, w_out: f32, d_in: f32, d_out: f32) -> f32 {
     let num = d_in * w_out;
-    let den = (w_out - w_in) * d_in + (d_in - d_out) * w_in;
-    return num / den;
+    let den = sx_r((w_out - w_in) * d_in) + sx_r((d_in - d_out) * w_in);
+    return ps_div(num, den);
 }
 "#;
 
@@ -830,7 +907,7 @@ fn sx_screen_s(w_in: f32, w_out: f32, d_in: f32, d_out: f32) -> f32 {
 /// shader `ps` reads by semantic (none: no pixel shader), `osgn` the outputs of the shader that
 /// wrote it) through WARP's clipper and setup, its fan triangles' slots into `setup` at `item *
 /// slots`: list primitive `item` + xd FIRST (a draw set up in pieces).
-pub fn setup_pass(store: &Store, osgn: &[SigElement], ps: Option<&[u8]>) -> Result<Wgsl, String> {
+pub fn setup_pass(store: &Store, osgn: &[SigElement], ps: Option<&[u8]>, prim: Prim) -> Result<Wgsl, String> {
     let layout = match ps {
         Some(p) => Layout::of(p)?,
         None => Layout::default(),
@@ -844,11 +921,11 @@ pub fn setup_pass(store: &Store, osgn: &[SigElement], ps: Option<&[u8]>) -> Resu
         Some(p) => parse(p)?.0.signature(false),
         None => Vec::new(),
     };
-    if store.corners() != 3 {
-        return Err(format!("a setup of {}-corner primitives", store.corners()));
+    if store.corners() != prim.corners() {
+        return Err(format!("a setup of {prim:?} from {}-corner primitives", store.corners()));
     }
     let regs = store.regs();
-    let reg_of = |corner: u32, r: u32, c: u8| format!("store[e{corner} * {regs}u + {r}u].{}", XYZW.get(usize::from(c)).copied().unwrap_or('x'));
+    let reg_of = |corner: &str, r: u32, c: u8| format!("store[{corner} * {regs}u + {r}u].{}", XYZW.get(usize::from(c)).copied().unwrap_or('x'));
     // the store's clip and cull distances, in order (SV_ClipDistance0 x..w, then 1)
     let dist = |sv: u32| -> Vec<(u32, u8)> {
         let mut e: Vec<&SigElement> = osgn.iter().filter(|e| e.sysval == sv).collect();
@@ -859,11 +936,37 @@ pub fn setup_pass(store: &Store, osgn: &[SigElement], ps: Option<&[u8]>) -> Resu
     let culls = dist(3);
     let user = kome::num::u32_of(clips.len());
     let planes = 6u32.saturating_add(user);
-    let nslots = slots(user);
+    let nslots = prim.slots(user);
     let stride = layout.stride();
     // (points: the 3 corners and at most 2 a plane; the polygon at most 3 + planes)
     let maxt = planes.saturating_mul(2).saturating_add(3);
     let maxp = planes.saturating_add(3);
+    // each input component of the layout: (its slot vec4, component, mode word, store source)
+    let mut comps: Vec<Comp> = Vec::new();
+    for (i, inp) in (0u32..).zip(&layout.inputs) {
+        let at = HEADER.saturating_add(i.saturating_mul(3));
+        for pcomp in bits(inp.mask) {
+            let mut src = None;
+            for e in isgn.iter().filter(|e| e.reg == inp.reg && e.mask & (1 << pcomp) != 0) {
+                let Some(f) = osgn.iter().find(|f| f.sysval == e.sysval && f.name.eq_ignore_ascii_case(&e.name) && f.index == e.index) else { continue };
+                // (the element's components in order: the pixel shader's to the store's)
+                if let Some((_, vc)) = bits(e.mask).into_iter().zip(bits(f.mask)).find(|(p, _)| *p == pcomp) {
+                    src = Some((f.reg, vc));
+                }
+            }
+            comps.push((at, pcomp, inp.mode.word(), src));
+        }
+    }
+    let val = |corner: &str, src: Option<(u32, u8)>| match src {
+        Some((r, vc)) => reg_of(corner, r, vc),
+        None => "0u".to_string(),
+    };
+    let pos = osgn.iter().find(|e| e.sysval == 1).map(|e| e.reg);
+    let pos_of = |corner: &str| match pos {
+        Some(r) => format!("bitcast<vec4<f32>>(store[{corner} * {regs}u + {r}u])"),
+        None => "vec4<f32>(0.0f)".to_string(),
+    };
+    let dc = "(xw(XD_RASTER) & 8u) != 0u";
     let mut m = String::new();
     let mut bindings = Vec::new();
     xd_decl(&mut m, &mut bindings);
@@ -871,6 +974,8 @@ pub fn setup_pass(store: &Store, osgn: &[SigElement], ps: Option<&[u8]>) -> Resu
     wln!(m, "@group(0) @binding({B_SETUP}) var<storage, read_write> setup: array<vec4<u32>>;");
     bindings.push((B_SETUP, Binding::StorageBuffer(true)));
     m.push_str(ps::WGSL);
+    m.push_str(ps::DIV);
+    m.push_str(SX_ROUND);
     m.push_str(SETUP_WGSL);
     wln!(m, "const SX_PLANES = {planes}u;\nconst SX_SLOTS = {nslots}u;\nconst SX_STRIDE = {stride}u;");
     wln!(m, "var<private> tp: array<vec4<f32>, {maxt}>;\nvar<private> td: array<array<f32, {planes}>, {maxt}>;");
@@ -891,7 +996,7 @@ pub fn setup_pass(store: &Store, osgn: &[SigElement], ps: Option<&[u8]>) -> Resu
             if (mode == 2u) {{ av[i] = lerp2(a, b, tdin[i], tden[i]); }}
             else {{
                 let s = sx_screen_s(tp[tin[i]].w, tp[tout[i]].w, tdin[i], tdout[i]);
-                av[i] = (b - a) * s + a;
+                av[i] = sx_r((b - a) * s) + a;
             }}
         }}
     }}
@@ -905,28 +1010,42 @@ pub fn setup_pass(store: &Store, osgn: &[SigElement], ps: Option<&[u8]>) -> Resu
         sx_ga = fga[f]; sx_gb = fgb[f];
         let k = fan[f];
         var a = vec3<f32>(av[k.x], av[k.y], av[k.z]);
-        if (mode == 2u) {{ a = a * frhw[f]; }}
+        if (mode == 2u) {{ a = sx_r3(a * frhw[f]); }}
         let p = sx_plane(a.x, a.y, a.z);
         setup[o][c] = bitcast<u32>(p.x); setup[o + 1u][c] = bitcast<u32>(p.y); setup[o + 2u][c] = bitcast<u32>(p.z);
     }}
 }}"
     );
+    if matches!(prim, Prim::Line | Prim::Wire) {
+        line_fns(&mut m, &clips, &culls, &comps, &val, &pos_of, regs);
+    }
+    if prim == Prim::Point {
+        point_fn(&mut m, &clips, &culls, &comps, &val, &pos_of, regs);
+    }
     wln!(m, "@compute @workgroup_size(64)\nfn main(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(num_workgroups) nwg: vec3<u32>) {{\n    {ITEM}");
-    wln!(m, "    let t = item + xw(XD_FIRST);\n    base = item * SX_SLOTS;");
+    m.push_str(ps::ENTRY);
+    wln!(m, "    sx_k = ps_k;\n    let t = item + xw(XD_FIRST);\n    base = item * SX_SLOTS;");
     // (an empty slot: three equal corners)
     m.push_str("    for (var f = 0u; f < SX_SLOTS; f += 1u) {\n        let o = (base + f) * SX_STRIDE;\n        setup[o] = vec4<u32>(0u); setup[o + 1u] = vec4<u32>(0u); setup[o + 2u] = vec4<u32>(0u);\n    }\n");
-    for c in 0..3 {
-        wln!(m, "    let e{c} = list[({}) * 3u + {c}u];", store.slot("t"));
+    let corners = prim.corners();
+    for c in 0..corners {
+        wln!(m, "    let e{c} = list[({}) * {corners}u + {c}u];", store.slot("t"));
+        wln!(m, "    if (e{c} == 0xffffffffu) {{ return; }}");
     }
-    m.push_str("    if (e0 == 0xffffffffu || e1 == 0xffffffffu || e2 == 0xffffffffu) { return; }\n");
-    let pos = osgn.iter().find(|e| e.sysval == 1).map(|e| e.reg);
-    for c in 0..3 {
-        match pos {
-            Some(r) => wln!(m, "    let p{c} = bitcast<vec4<f32>>(store[e{c} * {regs}u + {r}u]);"),
-            None => wln!(m, "    let p{c} = vec4<f32>(0.0f);"),
+    match prim {
+        Prim::Point => {
+            m.push_str("    point_slots(e0);\n}\n");
+            return Ok(Wgsl { code: m, bindings });
         }
+        Prim::Line => {
+            m.push_str("    line_slot(0u, e0, e1);\n}\n");
+            return Ok(Wgsl { code: m, bindings });
+        }
+        Prim::Triangle | Prim::Wire => {}
     }
-    let dc = "(xw(XD_RASTER) & 8u) != 0u";
+    for c in 0..3 {
+        wln!(m, "    let p{c} = {};", pos_of(&format!("e{c}")));
+    }
     // cull distances
     for &(r, cc) in &culls {
         let x = XYZW.get(usize::from(cc)).copied().unwrap_or('x');
@@ -968,7 +1087,7 @@ pub fn setup_pass(store: &Store, osgn: &[SigElement], ps: Option<&[u8]>) -> Resu
                 let den = din - dout;
                 let j = tn;
                 tn += 1u;
-                tp[j] = vec4<f32>(lerp2(tp[inside].x, tp[outside].x, din, den), lerp2(tp[inside].y, tp[outside].y, din, den), lerp2(tp[inside].z, tp[outside].z, din, den), lerp2(tp[inside].w, tp[outside].w, din, den));
+                tp[j] = lerp4(tp[inside], tp[outside], din, den);
                 for (var q = 0u; q < SX_PLANES; q += 1u) {
                     if (q > k && ((or >> q) & 1u) != 0u) { td[j][q] = lerp2(td[inside][q], td[outside][q], din, den); }
                     else { td[j][q] = td[inside][q]; }
@@ -984,8 +1103,7 @@ pub fn setup_pass(store: &Store, osgn: &[SigElement], ps: Option<&[u8]>) -> Resu
 ",
     );
     // the fan, its corners' screen positions, depths and rhws, the header of each slot
-    m.push_str(
-        "    let vx = bitcast<f32>(xw(XD_VIEWPORT)); let vy = bitcast<f32>(xw(XD_VIEWPORT + 1u));
+    const FAN: &str = "    let vx = bitcast<f32>(xw(XD_VIEWPORT)); let vy = bitcast<f32>(xw(XD_VIEWPORT + 1u));
     let vw = bitcast<f32>(xw(XD_VIEWPORT + 2u)); let vh = bitcast<f32>(xw(XD_VIEWPORT + 3u));
     let zn = bitcast<f32>(xw(XD_DEPTH)); let zf = bitcast<f32>(xw(XD_DEPTH + 1u));
     nf = 0u;
@@ -1007,9 +1125,9 @@ pub fn setup_pass(store: &Store, osgn: &[SigElement], ps: Option<&[u8]>) -> Resu
                 if (dclip) { zc = min(max(zc, 0.0f), w); }
                 q = vec4<f32>(min(max(p.x, -w), w), min(max(p.y, -w), w), zc, p.w);
             }
-            let rhw = 1.0f / w;
+            let rhw = ps_div(1.0f, w);
             r[c] = rhw;
-            z[c] = rhw * zc * (zf - zn) + zn;
+            z[c] = sx_r(rhw * zc * (zf - zn)) + zn;
             dp[c] = q;
         }
         if (!sx_geometry(s[0], s[1], s[2])) { continue; }
@@ -1025,29 +1143,283 @@ pub fn setup_pass(store: &Store, osgn: &[SigElement], ps: Option<&[u8]>) -> Resu
         setup[o + 4u] = vec4<u32>(bitcast<u32>(pz.x), bitcast<u32>(pz.y), bitcast<u32>(pz.z), 0u);
         nf += 1u;
     }
-",
-    );
-    // each input component of the layout, from the store by semantic
-    for (i, inp) in (0u32..).zip(&layout.inputs) {
-        let at = HEADER.saturating_add(i.saturating_mul(3));
-        for pcomp in bits(inp.mask) {
-            let mut src = None;
-            for e in isgn.iter().filter(|e| e.reg == inp.reg && e.mask & (1 << pcomp) != 0) {
-                let Some(f) = osgn.iter().find(|f| f.sysval == e.sysval && f.name.eq_ignore_ascii_case(&e.name) && f.index == e.index) else { continue };
-                // (the element's components in order: the pixel shader's to the store's)
-                if let Some((_, vc)) = bits(e.mask).into_iter().zip(bits(f.mask)).find(|(p, _)| *p == pcomp) {
-                    src = Some((f.reg, vc));
-                }
+";
+    const FAN_WIRE: &str = "    let vx = bitcast<f32>(xw(XD_VIEWPORT)); let vy = bitcast<f32>(xw(XD_VIEWPORT + 1u));
+    let vw = bitcast<f32>(xw(XD_VIEWPORT + 2u)); let vh = bitcast<f32>(xw(XD_VIEWPORT + 3u));
+    let zn = bitcast<f32>(xw(XD_DEPTH)); let zf = bitcast<f32>(xw(XD_DEPTH + 1u));
+    nf = 0u;
+    for (var i = 1u; i + 1u < n; i += 1u) {
+        let k = vec3<u32>(poly[0], poly[i], poly[i + 1u]);
+        var s: array<vec2<i32>, 3>;
+        var z: array<f32, 3>;
+        var r: array<f32, 3>;
+        var dp: array<vec4<f32>, 3>;
+        for (var c = 0u; c < 3u; c += 1u) {
+            let j = k[c];
+            let made = j >= 3u;
+            let p = tp[j];
+            s[c] = ps_snap(p, made);
+            let w = select(p.w, 1.17549435e-38f, 1.17549435e-38f > p.w);
+            var zc = p.z;
+            var q = p;
+            if (made) {
+                if (dclip) { zc = min(max(zc, 0.0f), w); }
+                q = vec4<f32>(min(max(p.x, -w), w), min(max(p.y, -w), w), zc, p.w);
             }
-            let (v0, v1, v2) = match src {
-                Some((r, vc)) => (reg_of(0, r, vc), reg_of(1, r, vc), reg_of(2, r, vc)),
-                None => ("0u".to_string(), "0u".to_string(), "0u".to_string()),
-            };
-            wln!(m, "    setup_c({at}u, {pcomp}u, {}u, {v0}, {v1}, {v2});", inp.mode.word());
+            let rhw = ps_div(1.0f, w);
+            r[c] = rhw;
+            z[c] = sx_r(rhw * zc * (zf - zn)) + zn;
+            dp[c] = q;
         }
+        if (!sx_geometry(s[0], s[1], s[2])) { continue; }
+        // (WIREFRAME: drawn when a fan triangle is, culling as solid)
+        nf += 1u;
+        break;
+    }
+";
+    m.push_str(if prim == Prim::Wire { FAN_WIRE } else { FAN });
+    if prim == Prim::Wire {
+        // (each edge an aliased line of its own, in the API's corner order)
+        m.push_str("    if (nf == 0u) { return; }\n    line_slot(0u, e0, e1);\n    line_slot(1u, e1, e2);\n    line_slot(2u, e2, e0);\n}\n");
+        return Ok(Wgsl { code: m, bindings });
+    }
+    // each input component of the layout, from the store by semantic
+    for &(at, pcomp, mode, src) in &comps {
+        wln!(m, "    setup_c({at}u, {pcomp}u, {mode}u, {}, {}, {});", val("e0", src), val("e1", src), val("e2", src));
     }
     m.push_str("}\n");
     Ok(Wgsl { code: m, bindings })
+}
+
+/// An input component of the layout in the setup pass: its slot vec4, component, mode word
+/// and the store's register and component it comes from (None: 0).
+type Comp = (u32, u8, u32, Option<(u32, u8)>);
+
+/// A store component's value expression for a corner index variable.
+type Val<'a> = &'a dyn Fn(&str, Option<(u32, u8)>) -> String;
+
+/// The WGSL that clips one point's distances (clip and cull) for corner variable `e` into
+/// `td[i]`, `fail` run when it is NaN with depth clip.
+fn dist_rows(m: &mut String, clips: &[(u32, u8)], regs: u32, e: &str, i: &str) {
+    wln!(m, "        for (var k = 0u; k < 6u; k += 1u) {{ td[{i}][k] = ps_dist(tp[{i}], k, dclip); }}");
+    for (k, &(r, cc)) in clips.iter().enumerate() {
+        let x = XYZW.get(usize::from(cc)).copied().unwrap_or('x');
+        wln!(m, "        td[{i}][{}u] = bitcast<f32>(store[{e} * {regs}u + {r}u].{x});", k.saturating_add(6));
+    }
+}
+
+/// The WGSL of an aliased line's setup (lines.md §1): `line_slot(f, ea, eb)` clips the line
+/// from corner ea to eb (clip.md's planes, the inside point's interpolation), snaps its ends,
+/// nudges the start and end out of their diamonds, and writes slot f: a triangle over the
+/// line's region, the coverage test's numbers, the planes along the major axis.
+fn line_fns(m: &mut String, clips: &[(u32, u8)], culls: &[(u32, u8)], comps: &[Comp], val: Val, pos_of: &dyn Fn(&str) -> String, regs: u32) {
+    m.push_str(
+        "var<private> lx_major = false;
+var<private> l_inv = 0.0f;
+var<private> l_base = 0.0f;
+var<private> lrhw = vec2<f32>(0.0f);
+var<private> lend = vec2<u32>(0u, 1u);
+fn line_axis(v0: f32, v1: f32) -> vec3<f32> {
+    let k = (v1 - v0) * l_inv;
+    let c = v0 - sx_r(k * l_base);
+    if (lx_major) { return vec3<f32>(k, 0.0f, c); }
+    return vec3<f32>(0.0f, k, c);
+}
+fn setup_lc(o: u32, c: u32, mode: u32, v0: u32, v1: u32) {
+    let v = array<u32, 2>(v0, v1);
+    for (var i = 0u; i < tn; i += 1u) {
+        if (mode == 0u) { av[i] = 0.0f; }
+        else if (mode == 1u) { av[i] = bitcast<f32>(v0); }
+        else if (i < 2u) { av[i] = bitcast<f32>(v[i]); }
+        else {
+            let a = av[tin[i]]; let b = av[tout[i]];
+            if (mode == 2u) { av[i] = lerp2(a, b, tdin[i], tden[i]); }
+            else {
+                let s = sx_screen_s(tp[tin[i]].w, tp[tout[i]].w, tdin[i], tdout[i]);
+                av[i] = sx_r((b - a) * s) + a;
+            }
+        }
+    }
+    if (mode <= 1u) {
+        setup[o][c] = 0u; setup[o + 1u][c] = 0u;
+        setup[o + 2u][c] = select(0u, v0, mode == 1u);
+        return;
+    }
+    var a = vec2<f32>(av[lend.x], av[lend.y]);
+    if (mode == 2u) { a = vec2<f32>(sx_r(a.x * lrhw.x), sx_r(a.y * lrhw.y)); }
+    let p = line_axis(a.x, a.y);
+    setup[o][c] = bitcast<u32>(p.x); setup[o + 1u][c] = bitcast<u32>(p.y); setup[o + 2u][c] = bitcast<u32>(p.z);
+}
+// ceil(v) - 0.5 as WARP takes it: round to nearest, up when below
+fn l_owner(v: f32) -> f32 {
+    var n = round(v);
+    if (v > n) { n = n + 1.0f; }
+    return n - 0.5f;
+}
+fn l_diamond(x: f32, y: f32, cx: f32, cy: f32, xm: bool) -> bool {
+    let d = abs(x - cx) + abs(y - cy);
+    if (y > cy || (y == cy && !xm && x > cx)) { return 0.5f >= d; }
+    return 0.5f > d;
+}
+",
+    );
+    wln!(m, "fn line_slot(f: u32, ea: u32, eb: u32) {{\n    let o = (base + f) * SX_STRIDE;");
+    for &(r, cc) in culls {
+        let x = XYZW.get(usize::from(cc)).copied().unwrap_or('x');
+        wln!(m, "    if (0.0f > bitcast<f32>(store[ea * {regs}u + {r}u].{x}) && 0.0f > bitcast<f32>(store[eb * {regs}u + {r}u].{x})) {{ return; }}");
+    }
+    wln!(m, "    let dclip = (xw(XD_RASTER) & 8u) != 0u;\n    tp[0] = {};\n    tp[1] = {};", pos_of("ea"), pos_of("eb"));
+    m.push_str("    {\n");
+    dist_rows(m, clips, regs, "ea", "0u");
+    dist_rows(m, clips, regs, "eb", "1u");
+    m.push_str("    }\n");
+    m.push_str(
+        "    if (dclip) { for (var k = 0u; k < 6u; k += 1u) { if (td[0][k] != td[0][k] || td[1][k] != td[1][k]) { return; } } }
+    tn = 2u;
+    lend = vec2<u32>(0u, 1u);
+    for (var k = 0u; k < SX_PLANES; k += 1u) {
+        let da = td[lend.x][k];
+        let db = td[lend.y][k];
+        let ao = 0.0f > da;
+        let bo = 0.0f > db;
+        if (ao && bo) { return; }
+        if (!ao && !bo) { continue; }
+        var inside = lend.x; var outside = lend.y; var din = da; var dout = db;
+        if (ao) { inside = lend.y; outside = lend.x; din = db; dout = da; }
+        let den = din - dout;
+        let j = tn;
+        tn += 1u;
+        tp[j] = lerp4(tp[inside], tp[outside], din, den);
+        for (var q = 0u; q < SX_PLANES; q += 1u) {
+            if (q > k) { td[j][q] = lerp2(td[inside][q], td[outside][q], din, den); }
+            else { td[j][q] = td[inside][q]; }
+        }
+        tin[j] = inside; tout[j] = outside; tdin[j] = din; tdout[j] = dout; tden[j] = den;
+        if (ao) { lend.x = j; } else { lend.y = j; }
+    }
+    let zn = bitcast<f32>(xw(XD_DEPTH)); let zf = bitcast<f32>(xw(XD_DEPTH + 1u));
+    var sc: array<vec2<i32>, 2>;
+    var zz: array<f32, 2>;
+    var rr: array<f32, 2>;
+    for (var c = 0u; c < 2u; c += 1u) {
+        let j = lend[c];
+        let made = j >= 2u;
+        let p = tp[j];
+        sc[c] = ps_snap(p, made);
+        let w = select(p.w, 1.17549435e-38f, 1.17549435e-38f > p.w);
+        var zc = p.z;
+        if (made && dclip) { zc = min(max(zc, 0.0f), w); }
+        let rhw = ps_div(1.0f, w);
+        rr[c] = rhw;
+        zz[c] = sx_r(rhw * zc * (zf - zn)) + zn;
+    }
+    let e = 0.00390625f;
+    let x0 = sx_r(sx_i32_f32(sc[0].x) * e); let y0 = sx_r(sx_i32_f32(sc[0].y) * e);
+    let x1 = sx_r(sx_i32_f32(sc[1].x) * e); let y1 = sx_r(sx_i32_f32(sc[1].y) * e);
+    if (x0 == x1 && y0 == y1) { return; }
+    let xm = abs(x0 - x1) >= abs(y0 - y1);
+    let dx = x1 - x0; let dy = y1 - y0;
+    let cx0 = l_owner(x0); let cy0 = l_owner(y0); let cx1 = l_owner(x1); let cy1 = l_owner(y1);
+    let in_s = l_diamond(x0, y0, cx0, cy0, xm);
+    let in_e = l_diamond(x1, y1, cx1, cy1, xm);
+    let hc = bitcast<f32>(0x3f000001u);
+    var hr = 0.5f;
+    if (!xm) { hr = hc; }
+    var sx0 = x0; var sy0 = y0; var sdx = dx; var sdy = dy;
+    if (in_s && in_e && cx0 == cx1 && cy0 == cy1) {
+        sx0 = -0.5f; sy0 = -0.5f; sdx = 0.0f; sdy = 0.0f;
+    } else {
+        if (in_s) {
+            var u = 0.0f; var v = 0.0f;
+            if (xm) { u = (x0 - cx0) + select(-e, e, dx > 0.0f); v = sx_r(ps_div(dy, dx) * u); }
+            else { v = (y0 - cy0) + select(-e, e, dy > 0.0f); u = sx_r(ps_div(dx, dy) * v); }
+            sx0 = x0 - u; sy0 = y0 - v; sdx = dx + u; sdy = dy + v;
+        }
+        if (in_e) {
+            var u = 0.0f; var v = 0.0f;
+            if (xm) { u = ((sx0 + sdx) - cx1) + select(-e, e, sdx > 0.0f); v = sx_r(ps_div(sdy, sdx) * u); }
+            else { v = ((sy0 + sdy) - cy1) + select(-e, e, sdy > 0.0f); u = sx_r(ps_div(sdx, sdy) * v); }
+            sdx = sdx - u; sdy = sdy - v;
+        }
+    }
+    lx_major = xm;
+    if (xm) { l_inv = ps_div(1.0f, x1 - x0); l_base = x0; } else { l_inv = ps_div(1.0f, y1 - y0); l_base = y0; }
+    lrhw = vec2<f32>(rr[0], rr[1]);
+    let pr = line_axis(rr[0], rr[1]);
+    let pz = line_axis(zz[0], zz[1]);
+    // the triangle drawn: over the line's pixels and one more on every side, its depth the
+    // plane's at its corners (in the viewport's clip space, w 1)
+    let vx = bitcast<f32>(xw(XD_VIEWPORT)); let vy = bitcast<f32>(xw(XD_VIEWPORT + 1u));
+    let vw = bitcast<f32>(xw(XD_VIEWPORT + 2u)); let vh = bitcast<f32>(xw(XD_VIEWPORT + 3u));
+    let hx = vw * 0.5f; let ox = sx_r(vw * 0.5f) + vx; let hy = -vh * 0.5f; let oy = sx_r(vh * 0.5f) + vy;
+    let bx0 = floor(min(x0, x1)) - 1.0f; let by0 = floor(min(y0, y1)) - 1.0f;
+    let bx1 = ceil(max(x0, x1)) + 1.0f; let by1 = ceil(max(y0, y1)) + 1.0f;
+    let cs = array<vec2<f32>, 3>(vec2<f32>(bx0, by0), vec2<f32>(bx0 + sx_r(2.0f * (bx1 - bx0)), by0), vec2<f32>(bx0, by0 + sx_r(2.0f * (by1 - by0))));
+    for (var c = 0u; c < 3u; c += 1u) {
+        let q = cs[c];
+        var dz = 0.0f;
+        if (zf != zn) { dz = clamp(ps_div((sx_r(pz.x * q.x) + (sx_r(pz.y * q.y) + pz.z)) - zn, zf - zn), 0.0f, 1.0f); }
+        setup[o + c] = bitcast<vec4<u32>>(vec4<f32>(ps_div(q.x - ox, hx), ps_div(q.y - oy, hy), dz, 1.0f));
+    }
+    setup[o + 3u] = vec4<u32>(bitcast<u32>(pr.x), bitcast<u32>(pr.y), bitcast<u32>(pr.z), bitcast<u32>(hc));
+    setup[o + 4u] = vec4<u32>(bitcast<u32>(pz.x), bitcast<u32>(pz.y), bitcast<u32>(pz.z), bitcast<u32>(hr));
+    setup[o + 5u] = bitcast<vec4<u32>>(vec4<f32>(sx0, sy0, sdx, sdy));
+",
+    );
+    for &(at, pcomp, mode, src) in comps {
+        wln!(m, "    setup_lc(o + {at}u, {pcomp}u, {mode}u, {}, {});", val("ea", src), val("eb", src));
+    }
+    m.push_str("}\n");
+}
+
+/// The WGSL of a point's setup: `point_slots(e)` drops a point outside a plane, else writes its
+/// two slots: the square of the pixel whose centre is in [X - 0.5, X + 0.5) of its snapped
+/// position, every plane constant (a perspective input's value times rhw).
+fn point_fn(m: &mut String, clips: &[(u32, u8)], culls: &[(u32, u8)], comps: &[Comp], val: Val, pos_of: &dyn Fn(&str) -> String, regs: u32) {
+    wln!(m, "fn point_slots(e0: u32) {{\n    let p = {};\n    let dclip = (xw(XD_RASTER) & 8u) != 0u;", pos_of("e0"));
+    m.push_str("    for (var k = 0u; k < 6u; k += 1u) { let d = ps_dist(p, k, dclip); if (0.0f > d || d != d) { return; } }\n");
+    for &(r, cc) in clips.iter().chain(culls) {
+        let x = XYZW.get(usize::from(cc)).copied().unwrap_or('x');
+        wln!(m, "    if (0.0f > bitcast<f32>(store[e0 * {regs}u + {r}u].{x})) {{ return; }}");
+    }
+    m.push_str(
+        "    let s = ps_snap(p, false);
+    let w = select(p.w, 1.17549435e-38f, 1.17549435e-38f > p.w);
+    let rhw = ps_div(1.0f, w);
+    let zn = bitcast<f32>(xw(XD_DEPTH)); let zf = bitcast<f32>(xw(XD_DEPTH + 1u));
+    let z = sx_r(rhw * p.z * (zf - zn)) + zn;
+    let px = f32((s.x - 1) >> 8u); let py = f32((s.y - 1) >> 8u);
+    let vx = bitcast<f32>(xw(XD_VIEWPORT)); let vy = bitcast<f32>(xw(XD_VIEWPORT + 1u));
+    let vw = bitcast<f32>(xw(XD_VIEWPORT + 2u)); let vh = bitcast<f32>(xw(XD_VIEWPORT + 3u));
+    let hx = vw * 0.5f; let ox = sx_r(vw * 0.5f) + vx; let hy = -vh * 0.5f; let oy = sx_r(vh * 0.5f) + vy;
+    var dz = 0.0f;
+    if (zf != zn) { dz = clamp(ps_div(z - zn, zf - zn), 0.0f, 1.0f); }
+    // (a square inside the pixel holding its centre and every standard sample position)
+    let lo = vec2<f32>(px + 0.0625f, py + 0.0625f);
+    let hi = vec2<f32>(px + 0.9375f, py + 0.9375f);
+    let q = array<vec2<f32>, 4>(lo, vec2<f32>(hi.x, lo.y), vec2<f32>(lo.x, hi.y), hi);
+    let tri = array<vec3<u32>, 2>(vec3<u32>(0u, 1u, 2u), vec3<u32>(1u, 3u, 2u));
+    for (var f = 0u; f < 2u; f += 1u) {
+        let o = (base + f) * SX_STRIDE;
+        for (var c = 0u; c < 3u; c += 1u) {
+            let v = q[tri[f][c]];
+            setup[o + c] = bitcast<vec4<u32>>(vec4<f32>(ps_div(v.x - ox, hx), ps_div(v.y - oy, hy), dz, 1.0f));
+        }
+        setup[o + 3u] = vec4<u32>(0u, 0u, bitcast<u32>(rhw), 0u);
+        setup[o + 4u] = vec4<u32>(0u, 0u, bitcast<u32>(z), 0u);
+        setup[o + 5u] = vec4<u32>(0u);
+",
+    );
+    for &(at, pcomp, mode, src) in comps {
+        let v = val("e0", src);
+        let c = match mode {
+            0 => "0u".to_string(),
+            2 => format!("bitcast<u32>(sx_r(bitcast<f32>({v}) * rhw))"),
+            _ => v,
+        };
+        wln!(m, "        setup[o + {at}u][{pcomp}u] = 0u; setup[o + {}u][{pcomp}u] = 0u; setup[o + {}u][{pcomp}u] = {c};", at.saturating_add(1), at.saturating_add(2));
+    }
+    m.push_str("    }\n}\n");
 }
 
 /// The render pipeline's vertex shader of a setup store: vertex i is corner i % 3 of slot i / 3,
@@ -1071,6 +1443,27 @@ pub fn sample_offsets(samples: u32) -> &'static [(i32, i32)] {
         _ => &[(0, 0)],
     }
 }
+
+/// An aliased line's coverage of the pixel centred at p (lines.md §1.2: f32 each step, a
+/// reciprocal of 0 leaving its test out, as its infinite t fails it).
+const SX_LINE_COVERS: &str = "fn sx_line_covers(o: u32, p: vec2<f32>) -> bool {
+    let l = bitcast<vec4<f32>>(setup[o + 5u]);
+    let hc = bitcast<f32>(setup[o + 3u].w);
+    let hr = bitcast<f32>(setup[o + 4u].w);
+    let a = l.x - p.x;
+    let b = l.y - p.y;
+    var hit = false;
+    if (l.z != 0.0f) {
+        let t = a * ps_div(-1.0f, l.z);
+        if (t >= 0.0f && t <= 1.0f) { let e = sx_r(t * l.w) + b; if (e > -0.5f && e < hc) { hit = true; } }
+    }
+    if (l.w != 0.0f) {
+        let t2 = b * ps_div(-1.0f, l.w);
+        if (t2 >= 0.0f && t2 <= 1.0f) { let e2 = sx_r(t2 * l.z) + a; if (e2 > -0.5f && e2 < hr) { hit = true; } }
+    }
+    return hit;
+}
+";
 
 /// The pixel shader's entry point's part for a setup store (`wgsl::translate_setup`): the slot
 /// (location 0) and position (and sample index, coverage) parameters, the setup's binding, and
@@ -1109,9 +1502,16 @@ pub(crate) fn inputs(ps: &[u8], samples: u32, params: &mut Vec<String>, pre: &mu
         let list: Vec<String> = offs.iter().map(|&(x, y)| format!("vec2<f32>({}f, {}f)", f64::from(x) / 16.0, f64::from(y) / 16.0)).collect();
         wln!(m, "const SX_COFFS = array<vec2<f32>, {}>({});", offs.len(), list.join(", "));
     }
-    m.push_str("fn sx_at(o: u32, c: u32, p: vec2<f32>) -> f32 {\n    return (bitcast<f32>(setup[o + 2u][c]) + bitcast<f32>(setup[o + 1u][c]) * p.y) + bitcast<f32>(setup[o][c]) * p.x;\n}\n");
+    m.push_str(SX_ROUND);
+    m.push_str(ps::DIV);
+    m.push_str("fn sx_at(o: u32, c: u32, p: vec2<f32>) -> f32 {\n    return (bitcast<f32>(setup[o + 2u][c]) + sx_r(bitcast<f32>(setup[o + 1u][c]) * p.y)) + sx_r(bitcast<f32>(setup[o][c]) * p.x);\n}\n");
+    pre.push("sx_k = in_slot & 0x80000000u;".into());
     pre.push(format!("let sx_o = in_slot * {stride}u;"));
     pre.push("let sx_c = floor(in_pos.xy) + vec2<f32>(0.5f);".into());
+    // (an aliased line's slot: the pixel lit by lines.md §1.2's test at its centre, the
+    // triangle drawn only bounds it)
+    m.push_str(SX_LINE_COVERS);
+    pre.push("if (setup[sx_o + 3u].w != 0u && !sx_line_covers(sx_o, sx_c)) { discard; }".into());
     let point = |a: At| -> String {
         match a {
             At::Center => "sx_c".into(),
@@ -1124,7 +1524,7 @@ pub(crate) fn inputs(ps: &[u8], samples: u32, params: &mut Vec<String>, pre: &mu
         let all = (1u32 << offs.len()).wrapping_sub(1);
         pre.push(format!("var sx_cen = sx_c;\n    if ((in_cov & {all}u) != {all}u) {{ let k = firstTrailingBit(in_cov & {all}u); sx_cen = sx_c + SX_COFFS[min(k, {}u)]; }}", offs.len().saturating_sub(1)));
     }
-    let rhw_at = |pt: &str| format!("(1.0f / sx_at(sx_o + 3u, 0u, {pt}))");
+    let rhw_at = |pt: &str| format!("ps_div(1.0f, sx_at(sx_o + 3u, 0u, {pt}))");
     for (i, inp) in (0u32..).zip(&layout.inputs) {
         let o = HEADER.saturating_add(i.saturating_mul(3));
         for c in bits(inp.mask) {
@@ -1154,7 +1554,7 @@ pub(crate) fn inputs(ps: &[u8], samples: u32, params: &mut Vec<String>, pre: &mu
                     0 => format!("bitcast<u32>({pt}.x)"),
                     1 => format!("bitcast<u32>({pt}.y)"),
                     2 => format!("bitcast<u32>(sx_at(sx_o + 4u, 0u, {pt}))"),
-                    _ => format!("bitcast<u32>{}", rhw_at(&pt)),
+                    _ => format!("bitcast<u32>({})", rhw_at(&pt)),
                 };
                 pre.push(format!("v{r}.{x} = {v};"));
             }

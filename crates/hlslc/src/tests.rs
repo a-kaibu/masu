@@ -1272,6 +1272,151 @@ fn valid(w: &str) {
     }
 }
 
+/// Every float division (not ps_div's) and every float product in the functions `only` names
+/// (all when empty) of `w` that a compiler could fuse into an add (WGSL leaves contraction to the implementation; WARP rounds the
+/// product and the sum each): a product an add or subtract takes, or one stored in a local,
+/// passed to a function or returned, without the opaque rounding sx_r / sx_r3 / ps_r / ps_r4
+/// between (or ps_div, which takes its operands' bits). The
+/// function and the expression of each.
+fn fusable(w: &str, only: &[&str]) -> Vec<String> {
+    use naga::{BinaryOperator as B, Expression as E, ScalarKind, Statement as S, TypeInner as T};
+    let m = match naga::front::wgsl::parse_str(w) {
+        Ok(m) => m,
+        Err(e) => panic!("{}\n{w}", e.emit_to_string(w)),
+    };
+    let info = match naga::valid::Validator::new(naga::valid::ValidationFlags::all(), naga::valid::Capabilities::all()).validate(&m) {
+        Ok(i) => i,
+        Err(e) => panic!("invalid: {e:?}\n{w}"),
+    };
+    let rounders = ["sx_r", "sx_r3", "ps_r", "ps_r4", "ps_div"];
+    let mut out = Vec::new();
+    let mut check = |name: &str, f: &naga::Function, fi: &naga::valid::FunctionInfo| {
+        if !only.is_empty() && !only.contains(&name) {
+            return;
+        }
+        let float = |h: naga::Handle<naga::Expression>| match fi[h].ty.inner_with(&m.types) {
+            T::Scalar(s) | T::Vector { scalar: s, .. } => s.kind == ScalarKind::Float,
+            _ => false,
+        };
+        let product = |h: naga::Handle<naga::Expression>| matches!(f.expressions[h], E::Binary { op: B::Multiply, .. }) && float(h);
+        let local = |h: naga::Handle<naga::Expression>| {
+            let mut p = h;
+            loop {
+                match f.expressions[p] {
+                    E::LocalVariable(_) => return true,
+                    E::Access { base, .. } | E::AccessIndex { base, .. } => p = base,
+                    _ => return false,
+                }
+            }
+        };
+        // (lerp2 and its lp_ helpers are the processor's double in integers: WGSL's f32 arithmetic
+        // may flush subnormals and its division is off by up to 2.5 ULP)
+        let integer_only = name == "lerp2" || name.starts_with("lp_");
+        for (h, e) in f.expressions.iter() {
+            if integer_only && matches!(e, E::Binary { .. } | E::Unary { .. } | E::Math { .. }) && float(h) {
+                out.push(format!("{name}: {e:?} is f32 arithmetic (lerp2 is integers)"));
+            }
+            // (a float division: WGSL's may be off by 2.5 ULP, ps_div is IEEE's)
+            if let E::Binary { op: B::Divide, .. } = *e
+                && float(h)
+            {
+                out.push(format!("{name}: {e:?} divides (ps_div)"));
+            }
+            if let E::Binary { op: B::Add | B::Subtract, left, right } = *e
+                && float(h)
+                && (product(left) || product(right))
+            {
+                out.push(format!("{name}: {e:?} adds a product"));
+            }
+        }
+        fn walk(b: &naga::Block, v: &mut dyn FnMut(&naga::Statement)) {
+            for st in b.iter() {
+                v(st);
+                match st {
+                    S::Block(b) => walk(b, v),
+                    S::If { accept, reject, .. } => {
+                        walk(accept, v);
+                        walk(reject, v);
+                    }
+                    S::Loop { body, continuing, .. } => {
+                        walk(body, v);
+                        walk(continuing, v);
+                    }
+                    S::Switch { cases, .. } => cases.iter().for_each(|c| walk(&c.body, v)),
+                    _ => {}
+                }
+            }
+        }
+        walk(&f.body, &mut |st| match st {
+            S::Store { pointer, value } if local(*pointer) && product(*value) => out.push(format!("{name}: a product stored in a local")),
+            S::Call { function, arguments, .. } if !rounders.contains(&m.functions[*function].name.as_deref().unwrap_or("")) && arguments.iter().any(|&a| product(a)) => {
+                out.push(format!("{name}: a product passed to {:?}", m.functions[*function].name));
+            }
+            S::Return { value: Some(v) } if product(*v) => out.push(format!("{name}: a product returned")),
+            _ => {}
+        });
+    };
+    for (h, f) in m.functions.iter() {
+        check(f.name.as_deref().unwrap_or(""), f, &info[h]);
+    }
+    for (i, ep) in m.entry_points.iter().enumerate() {
+        check(&ep.name, &ep.function, info.get_entry_point(i));
+    }
+    // (the rounders' 0 set by every entry point: one left at its initial 0 lets a compiler
+    // see through it)
+    for (h, g) in m.global_variables.iter() {
+        let Some(name) = g.name.as_deref().filter(|n| ["sx_k", "ps_k"].contains(n)) else { continue };
+        for ep in &m.entry_points {
+            let f = &ep.function;
+            let mut set = false;
+            let mut look = |b: &naga::Block| {
+                fn walk(b: &naga::Block, f: &naga::Function, h: naga::Handle<naga::GlobalVariable>, set: &mut bool) {
+                    for st in b.iter() {
+                        match st {
+                            naga::Statement::Store { pointer, .. } if matches!(f.expressions[*pointer], naga::Expression::GlobalVariable(g) if g == h) => *set = true,
+                            naga::Statement::Block(b) => walk(b, f, h, set),
+                            _ => {}
+                        }
+                    }
+                }
+                walk(b, f, h, &mut set);
+            };
+            look(&f.body);
+            if !set {
+                out.push(format!("{}: {name} not set at the entry", ep.name));
+            }
+        }
+    }
+    out
+}
+
+/// fusable finds each shape a compiler could fuse, and none once the products go through the
+/// rounder (its self-test: each mistake put into a shader that is otherwise right).
+#[test]
+fn fusable_finds_each_fusable_product() {
+    let head = "var<private> ps_k = 0u;\nfn ps_r(v: f32) -> f32 { return bitcast<f32>(bitcast<u32>(v) | ps_k); }\nfn g(v: f32) -> f32 { return v; }\n";
+    let good = "fn lp_or(a: f32, b: f32) -> f32 { return bitcast<f32>(bitcast<u32>(a) | bitcast<u32>(b)); }\nfn f(a: f32, b: f32, c: f32) -> f32 {\n    var x = ps_r(a * b);\n    x = g(ps_r(a * c)) + x;\n    return ps_r(a * b) + c;\n}\n@compute @workgroup_size(1) fn main() { ps_k = 0u; _ = f(1.0f, 2.0f, 3.0f); }\n";
+    assert_eq!(fusable(&format!("{head}{good}"), &[]), Vec::<String>::new());
+    let bad = [
+        ("return ps_r(a * b) + c;", "return a * b + c;", "adds a product"),
+        ("return ps_r(a * b) + c;", "return c - a * b;", "adds a product"),
+        ("var x = ps_r(a * b);", "var x = a * b;", "stored in a local"),
+        ("g(ps_r(a * c))", "g(a * c)", "passed to"),
+        ("return ps_r(a * b) + c;", "return a * b;", "returned"),
+        ("ps_k = 0u; ", "", "not set at the entry"),
+        ("return ps_r(a * b) + c;", "return a / b;", "divides"),
+        ("return bitcast<f32>(bitcast<u32>(a) | bitcast<u32>(b));", "return a + b;", "is f32 arithmetic"),
+        ("return bitcast<f32>(bitcast<u32>(a) | bitcast<u32>(b));", "return -a;", "is f32 arithmetic"),
+    ];
+    for (from, to, what) in bad {
+        let w = format!("{head}{}", good.replace(from, to));
+        let f = fusable(&w, &[]);
+        assert!(f.iter().any(|m| m.contains(what)), "{to}: {f:?}");
+    }
+    // (a function `only` leaves out is not looked at)
+    assert!(fusable(&format!("{head}{}", good.replace("return ps_r(a * b) + c;", "return a * b + c;")), &["g"]).is_empty());
+}
+
 #[test]
 fn geometry_shaders_of_the_d3d11gs_probe() {
     use dxwgsl::expand::{self, Store};
@@ -1312,7 +1457,10 @@ fn geometry_shaders_of_the_d3d11gs_probe() {
             valid(&expand::so_pass(&store, &osgn, &decls, &strides).unwrap_or_else(|e| panic!("{entry}: {e}")).code);
             if entry == "gs_quad" {
                 valid(&expand::store_vertex(&store, &osgn, Some(&ps)).unwrap().code);
-                valid(&expand::clip_pass(&store, &osgn).unwrap().code);
+                let w = expand::clip_pass(&store, &osgn).unwrap().code;
+                valid(&w);
+                let f = fusable(&w, &[]);
+                assert!(f.is_empty(), "clip pass: products a compiler could fuse\n{}", f.join("\n"));
             }
         }
     }
@@ -1326,7 +1474,10 @@ fn geometry_shaders_of_the_d3d11gs_probe() {
         expand::SoEntry { stream: 0, name: Some("SV_Position".into()), index: 0, start: 0, count: 2, slot: 1 },
     ];
     valid(&expand::so_pass(&store, &so_osgn, &decls, &[24, 16, 0, 0]).unwrap().code);
-    valid(&expand::clip_pass(&store, &so_osgn).unwrap().code);
+    let w = expand::clip_pass(&store, &so_osgn).unwrap().code;
+    valid(&w);
+    let f = fusable(&w, &[]);
+    assert!(f.is_empty(), "clip pass: products a compiler could fuse\n{}", f.join("\n"));
     valid(&expand::store_vertex(&store, &so_osgn, None).unwrap().code);
 }
 
@@ -1559,7 +1710,7 @@ fn tessellation_passes_of_the_d3d11tess_probe() {
 }
 
 /// The setup of winref d3d11interp's draws (dxwgsl::expand::setup): the setup pass of the
-/// vertex shader's store and of the geometry shader's, the store's vertex shader and every pixel
+/// vertex shader's store (triangles, wireframe, lines, points) and of the geometry shader's, the store's vertex shader and every pixel
 /// shader of the probe drawn from it, at 1 and 4 samples, are valid WGSL.
 #[test]
 fn setup_of_the_d3d11interp_probe() {
@@ -1573,16 +1724,30 @@ fn setup_of_the_d3d11interp_probe() {
         let ps = compile(&src, name, "ps_5_0");
         let layout = setup::Layout::of(&ps).unwrap_or_else(|e| panic!("{name}: {e}"));
         for samples in [1, 4] {
-            valid(&dxwgsl::translate_setup(&ps, &[], &[], samples).unwrap_or_else(|e| panic!("{name}: {e}")).code);
+            let w = dxwgsl::translate_setup(&ps, &[], &[], samples).unwrap_or_else(|e| panic!("{name}: {e}")).code;
+            valid(&w);
+            // (the setup's own evaluation: the guest shader's arithmetic is its own)
+            let f = fusable(&w, &["sx_at", "sx_line_covers"]);
+            assert!(f.is_empty(), "{name}: products a compiler could fuse\n{}", f.join("\n"));
         }
         valid(&setup::setup_vertex(layout.stride()).code);
         for v in [&vs, &vsc] {
             let osgn = dxwgsl::signature(v, true);
-            let store = Store::Vertex { regs: expand::store_regs(&osgn, 0), corners: 3 };
-            valid(&setup::setup_pass(&store, &osgn, Some(&ps)).unwrap_or_else(|e| panic!("{name}: {e}")).code);
+            for prim in [setup::Prim::Triangle, setup::Prim::Wire, setup::Prim::Line, setup::Prim::Point] {
+                let store = Store::Vertex { regs: expand::store_regs(&osgn, 0), corners: prim.corners() };
+                let w = setup::setup_pass(&store, &osgn, Some(&ps), prim).unwrap_or_else(|e| panic!("{name} {prim:?}: {e}")).code;
+                valid(&w);
+                let f = fusable(&w, &[]);
+                assert!(f.is_empty(), "{name} {prim:?}: products a compiler could fuse\n{}", f.join("\n"));
+            }
+            // (a store of other corners than the primitive's is an error, not a pass)
+            let store = Store::Vertex { regs: expand::store_regs(&osgn, 0), corners: 2 };
+            assert!(setup::setup_pass(&store, &osgn, Some(&ps), setup::Prim::Triangle).is_err());
         }
         let d = expand::gs_decl(&gs).unwrap();
         let store = Store::Geometry { decl: d, stream: 0, regs: expand::gs_regs(&gs) };
-        valid(&setup::setup_pass(&store, &dxwgsl::signature(&gs, true), Some(&ps)).unwrap_or_else(|e| panic!("{name}: {e}")).code);
+        for prim in [setup::Prim::Triangle, setup::Prim::Wire] {
+            valid(&setup::setup_pass(&store, &dxwgsl::signature(&gs, true), Some(&ps), prim).unwrap_or_else(|e| panic!("{name} {prim:?}: {e}")).code);
+        }
     }
 }
