@@ -34,7 +34,7 @@ pub(super) fn needles(tree: &Tree, want: &[Needle], not: &[Needle]) -> Hits {
 // --- run-plan --------------------------------------------------------------------------------
 
 /// The runners write their plan before running, compare.py and run.py fail on a plan problem.
-pub const RUN_PLAN: [Needle; 11] = [
+pub const RUN_PLAN: [Needle; 13] = [
     ("tests/winref/run.sh", "> \"$OUT/.plan/$runner\"", "run.sh writes no plan: a run that ran nothing compares 0 probes and passes"),
     ("tests/winref/run-browser.mjs", "writeFileSync(join(outDir, \".plan\", runner)", "run-browser.mjs writes no plan: a lost shard passes"),
     ("tests/winref/compare.py", "sys.exit(1 if failed or plan_errors else 0)", "compare.py does not fail on a plan problem (0 compared, a planned probe without a result, a lost shard)"),
@@ -44,6 +44,8 @@ pub const RUN_PLAN: [Needle; 11] = [
     ("tests/winetest/run.py", "all_jobs, not_adopted, missing = adopt(all_jobs, read_tsv(win_path))", "rostests run on sake without Windows' answers: a ReactOS expectation Windows itself fails would be held against sake"),
     ("tests/winetest/run.py", "unplanned += missing", "a rostests test Windows was never asked about runs on sake as if Windows passed it"),
     ("tests/winetest/run.py", "if not os.path.isfile(win_path):\n            raise FileNotFoundError(win_path)", "rostests without tests/rostests/windows-<arch>.tsv pass with no Windows answer to hold sake to"),
+    ("tests/winetest/run.py", "results[k], judged[k] = combine(rs)", "--repeat records a test by one of its runs, not by its worst and judged by its best: a test Windows passes only sometimes is adopted, or one bad Windows run fails CI"),
+    (".github/workflows/conformance.yml", "run.py --suite rostests --native --repeat 3", "Windows runs each ReactOS test once in CI: a test Windows passes only sometimes (RegEnumKey, EmptyClipboard) turns windows-<arch>.tsv into a coin toss"),
     (".github/workflows/conformance.yml", "run.py --suite rostests --native", "Windows no longer runs ReactOS's tests in CI: tests/rostests/windows-<arch>.tsv is never checked against Windows"),
     (".github/workflows/winref.yml", "--require-plan browser-0of4", "the final winref comparison does not require each browser shard's plan: a lost shard passes"),
 ];

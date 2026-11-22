@@ -170,6 +170,10 @@ pub enum KRef {
     Sync {
         id: u32,
     },
+    /// a file handle more than one process holds (inherited, duplicated): crate::kern's KFile
+    File {
+        id: u32,
+    },
 }
 
 /// A named event, mutex or semaphore: these are the kernel's (other processes open them by
@@ -206,6 +210,18 @@ impl Sync {
 pub struct KObj {
     pub sync: Sync,
     name: String,
+    refs: Vec<(u32, u32)>,
+}
+
+/// A file handle that more than one process holds (CreateProcess's inherited handles): every
+/// process opens the file itself, and they share its file pointer, as one handle's object does
+/// on Windows (msvcrt:file test_file_inherit: the child writes, the parent's tell moves)
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct KFile {
+    pub path: String,
+    pub write: bool,
+    pub pos: u64,
+    /// (process, handles) holding it
     refs: Vec<(u32, u32)>,
 }
 
@@ -296,6 +312,8 @@ pub struct Kern {
     rthreads: BTreeMap<u32, Option<u32>>,
     /// which process debugs which, and the debug events (crate::dbg)
     pub dbg: debug::Debugs,
+    /// the file handles processes share (KRef::File)
+    files: BTreeMap<u32, KFile>,
 }
 
 /// A request for process `to`'s memory (crate::xmem's operation `op` on `args`, `data`)
@@ -498,6 +516,14 @@ impl Kern {
 
     /// Process `pid` ended: its references go.
     pub fn release_process(&mut self, pid: u32) {
+        let before = self.files.len();
+        for f in self.files.values_mut() {
+            f.refs.retain(|r| r.0 != pid);
+        }
+        self.files.retain(|_, f| !f.refs.is_empty());
+        if self.files.len() != before {
+            self.changed();
+        }
         let ids: Vec<u32> = self.ends.iter().filter(|(_, e)| e.refs.iter().any(|r| r.0 == pid)).map(|(&i, _)| i).collect();
         for e in ids {
             let Some(end) = self.ends.get_mut(&e) else { continue };
@@ -846,6 +872,7 @@ impl Kern {
             match *r {
                 KRef::Pipe { end, .. } => self.add_ref(end, pid),
                 KRef::Sync { id } => self.add_sync_ref(id, pid),
+                KRef::File { id } => self.add_file_ref(id, pid),
                 KRef::Process { .. } => {}
             }
         }
@@ -1100,6 +1127,42 @@ impl Kern {
         Ok(id)
     }
     /// Another handle object of `pid` for named object `id` (inherited, duplicated)
+    /// A file handle of `pid` that another process is to have too: its shared record (path,
+    /// access, file pointer `pos`), held once by `pid`
+    pub fn share_file(&mut self, path: &str, write: bool, pos: u64, pid: u32) -> u32 {
+        self.next = self.next.saturating_add(1);
+        let id = self.next;
+        self.files.insert(id, KFile { path: path.to_string(), write, pos, refs: vec![(pid, 1)] });
+        self.changed();
+        id
+    }
+    pub fn file(&self, id: u32) -> Option<&KFile> {
+        self.files.get(&id)
+    }
+    pub fn add_file_ref(&mut self, id: u32, pid: u32) {
+        if let Some(f) = self.files.get_mut(&id) {
+            add_ref(&mut f.refs, pid);
+            self.changed();
+        }
+    }
+    pub fn release_file(&mut self, id: u32, pid: u32) {
+        let Some(f) = self.files.get_mut(&id) else { return };
+        if let Some(r) = f.refs.iter_mut().find(|r| r.0 == pid) {
+            r.1 = r.1.saturating_sub(1);
+        }
+        f.refs.retain(|r| r.1 != 0);
+        if f.refs.is_empty() {
+            self.files.remove(&id);
+        }
+        self.changed();
+    }
+    /// The shared file pointer moved to `pos` (a read, write or seek of any holder)
+    pub fn set_file_pos(&mut self, id: u32, pos: u64) {
+        if let Some(f) = self.files.get_mut(&id) && f.pos != pos {
+            f.pos = pos;
+            self.changed();
+        }
+    }
     pub fn add_sync_ref(&mut self, id: u32, pid: u32) {
         if let Some(o) = self.sync.get_mut(&id) {
             add_ref(&mut o.refs, pid);
@@ -1434,6 +1497,10 @@ impl Enc for KRef {
                 2u8.put(w);
                 id.put(w)
             }
+            KRef::File { id } => {
+                3u8.put(w);
+                id.put(w)
+            }
         }
     }
     fn get(r: &mut &[u8]) -> Option<Self> {
@@ -1447,6 +1514,7 @@ impl Enc for KRef {
                 KRef::Process { pid, access }
             }
             2 => KRef::Sync { id: Enc::get(r)? },
+            3 => KRef::File { id: Enc::get(r)? },
             _ => return None,
         })
     }
@@ -1491,11 +1559,12 @@ impl Enc for Sync {
     }
 }
 crate::enc_struct!(KObj { sync, name, refs });
+crate::enc_struct!(KFile { path, write, pos, refs });
 crate::enc_struct!(KWin { hwnd, pid, tid, class, title });
 crate::enc_struct!(XMsg { id, to, hwnd, msg, w, l, data, send, from });
 crate::enc_struct!(VmReq { id, to, op, args, data, from });
 crate::enc_struct!(VmReply { status, vals, data });
-crate::enc_struct!(Kern { generation, next, ends, pipes, procs, next_pid, sync, sync_names, dead_seen, wins, xmsgs, replies, askers, next_msg, services, com, vm, vm_replies, rthreads, dbg });
+crate::enc_struct!(Kern { generation, next, ends, pipes, procs, next_pid, sync, sync_names, dead_seen, wins, xmsgs, replies, askers, next_msg, services, com, vm, vm_replies, rthreads, dbg, files });
 
 #[cfg(test)]
 mod tests;

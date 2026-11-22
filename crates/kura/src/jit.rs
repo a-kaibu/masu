@@ -374,7 +374,7 @@ const MAX_BLOCKS: usize = 1024;
 #[cfg(target_os = "emscripten")]
 unsafe extern "C" {
     /// `slots`: koji::jit::TABLE_SLOTS, the table's bound
-    fn vnvm_jit_init(ptr: *const u8, len: usize, slots: u32);
+    fn vnvm_jit_init(ptr: *const u8, len: usize, slots: u32, pages: *const std::sync::atomic::AtomicU8);
     fn vnvm_jit_load(ptr: *const u8, len: usize, n: u32) -> i32;
     fn vnvm_jit_free(base: u32, n: u32);
     // JavaScript forwards this address to generated Wasm; it does not use Cpu's Rust layout.
@@ -547,6 +547,8 @@ struct Shared {
     sites: Vec<u32>,
     /// translated with the MXCSR flag checks (jit::Region::exact)
     exact: bool,
+    /// translated with the page checks or not (jit::Region::pages)
+    pages: jit::Pages,
     /// made after the ones with smaller numbers (share_seq): the oldest go first
     seq: u64,
 }
@@ -594,7 +596,7 @@ impl SharedCache {
         let list = self.map.entry(key).or_default();
         let mut freed = 0;
         list.retain(|o| {
-            let keep = !(o.exact == r.exact && o.build < r.build && o.text == r.text);
+            let keep = !(o.exact == r.exact && o.pages == r.pages && o.build < r.build && o.text == r.text);
             if !keep {
                 freed += o.size();
             }
@@ -717,7 +719,7 @@ fn region_text(mem: &mut Linear, region: &jit::Region) -> Option<Vec<u8>> {
 fn shared(mem: &mut Linear, roots: &[u32]) -> Option<Arc<Shared>> {
     let list = SHARED.locked().as_ref()?.get(roots)?.clone();
     let exact = jit::mx_exact();
-    list.into_iter().rev().find(|r| r.exact == exact && code_kept(&r.code) && code_bytes(mem, &r.code).is_some_and(|t| t == r.text))
+    list.into_iter().rev().find(|r| r.exact == exact && r.pages.runs_now() && code_kept(&r.code) && code_bytes(mem, &r.code).is_some_and(|t| t == r.text))
 }
 
 fn share(mem: &mut Linear, roots: &[u32], bytes: Vec<u8>, region: &jit::Region) {
@@ -726,7 +728,7 @@ fn share(mem: &mut Linear, roots: &[u32], bytes: Vec<u8>, region: &jit::Region) 
 
 fn share_build(mem: &mut Linear, key: Vec<u32>, bytes: Vec<u8>, region: &jit::Region, build: u32) {
     let Some(text) = region_text(mem, region) else { return };
-    let r = Arc::new(Shared { bytes, starts: region.starts.clone(), code: region.code.clone(), text, build, sites: region.sites.clone(), exact: region.exact, seq: share_seq() });
+    let r = Arc::new(Shared { bytes, starts: region.starts.clone(), code: region.code.clone(), text, build, sites: region.sites.clone(), exact: region.exact, pages: region.pages, seq: share_seq() });
     share_push(key, r);
 }
 
@@ -831,9 +833,18 @@ fn mark_code(code: &[(u32, u32)]) {
 }
 
 /// A byte per guest page of [0, 2 GB): [`READ_FAULTS`] | [`WRITE_FAULTS`] where an access
-/// faults; made with the first such page (koji's PAGE_MAP points at it once a page that
-/// turns the checks on is marked).
+/// faults; set with the first such page (until then the interpreter checks nothing). Its
+/// bytes are [`fault_store`]'s, made when the JIT starts: translated code reads them through
+/// the "pages" global every module imports (koji's jit::PAGES), given at instantiation, so a
+/// saved translation made with the checks runs in any later process.
 static FAULT_MAP: std::sync::OnceLock<&'static [std::sync::atomic::AtomicU8]> = std::sync::OnceLock::new();
+
+/// The bytes of [`FAULT_MAP`] (one allocation for the process: its address is what every
+/// module's "pages" global holds).
+fn fault_store() -> &'static [std::sync::atomic::AtomicU8] {
+    static STORE: std::sync::OnceLock<&'static [std::sync::atomic::AtomicU8]> = std::sync::OnceLock::new();
+    STORE.get_or_init(|| Box::leak((0..1 << 19).map(|_| std::sync::atomic::AtomicU8::new(0)).collect()))
+}
 
 /// A read of the page faults (and a write: PAGE_NOACCESS, PAGE_GUARD, decommitted).
 pub const READ_FAULTS: u8 = 1;
@@ -851,16 +862,12 @@ pub fn fault_pages(addr: u32, len: u32, kind: u8, checks: bool) {
     if len == 0 || addr >= 1 << 31 || (kind == 0 && FAULT_MAP.get().is_none()) {
         return;
     }
-    let map = *FAULT_MAP.get_or_init(|| {
-        let m: &'static [std::sync::atomic::AtomicU8] = Box::leak((0..1 << 19).map(|_| std::sync::atomic::AtomicU8::new(0)).collect());
-        m
-    });
+    let map = *FAULT_MAP.get_or_init(fault_store);
     let (lo, hi) = page_span(addr, len);
     for b in &map[lo..=hi] {
         b.store(kind, Ordering::Relaxed);
     }
-    if kind != 0 && checks && jit::PAGE_MAP.load(Ordering::Relaxed) == 0 {
-        jit::PAGE_MAP.store(map.as_ptr().expose_provenance(), Ordering::SeqCst);
+    if kind != 0 && checks && !jit::PAGE_CHECK.swap(true, Ordering::SeqCst) {
         drop_translations();
         if stats() {
             eprintln!("vnjit pages {addr:#x}+{len:#x} fault: accesses check pages from now on");
@@ -1075,7 +1082,7 @@ fn with_state<R>(f: impl FnOnce(&mut State) -> R) -> R {
             let d = jit::dispatch::module();
             #[cfg(target_os = "emscripten")]
             unsafe {
-                vnvm_jit_init(d.as_ptr(), d.len(), jit::TABLE_SLOTS)
+                vnvm_jit_init(d.as_ptr(), d.len(), jit::TABLE_SLOTS, fault_store().as_ptr())
             };
             let _ = d;
             // (the compiler thread started now, at a thread's first use of the JIT, not with the
@@ -1655,8 +1662,8 @@ fn take_late(s: &mut Saved, inbox: &Inbox, n: usize) {
 /// A saved region for `roots` (any built from `roots[0]` when `exact` is off: the one with most
 /// roots) whose guest code is still there, and clear of the trap range `trap`.
 fn find_saved(mem: &mut Linear, roots: &[u32], exact: bool, trap: (u32, u32)) -> Option<usize> {
-    if profiling() || jit::page_check() || jit::mx_exact() {
-        return None; // saved regions have no counters, nor page checks, nor MXCSR flag checks
+    if profiling() || jit::mx_exact() {
+        return None; // saved regions have no counters, nor MXCSR flag checks
     }
     let s = saved_regions();
     s.by_root
@@ -1665,8 +1672,9 @@ fn find_saved(mem: &mut Linear, roots: &[u32], exact: bool, trap: (u32, u32)) ->
         .copied()
         .filter(|&i| !exact || s.entries[i].roots == roots)
         .filter(|&i| s.entries[i].code.iter().all(|&(a, n)| a.saturating_add(n) <= trap.0 || a >= trap.1))
+        .filter(|&i| s.entries.get(i).is_some_and(|e| e.pages.runs_now()))
         .filter(|&i| code_kept(&s.entries[i].code) && code_bytes(mem, &s.entries[i].code).is_some_and(|t| t == s.entries[i].text))
-        .max_by_key(|&i| s.entries[i].roots.len())
+        .max_by_key(|&i| s.entries.get(i).map(|e| (e.roots.len(), e.pages == jit::Pages::now())))
 }
 
 /// The table index on this thread of the first function of part `part` (instantiated on this
@@ -1711,7 +1719,7 @@ fn load_saved(st: &mut State, i: usize) -> bool {
 
 /// A saved function at `eip` (its newest build) whose guest code is still there.
 fn find_saved_fn(mem: &mut Linear, eip: u32) -> Option<usize> {
-    if profiling() || jit::page_check() || jit::mx_exact() {
+    if profiling() || jit::mx_exact() {
         return None;
     }
     let s = saved_regions();
@@ -1719,8 +1727,9 @@ fn find_saved_fn(mem: &mut Linear, eip: u32) -> Option<usize> {
         .get(&eip)?
         .iter()
         .copied()
+        .filter(|&i| s.entries.get(i).is_some_and(|e| e.pages.runs_now()))
         .filter(|&i| code_kept(&s.entries[i].code) && code_bytes(mem, &s.entries[i].code).is_some_and(|t| t == s.entries[i].text))
-        .max_by_key(|&i| s.entries[i].build)
+        .max_by_key(|&i| s.entries.get(i).map(|e| (e.build, e.pages == jit::Pages::now())))
 }
 
 /// Puts saved function `i` in.
@@ -2014,6 +2023,7 @@ fn save((url, id, new, chunks): Save) {
             text: s.text.clone(),
             build: s.build,
             sites: s.sites.clone(),
+            pages: s.pages,
         })
         .collect();
     let mods: Vec<&[u8]> = new.iter().map(|(_, s)| &s.bytes[..]).collect();
@@ -2993,8 +3003,8 @@ struct Job {
 struct Batch {
     items: Vec<(u32, u32, Built)>,
     merged: Option<Vec<u8>>,
-    /// built with page checks (koji's PAGE_MAP)
-    checked: bool,
+    /// built with the page checks or not (koji::jit::PAGE_CHECK when the batch began)
+    pages: jit::Pages,
     /// built with the MXCSR flag checks (koji::jit::MX_EXACT)
     exact: bool,
 }
@@ -3042,7 +3052,7 @@ fn compiler() -> Option<std::sync::mpsc::Sender<Job>> {
                     waiting.extend(rx.try_iter());
                     let jobs = take_batch(j, &mut waiting, |j| j.state, BATCH_MAX);
                     let done = jobs[0].done.clone();
-                    let checked = jit::page_check();
+                    let pages = jit::Pages::now();
                     let exact = jit::mx_exact();
                     let items: Vec<(u32, u32, Built)> = jobs
                         .into_iter()
@@ -3051,7 +3061,7 @@ fn compiler() -> Option<std::sync::mpsc::Sender<Job>> {
                     let mods: Vec<&[u8]> = items.iter().filter_map(|(_, _, b)| b.as_ref().map(|b| &b.0[..])).collect();
                     let merged = if mods.len() > 1 { jit::wasm::merge(&mods, &[]) } else { None };
                     let n = items.len();
-                    let _ = done.send(Batch { items, merged, checked, exact });
+                    let _ = done.send(Batch { items, merged, pages, exact });
                     drop(done);
                     (0..n).for_each(|_| crate::snap::drain_done());
                 }
@@ -3064,10 +3074,10 @@ fn compiler() -> Option<std::sync::mpsc::Sender<Job>> {
 
 /// Installs the functions the compiler thread finished for this thread.
 fn take_built(st: &mut State, mem: &mut Linear) {
-    while let Ok(Batch { items, merged, checked, exact }) = st.done_rx.try_recv() {
+    while let Ok(Batch { items, merged, pages, exact }) = st.done_rx.try_recv() {
         // (built before the page checks or the MXCSR flag checks came on: dropped, translated
         // again when hot)
-        if jit::page_check() && !checked || jit::mx_exact() && !exact {
+        if !pages.runs_now() || jit::mx_exact() && !exact {
             for (eip, _, _) in &items {
                 st.pending.remove(eip);
             }
@@ -3166,7 +3176,7 @@ fn finish_fn(st: &mut State, eip: u32, build: u32, built: Built, at: Option<u32>
     }
     if ok {
         keep_profile(&mut region);
-        let r = Arc::new(Shared { bytes, starts: region.starts, code: region.code, text, build, sites: region.sites, exact: region.exact, seq: share_seq() });
+        let r = Arc::new(Shared { bytes, starts: region.starts, code: region.code, text, build, sites: region.sites, exact: region.exact, pages: region.pages, seq: share_seq() });
         share_push(fn_key(eip).to_vec(), r);
         maybe_save();
     }
@@ -3836,7 +3846,7 @@ mod late_tests {
     use proptest::prelude::*;
 
     fn entry(root: u32, build: u32) -> Entry {
-        Entry { roots: vec![root], starts: vec![(root, 0)], code: vec![(root, 4)], text: vec![0x90; 4], build, sites: vec![] }
+        Entry { roots: vec![root], starts: vec![(root, 0)], code: vec![(root, 4)], text: vec![0x90; 4], build, sites: vec![], pages: jit::Pages::Unchecked }
     }
 
     /// A part as the page hands it over: its bytes kept for good (as kura keeps the page's).
@@ -4233,7 +4243,7 @@ mod invalidate_tests {
 
     #[test]
     fn shared_builds_are_bounded() {
-        let mk = |text: u8, build: u32, n: usize| Arc::new(Shared { bytes: vec![0; n], starts: vec![], code: vec![], text: vec![text], build, sites: vec![], exact: false, seq: share_seq() });
+        let mk = |text: u8, build: u32, n: usize| Arc::new(Shared { bytes: vec![0; n], starts: vec![], code: vec![], text: vec![text], build, sites: vec![], exact: false, pages: jit::Pages::Unchecked, seq: share_seq() });
         let key = vec![0xdead_0000u32];
         // a newer build of the same code takes the older one's place
         share_push(key.clone(), mk(1, 1, 10));
@@ -4264,7 +4274,7 @@ mod invalidate_tests {
     /// change left 100 bytes held and 0 counted). Each check takes the same lock as a push.
     #[test]
     fn shared_bytes_are_what_the_map_holds_under_any_interleaving() {
-        let mk = |text: u8, build: u32, n: usize| Arc::new(Shared { bytes: vec![0; n], starts: vec![], code: vec![], text: vec![text], build, sites: vec![], exact: false, seq: share_seq() });
+        let mk = |text: u8, build: u32, n: usize| Arc::new(Shared { bytes: vec![0; n], starts: vec![], code: vec![], text: vec![text], build, sites: vec![], exact: false, pages: jit::Pages::Unchecked, seq: share_seq() });
         let check = || {
             let g = SHARED.locked();
             if let Some(c) = g.as_ref() {

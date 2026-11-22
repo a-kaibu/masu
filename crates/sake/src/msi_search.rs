@@ -128,7 +128,7 @@ fn find_in(sig: &Sig, file: &str, dir: &str, depth: i32) -> Option<String> {
     let host = crate::files::resolve(&crate::files::full_path(&dir))?;
     let mut subdirs = Vec::new();
     let mut found = None;
-    let mut names: Vec<(String, bool)> = kura::fs::read_dir(&host).into_iter().flatten().flatten().map(|e| (e.file_name().to_string_lossy().to_string(), kura::fs::metadata(e.path()).is_ok_and(|m| m.is_dir()))).collect();
+    let mut names: Vec<(String, bool)> = crate::shortname::read_dir(&host).into_iter().flatten().flatten().map(|e| (e.file_name().to_string_lossy().to_string(), kura::fs::metadata(e.path()).is_ok_and(|m| m.is_dir()))).collect();
     names.sort();
     for (n, is_dir) in names {
         if is_dir {

@@ -665,7 +665,7 @@ impl<'a> Gen<'a> {
         self.bail();
         self.depth -= 1;
         self.c.end();
-        // the pages that fault (super::PAGE_MAP)
+        // the pages that fault (super::PAGE_CHECK)
         if super::page_check() {
             let ins = self.ins;
             super::pages_marked(&mut self.c, L_A, size, &ins);
@@ -3343,6 +3343,7 @@ fn translate_seen64<M: Memory>(module: &mut Module, mem: &mut M, roots: &[u64], 
         None => (MAX_BLOCKS, MAX_REGION_INS),
     };
     let exact = super::mx_exact();
+    let pages = super::Pages::now();
     let entry = roots[0];
     // blocks: the entry and what its direct jumps reach (accept(a, false)), and what may run
     // without having run yet (accept(a, true)): direct calls' targets and return addresses,
@@ -3698,7 +3699,7 @@ fn translate_seen64<M: Memory>(module: &mut Module, mem: &mut M, roots: &[u64], 
     let text = super::code_text(mem, &code);
     sites.sort_unstable();
     sites.dedup();
-    Some(Region { starts, instructions: count, code, text, layout, profile: Vec::new(), sites, exact })
+    Some(Region { starts, instructions: count, code, text, layout, profile: Vec::new(), sites, exact, pages })
 }
 
 #[cfg(test)]

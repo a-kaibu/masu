@@ -389,6 +389,8 @@ mod proofs {
         kani::assume((0..=255).contains(&y0) && (0..=255).contains(&y1));
         let p = render_point(x0, x1, y0, y1, x);
         assert!(p >= y0.min(y1) && p <= y0.max(y1));
+        kani::cover!(y0 > y1 && p > y1 && p < y0, "a falling line between its posts");
+        kani::cover!(x1 == 32768 && y1 == 255 && y0 == 0, "the widest, steepest one");
     }
 
     /// The curve between two posts in 0..=255 stays in the dB table, and in the vector.
@@ -400,6 +402,8 @@ mod proofs {
         kani::assume((0..=255).contains(&y0) && (0..=255).contains(&y1));
         let mut d = [1f32; 12];
         render_line(n, x0, x0 + len, y0, y1, &mut d[..n.max((x0 + len) as usize).min(12)], kani::any());
+        kani::cover!(n > (x0 + len) as usize && (y1 - y0).abs() > len, "a line steeper than one step a sample, inside the vector");
+        kani::cover!(n < (x0 + len) as usize, "a line running past the vector");
     }
 }
 

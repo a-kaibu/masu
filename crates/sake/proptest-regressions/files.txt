@@ -6,3 +6,4 @@
 # everyone who runs the test benefits from these saved cases.
 cc 86bda5d29569358faf98a26238e684b946e37890304722f8d13d446a3fa05ce2 # shrinks to parents = ["a"], flips = [false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false], leaf = "0", seps = ""
 cc 1c4d869303d016958726a0e6c767f429c6d3eb189dd934225f1c190f64ba5549 # shrinks to parts = [" ", ""]
+cc e47f0c840753a00dcab711aa3c823a17d85240c205a6f28eec4ab52ed09b15ac # shrinks to head = "\\\\srv\\share\\", parts = [], set = false

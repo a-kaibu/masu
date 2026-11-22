@@ -68,6 +68,8 @@ pub enum Rule {
     GuestScratch,
     HandStd,
     KaniFeatures,
+    KaniCover,
+    VerusMirror,
     UncheckedOutput,
     HandLock,
     StageRun,
@@ -75,10 +77,15 @@ pub enum Rule {
     PcsgPack,
     WarpSetup,
     RunPlan,
+    DllSearch,
+    FullPathOneRule,
+    ShortNameTable,
+    MissingImportFails,
+    DrawPlan,
 }
 
 impl Rule {
-    pub const ALL: [Rule; 58] = [
+    pub const ALL: [Rule; 65] = [
         Rule::BuildOutput,
         Rule::HresultCopy,
         Rule::KomeCopy,
@@ -130,6 +137,8 @@ impl Rule {
         Rule::GuestScratch,
         Rule::HandStd,
         Rule::KaniFeatures,
+        Rule::KaniCover,
+        Rule::VerusMirror,
         Rule::UncheckedOutput,
         Rule::HandLock,
         Rule::StageRun,
@@ -137,6 +146,11 @@ impl Rule {
         Rule::PcsgPack,
         Rule::WarpSetup,
         Rule::RunPlan,
+        Rule::DllSearch,
+        Rule::FullPathOneRule,
+        Rule::ShortNameTable,
+        Rule::MissingImportFails,
+        Rule::DrawPlan,
     ];
 
     /// the name a site list and a message use
@@ -193,12 +207,19 @@ impl Rule {
             Rule::GuestScratch => "guest-scratch",
             Rule::HandStd => "hand-std",
             Rule::KaniFeatures => "kani-features",
+            Rule::KaniCover => "kani-cover",
+            Rule::VerusMirror => "verus-mirror",
             Rule::UncheckedOutput => "unchecked-output",
             Rule::HandLock => "hand-lock",
             Rule::StageRun => "stage-run",
             Rule::NanMinMax => "nan-min-max",
             Rule::PcsgPack => "pcsg-pack",
             Rule::WarpSetup => "warp-setup",
+            Rule::DllSearch => "dll-search",
+            Rule::FullPathOneRule => "full-path-one-rule",
+            Rule::ShortNameTable => "short-name-table",
+            Rule::MissingImportFails => "missing-import-fails",
+            Rule::DrawPlan => "draw-plan",
             Rule::RunPlan => "run-plan",
         }
     }
@@ -255,6 +276,8 @@ impl Rule {
             Rule::NoReturnHandler => "a Windows function that does not come back (modern::NORETURN: ExitProcess, exit, abort, _assert..) is `fn(&mut Ctx) -> !` registered with noreturn! (api::NoReturn checks it; 2026-11-21): a handler that returns a value lets the guest run on past it",
             Rule::WildcardUnreachable => "no `_ => unreachable!()` arm outside tests (2026-11-21, user rule: exhaustive matches, no `_` catch-alls): take the value that cannot come out by a type (an enum, `!` as a type argument, a const-built table)",
             Rule::GuestScratch => "a guest block one sake function uses for the length of a call is a mem::Scratch (2026-11-21: 355 hand pairs converted): it is freed on every way out of the function, where a hand-written heap_free at the end leaked it on each early return; a block the guest keeps stays heap_alloc",
+            Rule::VerusMirror => "a Verus proof (formal/verus/*.rs) is a copy of the code it is about (Verus checks its own copy, not the crate), so a test of that code reads it (`include_str!` of the proof file) and compares the two: a proof whose copy drifted from the real code proves nothing about it (2026-11-22, the formal-verification plan: CDC's proof had its own bounds and casts)",
+            Rule::KaniCover => "a Kani proof (`#[kani::proof]`) that narrows its inputs (`kani::assume`, an early `return`, a `let .. else`) shows with `kani::cover!` that the cases it is about are still reached (assumptions that contradict each other make every assertion after them vacuous: the proof passes and proves nothing), and every crate with a proof is in formal/kani.sh's `for c in` list (a proof no script runs is no proof; 2026-11-22, the formal-verification plan)",
             Rule::KaniFeatures => "a crate formal/kani.sh compiles (or links) names the Rust 1.100 library features Kani's older nightly has unstable in `#![cfg_attr(kani, feature(..))]` in its lib.rs (2026-11-21: Vec::from_fn stopped every proof; review e18bf44)",
             Rule::UncheckedOutput => "a command's stdout is its answer only when its exit status says it worked: check `.status.success()` (an empty `git ls-files` from a copy without .git was \"no files\"; review e18bf44)",
             Rule::HandLock => "a lock between processes is a lock file opened through masu's lockfile::LockFile: Windows' File::open opens no directory, and the store's writers locked the store directory itself (`masu add` failed on Windows; review e18bf44)",
@@ -262,6 +285,11 @@ impl Rule {
             Rule::NanMinMax => "a NaN through Direct3D's min/max gives the other operand (winref d3d11tess: [maxtessfactor(5.5)] turned a NaN tess factor into 5.5 on Windows, and the domain shader read 5.5 back; masu kept the NaN and culled the patch): dxwgsl's float min/max go through d3d_min/d3d_max (WGSL leaves a NaN to the implementation), hlslc clamps a patch constant function's tess factors to [maxtessfactor] with min, kura's clamp gives the maximum for a NaN (regress::NAN_MIN_MAX / NAN_MIN_MAX_NOT)",
             Rule::PcsgPack => "hlslc packs a patch constant that is not a tess factor into a taken register's free components as d3dcompiler does (winref d3d11tess: `uint pid : PID` after SV_TessFactor[3] sits at r0.y on Windows; hlslc gave it a register of its own): regress::PCSG_PACK in lower.rs's sig()",
             Rule::WarpSetup => "a Direct3D 11 draw whose pixel shader reads interpolated inputs (or whose last stage writes clip/cull distances) goes through the setup pass, WARP's clipper and planes evaluated in the fragment shader (winref d3d11logic: WebGPU's rasterizer gave 3e9c28f4 where WARP gives 3e9c28f6): expand.rs asks setup_wanted and runs setup_draw, dxwgsl's pixel inputs come from expand::setup::inputs, and setup.rs's WGSL has no fma (a fused multiply-add rounds once where WARP rounds twice) (regress::WARP_SETUP / WARP_SETUP_NOT)",
+            Rule::DllSearch => "sake's loader looks for a DLL named without a path in LdrGetDllPath's folders for that load (its module and LoadLibraryEx's flags, SetDefaultDllDirectories' with none) and for a DLL's imports as the load that found it (review b5dacf4 2.1: find_dll_file had an order of its own with the folder of every DLL loaded by path in it, and LoadLibraryEx's LOAD_LIBRARY_SEARCH_* flags never reached it; winref dllsearch): pe::LoadSearch::folders is dllpath::dll_folders, LoadLibraryExW passes its flags, and pe.rs names no folders of its own (regress::DLL_SEARCH / DLL_SEARCH_NOT)",
+            Rule::FullPathOneRule => "every file operation opens the full path GetFullPathName names (review b5dacf4 2.2: CreateFile opened `D:save.dat` as D:\\save.dat while GetFullPathName answered from the `=D:` variable): files::full_path makes a Win32 name full with fullpath's RtlGetFullPathName_Ustr (regress::FULL_PATH)",
+            Rule::ShortNameTable => "an 8.3 name is given when its long name is made and kept in its folder's table until the name is removed or renamed, as NTFS keeps it (review b5dacf4 2.3: the short names were made again from every listing, so deleting one file changed another's, and a reload gave new ones): kura::fs tells the one watcher each name made and removed, sake watches from its first guest path, shortname reads the kept table, and sake lists and removes folders only through shortname::read_dir / remove_dir (the table is no guest entry) (regress::SHORT_NAMES)",
+            Rule::MissingImportFails => "a DLL LoadLibrary loads whose import names a DLL file that is not there (or a function its DLL file lacks) fails the LoadLibrary with ERROR_MOD_NOT_FOUND (ERROR_PROC_NOT_FOUND), the images that load mapped unmapped with no DllMain run, as Windows' loader does (review b5dacf4 2.1, winref dllsearch: the import was bound to a trap and the DLL loaded, crashing when called); only the process's own imports keep binding traps (OnMissing::Traps): resolve_import_with notes the failure, load_library_searching abandons the load, LoadLibrary answers its error (regress::MISSING_IMPORT)",
+            Rule::DrawPlan => "a D3D11 draw's topology, fill and indices on the page come from one typed plan (d3d11::DrawPlan::of: PageTopo, Indices::Draw or Made), and the logic-op split takes that plan's PageTopo with the indices it draws (review b5dacf4 3.1: an adjacency list made for the draw was split as the line list of a wireframe's edges, and topology numbers were matched by hand in three places): draw_with builds the plan, logic::primitives takes a PageTopo (regress::DRAW_PLAN)",
             Rule::RunPlan => "a test run that ran nothing, or less than it meant to, fails (review 6852be1f: compare.py passed with Windows' answers and an empty sake directory, winetest/run.py passed when the selected test program was missing): run.sh and run-browser.mjs write <out>/.plan/<runner> before running, compare.py fails on no plan, an empty plan, a planned probe without a result and a missing --require-plan, run.py plans every test before sharding and fails on a missing program or an expected test no longer listed, and --suite rostests runs on sake only what Windows passes (tests/rostests/windows-<arch>.tsv, required, every planned test measured; Windows runs them in conformance.yml) (rebuild::RUN_PLAN / RUN_PLAN_NOT)",
             Rule::HandStd => "what the standard library names since Rust 1.98..1.100 is not written by hand (2026-11-21: 10 toggles, 3 trim_prefix, 136 map_or_default, 13 ok_or, 19 Vec::from_fn replaced): x.toggle(), s.trim_prefix(p), o.map_or_default(f), c.ok_or(e), Vec::from_fn(v.len(), f)",
         }
@@ -320,12 +348,19 @@ impl Rule {
             Rule::GuestScratch => modern::guest_scratch(tree),
             Rule::HandStd => modern::hand_std(tree),
             Rule::KaniFeatures => regress::kani_features(tree),
+            Rule::KaniCover => regress::kani_cover(tree),
+            Rule::VerusMirror => regress::verus_mirror(tree),
             Rule::UncheckedOutput => regress::unchecked_output(tree),
             Rule::HandLock => regress::hand_lock(tree),
             Rule::StageRun => regress::stage_run(tree),
             Rule::NanMinMax => regress::nan_min_max(tree),
             Rule::PcsgPack => regress::pcsg_pack(tree),
             Rule::WarpSetup => regress::warp_setup(tree),
+            Rule::DllSearch => regress::dll_search(tree),
+            Rule::FullPathOneRule => regress::full_path_one_rule(tree),
+            Rule::ShortNameTable => regress::short_name_table(tree),
+            Rule::MissingImportFails => regress::missing_import(tree),
+            Rule::DrawPlan => regress::draw_plan(tree),
             Rule::RunPlan => rebuild::needles(tree, &rebuild::RUN_PLAN, &rebuild::RUN_PLAN_NOT),
         };
         hits.into_iter().map(|(file, line, what)| Finding { rule: self, file, line, what }).collect()
@@ -643,7 +678,11 @@ fn release_build_only(tree: &Tree) -> Hits {
 }
 
 /// what must stay in place: (file, text, why)
-pub const REQUIRED: [(&str, &str, &str); 48] = [
+pub const REQUIRED: [(&str, &str, &str); 52] = [
+    ("crates/sake/src/files.rs", "        if self.shared != 0 && let Ok(p) = self.g.stream_position() {\n            let id = self.shared;\n            crate::kern::with(|k| k.set_file_pos(id, p));", "a file handle processes share keeps its file pointer in the kernel (the child's write did not move the parent's tell: msvcrt:file test_file_inherit; 2026-11-22)"),
+    ("crates/sake/src/process.rs", "        Obj::File(f) => f.share().map(|id| KRef::File { id }),", "an inheritable file handle reaches the child (2026-11-22)"),
+    ("crates/sake/src/k32.rs", "    // (lpSecurityAttributes's bInheritHandle: a child CreateProcess starts gets it)\n    sa_inherit(c.a(3), h)", "CreateFile honours bInheritHandle (msvcrt:file test_stdout_handle's file never reached the child; 2026-11-22)"),
+    ("crates/sake/src/crt_io.rs", "    let handles = rest.get(n..).unwrap_or(&[]);", "lpReserved2's handles follow all the count's flags even when cbReserved2 cuts the block (msvcrt_init_io; 2026-11-22)"),
     ("crates/sake/src/crt_io.rs", "    if let Some(d) = get(fd).filter(|d| d.text && !matches!(d.kind, Kind::Std(_))) {\n        return text_read(fd, d, buf, n.min(i32::MAX as u32));", "a text-mode descriptor's _read makes CR LF an LF (it gave the raw bytes: msvcrt:file test_file_write_read; 2026-11-22)"),
     ("crates/sake/src/crt_io.rs", "    // a stream on `to` (stdout after freopen) now reads and writes what `to` names\n    super::follow_fd(to);", "a stream follows its descriptor through _dup2 (stdout freopen'ed to a file never came back to the console: ucrtbase:file printed nothing; 2026-11-22)"),
     ("crates/sake/src/crt_io.rs", "fn getwc_of(fp: u32) -> u32 {\n    if !stream_is_text(fp) {", "a binary stream's wide characters are two raw bytes each (msvcrt:file test_fgetwc; 2026-11-22)"),
