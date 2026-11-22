@@ -2684,6 +2684,26 @@ fn stored_bytes(info: &mut iced_x86::InstructionInfoFactory, ins: &Instruction) 
         .unwrap_or(0)
 }
 
+/// Whether code for `ins` may leave before it runs: a memory operand other than the stack near
+/// RSP (LEA and NOP read none), a LOCK, or what the flag liveness does not know to be inline
+/// (the integer ALU, moves, stack, branches, SETcc/CMOVcc): those go to the interpreter.
+fn may_leave_before64(ins: &Instruction) -> bool {
+    use Mnemonic::*;
+    let memory = (0..ins.op_count()).any(|i| ins.op_kind(i) == OpKind::Memory);
+    let near_rsp = ins.memory_base() == Register::RSP && ins.memory_index() == Register::None && ins.memory_displacement64().cast_signed().unsigned_abs() < 0x1000;
+    if memory && !matches!(ins.mnemonic(), Lea | Nop) && !near_rsp || ins.has_lock_prefix() {
+        return true;
+    }
+    !matches!(
+        ins.mnemonic(),
+        Mov | Movzx | Movsx | Movsxd | Add | Sub | Adc | Sbb | And | Or | Xor | Cmp | Test | Inc | Dec | Neg | Not | Shl | Shr | Sar | Rol | Ror | Lea | Xchg | Bswap | Nop
+            | Cdq | Cqo | Cdqe | Cwde | Push | Pop | Call | Ret | Imul
+            | Seto | Setno | Setb | Setae | Sete | Setne | Setbe | Seta | Sets | Setns | Setp | Setnp | Setl | Setge | Setle | Setg
+            | Cmovo | Cmovno | Cmovb | Cmovae | Cmove | Cmovne | Cmovbe | Cmova | Cmovs | Cmovns | Cmovp | Cmovnp | Cmovl | Cmovge | Cmovle | Cmovg
+            | Jo | Jno | Jb | Jae | Je | Jne | Jbe | Ja | Js | Jns | Jp | Jnp | Jl | Jge | Jle | Jg | Jmp
+    )
+}
+
 fn reads_flags(ins: &Instruction) -> (u32, u32) {
     // (iced's RflagsBits: OF 1, SF 2, ZF 4, AF 8, CF 0x10, PF 0x20)
     let all = 0x3f;
@@ -3529,12 +3549,17 @@ fn translate_seen64<M: Memory>(module: &mut Module, mem: &mut M, roots: &[u64], 
     if fnm || STRUCTURED.load(Relaxed) {
         split_blocks(&mut blocks, &index, &copy_index, &tables);
     }
-    // flags a block reads before writing them all
+    // flags a block reads before writing them all; an instruction that may leave before it
+    // runs (an access the guest range or a page check may stop, one the interpreter runs)
+    // reads them all: the exit contract (jit::ExitAt), an exception handler sees EFLAGS
     for b in &mut blocks {
         let mut written = 0;
         let mut live = None;
         for i in &b.ins {
-            let (r, w) = reads_flags(i);
+            let (mut r, w) = reads_flags(i);
+            if may_leave_before64(i) {
+                r = 0x3f;
+            }
             if r & !written != 0 || matches!(i.flow_control(), FlowControl::Call | FlowControl::IndirectCall | FlowControl::Return | FlowControl::IndirectBranch | FlowControl::Interrupt | FlowControl::Exception) {
                 live = Some(r & !written != 0 || written != 0x3f);
                 break;

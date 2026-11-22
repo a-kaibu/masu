@@ -324,3 +324,87 @@ catch: no moves for the put-off FXCHs (14 failures), no reload of the modes afte
 root's guard left out ("x87 loop push" fails in FN mode). The random runs (3000 programs,
 seeds 7, 11, 31; 4000 seed 21) and TestFloat (302 371 cases) show no difference from the
 interpreter.
+
+## The exit contract: flags at mid-block exits (2026-11-22)
+
+A translation leaves its code at many places: a bail to the interpreter before an instruction
+(an address outside the guest range, a page to check, an instruction it does not translate), a
+check after a store into code or a write of ESP, the budget at a jump back, a jump out of the
+region or to a computed address. Until now the lazy flags were kept only where later code of
+the same translation read them, so at an exit the Cpu could hold stale status flags:
+`xor eax,eax / mov ecx,[0] / xor edx,edx` faulted at the load with EFLAGS 0x202 where the
+interpreter has 0x246, and a guest's exception handler (masu's SEH hands it the context) saw
+the wrong ZF/PF. jit32test and fuzz/x86_jit skipped the state comparison at exceptions for
+this reason.
+
+The contract (`jit::ExitAt`, `Gen::exit_contract`):
+
+- **Before / After** an instruction (`bail`, `fallback`, `check_esp`, the store checks): every
+  status flag exact. What follows is unknown here: an exception handler, or code that reads
+  them.
+- **Jump(need)** to code at an address (budget, a loop's hoisted checks, a callee missing from
+  the hash table, an irreducible edge, a return): only the flags that code reads first, its
+  live-in (`block_liveness`), or for a call `callee_reads`. A dynamic jump needs all of them.
+
+The liveness (`flag_effects` / `liveness_of`) takes every exit as a read of all flags:
+`may_leave_before` (memory operands other than the stack near ESP, LOCK, what Gen::emit does not
+translate inline), `may_leave_after` (stores, ESP written), the stores of a block that checks
+for code written (WATCH, FRESH), and ESP accesses after an instruction the interpreter ran that
+set ESP to something new (`esp_unknown`; `Gen::fallback` keeps ESP's track over the
+instructions that only push or pop). An exit the liveness did not see is recorded (`Exits`)
+and the translation made again with it (`translate_exits`, at most 4 rounds; `EXIT_AGAIN`,
+`EXIT_REFUSED`). With the predictions above jit32test's random programs need none: 1063
+translations were made again in 600 programs before ESP's track was kept.
+
+Keeping the flags at every exit has a cost in V8 where the flags would have been dead: the
+lazy locals become loop phis. Two measures keep it small:
+
+- `callee_reads` is recorded for every direct call, 0 included (a callee that writes the
+  flags before it reads or leaves): before, a 0 was left out and taken as "all", which made the
+  call keep and store them (calls +22%).
+- A block every predecessor of which leaves its flags from the same 32-bit CMP or TEST of
+  registers and immediates, none of them written after it (`remat_heads`), does that CMP/TEST
+  again (`Remat`): the blocks before keep no flags for it, the jumps there set L_OP to
+  L_OP_REMAT (-2) and the lazy locals to 0, and the CMP/TEST is done where something reads the
+  flags (`remat_now`, into the locals) or where code leaves (`remat_out`, into the Cpu with
+  L_OP -1). Into the Cpu, not the locals: register values in the lazy locals on the exits'
+  shared code made sort's inner loop 25% slower in V8 although those paths never run (found by
+  swapping modules, JB_SWAP). An entry of the function (its flags the Cpu's) does it only where
+  L_OP says so. L_OP_REMAT never reaches the Cpu. The CMP/TEST stays pending over what
+  neither reads nor writes the status flags, has no condition and keeps its registers
+  (`remat_keeps`: MOVs, SSE, MMX, x87): done at the first of those that would read them, SSE's
+  and x87's loops had it done at their start with selects on L_OP (sse_int +31%, x87_dot +21%
+  in Chromium as an Android phone).
+
+x64 (`long.rs`) keeps the same rule for its flag skip: `may_leave_before64` (memory operands
+other than near RSP, LOCK, what it does not translate inline) reads every flag, so a write of
+flags before such an instruction is never left out.
+
+ROL/ROR with live flags no longer go to the interpreter: `rotate_flags` writes EFLAGS exactly
+(crate::flags' bits; iced's RflagsBits are the liveness' and differ: masu-lint
+jit-exit-contract forbids emitting them).
+
+Tests: jit32test's fixed programs "exit fault between flag writers", "exit fault in a loop",
+"rotate flags"; at both runs faulting it compares the whole state, flags included; fuzz/x86_jit
+compares the status flags where the JIT stopped for the host; jit64test compares the state at
+both runs faulting too. The harnesses define env.pages (masu-lint jit-harness-imports): without
+it every module failed to load, jit32test took that for a refusal and compared the interpreter
+with itself; a load error now fails it, and so does a run with no translation loaded.
+
+tools/jitbench (README.md) measures it in V8: node, and Chromium as an Android phone (Pixel 7,
+CPU throttled 4x, wasm bounds checks). Against main before it, 7 rounds, hot time B/A:
+
+| program | node | Android-like |
+|---|---:|---:|
+| crc32 | 1.00 | 1.00 |
+| bigadd | 1.00 | 1.01 |
+| calls | 0.99 | 1.02 |
+| vm | 1.05 | 1.00 |
+| sse_int | 1.00 | 1.03 |
+| x87_dot | 0.96 | 0.96 |
+| sort | 1.03 | 1.11 |
+| flags_mem | 0.97 | 1.11 |
+
+Interpreter steps and exits the same, wasm +0-30% (sort's Remat), translation +3-14% (tenths
+of a millisecond in node), peak memory the same. What is left (sort, flags_mem on the phone) is
+the flags kept for the exits: the cost of the state being right where it was wrong.
