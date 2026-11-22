@@ -1,18 +1,20 @@
 // The JIT's module loader (see crates/kura/src/jit.rs). Every thread (worker) has its own
 // funcref table, dispatcher instance and block instances; all share the one memory.
 addToLibrary({
-  $VNJIT: { table: null, used: 0, freed: 0, run: null, env: null },
+  $VNJIT: { table: null, used: 0, freed: 0, slots: 0, run: null, env: null },
   // Room for `n` more slots after `used` (grown by half again each time: growing copies the
   // table); false when the thread should start over with a fresh table (crates/kura/src/jit.rs
   // TABLE_FULL): freed slots are never handed out again (a stale index must not name another
-  // module), so past 2^20 slots with half of them freed, or when V8 refuses to grow it
-  // (its limit is 10,000,000; a failed grow used to throw into the guest's frame and kill the
-  // thread), the table is dropped whole.
+  // module), so past `slots` (koji::jit::TABLE_SLOTS, what a dispatch entry can name: given by
+  // vnvm_jit_init, never written here), or when V8 refuses to grow it (its limit is
+  // 10,000,000; a failed grow used to throw into the guest's frame and kill the thread), the
+  // table is dropped whole. The bound comes first: a slot past it is never handed out, whatever
+  // room the table has.
   $vnjitRoom__deps: ['$VNJIT'],
   $vnjitRoom: (n) => {
     const t = VNJIT.table;
+    if (VNJIT.used + n > VNJIT.slots) return false;
     if (VNJIT.used + n <= t.length) return true;
-    if (VNJIT.used + n > (1 << 20) && VNJIT.freed * 2 >= VNJIT.used) return false;
     try {
       t.grow(Math.max(n, t.length >> 1, 256));
     } catch (e) {
@@ -23,9 +25,10 @@ addToLibrary({
   },
 
   vnvm_jit_init__deps: ['$VNJIT'],
-  vnvm_jit_init__sig: 'vpp',
-  vnvm_jit_init: (ptr, len) => {
+  vnvm_jit_init__sig: 'vppi',
+  vnvm_jit_init: (ptr, len, slots) => {
     ptr >>>= 0;
+    VNJIT.slots = slots >>> 0;
     const bytes = HEAPU8.slice(ptr, ptr + len);
     VNJIT.table = new WebAssembly.Table({ element: 'anyfunc', initial: 0 });
     VNJIT.used = 0;
