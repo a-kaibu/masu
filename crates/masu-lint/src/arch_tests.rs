@@ -785,6 +785,18 @@ fn fixture(r: Rule) -> Fixture {
             ],
             mutate: ("tools/jit64test/src/main.rs", |t| Some(t.replace("linker.define(&store, \"env\", \"pages\", pages).unwrap();", ""))),
         },
+        Rule::JitContext => Fixture {
+            bad: &[
+                ("crates/koji/src/jit/mod.rs", "fn check(&mut self) { if page_check() { self.guard(); } }\nfn bump(c: &mut Code) { if COUNT.load(Relaxed) {} }\n"),
+                ("crates/koji/src/jit/packed.rs", "fn supported(ins: &Instruction) -> bool { super::mx_exact() }\n"),
+            ],
+            good: &[
+                ("crates/koji/src/jit/mod.rs", "fn check(&mut self) { if self.tc.page_check() { self.guard(); } }\nfn bump(c: &mut Code) { if c.count_transfers {} }\npub fn page_check() -> bool { true }\n"),
+                ("crates/koji/src/jit/packed.rs", "fn supported(ins: &Instruction, float: Float) -> bool { float == Float::Exact }\n"),
+                ("crates/koji/src/jit/context.rs", "pub fn now() -> TranslationContext { let f = super::FN.load(Relaxed); let e = mx_exact(); }\n"),
+            ],
+            mutate: ("crates/koji/src/jit/mod.rs", |t| Some(t.replace("let prot = self.tc.page_check();", "let prot = page_check();"))),
+        },
         Rule::DllSearch => Fixture {
             bad: &[
                 ("crates/sake/src/pe.rs", "pub static DLL_DIRS: Mutex<Vec<String>> = Mutex::new(Vec::new());\nfn find_dll_file(dll: &str) {\n    let mut dirs = vec![exe_dir];\n    dirs.extend(crate::dllpath::user_dirs().into_iter().rev());\n    dirs.push(crate::files::cwd().trim_end_matches('\\\\').to_string());\n    dirs.push(\"C:\\\\windows\\\\system32\".into());\n}\n// for d in search.folders() image_resolver(search.of_dependency(&win))\n"),

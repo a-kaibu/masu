@@ -91,9 +91,15 @@ pub(super) struct Table {
     pub hash: Option<(u32, u32, Vec<u32>)>,
 }
 
+/// The control flow graph of a translation's blocks (32-bit and long mode alike: the one
+/// graph liveness, the Remat heads, flag predictions and the layout read)
 pub(super) struct Layout {
     /// node -> successors (nodes 0..n are blocks, n.. tables)
     pub(super) succ: Vec<Vec<usize>>,
+    /// node -> its predecessors over every edge (in node order)
+    pub(super) pred: Vec<Vec<usize>>,
+    /// node -> its predecessors that are reached (in reverse postorder)
+    reached_pred: Vec<Vec<usize>>,
     rpo: Vec<usize>,
     /// node -> position in `rpo` (usize::MAX: unreachable)
     order: Vec<usize>,
@@ -205,6 +211,12 @@ pub(super) fn from_succ(mut succ: Vec<Vec<usize>>, entry: usize, extra: &[usize]
             preds[w].push(v);
         }
     }
+    let mut pred: Vec<Vec<usize>> = alloc::vec![Vec::new(); total];
+    for (v, ws) in succ.iter().enumerate() {
+        for &w in ws {
+            pred[w].push(v);
+        }
+    }
     let mut idom = alloc::vec![usize::MAX; total];
     idom[entry] = entry;
     loop {
@@ -256,7 +268,7 @@ pub(super) fn from_succ(mut succ: Vec<Vec<usize>>, entry: usize, extra: &[usize]
             }
         }
     }
-    Layout { succ, rpo, order, idom, header }
+    Layout { succ, pred, reached_pred: preds, rpo, order, idom, header }
 }
 
 impl Layout {
@@ -264,12 +276,7 @@ impl Layout {
     /// reached, and in no loop but as the header of the outermost.
     pub(super) fn entries(&self, n: usize, want: impl Fn(usize) -> bool) -> Vec<usize> {
         let total = self.succ.len();
-        let mut preds: Vec<Vec<usize>> = alloc::vec![Vec::new(); total];
-        for &v in &self.rpo {
-            for &w in &self.succ[v] {
-                preds[w].push(v);
-            }
-        }
+        let preds = &self.reached_pred;
         // natural loops' bodies but their headers
         let mut inside = alloc::vec![false; total];
         for &u in &self.rpo {
@@ -296,12 +303,7 @@ impl Layout {
     /// Each loop header's natural loop: the nodes in it (the header too).
     pub(super) fn loop_bodies(&self) -> BTreeMap<usize, Vec<bool>> {
         let total = self.succ.len();
-        let mut preds: Vec<Vec<usize>> = alloc::vec![Vec::new(); total];
-        for &v in &self.rpo {
-            for &w in &self.succ[v] {
-                preds[w].push(v);
-            }
-        }
+        let preds = &self.reached_pred;
         let mut out: BTreeMap<usize, Vec<bool>> = BTreeMap::new();
         for &u in &self.rpo {
             for &h in &self.succ[u] {

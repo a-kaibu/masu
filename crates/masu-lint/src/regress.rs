@@ -1155,6 +1155,50 @@ fn rflags_emitted(line: &str) -> bool {
 
 /// Each of JIT_EXIT_CONTRACT missing from its file's code, each of JIT_EXIT_CONTRACT_NOT in it,
 /// each line of the JIT emitting RflagsBits.
+/// The statics koji's translations are made under (jit::context): only TranslationContext::now
+/// reads them, in context.rs
+pub const JIT_MODES: [&str; 18] = ["MX_EXACT", "MX_SWITCH", "PAGE_CHECK", "NOCHECK", "LAYOUT", "PROFILE", "COUNT", "HOIST", "SLOTS_MAX", "FN_ENTRIES", "FN", "FN64", "STRUCTURED", "DEBUG_CHECK", "DEBUG_ALL_REGS", "DEBUG_NO_SIDE", "MEMCOUNT", "PROBES"];
+
+/// The functions that read them (a free call: a method of the context is the context's)
+pub const JIT_MODE_READS: [&str; 3] = ["mx_exact()", "page_check()", "Pages::now()"];
+
+/// What of `l` reads a mode of [`JIT_MODES`] / [`JIT_MODE_READS`] outside the context
+fn mode_read(l: &str) -> Option<&'static str> {
+    let free = |l: &str, at: usize| at == 0 || !l[..at].ends_with(|c: char| c.is_ascii_alphanumeric() || c == '_' || c == '.' || c == ':') || l[..at].ends_with("super::") || l[..at].ends_with("jit::");
+    for n in JIT_MODES {
+        for (at, _) in l.match_indices(n) {
+            let rest = &l[at + n.len()..];
+            if free(l, at) && (rest.starts_with(".load(") || rest.starts_with(".swap(") || rest.starts_with(".iter()")) {
+                return Some(n);
+            }
+        }
+    }
+    for n in JIT_MODE_READS {
+        for (at, _) in l.match_indices(n) {
+            if free(l, at) && !l[..at].trim_end().ends_with("fn") {
+                return Some(n);
+            }
+        }
+    }
+    None
+}
+
+/// koji's generators read the modes from their TranslationContext only (see Rule::JitContext)
+pub(super) fn jit_context(tree: &Tree) -> Hits {
+    let mut out = Hits::new();
+    for f in tree.rs(&["crates/koji/src/jit/"]) {
+        if f.as_str() == "crates/koji/src/jit/context.rs" {
+            continue;
+        }
+        for (k, l) in product_code(tree, &f).lines().enumerate() {
+            if let Some(n) = mode_read(l) {
+                out.push((f.clone(), k.saturating_add(1), format!("`{n}` read while translating: the translation's TranslationContext has it (read once, when it began)")));
+            }
+        }
+    }
+    out
+}
+
 /// What jit32test must say: a module that does not load fails the test (Made, not a refusal),
 /// and a run in which no translation loaded fails
 pub const JIT_HARNESS_LOADED: [(&str, &str); 2] = [("tools/jit32test/src/main.rs", "fn translate(&mut self, base: usize, eip: u32) -> Result<Made, String>"), ("tools/jit32test/src/main.rs", "if loaded == 0 && count > 0")];

@@ -408,3 +408,37 @@ CPU throttled 4x, wasm bounds checks). Against main before it, 7 rounds, hot tim
 Interpreter steps and exits the same, wasm +0-30% (sort's Remat), translation +3-14% (tenths
 of a millisecond in node), peak memory the same. What is left (sort, flags_mem on the phone) is
 the flags kept for the exits: the cost of the state being right where it was wrong.
+
+## The translation context (2026-11-22)
+
+What a translation is made under besides the guest's bytes is one value, `jit::TranslationContext`
+(`jit/context.rs`), read once when the translation begins (`TranslationContext::now`):
+
+- `arch`: 16-bit code with its code segment's base, 32-bit flat, long mode
+- `calls`: regions, or guest functions as wasm functions (FN / FN64)
+- `float`: the MXCSR flag checks (MX_EXACT); `pages`: the page checks (PAGE_CHECK); `ranges`:
+  the range checks (off only when measuring, NOCHECK)
+- `measure` (counters, profile, layout text, memory sites, probes), `budget` (loop slots,
+  hoisting, function entries), `debug64` (long mode's debugging switches)
+
+The generators (32-bit and long mode, packed, mxguard) read these only from it: masu-lint
+jit-context fails a read of the statics anywhere in `crates/koji/src/jit/` but context.rs.
+Before, they were read where used: a mode the host turned on while another thread translated
+(the flag checks, the page checks) made a translation part one, part the other, kept as made
+with the first; and the 16-bit code segment's base was a static every translation read, so
+16-bit translations ran alone behind a gate (formal/tla/TranslateGate.tla checked it; gone with
+the static). An instruction tells 16-bit code by its own decoding (`code16`: iced's code size).
+
+A region keeps its context (`Region::ctx`): kura's shared cache keeps builds apart by it, runs
+one only where `ctx.runs_now()` (the flag checks and page checks as they are now), and saves
+only what `ctx.saveable()` (no flag checks, no counters of this run). Code (`wasm::Code`)
+carries what it counts (`Code::measured`): memory sites and transfer counters of that
+translation, not of whatever the statics say later.
+
+`structure::Layout` is the one control flow graph both generators lay out with: its
+predecessor lists (`pred`, every edge; and the reached ones in reverse postorder) are made once
+and read by the Remat heads, the flag predictions, loop bodies and function entries.
+
+The generated code is the same bytes as before (golden_jit unchanged, jitbench's modules the
+same size); node, 7 rounds, hot time B/A 0.98-1.00, translation time within the noise (a cold
+run's ±15%).

@@ -79,6 +79,7 @@ pub enum Rule {
     WarpSetup,
     JitExitContract,
     JitHarnessImports,
+    JitContext,
     RunPlan,
     DllSearch,
     FullPathOneRule,
@@ -95,7 +96,7 @@ pub enum Rule {
 }
 
 impl Rule {
-    pub const ALL: [Rule; 75] = [
+    pub const ALL: [Rule; 76] = [
         Rule::BuildOutput,
         Rule::HresultCopy,
         Rule::KomeCopy,
@@ -158,6 +159,7 @@ impl Rule {
         Rule::WarpSetup,
         Rule::JitExitContract,
         Rule::JitHarnessImports,
+        Rule::JitContext,
         Rule::RunPlan,
         Rule::DllSearch,
         Rule::FullPathOneRule,
@@ -238,6 +240,7 @@ impl Rule {
             Rule::WarpSetup => "warp-setup",
             Rule::JitExitContract => "jit-exit-contract",
             Rule::JitHarnessImports => "jit-harness-imports",
+            Rule::JitContext => "jit-context",
             Rule::DllSearch => "dll-search",
             Rule::FullPathOneRule => "full-path-one-rule",
             Rule::ShortNameTable => "short-name-table",
@@ -318,13 +321,13 @@ impl Rule {
             Rule::WarpSetup => "a Direct3D 11 draw whose pixel shader reads interpolated inputs (or whose last stage writes clip/cull distances) goes through the setup pass, WARP's clipper and planes evaluated in the fragment shader (winref d3d11logic: WebGPU's rasterizer gave 3e9c28f4 where WARP gives 3e9c28f6): expand.rs asks setup_wanted and runs setup_draw, dxwgsl's pixel inputs come from expand::setup::inputs, and setup.rs's WGSL has no fma (a fused multiply-add rounds once where WARP rounds twice) (regress::WARP_SETUP / WARP_SETUP_NOT)",
             Rule::JitExitContract => "koji's exit contract (jit::ExitAt): before or after an instruction that may leave, every status flag exact (an exception handler reads EFLAGS: xor eax,eax / mov ecx,[0] left 0x202 where the interpreter has 0x246); at a jump to code, those it reads. Gen::exit_with, jump_dyn and fallback check it, liveness sees the bails of an unchecked ESP, a callee that reads none is recorded so, a loop's hoisted checks need only its head's live-in, and no iced RflagsBits are emitted as EFLAGS bits (regress::JIT_EXIT_CONTRACT / JIT_EXIT_CONTRACT_NOT)",
             Rule::JitHarnessImports => "a test harness that runs koji's modules (a wasmtime linker defining env.table: jit16test, jit32test, jit64test, fuzz) defines env.pages too, the page marks every module imports since the saved code runs with the page checks on, and jit32test fails when no translation loaded: its translations' load errors were taken as refusals, so after that import came every one failed to load and 600 random programs compared the interpreter with itself (regress::JIT_HARNESS_LOADED)",
+            Rule::JitContext => "koji's generators read the modes (MXCSR flag checks, page checks, 16-bit code's segment, functions, measuring, budgets) from the translation's jit::TranslationContext, made once when it begins, never from the statics: a mode the host turned on while another thread translated made a translation part one, part the other, kept as the first; and the 16-bit segment base was a static every translation read, behind a gate (regress::JIT_MODES / JIT_MODE_READS)",
             Rule::DllSearch => "sake's loader looks for a DLL named without a path in LdrGetDllPath's folders for that load (its module and LoadLibraryEx's flags, SetDefaultDllDirectories' with none) and for a DLL's imports as the load that found it (review b5dacf4 2.1: find_dll_file had an order of its own with the folder of every DLL loaded by path in it, and LoadLibraryEx's LOAD_LIBRARY_SEARCH_* flags never reached it; winref dllsearch): pe::LoadSearch::folders is dllpath::dll_folders, LoadLibraryExW passes its flags, and pe.rs names no folders of its own (regress::DLL_SEARCH / DLL_SEARCH_NOT)",
             Rule::FullPathOneRule => "every file operation opens the full path GetFullPathName names (review b5dacf4 2.2: CreateFile opened `D:save.dat` as D:\\save.dat while GetFullPathName answered from the `=D:` variable): files::full_path makes a Win32 name full with fullpath's RtlGetFullPathName_Ustr (regress::FULL_PATH)",
             Rule::ShortNameTable => "an 8.3 name is given when its long name is made and kept in its folder's table until the name is removed or renamed, as NTFS keeps it (review b5dacf4 2.3: the short names were made again from every listing, so deleting one file changed another's, and a reload gave new ones): kura::fs tells the one watcher each name made and removed, sake watches from its first guest path, shortname reads the kept table, and sake lists and removes folders only through shortname::read_dir / remove_dir (the table is no guest entry) (regress::SHORT_NAMES)",
             Rule::MissingImportFails => "a DLL LoadLibrary loads whose import names a DLL file that is not there (or a function its DLL file lacks) fails the LoadLibrary with ERROR_MOD_NOT_FOUND (ERROR_PROC_NOT_FOUND), the images that load mapped unmapped with no DllMain run, as Windows' loader does (review b5dacf4 2.1, winref dllsearch: the import was bound to a trap and the DLL loaded, crashing when called); only the process's own imports keep binding traps (OnMissing::Traps): resolve_import_with notes the failure, load_library_searching abandons the load, LoadLibrary answers its error (regress::MISSING_IMPORT)",
             Rule::DrawPlan => "a D3D11 draw's topology, fill and indices on the page come from one typed plan (d3d11::DrawPlan::of: PageTopo, Indices::Draw or Made), and the logic-op split takes that plan's PageTopo with the indices it draws (review b5dacf4 3.1: an adjacency list made for the draw was split as the line list of a wireframe's edges, and topology numbers were matched by hand in three places): draw_with builds the plan, logic::primitives takes a PageTopo (regress::DRAW_PLAN)",
             Rule::RunPlan => "a test run that ran nothing, or less than it meant to, fails (review 6852be1f: compare.py passed with Windows' answers and an empty sake directory, winetest/run.py passed when the selected test program was missing): run.sh and run-browser.mjs write <out>/.plan/<runner> before running, compare.py fails on no plan, an empty plan, a planned probe without a result and a missing --require-plan, run.py plans every test before sharding and fails on a missing program or an expected test no longer listed, and --suite rostests runs on sake only what Windows passes (tests/rostests/windows-<arch>.tsv, required, every planned test measured; Windows runs them in conformance.yml) (rebuild::RUN_PLAN / RUN_PLAN_NOT)",
-            Rule::RunPlan => "a test run that ran nothing, or less than it meant to, fails (review 6852be1f: compare.py passed with Windows' answers and an empty sake directory, winetest/run.py passed when the selected test program was missing): run.sh and run-browser.mjs write <out>/.plan/<runner> before running, compare.py fails on no plan, an empty plan, a planned probe without a result and a missing --require-plan, run.py plans every test before sharding and fails on a missing program or an expected test no longer listed (rebuild::RUN_PLAN / RUN_PLAN_NOT)",
             Rule::GdiLockOrder => "GDI takes its locks in one order, the GDI table, user32, a window surface, never back: a draw op's closure (gdi::draw / draw_src) finds no window, locks no surface and reads no source DC itself, draw_src hands it the source copied before the destination's surface is locked (review 6852be1f: a blit from a window DC found its target with the destination surface held while SetWindowPos resized a surface under user32's lock, and two blits between two windows locked their surfaces in opposite orders) (rebuild::gdi_lock_order)",
             Rule::NotDone => "An export sake knows but does not implement answers its declared result's failure, from the Win32 metadata (crates/sake/src/returns.txt, written by tools/win32md: HRESULT E_NOTIMPL, NTSTATUS STATUS_NOT_IMPLEMENTED, WIN32_ERROR and SetLastError functions ERROR_CALL_NOT_IMPLEMENTED), typed as api::NotDone (review 6852be1f: 0 for all of them, S_OK / ERROR_SUCCESS / STATUS_SUCCESS with the outputs never written) (rebuild::NOT_DONE / _NOT)",
             Rule::Lifetimes => "A DLL lives only once its DllMain answered TRUE, a process as long as one of the program's threads runs (review 6852be1f: LoadLibrary answered a DLL whose DllMain said FALSE, and the process ended with its first thread whatever else ran): pe::init_dlls answers Err(InitFailed), load_library a LoadFailure::Init (ERROR_DLL_INIT_FAILED) after unloading what it loaded, exit_thread asks crate::lives whether it was the last (rebuild::LIFETIMES / _NOT)",
@@ -400,6 +403,7 @@ impl Rule {
             Rule::WarpSetup => regress::warp_setup(tree),
             Rule::JitExitContract => regress::jit_exit_contract(tree),
             Rule::JitHarnessImports => regress::jit_harness_imports(tree),
+            Rule::JitContext => regress::jit_context(tree),
             Rule::DllSearch => regress::dll_search(tree),
             Rule::FullPathOneRule => regress::full_path_one_rule(tree),
             Rule::ShortNameTable => regress::short_name_table(tree),

@@ -30,7 +30,7 @@ fn translate(code: &[u8]) -> (usize, bool) {
     let (_, mut m) = setup(code);
     let mut module = jit::wasm::Module::default();
     let r = jit::translate_region(&mut module, &mut m, &[CODE], 4, |_| true).expect("translated");
-    (module.finish().len(), r.exact)
+    (module.finish().len(), r.ctx.exact())
 }
 
 /// The instructions of `code` at CODE.

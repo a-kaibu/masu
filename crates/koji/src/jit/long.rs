@@ -24,6 +24,7 @@ use super::wasm::{Code, Func, Module, I32, I64, V128};
 mod avx;
 #[path = "long/sse.rs"]
 mod sse;
+use super::context::{Arch, TranslationContext};
 use super::{Region, ENTRY_SHIFT, GUEST_HI, GUEST_LO, N_PARAMS, RET_INTERP};
 use crate::{Cpu, Memory};
 use alloc::collections::BTreeMap;
@@ -263,6 +264,8 @@ const MAX_COPIES: usize = 32;
 
 struct Gen<'a> {
     c: Code,
+    /// what the translation is made under (super::context: read here only)
+    tc: TranslationContext,
     blocks: &'a [Block],
     index: &'a BTreeMap<u64, usize>,
     /// the leaves' copies' blocks, by (copy, address) (LeafCopy)
@@ -403,7 +406,7 @@ fn emit_stores(c: &mut Code, mask: u16) {
 /// hops among a thousand regions).
 fn splice_regs(code: Code, marks: &[(usize, usize, bool)], all: bool) -> Code {
     let (named, written) = if all { (u16::MAX, u16::MAX) } else { regs_named(&code) };
-    let mut out = Code { b: Vec::with_capacity(code.b.len() + marks.len() * 64), locs: Vec::with_capacity(code.locs.len()), cpu_at: false };
+    let mut out = Code { b: Vec::with_capacity(code.b.len() + marks.len() * 64), locs: Vec::with_capacity(code.locs.len()), ..code.like() };
     let (mut from, mut lfrom) = (0, 0);
     for &(at, li, store) in marks {
         out.b.extend_from_slice(&code.b[from..at]);
@@ -666,7 +669,7 @@ impl<'a> Gen<'a> {
         self.depth -= 1;
         self.c.end();
         // the pages that fault (super::PAGE_CHECK)
-        if super::page_check() {
+        if self.tc.page_check() {
             let ins = self.ins;
             super::pages_marked(&mut self.c, L_A, size, &ins);
             self.c.if_();
@@ -867,7 +870,7 @@ impl<'a> Gen<'a> {
         if !self.cond_lazy(base) {
             self.flags_to_cpu();
             self.cond_from_eflags(base);
-        } else if DEBUG_CHECK.load(Relaxed) {
+        } else if self.tc.debug64.check {
             // (debugging: the lazy condition against the materialized flags; a mismatch goes to
             // the status import as op 0xdead)
             let f = self.flags;
@@ -1164,7 +1167,7 @@ impl<'a> Gen<'a> {
                 // (not a way the layout has: out, and back in through the exit's lookup if
                 // the target is one of the region's entries)
                 (None, None) => {
-                    if super::LAYOUT.load(Relaxed) {
+                    if self.tc.measure.layout {
                         self.unlaid.push((self.ins.ip(), target));
                     }
                     self.exit_to(target, 0);
@@ -2992,7 +2995,7 @@ pub static DEBUG_NO_SIDE: core::sync::atomic::AtomicBool = core::sync::atomic::A
 /// per jump table, and one before them all going to the entries) and its entries, the first
 /// block first: the roots, the return addresses of calls and loop headers that are in no loop
 /// but as its header (into the middle of a loop is not a structured way in).
-fn structure64(blocks: &[Block], (index, copy_index): (&BTreeMap<u64, usize>, &BTreeMap<(LeafCopy, u64), usize>), returns: &[u64], (group_of, groups): (&BTreeMap<usize, usize>, &[Vec<u64>]), roots: &[u64], fnm: bool, (copies, copy_ret): (&BTreeMap<u64, (LeafCopy, u64)>, &[u64])) -> Option<(super::structure::Layout, Vec<usize>, BTreeMap<usize, Vec<(usize, usize, bool)>>)> {
+fn structure64(blocks: &[Block], (index, copy_index): (&BTreeMap<u64, usize>, &BTreeMap<(LeafCopy, u64), usize>), returns: &[u64], (group_of, groups): (&BTreeMap<usize, usize>, &[Vec<u64>]), roots: &[u64], fnm: bool, (copies, copy_ret): (&BTreeMap<u64, (LeafCopy, u64)>, &[u64]), debug: super::context::Debug64) -> Option<(super::structure::Layout, Vec<usize>, BTreeMap<usize, Vec<(usize, usize, bool)>>)> {
     let n = blocks.len();
     let find = |a: u64| index.get(&a).copied();
     let mut succ: Vec<Vec<usize>> = alloc::vec![Vec::new(); n + groups.len() + 1];
@@ -3079,7 +3082,7 @@ fn structure64(blocks: &[Block], (index, copy_index): (&BTreeMap<u64, usize>, &B
     let mut inner = Vec::new();
     let mut heads = Vec::new();
     let mut succ2 = succ.clone();
-    if !DEBUG_NO_SIDE.load(Relaxed) {
+    if !debug.no_side {
         for e in (1..n).filter(|&k| reached[k] && wanted(k) && !direct.contains(&k)) {
             let mut chain: Vec<(usize, usize)> = bodies.iter().filter(|&(&h, ref b)| h != e && b[e]).map(|(&h, b)| (h, b.iter().filter(|&&x| x).count())).collect();
             chain.sort_by(|a, b| b.1.cmp(&a.1));
@@ -3218,7 +3221,7 @@ fn emit_block64<M: Memory>(g: &mut Gen<'_>, mem: &mut M, k: usize, count: &mut u
         let next = list.last().next_ip();
         g.goto(next);
     }
-    if super::LAYOUT.load(core::sync::atomic::Ordering::Relaxed) {
+    if g.tc.measure.layout {
         let l = list.last();
         layout.push_str(&alloc::format!("{:#x} {} {:?} {:#x}\n", blocks[k].start, list.len(), l.mnemonic(), if l.op0_kind() == OpKind::NearBranch64 { l.near_branch64() } else { 0 }));
     }
@@ -3307,7 +3310,7 @@ fn emit_entries64(g: &mut Gen<'_>, entries: &[usize]) {
 pub fn translate_region64<M: Memory>(module: &mut Module, mem: &mut M, roots: &[u64], trap: (u32, u32), accept: impl FnMut(u32, bool) -> bool) -> Option<Region> {
     // (each page read once: the instructions decoded, the bytes blocks check on entry and the
     // region's text agree although other threads may rewrite the code meanwhile)
-    translate_seen64(module, &mut super::Snapshot::new(mem), roots, trap, accept, None, &|_| None)
+    translate_seen64(&TranslationContext::now(Arch::Long64), module, &mut super::Snapshot::new(mem), roots, trap, accept, None, &|_| None)
 }
 
 /// x64 functions (`MASU_JIT64_FN`, on unless it is 0; kura sets it at start).
@@ -3348,10 +3351,10 @@ pub fn translate_function64<M: Memory>(module: &mut Module, mem: &mut M, entry: 
 pub fn translate_function64_with<M: Memory>(module: &mut Module, mem: &mut M, entry: u64, also: &[u64], trap: (u32, u32), max_ins: usize, hints: &dyn Fn(u64) -> Option<u64>, accept: impl FnMut(u32, bool) -> bool) -> Option<Region> {
     let mut roots = alloc::vec![entry];
     roots.extend(also.iter().filter(|&&a| a != entry && !(trap.0..trap.1).contains(&low_half(a))));
-    translate_seen64(module, &mut super::Snapshot::new(mem), &roots, trap, accept, Some(max_ins), hints)
+    translate_seen64(&TranslationContext::now(Arch::Long64), module, &mut super::Snapshot::new(mem), &roots, trap, accept, Some(max_ins), hints)
 }
 
-fn translate_seen64<M: Memory>(module: &mut Module, mem: &mut M, roots: &[u64], trap: (u32, u32), mut accept: impl FnMut(u32, bool) -> bool, fn_ins: Option<usize>, hints: &dyn Fn(u64) -> Option<u64>) -> Option<Region> {
+fn translate_seen64<M: Memory>(tc: &TranslationContext, module: &mut Module, mem: &mut M, roots: &[u64], trap: (u32, u32), mut accept: impl FnMut(u32, bool) -> bool, fn_ins: Option<usize>, hints: &dyn Fn(u64) -> Option<u64>) -> Option<Region> {
     let fnm = fn_ins.is_some();
     // (a host trap's address is no code: a function or region never starts there, a call
     // cache miss on an import's slot names one)
@@ -3362,8 +3365,6 @@ fn translate_seen64<M: Memory>(module: &mut Module, mem: &mut M, roots: &[u64], 
         Some(n) => (MAX_FN_BLOCKS, n),
         None => (MAX_BLOCKS, MAX_REGION_INS),
     };
-    let exact = super::mx_exact();
-    let pages = super::Pages::now();
     let entry = roots[0];
     // blocks: the entry and what its direct jumps reach (accept(a, false)), and what may run
     // without having run yet (accept(a, true)): direct calls' targets and return addresses,
@@ -3546,7 +3547,7 @@ fn translate_seen64<M: Memory>(module: &mut Module, mem: &mut M, roots: &[u64], 
     // jump into the middle of a decoded block made a second block of its tail, and a loop
     // entered there through the first one's copy is irreducible: std::sort's partition loops
     // left the layout at every round)
-    if fnm || STRUCTURED.load(Relaxed) {
+    if fnm || tc.debug64.structured {
         split_blocks(&mut blocks, &index, &copy_index, &tables);
     }
     // flags a block reads before writing them all; an instruction that may leave before it
@@ -3602,9 +3603,9 @@ fn translate_seen64<M: Memory>(module: &mut Module, mem: &mut M, roots: &[u64], 
         };
         group_of.insert(k, g);
     }
-    let lay = if !STRUCTURED.load(Relaxed) && !fnm { None } else { structure64(&blocks, (&index, &copy_index), &returns, (&group_of, &groups), roots, fnm, (&copies, &copy_ret)) };
+    let lay = if !tc.debug64.structured && !fnm { None } else { structure64(&blocks, (&index, &copy_index), &returns, (&group_of, &groups), roots, fnm, (&copies, &copy_ret), tc.debug64) };
     let nodes = blocks.len() + groups.len() + 1;
-    let mut g = Gen { c: Code::default(), blocks: &blocks, index: &index, copy_index: &copy_index, returns: &returns, flags: Flags::Cpu, depth: 0, ins: blocks[0].ins[0], temps: 0, mx_checked: None, mx_seen: [[None; 2]; 16], marks: Vec::new(), hi_swapped: Vec::new(), smc: false, fresh: None, watch_store: false, fell_back: false, bad: false, info: iced_x86::InstructionInfoFactory::new(), structured: lay.is_some(), fwd: alloc::vec![None; nodes], back: alloc::vec![None; nodes], cur: 0, table_node: BTreeMap::new(), side: BTreeMap::new(), fnm, thunks: &thunks, copies: &copies, copy_ret: &copy_ret, copy: LeafCopy::NONE, unlaid: Vec::new() };
+    let mut g = Gen { c: Code::measured(&tc.measure), tc: *tc, blocks: &blocks, index: &index, copy_index: &copy_index, returns: &returns, flags: Flags::Cpu, depth: 0, ins: blocks[0].ins[0], temps: 0, mx_checked: None, mx_seen: [[None; 2]; 16], marks: Vec::new(), hi_swapped: Vec::new(), smc: false, fresh: None, watch_store: false, fell_back: false, bad: false, info: iced_x86::InstructionInfoFactory::new(), structured: lay.is_some(), fwd: alloc::vec![None; nodes], back: alloc::vec![None; nodes], cur: 0, table_node: BTreeMap::new(), side: BTreeMap::new(), fnm, thunks: &thunks, copies: &copies, copy_ret: &copy_ret, copy: LeafCopy::NONE, unlaid: Vec::new() };
     // the dispatcher's key is the low 32 bits: code at another 4GB alias is left to the
     // interpreter (a function's adapter checks, fn_adapter)
     if !fnm {
@@ -3698,11 +3699,11 @@ fn translate_seen64<M: Memory>(module: &mut Module, mem: &mut M, roots: &[u64], 
     for (f, t) in &g.unlaid {
         layout.push_str(&alloc::format!("out of the layout: {f:#x} -> {t:#x}\n"));
     }
-    if super::LAYOUT.load(Relaxed) {
+    if tc.measure.layout {
         layout.push_str(&alloc::format!("entries {:x?}\ntables {:x?}\n", entries.iter().map(|&k| blocks[k].start).collect::<Vec<_>>(), tables.iter().map(|(&k, t)| (blocks[k].start, t.len())).collect::<Vec<_>>()));
     }
     // (a function's exits put all its registers in the Cpu: they came as arguments)
-    let code = splice_regs(core::mem::take(&mut g.c), &g.marks, fnm || DEBUG_ALL_REGS.load(Relaxed));
+    let code = splice_regs(core::mem::take(&mut g.c), &g.marks, fnm || tc.debug64.all_regs);
     if fnm {
         let (locals, body) = super::wasm::compact_locals_param(1, &FN_ARGS, &locals, code);
         let nimp = lo32(module.imports.iter().filter(|i| matches!(i, super::wasm::Import::Func(..))).count());
@@ -3724,7 +3725,7 @@ fn translate_seen64<M: Memory>(module: &mut Module, mem: &mut M, roots: &[u64], 
     let text = super::code_text(mem, &code);
     sites.sort_unstable();
     sites.dedup();
-    Some(Region { starts, instructions: count, code, text, layout, profile: Vec::new(), sites, exact, pages })
+    Some(Region { starts, instructions: count, code, text, layout, profile: Vec::new(), sites, ctx: *tc })
 }
 
 #[cfg(test)]
