@@ -350,7 +350,10 @@ pub struct Shader {
     /// page shader and bindings, per pixel shader for vertex shaders (key 0 otherwise)
     /// by the pixel shader a vertex shader feeds (see shader_for) and the samplers addressing
     /// as WebGPU's don't (dxwgsl::addr)
-    pub wgsl: HashMap<(u32, Vec<dxwgsl::addr::Addr>, Vec<dxwgsl::logic::Logic>), Option<(u32, Vec<(u32, dxwgsl::Binding)>)>>,
+    /// translations by variant: the pixel shader's setup samples (a vertex shader's pixel
+    /// shader, its point sprite bit), the samplers' addressing, the targets' logic, the SRVs on
+    /// SNORM twins (snorm_ms_srvs)
+    pub wgsl: HashMap<(u32, Vec<dxwgsl::addr::Addr>, Vec<dxwgsl::logic::Logic>, Vec<(u32, u32)>), Option<(u32, Vec<(u32, dxwgsl::Binding)>)>>,
     /// CreateGeometryShaderWithStreamOutput's (`code` a geometry or a vertex shader's)
     pub so: Option<expand::SoDesc>,
 }
@@ -1419,9 +1422,15 @@ fn new_backbuffer(d: &mut D11, w: u32, h: u32, fmt: u32, samples: (u32, u32)) ->
 /// can, see render::d3d create_texture2).
 #[allow(clippy::too_many_arguments)]
 fn new_texture(d: &mut D11, dim: u32, w: u32, h: u32, layers: u32, mips: u32, fmt: u32, usage: u32, bind: u32, cube: bool, samples: u32) -> u32 {
-    let page = format::page(fmt, bind).unwrap_or(format::P_BGRA8);
     let max = w.max(h).max(1).bit_width();
     let mips = if mips == 0 { max } else { mips.min(max) };
+    // (a multisampled 8-bit SNORM texture the page multisamples: its SINT twin, 4 samples, for
+    // good: WebGPU neither draws to nor multisamples SNORM, and a multisampled texture is not
+    // copied through a buffer; logic::snorm_ms_page)
+    let page = match logic::snorm_ms_page(fmt, dim, layers, mips, samples, bind) {
+        Some(twin) => twin,
+        None => format::page(fmt, bind).unwrap_or(format::P_BGRA8),
+    };
     let gpu = page_id();
     let layers = layers.max(1);
     // (bit 8: bound for unordered access, a storage texture on the page; bit 9: multisampled;
@@ -3461,6 +3470,17 @@ unsafe fn context_call2(d: &mut D11, st: &mut State, m: u32, a: &dyn Fn(usize) -
             if matches!(d.objs.get(&v).map(|o| &o.data), Some(Data::View(View { fmt, .. })) if logic::snorm_twin(*fmt).is_some()) {
                 // SAFETY: context_call2's own contract: ClearRenderTargetView's color of four floats
                 let c: [f32; 4] = std::array::from_fn(|i| f32::from_bits(unsafe { rd(a(2), i) }));
+                // (a multisampled one is its SINT twin on the page, logic::snorm_ms_page: a clear
+                // pass of the bytes as integers; the page writes no texels of it)
+                if let (Some((tex, _, _, true, _, _, page)), Some(Data::View(View { fmt, .. }))) = (target_texture(d, v), d.objs.get(&v).map(|o| &o.data))
+                    && logic::snorm_twin(*fmt).is_some_and(|t| t.0 == page)
+                {
+                    let bytes = clear::texel(*fmt, clear::Values::Float(c)).unwrap_or_default();
+                    let ch: [u32; 4] = std::array::from_fn(|i| f32::from(bytes.get(i).copied().unwrap_or(0).cast_signed()).to_bits());
+                    gpu::record(|q| q.cmd(&[gpu::CLEAR_VIEW, tex, 0, 0, 1, ch[0], ch[1], ch[2], ch[3], 0, 0]));
+                    d.targets = None;
+                    return S_OK;
+                }
                 // SAFETY: clear_view_texels' own contract: a view of this device
                 unsafe { clear_view_texels(d, v, clear::Values::Float(c), &[]) };
                 return S_OK;
@@ -4226,6 +4246,18 @@ unsafe fn resolve(d: &mut D11, dst: u32, dsub: u32, src: u32, ssub: u32, fmt: u3
     if !ok {
         return;
     }
+    // (a multisampled SNORM texture, its SINT twin on the page (logic::snorm_ms_page): resolved
+    // into a SINT texture as WARP resolves, its bits copied into the level)
+    if let Some((page, _)) = logic::snorm_twin(fmt).filter(|t| t.0 == b.page) {
+        let (w, h, ag, bg) = (b.w, b.h, a.gpu, b.gpu);
+        let twin = logic::resolve_twin(d, w, h, page);
+        gpu::record(|q| {
+            q.cmd(&[gpu::RESOLVE_SNORM, twin, bg]);
+            q.cmd(&[gpu::COPY, twin, 0, 0, 0, w, h, ag, dl | dly << 16, 0, 0, w, h, 2]);
+        });
+        d.targets = None;
+        return;
+    }
     let cmd = [gpu::RESOLVE, a.gpu, dl, dly, b.gpu, ssub];
     gpu::record(|q| q.cmd(&cmd));
     d.targets = None;
@@ -4438,7 +4470,25 @@ unsafe fn source_bytes(d: &mut D11, id: u32, sub: u32, b: [u32; 6]) -> Option<u3
 /// those with a point mip filter: the shader rounds explicit levels)
 /// `setup`: a pixel shader drawn from a setup store (expand.rs), over targets of that many
 /// samples a pixel.
-fn shader_for(d: &mut D11, sh: u32, ps: u32, sprite: Option<f32>, samplers: &[u32], logic: &[dxwgsl::logic::Logic], setup: Option<u32>) -> Option<(u32, Vec<(u32, dxwgsl::Binding)>)> {
+/// The SRVs of stage `stage` (0 VS, 1 PS, ...) that are views of multisampled 8-bit SNORM
+/// textures on their SINT twins (logic::snorm_ms_page): (slot, the format's channels), which
+/// the shader loads as i32 bytes (dxwgsl::translate_views).
+fn snorm_ms_srvs(d: &D11, st: &State, stage: usize) -> Vec<(u32, u32)> {
+    let Some(srvs) = st.srvs.get(stage) else { return Vec::new() };
+    srvs.iter()
+        .enumerate()
+        .filter(|&(_, &v)| v != 0)
+        .filter_map(|(n, &v)| {
+            let Some(Data::View(view)) = d.objs.get(&v).map(|o| &o.data) else { return None };
+            let Some(Data::Texture(t)) = d.objs.get(&view.res).map(|o| &o.data) else { return None };
+            let (page, bits) = logic::snorm_twin(view.fmt)?;
+            (t.samples.0 > 1 && t.page == page).then(|| (lo32(n), lo32(bits.iter().filter(|&&b| b != 0).count())))
+        })
+        .collect()
+}
+
+#[allow(clippy::too_many_arguments)]
+fn shader_for(d: &mut D11, sh: u32, ps: u32, sprite: Option<f32>, samplers: &[u32], logic: &[dxwgsl::logic::Logic], setup: Option<u32>, views: &[(u32, u32)]) -> Option<(u32, Vec<(u32, dxwgsl::Binding)>)> {
     let mut addr = Vec::new();
     if matches!(d.objs.get(&sh).map(|o| &o.data), Some(Data::Shader(s)) if s.pixel) {
         for (n, &id) in samplers.iter().enumerate() {
@@ -4455,7 +4505,7 @@ fn shader_for(d: &mut D11, sh: u32, ps: u32, sprite: Option<f32>, samplers: &[u3
     }
     // (point sprite variants of a vertex shader: the pixel shader's id with the top bit set)
     let Some(Data::Shader(s)) = d.objs.get(&sh).map(|o| &o.data) else { return None };
-    let key = (if s.pixel { setup.unwrap_or(0) } else if sprite.is_some() { ps | 0x8000_0000 } else { ps }, addr, if s.pixel { logic.to_vec() } else { Vec::new() });
+    let key = (if s.pixel { setup.unwrap_or(0) } else if sprite.is_some() { ps | 0x8000_0000 } else { ps }, addr, if s.pixel { logic.to_vec() } else { Vec::new() }, views.to_vec());
     if let Some(r) = s.wgsl.get(&key) {
         return r.clone();
     }
@@ -4466,11 +4516,12 @@ fn shader_for(d: &mut D11, sh: u32, ps: u32, sprite: Option<f32>, samplers: &[u3
     };
     let trace = d.trace;
     let Some(Data::Shader(s)) = d.objs.get_mut(&sh).map(|o| &mut o.data) else { return None };
-    let w = match sprite {
-        Some(max) if !s.pixel => dxwgsl::translate_point_sprite(&s.code, ps_code.as_deref(), max),
-        _ if s.pixel && let Some(samples) = setup => dxwgsl::translate_setup(&s.code, &key.1, &key.2, samples),
-        _ if s.pixel && !key.2.is_empty() => dxwgsl::translate_logic(&s.code, &key.1, &key.2),
-        _ => dxwgsl::translate_addr(&s.code, s.pixel, if s.pixel { None } else { ps_code.as_deref() }, &key.1),
+    // (a vertex shader: the pixel shader it feeds, a point sprite's size; a pixel shader: its
+    // targets' logic and setup samples)
+    let w = if s.pixel {
+        dxwgsl::translate_views(&s.code, true, None, None, &key.1, &key.2, setup, &key.3)
+    } else {
+        dxwgsl::translate_views(&s.code, false, ps_code.as_deref(), sprite, &key.1, &[], None, &key.3)
     };
     let r = match w {
         Ok(w) => {
@@ -4787,7 +4838,10 @@ unsafe fn draw_with(d: &mut D11, st: &State, indexed: bool, count: u32, instance
     let (count, instances, start, first_instance) = if sprite.is_some() { (6, count, 0, start) } else { (count, instances, start, first_instance) };
     let shaders = match store {
         Some(sd) => Some(sd.vs.clone()),
-        None => shader_for(d, st.vs, st.ps, sprite, &[], &[], None),
+        None => {
+            let views = snorm_ms_srvs(d, st, 0);
+            shader_for(d, st.vs, st.ps, sprite, &[], &[], None, &views)
+        }
     };
     let Some((vs, vb)) = shaders else { return };
     if trace2() {
@@ -4842,7 +4896,8 @@ unsafe fn draw_with(d: &mut D11, st: &State, indexed: bool, count: u32, instance
     // (a setup store's draw: the pixel shader evaluates its inputs from the store's planes,
     // at the samples of its targets)
     let setup = store.and_then(|sd| sd.setup).map(|_| if multisampled.iter().any(|&m| m) || target_texture(d, st.dsv).is_some_and(|t| t.3 && crate::render::d3d::page_multisamples(t.6)) { 4 } else { 1 });
-    let ps = if st.ps != 0 { shader_for(d, st.ps, 0, None, &st.samplers[1], &logic_ops, setup) } else { None };
+    let ps_views = snorm_ms_srvs(d, st, 1);
+    let ps = if st.ps != 0 { shader_for(d, st.ps, 0, None, &st.samplers[1], &logic_ops, setup, &ps_views) } else { None };
     // SNORM targets: drawn as their SINT twins, the target's bits copied in before and back after
     let twins: Vec<logic::Twin> = logic_ops
         .iter()
@@ -4993,10 +5048,10 @@ unsafe fn draw_with(d: &mut D11, st: &State, indexed: bool, count: u32, instance
         v
     });
     // (a stash's pass (logic.rs): the stash written whole where the target is, then the mark)
-    let stashed: Vec<&dxwgsl::logic::Logic> = logic_ops.iter().filter(|l| matches!(l.store, dxwgsl::logic::Store::Stash { .. })).collect();
+    let stashed: Vec<&dxwgsl::logic::Logic> = logic_ops.iter().filter(|l| l.stashed()).collect();
     let plain = |f: u32| [f, 0, blend_factor(2, false).code(), blend_factor(1, false).code(), 1, blend_factor(2, true).code(), blend_factor(1, true).code(), 1, 0xf];
     // (a mark of its own after the targets: logic::stash_of)
-    let mark_slot = stashed.iter().any(|l| matches!(l.store, dxwgsl::logic::Store::Stash { mark: dxwgsl::logic::Mark::Slot(at), .. } if us(at) >= formats.len()));
+    let mark_slot = stashed.iter().any(|l| matches!(l.mark(), Some(dxwgsl::logic::Mark::Slot(at)) if us(at) >= formats.len()));
     key.push(lo32(formats.len()).saturating_add(u32::from(mark_slot)));
     let mut masks = Vec::new();
     for (i, f) in formats.iter().enumerate() {
@@ -5006,10 +5061,22 @@ unsafe fn draw_with(d: &mut D11, st: &State, indexed: bool, count: u32, instance
         let mask = if logic_kept.contains(&lo32(i)) { 0 } else { t[7] & 0xf };
         masks.push(mask);
         if let Some(l) = stashed.iter().find(|l| l.target == lo32(i)) {
-            // (a stash at the mark's location: the mark there)
-            key.extend_from_slice(&plain(if l.buffered() { format::P_R8UI } else { logic::uint_page(l.stash_bits()).unwrap_or(*f) }));
-        } else if twins.iter().any(|t| t.target == lo32(i)) {
-            // (an SNORM target's twin: the shader blends, the page writes its bytes)
+            // (a stash at the mark's location: the mark there; an SNORM stash elsewhere: its
+            // target, written by the resolve pass alone)
+            match l.store {
+                dxwgsl::logic::Store::SnormStash { mark, .. } if mark == dxwgsl::logic::Mark::Slot(lo32(i)) => key.extend_from_slice(&plain(format::P_R8UI)),
+                dxwgsl::logic::Store::SnormStash { .. } => {
+                    let mut p = plain(*f);
+                    p[8] = 0;
+                    key.extend_from_slice(&p);
+                }
+                dxwgsl::logic::Store::Stash { .. } | dxwgsl::logic::Store::Plain | dxwgsl::logic::Store::Direct(_) | dxwgsl::logic::Store::Snorm(_) => {
+                    key.extend_from_slice(&plain(if l.buffered() { format::P_R8UI } else { logic::uint_page(l.stash_bits()).unwrap_or(*f) }));
+                }
+            }
+        } else if logic_ops.iter().any(|l| l.target == lo32(i) && matches!(l.store, dxwgsl::logic::Store::Snorm(_))) {
+            // (an SNORM target's twin, or the multisampled target that is one: the shader
+            // blends, the page writes its bytes)
             let mut p = plain(*f);
             p[8] = mask;
             key.extend_from_slice(&p);
@@ -5074,7 +5141,8 @@ unsafe fn draw_with(d: &mut D11, st: &State, indexed: bool, count: u32, instance
     let copies: Vec<logic::Copy> = logic_ops.iter().filter(|l| l.reads_copy()).filter_map(|l| logic::copy_of(d, st.rtvs.get(us(l.target)).copied().unwrap_or(0), l, &twins)).collect();
     // (an SNORM target's blend constant: the blend state's BlendFactor)
     let constant = logic_ops.iter().any(|l| matches!(l.store, dxwgsl::logic::Store::Snorm(Some(b)) if b.reads_constant()));
-    if constant {
+    // (an SNORM stash's: its resolve pass reads it)
+    if constant || logic_ops.iter().any(|l| matches!(l.store, dxwgsl::logic::Store::SnormStash { .. })) {
         ps_constant(d, st);
     }
     // (a stash's copy is the resolve's, not the shader's)
@@ -5085,8 +5153,9 @@ unsafe fn draw_with(d: &mut D11, st: &State, indexed: bool, count: u32, instance
     if let Some(e) = store.and_then(|sd| sd.setup) {
         ps_over.push(e);
     }
-    let stash = logic::stash_of(d, &st.rtvs, &colors, [dt, dl, dly], &stashed, &masks, &copies);
-    ps_over.extend(stash.as_ref().and_then(|s| s.src));
+    let constant_buf = d.blend_constant.0;
+    let stash = logic::stash_of(d, &st.rtvs, &colors, [dt, dl, dly], &stashed, &masks, &copies, constant_buf);
+    ps_over.extend(stash.as_ref().map_or_default(|s| s.src.clone()));
     for (stage, binds) in [(0usize, &vb), (1usize, &ps.as_ref().map_or_default(|p| p.1.clone()))] {
         let entries = bind_entries(d, st, stage, binds, if stage == 0 { &over } else { &ps_over }, &mut cbs_read);
         w.push(lo32(entries.len()));
@@ -5455,16 +5524,16 @@ fn ps_constant(d: &mut D11, st: &State) {
 }
 
 /// A compute shader's page shader and bindings for UAVs of these page formats (slot, format).
-fn compute_shader_for(d: &mut D11, cs: u32, fmts: &[(u32, u32)]) -> Option<(u32, Vec<(u32, dxwgsl::Binding)>)> {
+fn compute_shader_for(d: &mut D11, cs: u32, fmts: &[(u32, u32)], views: &[(u32, u32)]) -> Option<(u32, Vec<(u32, dxwgsl::Binding)>)> {
     let trace = d.trace;
     let Some(Data::Shader(s)) = d.objs.get_mut(&cs).map(|o| &mut o.data) else { return None };
     let key = fmts.iter().fold(0x811c_9dc5u32, |h, &(n, f)| (h ^ (n << 8 | f)).wrapping_mul(0x0100_0193));
-    let key = (key, Vec::new(), Vec::new());
+    let key = (key, Vec::new(), Vec::new(), views.to_vec());
     if let Some(r) = s.wgsl.get(&key) {
         return r.clone();
     }
     let names: Vec<(u32, &str)> = fmts.iter().map(|&(n, f)| (n, crate::render::d3d::TEX_FORMATS.get(us(f)).map_or("rgba8unorm", |t| t.name()))).collect();
-    let r = match dxwgsl::translate_compute(&s.code, &names) {
+    let r = match dxwgsl::translate_compute_views(&s.code, &names, views) {
         Ok(w) => {
             let id = page_id();
             gpu::record(|q| {
@@ -5525,7 +5594,8 @@ unsafe fn dispatch(d: &mut D11, st: &State, x: u32, y: u32, z: u32) {
             fmts.push((n, page));
         }
     }
-    let Some((sh, binds)) = compute_shader_for(d, cs, &fmts) else { return };
+    let views = snorm_ms_srvs(d, st, 5);
+    let Some((sh, binds)) = compute_shader_for(d, cs, &fmts, &views) else { return };
     let mut w = vec![gpu::DISPATCH, sh, x, y, z, lo32(binds.len())];
     for (bi, kind) in &binds {
         let e = match kind {

@@ -240,7 +240,7 @@ pub(super) fn ps_quads(tree: &Tree) -> Hits {
 /// logic-op blend state as a plain write, known.txt holding WARP's 1 as a difference)
 const LOGIC_SITES: [(&str, &str, &str); 19] = [
     ("crates/kura/src/d3d11/mod.rs", "for k in 0..10 {", "D3D11_OPTIONS does not answer every BOOL from OutputMergerLogicOp (0) on"),
-    ("crates/kura/src/d3d11/mod.rs", "dxwgsl::translate_logic(", "the pixel shader of a draw with logic ops is not dxwgsl::translate_logic"),
+    ("crates/kura/src/d3d11/mod.rs", "dxwgsl::translate_views(&s.code, true, None, None, &key.1, &key.2,", "the pixel shader of a draw with logic ops is not translated with its targets' logic (dxwgsl::translate_views)"),
     ("crates/kura/src/d3d11/mod.rs", "logic::targets(", "a draw's logic ops are not taken from its blend state (logic::targets)"),
     ("crates/kura/src/d3d11/mod.rs", "logic::split(&w, &copies, stash.as_ref(),", "a draw reading its target is not split by primitive after the target's copy (logic::split), with its stash passes"),
     ("crates/kura/src/d3d11/mod.rs", "dxwgsl::sample_rate(", "a multisampled target's op is not chosen by the pixel shader's rate (WARP: a pixel-rate shader stays one invocation a pixel under a logic op)"),
@@ -280,14 +280,21 @@ pub(super) fn logic_ops(tree: &Tree) -> Hits {
 
 /// 8-bit SNORM render targets (2026-11-22: kura dropped every clear of and draw to them,
 /// WebGPU rendering to no SNORM format)
-const SNORM_SITES: [(&str, &str, &str); 16] = [
+const SNORM_SITES: [(&str, &str, &str); 23] = [
+    ("crates/kura/src/d3d11/mod.rs", "logic::snorm_ms_page(fmt, dim, layers, mips, samples, bind)", "a multisampled SNORM texture is not its SINT twin on the page (WebGPU multisamples no SNORM format: 4x SNORM would be one sample)"),
+    ("crates/kura/src/d3d11/logic.rs", "Some(blend) if ms && !sample_rate && blend.reads_dst() => Store::SnormStash { blend, mark },", "a multisampled SNORM blend that reads its target under a pixel-rate shader is not done per sample in the resolve pass"),
+    ("crates/kura/src/d3d11/logic.rs", "gpu::SNORM_RESOLVE, tex, copy, stash, mark_tex, mask", "an SNORM stash's draw has no resolve pass after it"),
+    ("crates/kura/src/d3d11/mod.rs", "q.cmd(&[gpu::RESOLVE_SNORM, twin, bg]);", "ResolveSubresource of a multisampled SNORM texture is not WARP's resolve of its bytes"),
+    ("crates/kura/src/d3d11/mod.rs", "let views = snorm_ms_srvs(d, st, 5);", "a compute shader's SRV of a multisampled SNORM texture is not loaded as its bytes' floats"),
+    ("crates/kura/src/d3d11/mod.rs", "let ps_views = snorm_ms_srvs(d, st, 1);", "a pixel shader's SRV of a multisampled SNORM texture is not loaded as its bytes' floats"),
+    ("crates/dxwgsl/src/wgsl.rs", "sn_load(textureLoad({tv}, {args}))", "a load of a multisampled SNORM SRV does not convert its SINT twin's bytes"),
     ("crates/kura/src/d3d11/mod.rs", "logic::twin_of(", "a draw to an SNORM target is not drawn to its SINT twin (logic::twin_of)"),
     ("crates/kura/src/d3d11/mod.rs", "logic::snorm_twin(*fmt).is_some()", "ClearRenderTargetView of an SNORM view does not write its texels (the page clears no SNORM pass)"),
     ("crates/kura/src/d3d11/mod.rs", "logic::split(&w, &copies, stash.as_ref(), &twins,", "a draw's SNORM twins are not loaded before its primitives and stored back after (logic::split)"),
     ("crates/kura/src/d3d11/logic.rs", "31 => Some((f::P_RGBA8SI, [8, 8, 8, 8])),", "R8G8B8A8_SNORM views have no SINT twin"),
     ("crates/kura/src/d3d11/logic.rs", "51 => Some((f::P_RG8SI, [8, 8, 0, 0])),", "R8G8_SNORM views have no SINT twin"),
     ("crates/kura/src/d3d11/logic.rs", "63 => Some((f::P_R8SI, [8, 0, 0, 0])),", "R8_SNORM views have no SINT twin"),
-    ("crates/kura/src/d3d11/logic.rs", "store: Store::Snorm(b)", "an SNORM target's store does not carry its blend (logic::targets)"),
+    ("crates/kura/src/d3d11/logic.rs", "Some(_) | None => Store::Snorm(b),", "an SNORM target's store does not carry its blend (logic::targets)"),
     ("crates/dxwgsl/src/wgsl.rs", "Store::Snorm(blend) =>", "an SNORM target's output does not go through logic_output's store and blend"),
     ("crates/dxwgsl/src/snorm.rs", "kome::num::trunc_i8((clamp_src(v) * 127.0).round())", "an SNORM store no longer rounds WARP's way (the f32 product, halves away from zero; winref d3d11snorm)"),
     ("crates/dxwgsl/src/snorm.rs", "if v.is_nan() { -1.0 } else { v.clamp(-1.0, 1.0) }", "a NaN output to an SNORM target is not -127 (WARP writes NaN as -127; winref d3d11snorm)"),
