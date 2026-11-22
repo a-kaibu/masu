@@ -71,10 +71,11 @@ pub enum Rule {
     NanMinMax,
     PcsgPack,
     WarpSetup,
+    RunPlan,
 }
 
 impl Rule {
-    pub const ALL: [Rule; 54] = [
+    pub const ALL: [Rule; 55] = [
         Rule::BuildOutput,
         Rule::HresultCopy,
         Rule::KomeCopy,
@@ -129,6 +130,7 @@ impl Rule {
         Rule::NanMinMax,
         Rule::PcsgPack,
         Rule::WarpSetup,
+        Rule::RunPlan,
     ];
 
     /// the name a site list and a message use
@@ -188,6 +190,7 @@ impl Rule {
             Rule::NanMinMax => "nan-min-max",
             Rule::PcsgPack => "pcsg-pack",
             Rule::WarpSetup => "warp-setup",
+            Rule::RunPlan => "run-plan",
         }
     }
 
@@ -247,6 +250,7 @@ impl Rule {
             Rule::NanMinMax => "a NaN through Direct3D's min/max gives the other operand (winref d3d11tess: [maxtessfactor(5.5)] turned a NaN tess factor into 5.5 on Windows, and the domain shader read 5.5 back; masu kept the NaN and culled the patch): dxwgsl's float min/max go through d3d_min/d3d_max (WGSL leaves a NaN to the implementation), hlslc clamps a patch constant function's tess factors to [maxtessfactor] with min, kura's clamp gives the maximum for a NaN (regress::NAN_MIN_MAX / NAN_MIN_MAX_NOT)",
             Rule::PcsgPack => "hlslc packs a patch constant that is not a tess factor into a taken register's free components as d3dcompiler does (winref d3d11tess: `uint pid : PID` after SV_TessFactor[3] sits at r0.y on Windows; hlslc gave it a register of its own): regress::PCSG_PACK in lower.rs's sig()",
             Rule::WarpSetup => "a Direct3D 11 draw whose pixel shader reads interpolated inputs (or whose last stage writes clip/cull distances) goes through the setup pass, WARP's clipper and planes evaluated in the fragment shader (winref d3d11logic: WebGPU's rasterizer gave 3e9c28f4 where WARP gives 3e9c28f6): expand.rs asks setup_wanted and runs setup_draw, dxwgsl's pixel inputs come from expand::setup::inputs, and setup.rs's WGSL has no fma (a fused multiply-add rounds once where WARP rounds twice) (regress::WARP_SETUP / WARP_SETUP_NOT)",
+            Rule::RunPlan => "a test run that ran nothing, or less than it meant to, fails (review 6852be1f: compare.py passed with Windows' answers and an empty sake directory, winetest/run.py passed when the selected test program was missing): run.sh and run-browser.mjs write <out>/.plan/<runner> before running, compare.py fails on no plan, an empty plan, a planned probe without a result and a missing --require-plan, run.py plans every test before sharding and fails on a missing program or an expected test no longer listed (rebuild::RUN_PLAN / RUN_PLAN_NOT)",
             Rule::HandStd => "what the standard library names since Rust 1.98..1.100 is not written by hand (2026-11-21: 10 toggles, 3 trim_prefix, 136 map_or_default, 13 ok_or, 19 Vec::from_fn replaced): x.toggle(), s.trim_prefix(p), o.map_or_default(f), c.ok_or(e), Vec::from_fn(v.len(), f)",
         }
     }
@@ -307,6 +311,7 @@ impl Rule {
             Rule::NanMinMax => regress::nan_min_max(tree),
             Rule::PcsgPack => regress::pcsg_pack(tree),
             Rule::WarpSetup => regress::warp_setup(tree),
+            Rule::RunPlan => rebuild::needles(tree, &rebuild::RUN_PLAN, &rebuild::RUN_PLAN_NOT),
         };
         hits.into_iter().map(|(file, line, what)| Finding { rule: self, file, line, what }).collect()
     }
@@ -324,6 +329,8 @@ pub struct Finding {
 mod boundaries;
 #[path = "regress.rs"]
 mod regress;
+#[path = "rebuild.rs"]
+mod rebuild;
 #[path = "modern.rs"]
 mod modern;
 

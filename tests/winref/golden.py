@@ -129,7 +129,8 @@ def flaky(run, out, probe):
 def import_(src, only):
     for probe in sorted(os.listdir(src)):
         d = os.path.join(src, probe)
-        if not os.path.isdir(d) or (only and probe not in only) or probe.startswith("kikizake_"):
+        # (.plan: run.sh's list of what it meant to run, not a probe)
+        if not os.path.isdir(d) or probe.startswith(".") or (only and probe not in only) or probe.startswith("kikizake_"):
             continue
         out = os.path.join(GOLDEN, probe)
         if flaky(d, out, probe):

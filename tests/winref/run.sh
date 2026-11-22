@@ -10,11 +10,24 @@ EXE=$(cd "$1" && pwd)
 mkdir -p "$2"
 OUT=$(cd "$2" && pwd)
 FILTER=${3:-}
+names=()
 for exe in "$EXE"/*.exe; do
+  [ -e "$exe" ] || continue
   n=$(basename "$exe" .exe)
   [[ -n "$FILTER" && "$n" != *$FILTER* ]] && continue
   # (GPU probes run in the browser on sake's side: run-browser.mjs)
   [[ -n "${SAKE:-}" && -f "$EXE/browser.txt" ]] && grep -qx "$n" "$EXE/browser.txt" && continue
+  names+=("$n")
+done
+# (the plan first: compare.py fails a planned probe that leaves no result, and a run that
+# planned nothing)
+runner=${SAKE:+node}
+runner=${runner:-windows}${FILTER:+-${FILTER//[^A-Za-z0-9_.-]/_}}
+# (plan.py's format, written here: Windows' Git Bash has no python of its own)
+mkdir -p "$OUT/.plan"
+{ echo "# run.sh ${SAKE:+(sake) }exe=$EXE filter=${FILTER:-none}"; for n in "${names[@]}"; do echo "$n"; done; } > "$OUT/.plan/$runner"
+for n in "${names[@]}"; do
+  exe=$EXE/$n.exe
   d=$OUT/$n
   rm -rf "$d"; mkdir -p "$d/cwd"
   start=$(date +%s)
