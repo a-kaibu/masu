@@ -408,6 +408,7 @@ fn show(c: &[u32]) -> String {
             SET_TARGETS2 => ("targets2", 2 + c[i + 1] as usize * 3 + 3),
             CLEAR_VIEW => ("clear view", 11),
             GEN_MIPS => ("mips", 2),
+            GEN_MIPS_POINT => ("point mips", 2),
             RESOLVE => ("resolve", 6),
             DRAW2 => {
                 let mut q = i + 2 + 6 + 5 + 4 + 1;

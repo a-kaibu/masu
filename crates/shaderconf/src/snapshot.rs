@@ -47,6 +47,7 @@ fn binding(b: &dxwgsl::Binding) -> String {
     match b {
         dxwgsl::Binding::Uniform(n) => format!("u{n}"),
         dxwgsl::Binding::Texture(d, t) => format!("t{d},{t}"),
+        dxwgsl::Binding::LoadTexture(d, t) => format!("tl{d},{t}"),
         dxwgsl::Binding::Sampler(c) => format!("s{}", u8::from(*c)),
         dxwgsl::Binding::Storage(d, f) => format!("w{d},{f}"),
         dxwgsl::Binding::StorageBuffer(rw) => format!("b{}", u8::from(*rw)),

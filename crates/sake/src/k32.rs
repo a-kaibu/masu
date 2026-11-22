@@ -7441,8 +7441,15 @@ fn WriteFile(c: &mut Ctx) -> u32 {
 /// Console output a line at a time (the page logs each write as its own line: 吉里吉里2 writes its
 /// log a character at a time)
 pub(crate) fn console_write(t: &str) {
-    static PENDING: Mutex<String> = Mutex::new(String::new());
-    let mut p = PENDING.locked();
+    // (a last line without its end goes out when the process ends: libc's atexit, which
+    // every way out (libc::exit, EXIT_RUNTIME) runs)
+    static AT_EXIT: std::sync::Once = std::sync::Once::new();
+    AT_EXIT.call_once(|| {
+        // SAFETY: console_rest is an extern "C" fn of no arguments that lives as long as the
+        // program; atexit has no other precondition
+        unsafe { libc::atexit(console_rest) };
+    });
+    let mut p = CONSOLE_PENDING.locked();
     p.push_str(t);
     while let Some(i) = p.find('\n') {
         let line: String = p.drain(..=i).collect();
@@ -7459,6 +7466,15 @@ pub(crate) fn console_write(t: &str) {
     }
 }
 const CONSOLE_PIECE: usize = 4096;
+/// console_write's part of a line not yet ended
+static CONSOLE_PENDING: Mutex<String> = Mutex::new(String::new());
+/// What is left of the console's last line, at the process's end
+extern "C" fn console_rest() {
+    let rest = std::mem::take(&mut *CONSOLE_PENDING.locked());
+    if !rest.is_empty() {
+        eprintln!("{rest}");
+    }
+}
 /// SAKE_ECHO_FILE=name: what the program writes to files of that name also goes to the log, a
 /// line at a time (a game's own log file: 吉里吉里2 writes Debug.message only to krkr.console.log)
 pub(crate) fn echo_write(path: &str, buf: u32, n: u32) {

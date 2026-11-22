@@ -328,3 +328,41 @@ proptest! {
         gpu::set_pump(None);
     }
 }
+
+/// The levels AUTOGENMIPMAP makes of four colored quadrants (winref d3d9tex): D3DTEXF_POINT
+/// takes each texel's (2x + 1, 2y + 1) above, so the 1x1 level is the bottom right quadrant's;
+/// D3DTEXF_LINEAR the four's mean (a blit through a linear sampler). And a draw with D3DSAMP_MAXMIPLEVEL asks the page for a
+/// sampler whose lodMinClamp is that level.
+#[test]
+fn autogen_levels_by_filter_and_max_mip_level() {
+    let _g = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+    init();
+    let dev = device();
+    errors();
+    for (filter, one) in [(1u32, None), (2, Some(()))] {
+        let from = model::with(|m| m.objs.len());
+        let t = texture(dev, 4, 0, 0x400, f::A8R8G8B8, 1).expect("CreateTexture");
+        assert_eq!(call(IF_TEXTURE, 14, &[t, filter]), 0);
+        lock_fill(t, 0, [0, 0, 4, 4], 0, |x, y| [0xffff_0000, 0xff00_ff00, 0xff00_00ff, 0xffff_ffff][usize::from(y >= 2) * 2 + usize::from(x >= 2)]);
+        draw(dev, t);
+        pump();
+        let p = page_textures(from, 4);
+        assert_eq!(p.len(), 1);
+        let (l1, l2) = (&p[0][1], &p[0][2]);
+        let top = &p[0][0];
+        // (level 1 is the quadrants' colors either way: what each 2x2 block of the top holds)
+        assert_eq!(l1, &vec![top[0], top[2], top[8], top[10]], "filter {filter}: level 1");
+        // (the model samples a blit's source at the nearest texel, its texels being hashes: the
+        // linear mean shows as the blit's linear sampler)
+        let linear = model::with(|m| m.objs[from..].iter().filter(|o| matches!(o, model::Obj::Sampler(k) if k & 3 == 1)).count());
+        match one {
+            None => {
+                assert_eq!(l2, &vec![top[15]], "point: the bottom right texel");
+                assert_eq!(linear, 0, "point: no linear sampler");
+            }
+            Some(()) => assert_eq!(linear, 1, "linear: the blit's one linear sampler"),
+        }
+        call(IF_TEXTURE, 2, &[t]);
+    }
+    gpu::set_pump(None);
+}

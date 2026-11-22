@@ -66,7 +66,7 @@ fn passes_name_the_words_they_read() {
 }
 
 /// PSInvocations of the probe's draws (winref d3d11gs, viewport 64x64, CULL_BACK): Windows'
-/// answers, but for the three tests/winref/known.txt names (across two edges, the lines).
+/// answers.
 #[test]
 fn ps_invocations_as_windows() {
     use ps::{invocations, Cull, Raster};
@@ -77,7 +77,7 @@ fn ps_invocations_as_windows() {
     assert_eq!(t([-h, -h, h, 1.0], [h, -h, h, 1.0], [-h, h, h, 1.0]), 0, "counterclockwise");
     assert_eq!(t([2.0, -h, h, 1.0], [2.0, h, h, 1.0], [3.0, -h, h, 1.0]), 0, "outside right");
     assert_eq!(t([-h, -h, h, 1.0], [-h, h, h, 1.0], [1.5, -h, h, 1.0]), 1072, "across the right edge");
-    assert_eq!(t([-2.0, -h, h, 1.0], [-h, 2.0, h, 1.0], [2.0, -2.0, h, 1.0]), 3764, "across two edges (Windows 3772: known.txt)");
+    assert_eq!(t([-2.0, -h, h, 1.0], [-h, 2.0, h, 1.0], [2.0, -2.0, h, 1.0]), 3772, "across two edges");
     assert_eq!(t([-h, -h, h, 1.0], [-h, h, h, 1.0], [100_000.0, -h, h, 1.0]), 1600, "far outside the guard band");
     assert_eq!(t([-h, -h, -h, 1.0], [-h, h, h, 1.0], [h, -h, h, 1.0]), 496, "across the near plane");
     assert_eq!(t([-h, -h, 1.5, 1.0], [-h, h, h, 1.0], [h, -h, h, 1.0]), 496, "across the far plane");
@@ -98,12 +98,12 @@ fn ps_invocations_as_windows() {
     let points: u64 = (0..6).map(|i| invocations(&[at(i)], &r)).sum();
     assert_eq!(points, 16, "point list of 6");
     let lines: u64 = [[0, 1], [2, 3], [4, 5]].iter().map(|l| invocations(&l.map(at), &r)).sum();
-    assert_eq!(lines, 128, "line list of 6 (Windows 228: known.txt)");
+    assert_eq!(lines, 228, "line list of 6");
     let lstrip: u64 = (0..5).map(|i| invocations(&[at(i), at(i + 1)], &r)).sum();
-    assert_eq!(lstrip, 224, "line strip of 6 (Windows 438: known.txt)");
+    assert_eq!(lstrip, 438, "line strip of 6");
 }
 
-/// The clip pass (with ps_quads) of points, lines and triangles is WGSL naga takes.
+/// The clip pass (with ps_pairs) of points, lines and triangles is WGSL naga takes.
 #[test]
 fn clip_pass_validates() {
     let pos = crate::dxbc::SigElement { name: "SV_Position".into(), index: 0, sysval: 1, component_type: 3, reg: 0, mask: 15, stream: 0 };

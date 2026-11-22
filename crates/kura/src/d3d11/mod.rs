@@ -5045,6 +5045,10 @@ fn bind_entries(d: &mut D11, st: &State, stage: usize, binds: &[(u32, dxwgsl::Bi
                 }
                 entries.push(e);
             }
+            dxwgsl::Binding::LoadTexture(vdim, sample) => {
+                let sv = st.srvs.get(stage).and_then(|c| c.get(us(bi.saturating_sub(dxwgsl::LOAD_TEXTURES)))).copied().unwrap_or(0);
+                entries.push(load_texture_entry(d, sv, *bi, *vdim, *sample));
+            }
             dxwgsl::Binding::Sampler(cmp) => {
                 let s = bi.wrapping_sub(160);
                 let id = st.samplers.get(stage).and_then(|c| c.get(us(s))).copied().unwrap_or(0);
@@ -5150,12 +5154,50 @@ fn counter_binding(d: &mut D11, st: &State, stage: usize, bi: u32) -> [u32; 8] {
     [bi, 10, g, 0, 0, 0, 0, 0]
 }
 
+/// The entry of binding `bi`, a LoadTexture (`ld` by level) of SRV `sv`: a view of every level
+/// of its texture, of the SRV's layers (nothing there, or not a texture: none bound).
+fn load_texture_entry(d: &mut D11, sv: u32, bi: u32, vdim: u32, sample: u32) -> [u32; 8] {
+    let kind = if sample != 0 { sample.saturating_add(3) } else { 1 };
+    let e = match d.objs.get(&sv).map(|o| &o.data) {
+        Some(Data::View(v)) => match d.objs.get(&v.res).map(|o| &o.data) {
+            Some(Data::Texture(tx)) => [bi, kind, tx.gpu, vdim, 0, tx.mips.max(1), v.layer, v.layers.max(1)],
+            _ => [bi, kind, 0, vdim, 0, 1, 0, 1],
+        },
+        _ => [bi, kind, 0, vdim, 0, 1, 0, 1],
+    };
+    // (a stencil view, as Binding::Texture: unbound)
+    if kind == 1 && matches!(d.objs.get(&sv).map(|o| &o.data), Some(Data::View(v)) if matches!(v.fmt, 22 | 47)) {
+        return [e[0], e[1], 0, e[3], e[4], e[5], e[6], e[7]];
+    }
+    e
+}
+
+/// What BUFFER_RANGES holds for a LoadTexture of SRV `sv`: its first level, its level count
+/// (nothing there: no levels, every load 0).
+fn load_texture_levels(d: &D11, sv: u32) -> [u32; 4] {
+    match d.objs.get(&sv).map(|o| &o.data) {
+        Some(Data::View(v)) => match d.objs.get(&v.res).map(|o| &o.data) {
+            Some(Data::Texture(tx)) => {
+                let first = v.mip.min(tx.mips.saturating_sub(1));
+                [first, v.mips.min(tx.mips.saturating_sub(first)).max(1), 0, 0]
+            }
+            _ => [0; 4],
+        },
+        _ => [0; 4],
+    }
+}
+
 /// The BUFFER_RANGES uniform of the views at `bindings` (buffer_view_binding's ranges, in
-/// order): a page buffer of those bytes, made once for each such table.
+/// order; a LoadTexture's levels): a page buffer of those bytes, made once for each such table.
 fn ranges_binding(d: &mut D11, st: &State, stage: usize, bindings: &[u32]) -> [u32; 8] {
     let mut bytes = Vec::new();
     for &b in bindings {
-        let (_, r) = buffer_view_binding(d, st, stage, b);
+        let r = if b >= dxwgsl::LOAD_TEXTURES {
+            let sv = st.srvs.get(stage).and_then(|c| c.get(us(b.saturating_sub(dxwgsl::LOAD_TEXTURES)))).copied().unwrap_or(0);
+            load_texture_levels(d, sv)
+        } else {
+            buffer_view_binding(d, st, stage, b).1
+        };
         bytes.extend(r.iter().flat_map(|w| w.to_le_bytes()));
     }
     let len = lo32(bytes.len()).max(16);
@@ -5320,6 +5362,10 @@ unsafe fn dispatch(d: &mut D11, st: &State, x: u32, y: u32, z: u32) {
                     e[1] = 3 + *sample;
                 }
                 e
+            }
+            dxwgsl::Binding::LoadTexture(vdim, sample) => {
+                let sv = st.srvs[5].get(us(bi.saturating_sub(dxwgsl::LOAD_TEXTURES))).copied().unwrap_or(0);
+                load_texture_entry(d, sv, *bi, *vdim, *sample)
             }
             dxwgsl::Binding::Sampler(cmp) => {
                 let s = bi - 160;

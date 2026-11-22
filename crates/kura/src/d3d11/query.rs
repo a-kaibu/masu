@@ -114,11 +114,11 @@ pub struct Query {
 }
 
 /// The words of the page's counters (dxwgsl::expand::counter) a query reads: PIPELINE_STATISTICS
-/// GSPrimitives, CInvocations, CPrimitives, PS_QUADS; SO_STATISTICS and SO_OVERFLOW_PREDICATE a stream's
+/// GSPrimitives, CInvocations, CPrimitives, PS_PAIRS; SO_STATISTICS and SO_OVERFLOW_PREDICATE a stream's
 /// primitives written and needed (2 s, 2 s + 1), all four streams' without one.
 pub fn counter_words(kind: Kind) -> &'static [u32] {
     use dxwgsl::expand::counter as c;
-    const STATS: [u32; 4] = [c::GS_PRIMITIVES, c::C_INVOCATIONS, c::C_PRIMITIVES, c::PS_QUADS];
+    const STATS: [u32; 4] = [c::GS_PRIMITIVES, c::C_INVOCATIONS, c::C_PRIMITIVES, c::PS_PAIRS];
     const SO: [u32; 8] = [0, 1, 2, 3, 4, 5, 6, 7];
     match kind {
         Kind::PipelineStatistics => &STATS,
@@ -387,8 +387,8 @@ impl Query {
             }
             Kind::PipelineStatistics => {
                 let mut st = self.stats;
-                // (PSInvocations: the clip pass's quads, 4 invocations each)
-                for (i, c) in [4usize, 5, 6, 7].into_iter().zip(counts.iter().enumerate().map(|(k, &c)| if k == 3 { c.saturating_mul(4) } else { c })) {
+                // (PSInvocations: the clip pass's pairs of invocations)
+                for (i, c) in [4usize, 5, 6, 7].into_iter().zip(counts.iter().enumerate().map(|(k, &c)| if k == 3 { c.saturating_mul(2) } else { c })) {
                     if let Some(s) = st.get_mut(i) {
                         *s = c;
                     }

@@ -81,11 +81,29 @@ int main(void) {
     {
         UINT a = IDirect3DDevice9_GetAvailableTextureMem(dev);
         IDirect3DTexture9 *t[4] = { 0 };
-        for (int i = 0; i < 4; i++) IDirect3DDevice9_CreateTexture(dev, 1024, 1024, 1, D3DUSAGE_RENDERTARGET, D3DFMT_X8R8G8B8, D3DPOOL_DEFAULT, &t[i], NULL);
+        /* (each step's drop: the four went down by 15 MB on Windows, not 16) */
+        printf("  each texture: hr, MB below the first answer:");
+        for (int i = 0; i < 4; i++) {
+            HRESULT hr = IDirect3DDevice9_CreateTexture(dev, 1024, 1024, 1, D3DUSAGE_RENDERTARGET, D3DFMT_X8R8G8B8, D3DPOOL_DEFAULT, &t[i], NULL);
+            printf(" %#lx %u", hr, (a - IDirect3DDevice9_GetAvailableTextureMem(dev)) >> 20);
+        }
+        printf("\n");
         UINT b = IDirect3DDevice9_GetAvailableTextureMem(dev);
         for (int i = 0; i < 4; i++) if (t[i]) IDirect3DTexture9_Release(t[i]);
         UINT c = IDirect3DDevice9_GetAvailableTextureMem(dev);
         printf("  whole MB %d %d %d, went down by %u MB, came back %d\n", a % (1024 * 1024) == 0, b % (1024 * 1024) == 0, c % (1024 * 1024) == 0, (a - b) >> 20, c == a);
+        /* (a size that is not a whole MB, and one smaller than one: how the drop rounds) */
+        {
+            IDirect3DTexture9 *u = NULL;
+            HRESULT hr = IDirect3DDevice9_CreateTexture(dev, 1000, 1000, 1, D3DUSAGE_RENDERTARGET, D3DFMT_X8R8G8B8, D3DPOOL_DEFAULT, &u, NULL);
+            printf("  1000x1000: %#lx, down by %u MB", hr, (c - IDirect3DDevice9_GetAvailableTextureMem(dev)) >> 20);
+            if (u) IDirect3DTexture9_Release(u);
+            u = NULL;
+            hr = IDirect3DDevice9_CreateTexture(dev, 256, 256, 1, D3DUSAGE_RENDERTARGET, D3DFMT_X8R8G8B8, D3DPOOL_DEFAULT, &u, NULL);
+            printf("; 256x256: %#lx, down by %u MB", hr, (c - IDirect3DDevice9_GetAvailableTextureMem(dev)) >> 20);
+            if (u) IDirect3DTexture9_Release(u);
+            printf(", then back %d\n", IDirect3DDevice9_GetAvailableTextureMem(dev) == c);
+        }
         printf("  EvictManagedResources %#lx, then %d\n", IDirect3DDevice9_EvictManagedResources(dev), IDirect3DDevice9_GetAvailableTextureMem(dev) == c);
     }
 

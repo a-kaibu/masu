@@ -158,6 +158,12 @@ pub fn cases() -> Result<String, String> {
         if sc == 1 {
             b.push(format!(r#"{{"binding":17,"texture":{{"format":"rgba32float","w":2,"h":64,"f32":[{coef_scale}]}}}}"#));
             b.push(format!(r#"{{"binding":18,"texture":{{"format":"rgba32float","w":2,"h":64,"f32":[{coef_usm}]}}}}"#));
+            // (masu's ld reads the coefficients from every level's views, LOAD_TEXTURES + 1 and
+            // + 2, their one level in the ranges)
+            let l = dxwgsl::LOAD_TEXTURES;
+            b.push(format!(r#"{{"binding":{},"texture":{{"format":"rgba32float","w":2,"h":64,"f32":[{coef_scale}]}}}}"#, l + 1));
+            b.push(format!(r#"{{"binding":{},"texture":{{"format":"rgba32float","w":2,"h":64,"f32":[{coef_usm}]}}}}"#, l + 2));
+            b.push(format!(r#"{{"binding":{},"uniform":[0,1,0,0,0,1,0,0]}}"#, dxwgsl::BUFFER_RANGES));
         }
         b.push(r#"{"binding":160,"sampler":{"filter":"linear","address":"clamp-to-edge"}}"#.into());
         b.push(format!(r#"{{"binding":200,"storage":{{"format":"rgba8unorm","w":{ow},"h":{oh}}}}}"#));
@@ -211,7 +217,9 @@ fn buffer_case(name: &str, src: &str, dispatch: [u32; 3], bufs: &[(u32, Vec<u32>
     let code = hlslc::compile(src, &[], &mut |_, _| None, "main", "cs_5_0", 0).map_err(|e| format!("{name}: hlslc: {e}"))?;
     let ours = dxwgsl::translate_compute(&code, &[]).map_err(|e| format!("{name}: dxwgsl: {e}"))?;
     let ranges: Vec<u32> = ours.bindings.iter().filter_map(|(_, b)| if let dxwgsl::Binding::BufferRanges(r) = b { Some(r.clone()) } else { None }).flatten().collect();
-    let want_ranges: Vec<u32> = bufs.iter().map(|b| b.0).filter(|&b| (500..700).contains(&b)).collect();
+    // (the textures `ld` reads first, their levels; then the buffer views' ranges)
+    let loaded = ours.bindings.iter().filter_map(|(n, b)| matches!(b, dxwgsl::Binding::LoadTexture(..)).then_some(*n));
+    let want_ranges: Vec<u32> = loaded.chain(bufs.iter().map(|b| b.0).filter(|&b| (500..700).contains(&b))).collect();
     if ranges != want_ranges {
         return Err(format!("{name}: ranges of {ranges:?}, the case binds {want_ranges:?}"));
     }
@@ -307,9 +315,11 @@ fn buffer_cases() -> Result<Vec<String>, String> {
     // (texel i of the 2x2: 10i + 1 .. 10i + 4)
     let texel = |i: u8| (1..5u8).map(move |c| f32::from(i.wrapping_mul(10).wrapping_add(c)).to_bits());
     let tex: Vec<String> = (0..4u8).flat_map(texel).map(|b| f32::from_bits(b).to_string()).collect();
-    let tex = format!(r#"{{"binding":16,"texture":{{"format":"rgba32float","w":2,"h":2,"f32":[{}]}}}}"#, tex.join(","));
+    // (ld reads tl0, binding LOAD_TEXTURES: every level's view; the SRV's levels 0 and 1 in the
+    // ranges first)
+    let tex = format!(r#"{{"binding":{},"texture":{{"format":"rgba32float","w":2,"h":2,"f32":[{}]}}}}"#, dxwgsl::LOAD_TEXTURES, tex.join(","));
     let want: Vec<u32> = texel(3).chain([0; 12]).chain(texel(3)).chain([0; 8]).collect();
-    out.push(buffer_case("Load outside the texture", src, [1, 1, 1], &[(600, pattern(28))], vec![0, 112, 7, 0], &[tex], &[600], want)?);
+    out.push(buffer_case("Load outside the texture", src, [1, 1, 1], &[(600, pattern(28))], vec![0, 1, 0, 0, 0, 112, 7, 0], &[tex], &[600], want)?);
     Ok(out)
 }
 

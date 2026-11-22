@@ -199,8 +199,9 @@ proptest! {
         prop_assert_eq!(&s[..3], &[verts, prims, verts][..]);
         // (CInvocations, CPrimitives and PSInvocations: the page's clipper counters, which the
         // model does not run shaders for; dxwgsl's ps tests and winref d3d11gs and d3d11query
-        // in the browser measure them; PSInvocations is whole quads)
-        prop_assert_eq!((s[7] % 4, s[10]), (0, 0));
+        // in the browser measure them; PSInvocations is pairs of invocations: 4 for a triangle's
+        // quad, 2 for a quad a line visits)
+        prop_assert_eq!((s[7] % 2, s[10]), (0, 0));
         // predicated: the draws go when the answer is not the value
         for value in [0u32, 1] {
             cc(ctx, 30, &[pred, value]);
