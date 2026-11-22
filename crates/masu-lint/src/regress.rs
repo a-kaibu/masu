@@ -329,7 +329,7 @@ pub(super) fn snorm_targets(tree: &Tree) -> Hits {
 
 /// What the review of kura at 6852be1 found wrong, fixed (2026-11-22), each by its spelling in
 /// the code (comments left out): (file, text it must hold, what is wrong without it).
-pub(super) const REVIEW_6852BE1_HAS: [(&str, &str, &str); 32] = [
+pub(super) const REVIEW_6852BE1_HAS: [(&str, &str, &str); 33] = [
     ("crates/kura/src/d3d11/hazards.rs", "out.extend(st.so.iter()", "stream output targets are not outputs: a vertex buffer of one stays bound (D3D11 unbinds it)"),
     ("crates/kura/src/d3d11/hazards.rs", "for vb in st.vbs.iter_mut()", "the vertex buffers checked are not all 32 slots"),
     ("crates/kura/src/d3d11/op.rs", "if let Uavs::Set { start, views, counts } = uavs {", "OMSetRenderTargetsAndUnorderedAccessViews with KEEP render targets does not resolve its new UAVs"),
@@ -362,10 +362,11 @@ pub(super) const REVIEW_6852BE1_HAS: [(&str, &str, &str); 32] = [
     ("crates/kura/src/gl/mod.rs", "Fbos::Core => c.fbos.get(&f.name),", "GL 3.0 / ARB framebuffers are the share group's, not each context's own"),
     ("crates/kura/src/gl/mod.rs", "bind_fbo(Fbos::Ext, target, f)", "EXT_framebuffer_object's framebuffers are each context's own, not the share group's"),
     ("crates/kura/src/d3d11/mod.rs", "let alias = d.new_obj(iface, Data::Opened(id));", "OpenSharedResource on another device gives back the other device's object"),
+    ("crates/kura/src/d3d9/mod.rs", "let mine = std::mem::replace(&mut self.d8, std::mem::take(&mut next.d8));", "Direct3D 8 shader and state block handles are one table for every device"),
 ];
 
 /// (file, text it must not hold, what is wrong with it)
-pub(super) const REVIEW_6852BE1_NOT: [(&str, &str, &str); 15] = [
+pub(super) const REVIEW_6852BE1_NOT: [(&str, &str, &str); 16] = [
     ("crates/kura/src/d3d11/hazards.rs", "0..16", "a fixed slot count: the slots past it are not checked"),
     ("crates/kura/src/d3d11/hazards.rs", "0..128", "a fixed slot count: the slots past it are not checked"),
     ("crates/kura/src/jit.rs", "SHARED_BYTES", "a byte count of the shared cache apart from what the map holds"),
@@ -381,6 +382,7 @@ pub(super) const REVIEW_6852BE1_NOT: [(&str, &str, &str); 15] = [
     ("crates/kura/src/d3d11/mod.rs", "made_by: HashMap<u32, u32>", "which device made a child kept apart from the child (one device per process, the others its side-faces)"),
     ("crates/kura/src/d3d11/mod.rs", "if d.device == 0 {", "a device made only when there is none yet"),
     ("crates/kura/src/gl/mod.rs", "fn vngl_context_create(_share: u32)", "the share context of a new context not looked at"),
+    ("crates/kura/src/d3d9/d3d8.rs", "let old = std::mem::take(&mut d.d8);", "a new Direct3D 8 device takes the handles of the device before"),
 ];
 
 /// a fix of the review of 6852be1 taken back

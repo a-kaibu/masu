@@ -469,6 +469,9 @@ pub struct Device {
     pub shown: Vec<Shown>,
     /// IDirect3DDevice9Ex: Set/GetGPUThreadPriority's (-7..=7, 0 at first)
     pub gpu_priority: i32,
+    /// its Direct3D 8 shader and state block handles, while another device is the one the calls
+    /// go to (the calls' own device keeps them in `D3d::d8`: `D3d::install`)
+    pub d8: super::d3d8::State,
     /// IDirect3DDevice9Ex: Set/GetMaximumFrameLatency's (3 at first: Wine's tests of Windows,
     /// d3d9ex.c test_frame_latency)
     pub max_latency: u32,
@@ -1443,6 +1446,7 @@ unsafe fn create_device(d: &mut D3d, d3d: u32, ty: u32, focus: u32, behavior: u3
         recording: None,
         batch_target: None,
         gpu_priority: 0,
+        d8: Default::default(),
         max_latency: 3,
         pipelines: HashMap::default(),
         shaders: HashMap::new(),
@@ -1478,9 +1482,7 @@ unsafe fn create_device(d: &mut D3d, d3d: u32, ty: u32, focus: u32, behavior: u3
     });
     let _ = dev.new_gpu();
     // (another device of the program waits: its calls switch back to it, `D3d::activate`)
-    if let Some(cur) = d.dev.replace(dev) {
-        d.parked.push(cur);
-    }
+    d.install(dev);
     reset_buffers(d);
     // (always: in every run's log, a game's picture starts here)
     eprintln!("sake: d3d9 CreateDevice hwnd {hwnd:#x} {}x{} fmt {} depth {}/{} windowed {} behavior {behavior:#x}", p[0], p[1], p[2], p[9], p[10], p[8]);

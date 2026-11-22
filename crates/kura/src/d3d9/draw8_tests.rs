@@ -380,3 +380,53 @@ fn d3d8_handles() {
         gpu::set_pump(None);
     });
 }
+
+/// Each Direct3D 8 device has its own handles (review of 6852be1, stage 4): a second device
+/// made, its vertex shaders, pixel shaders and state blocks made and deleted, leaves the first
+/// device's handles of the same numbers working, and the first device's after the second goes.
+#[test]
+fn d3d8_handles_are_each_devices_own() {
+    let _g = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+    on_low_stack(|| {
+        unsafe {
+            let vt: Vec<u32> = (1..=64).map(|i| 0x1000 * i).collect();
+            vnhost_d3d9_init(vt.as_ptr(), vt.len() as u32);
+        }
+        let t = decl_tokens(&[(0, 0, 2, 0, 0)]);
+        let decl = unsafe { alloc(4 * t.len() as u32) as u32 };
+        put_bytes(decl, &t.iter().flat_map(|w| w.to_le_bytes()).collect::<Vec<u8>>());
+        let code = [0xffff_0101u32, 0x0000_0001, 0x800f_0000, 0x90e4_0000, 0x0000_ffff];
+        let ps = unsafe { alloc(4 * code.len() as u32) as u32 };
+        put_bytes(ps, &code.iter().flat_map(|w| w.to_le_bytes()).collect::<Vec<u8>>());
+        let make = |dev: u32| -> [u32; 3] {
+            let devc = |m: u32, a: &[u32]| -> u32 { call(IF_DEVICE + V8, m, &[&[dev][..], a].concat()) };
+            let (o1, o2, o3) = (out(), out(), out());
+            assert_eq!(devc(75, &[decl, 0, o1, 0]), 0);
+            assert_eq!(devc(87, &[ps, o2]), 0);
+            assert_eq!(devc(57, &[1, o3]), 0);
+            [rd(o1), rd(o2), rd(o3)]
+        };
+        let works = |dev: u32, [vs, p, sb]: [u32; 3]| -> [bool; 3] {
+            let devc = |m: u32, a: &[u32]| -> u32 { call(IF_DEVICE + V8, m, &[&[dev][..], a].concat()) };
+            [devc(76, &[vs]) == 0, devc(88, &[p]) == 0, devc(54, &[sb]) == 0]
+        };
+        let (_, a) = device8();
+        let ha = make(a);
+        let (_, b) = device8();
+        assert_eq!(works(a, ha), [true; 3], "the first device's handles after a second device was made");
+        let hb = make(b);
+        assert_eq!(hb, ha, "each device numbers its own handles from the start");
+        assert_eq!(works(b, hb), [true; 3]);
+        // the second device's deleted: the first's of the same numbers stay
+        let devb = |m: u32, a: &[u32]| -> u32 { call(IF_DEVICE + V8, m, &[&[b][..], a].concat()) };
+        assert_eq!(devb(78, &[hb[0]]), 0);
+        assert_eq!(devb(90, &[hb[1]]), 0);
+        assert_eq!(devb(56, &[hb[2]]), 0);
+        assert_eq!(works(b, hb), [false; 3]);
+        assert_eq!(works(a, ha), [true; 3], "the second device's deletes took the first's handles");
+        // the second device gone: the first's still there
+        while call(IF_DEVICE + V8, 2, &[b]) != 0 {}
+        assert_eq!(works(a, ha), [true; 3], "the second device's release took the first's handles");
+        gpu::set_pump(None);
+    });
+}

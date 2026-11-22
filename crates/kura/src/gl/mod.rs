@@ -652,7 +652,7 @@ fn with<R: Default>(f: impl FnOnce(&mut Gl, &mut Ctx) -> R) -> R {
 
 /// The lock with the current context's share group in `objs` (a test's look at the objects).
 #[cfg(test)]
-pub(crate) fn current_objs() -> glsl::Current {
+pub(in crate::gl) fn current_objs() -> glsl::Current {
     glsl::gl()
 }
 
