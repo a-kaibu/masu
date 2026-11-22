@@ -2501,8 +2501,12 @@ fn iob() -> u32 {
     let m = g.get_or_insert_with(HashMap::default);
     for i in 0..3 {
         // (sake's stdin reads nothing: at its end, but feof says so only once read)
-        let st = Stream::new(p + file_size() * i, None, i, if i == 0 { IOREAD } else { IOWRT }, false);
-        m.insert(p + file_size() * i, Arc::new(Mutex::new(Stream { eof: true, ..st })));
+        // (a child's standard descriptor may be a file or pipe its parent gave: the stream is
+        // that, as follow_fd makes it after _dup2)
+        let st = Stream::new(p + file_size() * i, io::file_of(i), i, if i == 0 { IOREAD } else { IOWRT }, false);
+        let pipe = io::pipe_of(i);
+        let eof = st.f.is_none() && pipe.is_none();
+        m.insert(p + file_size() * i, Arc::new(Mutex::new(Stream { eof, pipe, ..st })));
     }
     p
 }

@@ -68,6 +68,8 @@ pub enum Rule {
     GuestScratch,
     HandStd,
     KaniFeatures,
+    KaniCover,
+    VerusMirror,
     UncheckedOutput,
     HandLock,
     StageRun,
@@ -78,7 +80,7 @@ pub enum Rule {
 }
 
 impl Rule {
-    pub const ALL: [Rule; 58] = [
+    pub const ALL: [Rule; 60] = [
         Rule::BuildOutput,
         Rule::HresultCopy,
         Rule::KomeCopy,
@@ -130,6 +132,8 @@ impl Rule {
         Rule::GuestScratch,
         Rule::HandStd,
         Rule::KaniFeatures,
+        Rule::KaniCover,
+        Rule::VerusMirror,
         Rule::UncheckedOutput,
         Rule::HandLock,
         Rule::StageRun,
@@ -193,6 +197,8 @@ impl Rule {
             Rule::GuestScratch => "guest-scratch",
             Rule::HandStd => "hand-std",
             Rule::KaniFeatures => "kani-features",
+            Rule::KaniCover => "kani-cover",
+            Rule::VerusMirror => "verus-mirror",
             Rule::UncheckedOutput => "unchecked-output",
             Rule::HandLock => "hand-lock",
             Rule::StageRun => "stage-run",
@@ -255,6 +261,8 @@ impl Rule {
             Rule::NoReturnHandler => "a Windows function that does not come back (modern::NORETURN: ExitProcess, exit, abort, _assert..) is `fn(&mut Ctx) -> !` registered with noreturn! (api::NoReturn checks it; 2026-11-21): a handler that returns a value lets the guest run on past it",
             Rule::WildcardUnreachable => "no `_ => unreachable!()` arm outside tests (2026-11-21, user rule: exhaustive matches, no `_` catch-alls): take the value that cannot come out by a type (an enum, `!` as a type argument, a const-built table)",
             Rule::GuestScratch => "a guest block one sake function uses for the length of a call is a mem::Scratch (2026-11-21: 355 hand pairs converted): it is freed on every way out of the function, where a hand-written heap_free at the end leaked it on each early return; a block the guest keeps stays heap_alloc",
+            Rule::VerusMirror => "a Verus proof (formal/verus/*.rs) is a copy of the code it is about (Verus checks its own copy, not the crate), so a test of that code reads it (`include_str!` of the proof file) and compares the two: a proof whose copy drifted from the real code proves nothing about it (2026-11-22, the formal-verification plan: CDC's proof had its own bounds and casts)",
+            Rule::KaniCover => "a Kani proof (`#[kani::proof]`) that narrows its inputs (`kani::assume`, an early `return`, a `let .. else`) shows with `kani::cover!` that the cases it is about are still reached (assumptions that contradict each other make every assertion after them vacuous: the proof passes and proves nothing), and every crate with a proof is in formal/kani.sh's `for c in` list (a proof no script runs is no proof; 2026-11-22, the formal-verification plan)",
             Rule::KaniFeatures => "a crate formal/kani.sh compiles (or links) names the Rust 1.100 library features Kani's older nightly has unstable in `#![cfg_attr(kani, feature(..))]` in its lib.rs (2026-11-21: Vec::from_fn stopped every proof; review e18bf44)",
             Rule::UncheckedOutput => "a command's stdout is its answer only when its exit status says it worked: check `.status.success()` (an empty `git ls-files` from a copy without .git was \"no files\"; review e18bf44)",
             Rule::HandLock => "a lock between processes is a lock file opened through masu's lockfile::LockFile: Windows' File::open opens no directory, and the store's writers locked the store directory itself (`masu add` failed on Windows; review e18bf44)",
@@ -320,6 +328,8 @@ impl Rule {
             Rule::GuestScratch => modern::guest_scratch(tree),
             Rule::HandStd => modern::hand_std(tree),
             Rule::KaniFeatures => regress::kani_features(tree),
+            Rule::KaniCover => regress::kani_cover(tree),
+            Rule::VerusMirror => regress::verus_mirror(tree),
             Rule::UncheckedOutput => regress::unchecked_output(tree),
             Rule::HandLock => regress::hand_lock(tree),
             Rule::StageRun => regress::stage_run(tree),
@@ -643,7 +653,11 @@ fn release_build_only(tree: &Tree) -> Hits {
 }
 
 /// what must stay in place: (file, text, why)
-pub const REQUIRED: [(&str, &str, &str); 48] = [
+pub const REQUIRED: [(&str, &str, &str); 52] = [
+    ("crates/sake/src/files.rs", "        if self.shared != 0 && let Ok(p) = self.g.stream_position() {\n            let id = self.shared;\n            crate::kern::with(|k| k.set_file_pos(id, p));", "a file handle processes share keeps its file pointer in the kernel (the child's write did not move the parent's tell: msvcrt:file test_file_inherit; 2026-11-22)"),
+    ("crates/sake/src/process.rs", "        Obj::File(f) => f.share().map(|id| KRef::File { id }),", "an inheritable file handle reaches the child (2026-11-22)"),
+    ("crates/sake/src/k32.rs", "    // (lpSecurityAttributes's bInheritHandle: a child CreateProcess starts gets it)\n    sa_inherit(c.a(3), h)", "CreateFile honours bInheritHandle (msvcrt:file test_stdout_handle's file never reached the child; 2026-11-22)"),
+    ("crates/sake/src/crt_io.rs", "    let handles = rest.get(n..).unwrap_or(&[]);", "lpReserved2's handles follow all the count's flags even when cbReserved2 cuts the block (msvcrt_init_io; 2026-11-22)"),
     ("crates/sake/src/crt_io.rs", "    if let Some(d) = get(fd).filter(|d| d.text && !matches!(d.kind, Kind::Std(_))) {\n        return text_read(fd, d, buf, n.min(i32::MAX as u32));", "a text-mode descriptor's _read makes CR LF an LF (it gave the raw bytes: msvcrt:file test_file_write_read; 2026-11-22)"),
     ("crates/sake/src/crt_io.rs", "    // a stream on `to` (stdout after freopen) now reads and writes what `to` names\n    super::follow_fd(to);", "a stream follows its descriptor through _dup2 (stdout freopen'ed to a file never came back to the console: ucrtbase:file printed nothing; 2026-11-22)"),
     ("crates/sake/src/crt_io.rs", "fn getwc_of(fp: u32) -> u32 {\n    if !stream_is_text(fp) {", "a binary stream's wide characters are two raw bytes each (msvcrt:file test_fgetwc; 2026-11-22)"),

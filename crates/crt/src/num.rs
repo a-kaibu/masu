@@ -535,6 +535,9 @@ mod proofs {
             assert!(r == 0 && b[..want.len()] == want[..] && b[want.len()] == 0);
         }
         assert!(b[n..] == orig[n..]);
+        kani::cover!(n == 0, "no buffer");
+        kani::cover!(n > 0 && want.len() + 1 > n, "a buffer too small");
+        kani::cover!(r == 0 && v < 0 && want.len() + 1 == n, "a negative number filling the buffer");
     }
 }
 

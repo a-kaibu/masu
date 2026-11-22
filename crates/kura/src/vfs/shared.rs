@@ -153,6 +153,8 @@ mod proofs {
             covered |= mask(x as u8, y as u8);
         }
         assert!(covered & written == written);
+        kani::cover!(r.len() == 1, "the third range filled the gap");
+        kani::cover!(r.len() == 2 && lo > b && hi < c, "a range inside the gap, apart from both");
     }
 }
 

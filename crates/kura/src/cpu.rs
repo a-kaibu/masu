@@ -644,6 +644,8 @@ mod proofs {
         if allowed(addr, len, end, lo, hi, true) && addr as u64 + len as u64 <= GUEST_END {
             assert!(allowed(addr, len, end, lo, hi, false));
         }
+        kani::cover!(allowed(addr, len, end, lo, hi, false) && addr as u64 + len as u64 > GUEST_END, "an access above 2 GB inside [lo, hi)");
+        kani::cover!(allowed(addr, len, end, lo, hi, true) && !allowed(addr, len, end, lo, hi, false), "one the old rule allowed and this one refuses");
     }
 }
 

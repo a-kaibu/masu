@@ -48,6 +48,9 @@ struct Fd {
     /// a text-mode pipe's byte read past a CR to see whether LF came (msvcrt's pipech): the
     /// next _read starts with it
     peek: Option<u8>,
+    /// wxflag bits kept as given, which sake does not act on: WX_DONTINHERIT (_O_NOINHERIT),
+    /// and what a parent's lpReserved2 said (WX_ATEOF, WX_READNL, ...)
+    kept: u8,
 }
 
 static FDS: Mutex<Vec<Option<Fd>>> = Mutex::new(Vec::new());
@@ -55,16 +58,9 @@ static FDS: Mutex<Vec<Option<Fd>>> = Mutex::new(Vec::new());
 fn with_fds<R>(f: impl FnOnce(&mut Vec<Option<Fd>>) -> R) -> R {
     let mut g = FDS.locked();
     if g.is_empty() {
-        for i in 0..3 {
-            g.push(Some(Fd {
-                kind: Kind::Std(i),
-                text: true,
-                append: false,
-                osf: 0,
-                peek: None,
-            }));
-        }
+        g.extend((0..3).map(|_| None));
         inherit_fds(&mut g);
+        std_fds(&mut g);
     }
     let r = f(&mut g);
     if PIOINFO.load(Ordering::Acquire) != 0 {
@@ -83,6 +79,8 @@ static MIRRORED: AtomicU32 = AtomicU32::new(0);
 const FD_BLOCK: u32 = 32;
 const FD_BLOCKS: u32 = 64;
 const WX_OPEN: u8 = 0x01;
+/// _O_NOINHERIT's descriptor: no child gets it
+const WX_DONTINHERIT: u8 = 0x10;
 const WX_PIPE: u8 = 0x08;
 const WX_APPEND: u8 = 0x20;
 const WX_TTY: u8 = 0x40;
@@ -122,7 +120,7 @@ fn ioinfo_at(fd: u32) -> Option<u32> {
 }
 /// msvcrt's wxflag of a descriptor
 fn wxflag(d: &Fd) -> u8 {
-    let mut f = WX_OPEN;
+    let mut f = WX_OPEN | d.kept;
     if d.text {
         f |= WX_TEXT;
     }
@@ -137,21 +135,28 @@ fn wxflag(d: &Fd) -> u8 {
     f
 }
 /// Writes FDS into the guest's __pioinfo (a file's handle is made, as msvcrt has one for each)
+/// Descriptor `d`'s handle, made the first time it is asked for (_get_osfhandle, __pioinfo, a
+/// child's lpReserved2): a file's is inheritable unless _O_NOINHERIT, as msvcrt's CreateFile
+fn osf_of(d: &mut Fd) -> u32 {
+    if d.osf == 0 {
+        d.osf = match &d.kind {
+            Kind::Std(i) => crate::k32::std_handle(*i),
+            Kind::File(f) => {
+                let h = obj::add(Obj::File(f.clone()));
+                obj::set_inherit(h, d.kept & WX_DONTINHERIT == 0);
+                h
+            }
+            Kind::Pipe(p) => crate::pipe::crt_dup(*p),
+        };
+    }
+    d.osf
+}
 fn mirror(t: &mut [Option<Fd>]) {
     let n = kome::num::u32_of(t.len());
     for (fd, slot) in (0u32..).zip(t.iter_mut()) {
         let Some(e) = ioinfo_at(fd) else { break };
         let (h, flag) = match slot {
-            Some(d) => {
-                if d.osf == 0 {
-                    d.osf = match &d.kind {
-                        Kind::Std(i) => crate::k32::std_handle(*i),
-                        Kind::File(f) => obj::add(Obj::File(f.clone())),
-                        Kind::Pipe(p) => crate::pipe::crt_dup(*p),
-                    };
-                }
-                (d.osf, wxflag(d))
-            }
+            Some(d) => (osf_of(d), wxflag(d)),
             None => (u32::MAX, 0),
         };
         mem::wp(e, h);
@@ -167,7 +172,6 @@ fn mirror(t: &mut [Option<Fd>]) {
 
 /// ioinfo flags of the descriptors a spawned process inherits (STARTUPINFO lpReserved2)
 const FOPEN: u8 = 0x01;
-const FPIPE: u8 = 0x08;
 const FAPPEND: u8 = 0x20;
 const FTEXT: u8 = 0x80;
 
@@ -197,10 +201,12 @@ pub(crate) fn decode_inherited(b: &[u8], x64: bool) -> Vec<Inherited> {
     let Some(n) = b.first_chunk::<4>().map(|c| kome::num::us(u32::from_le_bytes(*c))) else { return Vec::new() };
     let hs: usize = if x64 { 8 } else { 4 };
     let rest = b.get(4..).unwrap_or(&[]);
+    // (msvcrt_init_io: the handles follow all `n` flags, but only as many entries count as
+    // cbReserved2 holds whole; a handle cut off is none)
     let fit = rest.len().checked_div(hs.saturating_add(1)).unwrap_or(0);
-    let n = n.min(fit);
-    let (flags, handles) = rest.split_at(n);
-    flags.iter().zip(handles.chunks_exact(hs)).map(|(&flags, h)| {
+    let handles = rest.get(n..).unwrap_or(&[]);
+    rest.iter().take(n.min(fit)).enumerate().map(|(i, &flags)| {
+        let h = handles.get(i.saturating_mul(hs)..).unwrap_or(&[]);
         let handle = if x64 {
             let v = h.first_chunk::<8>().map_or(u64::MAX, |c| u64::from_le_bytes(*c));
             if v == u64::MAX { u32::MAX } else { kome::num::lo32(v) }
@@ -210,43 +216,79 @@ pub(crate) fn decode_inherited(b: &[u8], x64: bool) -> Vec<Inherited> {
         Inherited { flags, handle }
     }).collect()
 }
-/// What a child gets of this process's descriptors: the open pipe ends whose handle is
-/// inheritable (sake hands other processes pipes, not files); none past the last
+/// What a child gets of this process's descriptors (msvcrt's create_io_inherit_block): each
+/// open one's wxflag and handle, but those with WX_DONTINHERIT or a handle that is not
+/// inheritable (a standard one's is the process's own); none past the last
 fn inherited_fds() -> Vec<Inherited> {
-    let mut out: Vec<Inherited> = with_fds(|t| t.iter().map(|d| match d {
-        Some(Fd { kind: Kind::Pipe(_), text, append, osf, .. }) if *osf != 0 && obj::inherits(*osf) => {
-            let mut flags = FOPEN | FPIPE;
-            if *text {
-                flags |= FTEXT;
-            }
-            if *append {
-                flags |= FAPPEND;
-            }
-            Inherited { flags, handle: *osf }
+    let none = Inherited { flags: 0, handle: u32::MAX };
+    let mut out: Vec<Inherited> = with_fds(|t| (0u32..).zip(t.iter_mut()).map(|(fd, slot)| {
+        let Some(d) = slot else { return none };
+        if d.kept & WX_DONTINHERIT != 0 {
+            return none;
         }
-        Some(Fd { kind: Kind::Std(_) | Kind::File(_) | Kind::Pipe(_), .. }) | None => Inherited { flags: 0, handle: u32::MAX },
+        let handle = osf_of(d);
+        let inheritable = matches!(d.kind, Kind::Std(_)) || fd < 3 || handle != 0 && obj::inherits(handle);
+        if inheritable { Inherited { flags: wxflag(d), handle } } else { none }
     }).collect());
     while out.last().is_some_and(|d| d.flags == 0) {
         out.pop();
     }
     out
 }
-/// A child's descriptors from its STARTUPINFO lpReserved2: the open ones whose handle is a pipe
-/// end it inherited (process::start_child put them at their numbers)
+/// The descriptor kind of handle `h` of this process (None: no file, pipe or console there,
+/// as GetFileType's FILE_TYPE_UNKNOWN)
+fn kind_of_handle(h: u32) -> Option<Kind> {
+    obj::with(|t| match t.objs.get(&h) {
+        Some((Obj::File(f), _)) => Some(Kind::File(f.clone())),
+        Some((Obj::Pipe(p), _)) => Some(Kind::Pipe(*p)),
+        Some((Obj::Other(k), _)) => Some(Kind::Std({
+            use crate::obj::Other::*;
+            match k {
+                Stdin => 0,
+                Stderr => 2,
+                Stdout | Console | Iocp | Afd | Snapshot | Nul | IpChangeNotify | Volume | Socket | Service | ServiceStatus | ServiceManager | ProviderChange | Token | ImpersonationToken => 1,
+            }
+        })),
+        Some(_) | None => None,
+    })
+}
+/// A child's descriptors from its STARTUPINFO lpReserved2 (msvcrt_init_io): every entry with
+/// WX_OPEN whose handle is a file, pipe or console here (process::start_child put inherited
+/// handles at their numbers) takes that handle and wxflag; a standard one is text whatever
+/// the parent said (Wine msvcrt:file test_file_inherit)
 fn inherit_fds(t: &mut Vec<Option<Fd>>) {
     for (i, d) in decode_inherited(crate::k32::reserved2(), mem::x64()).into_iter().enumerate() {
         if d.flags & FOPEN == 0 || d.handle == u32::MAX {
             continue;
         }
-        let Some(p) = obj::with(|o| match o.objs.get(&d.handle) {
-            Some((Obj::Pipe(p), _)) => Some(*p),
-            _ => None,
-        }) else { continue };
+        let Some(kind) = kind_of_handle(d.handle) else { continue };
         if t.len() <= i {
             t.resize(i.saturating_add(1), None);
         }
+        let text = d.flags & FTEXT != 0 || i < 3;
+        // (the bits sake keeps by itself: open, text, append, and the one its kind gives)
+        let acted = WX_OPEN | WX_APPEND | WX_TEXT | match kind {
+            Kind::Std(_) => WX_TTY,
+            Kind::Pipe(_) => WX_PIPE,
+            Kind::File(_) => 0,
+        };
         if let Some(slot) = t.get_mut(i) {
-            *slot = Some(Fd { kind: Kind::Pipe(p), text: d.flags & FTEXT != 0, append: d.flags & FAPPEND != 0, osf: d.handle, peek: None });
+            *slot = Some(Fd { kind, text, append: d.flags & FAPPEND != 0, osf: d.handle, peek: None, kept: d.flags & !acted });
+        }
+    }
+}
+/// Descriptors 0 to 2 that lpReserved2 did not give: the standard handles (a file or pipe
+/// STARTF_USESTDHANDLES gave, else the console), in text mode
+fn std_fds(t: &mut [Option<Fd>]) {
+    for (i, slot) in t.iter_mut().take(3).enumerate() {
+        if slot.is_none() {
+            let h = crate::k32::std_handle(i);
+            let kind = match kind_of_handle(h) {
+                Some(Kind::Std(_)) | None => Kind::Std(i),
+                Some(k) => k,
+            };
+            let osf = if matches!(kind, Kind::Std(_)) { 0 } else { h };
+            *slot = Some(Fd { kind, text: true, append: false, osf, peek: None, kept: 0 });
         }
     }
 }
@@ -279,6 +321,7 @@ pub(super) fn fd_of_file(f: Arc<File>) -> u32 {
         append: false,
         osf: 0,
         peek: None,
+        kept: 0,
     })
 }
 
@@ -346,6 +389,7 @@ fn open(path: &str, oflag: u32) -> u32 {
             append: oflag & O_APPEND != 0,
             osf: 0,
             peek: None,
+            kept: if oflag & O_NOINHERIT != 0 { WX_DONTINHERIT } else { 0 },
         }),
         Err(e) => {
             set_errno(errno_for(e));
@@ -609,7 +653,7 @@ fn _eof(c: &mut Ctx) -> u32 {
 fn chsize(fd: u32, size: u64) -> u32 {
     match file_of(fd) {
         Some(f) if f.write => {
-            if f.f.locked().set_len(size).is_ok() {
+            if f.host().set_len(size).is_ok() {
                 0
             } else {
                 set_errno(EACCES);
@@ -667,35 +711,14 @@ fn _setmode(c: &mut Ctx) -> u32 {
 fn _get_osfhandle(c: &mut Ctx) -> u32 {
     let fd = c.a(0);
     with_fds(|t| match t.get_mut(fd as usize).and_then(Option::as_mut) {
-        Some(d) => {
-            if d.osf == 0 {
-                d.osf = match &d.kind {
-                    Kind::Std(i) => crate::k32::std_handle(*i),
-                    Kind::File(f) => obj::add(Obj::File(f.clone())),
-                    Kind::Pipe(p) => crate::pipe::crt_dup(*p),
-                };
-            }
-            d.osf
-        }
+        Some(d) => osf_of(d),
         None => bad(),
     })
 }
 /// _open_osfhandle(handle, flags): a descriptor that owns the handle
 fn _open_osfhandle(c: &mut Ctx) -> u32 {
     let (h, flags) = (c.a(0), c.a(1));
-    let kind = obj::with(|t| match t.objs.get(&h) {
-        Some((Obj::File(f), _)) => Some(Kind::File(f.clone())),
-        Some((Obj::Pipe(p), _)) => Some(Kind::Pipe(*p)),
-        Some((Obj::Other(k), _)) => Some(Kind::Std({
-            use crate::obj::Other::*;
-            match k {
-                Stdin => 0,
-                Stderr => 2,
-                Stdout | Console | Iocp | Afd | Snapshot | Nul | IpChangeNotify | Volume | Socket | Service | ServiceStatus | ServiceManager | ProviderChange | Token | ImpersonationToken => 1,
-            }
-        })),
-        _ => None,
-    });
+    let kind = kind_of_handle(h);
     match kind {
         Some(kind) => add(Fd {
             kind,
@@ -703,6 +726,7 @@ fn _open_osfhandle(c: &mut Ctx) -> u32 {
             append: flags & O_APPEND != 0,
             osf: h,
             peek: None,
+            kept: 0,
         }),
         None => bad(),
     }
@@ -765,7 +789,7 @@ fn _pipe(c: &mut Ctx) -> u32 {
         set_errno(24); // EMFILE
         return u32::MAX;
     };
-    let fd = |h: u32, end: crate::pipe::Handle| add(Fd { kind: Kind::Pipe(end), text: mode & O_BINARY == 0, append: false, osf: h, peek: None });
+    let fd = |h: u32, end: crate::pipe::Handle| add(Fd { kind: Kind::Pipe(end), text: mode & O_BINARY == 0, append: false, osf: h, peek: None, kept: if mode & O_NOINHERIT != 0 { WX_DONTINHERIT } else { 0 } });
     let r = fd(hr, er);
     if r == u32::MAX {
         obj::close(hr);
@@ -906,7 +930,7 @@ fn fstat(c: &mut Ctx, k: StatKind) -> u32 {
             ctime: 0,
         },
         Some(Kind::File(f)) => {
-            let Ok(m) = f.f.locked().metadata() else { return bad() };
+            let Ok(m) = f.host().metadata() else { return bad() };
             info_of(&m, &f.path)
         }
         // (a pipe: _S_IFIFO, the bytes waiting as its size)

@@ -382,6 +382,8 @@ mod proofs {
             assert!(steps <= 3);
         }
         assert_eq!(done, n);
+        kani::cover!(steps == 3, "a range over three pages");
+        kani::cover!(n > 0 && off % PAGE as u64 != 0, "a range starting inside a page");
     }
 
     /// set_len keeps the invariant the reads rely on: ceil(len / PAGE) pages, the last one no
@@ -397,5 +399,7 @@ mod proofs {
         } else {
             assert_eq!(count, 0);
         }
+        kani::cover!(n > 0 && n % PAGE as u64 == 0, "a file of whole pages");
+        kani::cover!(n % PAGE as u64 == 1, "a last page of one byte");
     }
 }

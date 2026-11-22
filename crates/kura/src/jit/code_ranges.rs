@@ -194,6 +194,109 @@ mod proofs {
         let (Some(code), Some(store)) = (Span::new(a, n), Span::new(b, m)) else { return };
         let mut r = CodeRanges::new();
         r.insert(code);
-        assert_eq!(r.meets(store), u64::from(store.addr()) < code.end() && u64::from(code.addr()) < store.end());
+        let shared = u64::from(store.addr()) < code.end() && u64::from(code.addr()) < store.end();
+        assert_eq!(r.meets(store), shared);
+        kani::cover!(shared && store.addr() < code.addr(), "a store running into the code from below");
+        kani::cover!(!shared, "a store missing it");
+    }
+
+    /// One operation of a sequence: insert a span, or cut [lo, hi) out.
+    #[derive(Clone, Copy)]
+    enum Op {
+        Insert(Span),
+        Remove(u64, u64),
+    }
+
+    fn any_op() -> Op {
+        if kani::any() {
+            let (a, n): (u32, u32) = (kani::any(), kani::any());
+            // (code ends at 4 GB at the latest: what translate() records)
+            kani::assume(n >= 1 && u64::from(a) + u64::from(n) <= 1 << 32);
+            Op::Insert(Span::at_least_one(a, n))
+        } else {
+            let (lo, hi): (u64, u64) = (kani::any(), kani::any());
+            kani::assume(hi <= 1 << 32);
+            Op::Remove(lo, hi)
+        }
+    }
+
+    /// The intervals the operations make, from none
+    fn run(ops: &[Op]) -> CodeRanges {
+        let mut r = CodeRanges::new();
+        for op in ops {
+            match *op {
+                Op::Insert(s) => r.insert(s),
+                Op::Remove(lo, hi) => r.remove(lo, hi),
+            }
+        }
+        r
+    }
+
+    /// The byte set the operations leave: whether byte `x` is in it (the last op covering it
+    /// decides; none: not in it).
+    fn holds(ops: &[Op], x: u64) -> bool {
+        ops.iter().fold(false, |held, op| match *op {
+            Op::Insert(s) => held || (u64::from(s.addr()) <= x && x < s.end()),
+            Op::Remove(lo, hi) => held && !(lo <= x && x < hi),
+        })
+    }
+
+    /// Guarantees, for a span inserted and then any insert or remove of any bounds (assumed: an
+    /// inserted span ends by 4 GB, a cut's end too, as their callers give them): the intervals
+    /// stay sorted, non-empty, disjoint and apart (no two touch), and for every byte (a
+    /// symbolic one) `meets` agrees with the byte set: insert is the
+    /// union, remove the difference. The bound is the 2 operations (a cut splitting the interval,
+    /// a second one beside it, merged with it or inside it); 3 symbolic operations over the
+    /// BTreeMap took CBMC past 9 GB and 40 minutes. Longer sequences: the proptest
+    /// `as_a_set_of_bytes` runs 60 over a small address space at both ends of 4 GB.
+    #[kani::proof]
+    #[kani::unwind(6)]
+    #[kani::solver(cadical)]
+    fn ops_on_a_range_are_a_set_of_bytes() {
+        let (a0, n0): (u32, u32) = (kani::any(), kani::any());
+        kani::assume(n0 >= 1 && u64::from(a0) + u64::from(n0) <= 1 << 32);
+        let ops = [Op::Insert(Span::at_least_one(a0, n0)), any_op()];
+        let r = run(&ops);
+        let mut prev: Option<u64> = None;
+        for (&a, &e) in &r.0 {
+            assert!(u64::from(a) < e && e <= 1 << 32);
+            if let Some(p) = prev {
+                assert!(p < u64::from(a), "disjoint and apart");
+            }
+            prev = Some(e);
+        }
+        let x: u32 = kani::any();
+        assert_eq!(r.meets(Span::at_least_one(x, 1)), holds(&ops, u64::from(x)));
+        kani::cover!(matches!(ops, [_, Op::Remove(..)]) && r.0.len() == 2, "a cut splitting one");
+        kani::cover!(matches!(ops, [_, Op::Insert(_)]) && r.0.len() == 2, "two apart");
+        kani::cover!(matches!(ops, [_, Op::Insert(s)] if s.addr() > a0) && r.0.len() == 1, "two merged");
+    }
+
+    /// The same sequences, for a span of any length (symbolic): it meets the intervals exactly
+    /// when one of its bytes is in the set the operations leave.
+    #[kani::proof]
+    #[kani::unwind(6)]
+    #[kani::solver(cadical)]
+    fn ops_on_a_range_meet_as_the_bytes_do() {
+        let (a0, n0): (u32, u32) = (kani::any(), kani::any());
+        kani::assume(n0 >= 1 && u64::from(a0) + u64::from(n0) <= 1 << 32);
+        let ops = [Op::Insert(Span::at_least_one(a0, n0)), any_op()];
+        let r = run(&ops);
+        // (a longer span: it meets them when a byte of it is held; its bytes checked through
+        // the interval it would share, the first held byte at or after its start)
+        let (b, m): (u32, u32) = (kani::any(), kani::any());
+        if let Some(s) = Span::new(b, m) {
+            let y: u64 = kani::any();
+            kani::assume(u64::from(b) <= y && y < s.end());
+            if holds(&ops, y) {
+                assert!(r.meets(s));
+            }
+            if r.meets(s) {
+                // some interval shares a byte with s: that byte is held
+                let shared = r.0.iter().find(|&(&a, &e)| u64::from(a) < s.end() && e > u64::from(b)).map(|(&a, _)| u64::from(a).max(u64::from(b)));
+                assert!(shared.is_some_and(|z| holds(&ops, z)));
+            }
+        }
+        kani::cover!(Span::new(b, m).is_some_and(|s| r.meets(s) && !holds(&ops, u64::from(b))), "a span meeting them past its first byte");
     }
 }

@@ -544,6 +544,30 @@ fn fixture(r: Rule) -> Fixture {
             ],
             mutate: ("crates/kura/src/lib.rs", |t| Some(t.replace("#![cfg_attr(kani, feature(vec_from_fn, bool_toggle, trim_prefix_suffix))]", ""))),
         },
+        Rule::KaniCover => Fixture {
+            bad: &[
+                ("formal/kani.sh", "#!/bin/bash\nfor c in kura; do\n  (cd \"crates/$c\" && cargo kani)\ndone\n"),
+                ("crates/kura/src/a.rs", "#[cfg(kani)]\nmod proofs {\n    #[kani::proof]\n    fn f() {\n        let x: u32 = kani::any();\n        kani::assume(x < 4 && x > 8);\n        assert!(x == 0);\n    }\n    #[kani::proof]\n    fn g() {\n        let Some(n) = std::num::NonZeroU32::new(kani::any()) else { return };\n        assert!(n.get() > 0);\n    }\n}\n"),
+                ("crates/kome/src/num.rs", "#[cfg(kani)]\nmod proofs {\n    #[kani::proof]\n    fn h() {\n        let x: u8 = kani::any();\n        assert!(u32::from(x) < 256);\n    }\n}\n"),
+            ],
+            good: &[
+                ("formal/kani.sh", "#!/bin/bash\nfor c in kura kome; do\n  (cd \"crates/$c\" && cargo kani)\ndone\n"),
+                ("crates/kura/src/a.rs", "#[cfg(kani)]\nmod proofs {\n    #[kani::proof]\n    fn f() {\n        let x: u32 = kani::any();\n        kani::assume(x < 4);\n        assert!(x < 5);\n        kani::cover!(x == 3, \"the top\");\n    }\n    #[kani::proof]\n    fn g() {\n        let n: u8 = kani::any();\n        let returned = n.checked_add(1);\n        assert!(returned.is_none() == (n == 255));\n    }\n}\nfn not_a_proof(x: u32) -> u32 { if x == 0 { return 1 } x }\n"),
+                ("crates/kome/src/num.rs", "#[cfg(kani)]\nmod proofs {\n    #[kani::proof]\n    fn h() {\n        let x: u8 = kani::any();\n        assert!(u32::from(x) < 256);\n    }\n}\n"),
+            ],
+            mutate: ("crates/sake/src/mem_proofs.rs", |t| Some(t.replace("    kani::cover!(n > u32::MAX - PAGE, \"a length near 4 GB (review A-13)\");\n    kani::cover!(touched && i == pages - 1 && off < PAGE && pages > 1, \"a range to the allocation's end\");\n    kani::cover!(!touched && i > first, \"a page after the range\");\n", ""))),
+        },
+        Rule::VerusMirror => Fixture {
+            bad: &[
+                ("formal/verus/cdc.rs", "verus! { pub fn next() {} }\nfn main() {}\n"),
+                ("crates/masu/src/cdc.rs", "pub fn next() {}\n"),
+            ],
+            good: &[
+                ("formal/verus/cdc.rs", "verus! { pub fn next() {} }\nfn main() {}\n"),
+                ("crates/masu/src/cdc.rs", "pub fn next() {}\n#[cfg(test)]\nmod tests {\n    #[test]\n    fn same() { assert!(include_str!(\"../../../formal/verus/cdc.rs\").contains(\"fn next\")); }\n}\n"),
+            ],
+            mutate: ("crates/masu/src/cdc.rs", |t| Some(t.replace("include_str!(\"../../../formal/verus/cdc.rs\")", "\"\""))),
+        },
         Rule::UncheckedOutput => Fixture {
             bad: &[
                 ("crates/masu-lint/src/tree.rs", "fn files(root: &Path) -> Vec<String> {\n    let o = Command::new(\"git\").arg(\"ls-files\").current_dir(root).output();\n    o.map(|o| String::from_utf8_lossy(&o.stdout).lines().map(str::to_owned).collect()).unwrap_or_default()\n}\n"),

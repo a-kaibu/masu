@@ -193,6 +193,7 @@ fn kref(o: &Obj) -> Option<KRef> {
         Obj::Pipe(p) => Some(KRef::Pipe { end: p.end, read: p.read, write: p.write, ovl: p.ovl }),
         Obj::Process { access, pid } => Some(KRef::Process { pid: *pid, access: *access }),
         Obj::Shared(id) => Some(KRef::Sync { id: *id }),
+        Obj::File(f) => f.share().map(|id| KRef::File { id }),
         _ => None,
     }
 }
@@ -232,6 +233,13 @@ pub fn adopt_handle(r: KRef) -> u32 {
         KRef::Sync { id } => {
             kern::with(|k| k.add_sync_ref(id, crate::pid()));
             Obj::Shared(id)
+        }
+        KRef::File { id } => {
+            kern::with(|k| k.add_file_ref(id, crate::pid()));
+            match crate::files::File::adopt(id) {
+                Some(f) => Obj::File(std::sync::Arc::new(f)),
+                None => return 0,
+            }
         }
     };
     obj::add(o)
@@ -457,6 +465,11 @@ pub fn start_child(r: &Proc) {
             KRef::Pipe { end, read, write, ovl } => Obj::Pipe(crate::pipe::Handle { end, read, write, ovl }),
             KRef::Process { pid, access } => Obj::Process { access, pid },
             KRef::Sync { id } => Obj::Shared(id),
+            // (no file there any more: the handle is not there either)
+            KRef::File { id } => match crate::files::File::adopt(id) {
+                Some(f) => Obj::File(std::sync::Arc::new(f)),
+                None => continue,
+            },
         };
         obj::add_at(h, o, true);
     }
