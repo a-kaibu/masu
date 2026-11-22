@@ -743,7 +743,10 @@ fn release_build_only(tree: &Tree) -> Hits {
 }
 
 /// what must stay in place: (file, text, why)
-pub const REQUIRED: [(&str, &str, &str); 56] = [
+pub const REQUIRED: [(&str, &str, &str); 59] = [
+    ("crates/sake/src/gdi.rs", "        let o = self.m.remove(&h)?;\n        if !is_stock(h) {\n            self.slots.give_back(handle_index(h));", "a deleted GDI object's slot goes back with its generation counted up, so the old handle names nothing (gdi32:gdiobj test_shared_handle_table; 2026-11-22)"),
+    ("crates/sake/src/lib.rs", "    PEB.store(peb, Ordering::Relaxed);\n    gdi::share_table(peb);", "PEB->GdiSharedHandleTable points at the GDI handle table (gdi32:gdiobj read a NULL table and crashed; 2026-11-22)"),
+    ("crates/sake/src/gdiplus.rs", "            if row.len() < (w * bpp) as usize {\n                continue;", "GdipCreateBitmapFromScan0 with bits that are not memory does not read them (gdiplus:graphics test_GetDC panicked sake; 2026-11-22)"),
     ("crates/sake/src/sysdll.rs", "    kura::fs::write(&h, image_of(crate::mem::x64(), &n)).ok()?;", "a system32 DLL file carries its RT_VERSION block, so GetFileVersionInfo finds one (version:info crashed on a NULL block; 2026-11-22)"),
     ("crates/sake/src/files.rs", "        if self.shared != 0 && let Ok(p) = self.g.stream_position() {\n            let id = self.shared;\n            crate::kern::with(|k| k.set_file_pos(id, p));", "a file handle processes share keeps its file pointer in the kernel (the child's write did not move the parent's tell: msvcrt:file test_file_inherit; 2026-11-22)"),
     ("crates/sake/src/process.rs", "        Obj::File(f) => f.share().map(|id| KRef::File { id }),", "an inheritable file handle reaches the child (2026-11-22)"),

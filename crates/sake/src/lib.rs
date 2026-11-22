@@ -1309,6 +1309,7 @@ pub fn main(exe: &str, args: &[String]) -> ! {
     let Some(peb) = mem::reserve(0, 0x2000, 4, 0x20000, true) else { start_failed(exe, "no room for the PEB") };
     mem::commit(peb, 4);
     PEB.store(peb, Ordering::Relaxed);
+    gdi::share_table(peb);
     if let Some(r) = kura::fs::read_head(exe, 1 << 16).ok().as_deref().and_then(pe::stack_reserve) {
         STACK_RESERVE.store(r, Ordering::Relaxed);
     }

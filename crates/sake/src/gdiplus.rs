@@ -665,6 +665,11 @@ fn GdipCreateBitmapFromScan0(c: &mut Ctx) -> u32 {
         let bpp = bytes_per_pixel(fmt);
         for j in 0..h {
             let row = &mem::bytes((scan0 as i32 + j as i32 * stride) as u32, w * bpp);
+            // (bits that are not guest memory are never read while nothing draws: Windows takes
+            // scan0 = 1 and fails only on a draw; Wine gdiplus:graphics test_GetDC)
+            if row.len() < (w * bpp) as usize {
+                continue;
+            }
             for i in 0..w {
                 let s = (i * bpp) as usize;
                 let d = ((j * w + i) * 4) as usize;

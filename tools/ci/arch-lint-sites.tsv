@@ -119,7 +119,6 @@ constant-handler	crates/sake/src/gdi.rs	fn SetSystemPaletteUse(_: &mut Ctx) -> u
 constant-handler	crates/sake/src/gdi.rs	fn SetViewportExtEx(_: &mut Ctx) -> u32 {	escape: implement Windows' behavior (Win32 thread)
 constant-handler	crates/sake/src/gdi.rs	fn SetWindowExtEx(_: &mut Ctx) -> u32 {	escape: implement Windows' behavior (Win32 thread)
 constant-handler	crates/sake/src/gdi.rs	fn SetWorldTransform(_: &mut Ctx) -> u32 {	escape: implement Windows' behavior (Win32 thread)
-constant-handler	crates/sake/src/gdi.rs	fn UnrealizeObject(_: &mut Ctx) -> u32 {	escape: implement Windows' behavior (Win32 thread)
 constant-handler	crates/sake/src/gdiplus.rs	fn ok(_: &mut Ctx) -> u32 {	escape: implement Windows' behavior (this thread)
 constant-handler	crates/sake/src/gdiplus_brush.rs	fn GdipGetPathGradientPath(_: &mut Ctx) -> u32 {	escape: implement Windows' behavior (this thread)
 constant-handler	crates/sake/src/gdiplus_text.rs	fn ok(_: &mut Ctx) -> u32 {	escape: implement Windows' behavior (this thread)

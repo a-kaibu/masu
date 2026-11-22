@@ -16,6 +16,11 @@ impl Rect {
     pub fn h(&self) -> i32 {
         self.b.wrapping_sub(self.t)
     }
+    /// the same box with left <= right and top <= bottom (Windows takes a RECT with its sides
+    /// swapped as that box in RectInRegion and CreateRectRgnIndirect)
+    pub fn ordered(&self) -> Rect {
+        Rect { l: self.l.min(self.r), t: self.t.min(self.b), r: self.l.max(self.r), b: self.t.max(self.b) }
+    }
     pub fn empty(&self) -> bool {
         self.l >= self.r || self.t >= self.b
     }
