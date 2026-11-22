@@ -1565,9 +1565,9 @@ file	crates/sake/src/picture.rs	cast_precision_loss	1
 file	crates/sake/src/picture.rs	cast_sign_loss	8
 file	crates/sake/src/picture.rs	indexing_slicing	164
 file	crates/sake/src/picture.rs	wildcard_enum_match_arm	9
-file	crates/sake/src/pipe.rs	arithmetic_side_effects	9
-file	crates/sake/src/pipe.rs	as_conversions	13
-file	crates/sake/src/pipe.rs	cast_possible_truncation	6
+file	crates/sake/src/pipe.rs	arithmetic_side_effects	7
+file	crates/sake/src/pipe.rs	as_conversions	11
+file	crates/sake/src/pipe.rs	cast_possible_truncation	5
 file	crates/sake/src/pointer.rs	arithmetic_side_effects	4
 file	crates/sake/src/pointer.rs	as_conversions	7
 file	crates/sake/src/pointer.rs	cast_possible_truncation	1

@@ -547,6 +547,22 @@ pub fn waitable(handles: &[u32]) -> bool {
         try_take(t, k, tid, false).is_some()
     })
 }
+/// Whether `h` is an object that its I/O signals (a file, pipe, socket, device: waiting on one
+/// waits for its pending I/O, iocp::overlapped_result); events, threads, ports and the like
+/// are not
+pub fn io_object(h: u32) -> bool {
+    with(|t| {
+        let Some(k) = t.objs.key(&norm(h)) else { return false };
+        t.objs.map.get(&k).is_some_and(|(o, _)| match o {
+            Obj::File(_) | Obj::Pipe(_) => true,
+            Obj::Other(o) => match o {
+                Other::Afd | Other::Nul | Other::Volume | Other::Stdin | Other::Stdout | Other::Stderr | Other::Console | Other::Socket => true,
+                Other::Iocp | Other::Snapshot | Other::IpChangeNotify | Other::Service | Other::ServiceStatus | Other::ServiceManager | Other::ProviderChange | Other::Token | Other::ImpersonationToken => false,
+            },
+            Obj::Event { .. } | Obj::Timer { .. } | Obj::Mutex { .. } | Obj::Semaphore { .. } | Obj::Thread { .. } | Obj::Shared(_) | Obj::Process { .. } | Obj::RemoteThread { .. } | Obj::Find(_) | Obj::Mapping { .. } | Obj::Key(_) | Obj::DebugObject(_) => false,
+        })
+    })
+}
 /// Handle `h` has only the rights `mask` (waiting needs SYNCHRONIZE)
 pub fn set_access(h: u32, mask: u32) {
     with(|t| t.objs.access.insert(h, mask));

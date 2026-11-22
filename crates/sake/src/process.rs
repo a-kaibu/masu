@@ -211,6 +211,27 @@ pub fn adopt_handle(r: KRef) -> u32 {
 }
 
 /// STARTUPINFO's dwFlags and its three standard handles
+/// What a STARTUPINFO hands the new process
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Startup {
+    /// STARTF_USESTDHANDLES's input, output, error
+    pub std: Option<(u32, u32, u32)>,
+    /// cbReserved2 bytes at lpReserved2 (None: none, as for a cbReserved2 of 0 or no pointer)
+    pub reserved2: Option<Vec<u8>>,
+}
+fn startup_of(si: u32) -> Startup {
+    Startup { std: startup_std(si), reserved2: startup_reserved2(si) }
+}
+/// STARTUPINFO's cbReserved2 (a WORD after wShowWindow) and lpReserved2
+fn startup_reserved2(si: u32) -> Option<Vec<u8>> {
+    if si == 0 {
+        return None;
+    }
+    let (cb, p) = if mem::x64() { (66, 72) } else { (50, 52) };
+    let n = u32::from(crate::mem::r16(mem::ga(si) + cb));
+    let p = crate::mem::rp(mem::ga(si) + p);
+    (n != 0 && p != 0).then(|| mem::bytes(p, n))
+}
 fn startup_std(si: u32) -> Option<(u32, u32, u32)> {
     if si == 0 {
         return None;
@@ -233,7 +254,7 @@ fn startup_std(si: u32) -> Option<(u32, u32, u32)> {
 #[allow(clippy::too_many_arguments)]
 /// `env`: the child's environment, None: this process's as it is now (Windows passes the
 /// parent's current environment when lpEnvironment is NULL).
-pub fn spawn(prog: &str, app: bool, args: &str, cmd: Option<String>, dir: Option<String>, inherit: bool, flags: u32, std: Option<(u32, u32, u32)>, env: Option<Vec<(String, String)>>) -> Result<u32, u32> {
+pub fn spawn(prog: &str, app: bool, args: &str, cmd: Option<String>, dir: Option<String>, inherit: bool, flags: u32, startup: Startup, env: Option<Vec<(String, String)>>) -> Result<u32, u32> {
     // (SAKE_NO_EXEC: tests/winetest, whose programs start copies of themselves as children)
     if std::env::var_os("SAKE_NO_EXEC").is_some() {
         eprintln!("sake: CreateProcess({prog}, {args}) refused");
@@ -261,7 +282,7 @@ pub fn spawn(prog: &str, app: bool, args: &str, cmd: Option<String>, dir: Option
         Vec::new()
     };
     let env = Some(env.unwrap_or_else(crate::k32::env_vars));
-    let p = Proc { parent: crate::pid(), image: win.clone(), cmdline, cwd, suspend: (flags & 4 != 0) as u32, inherit: list, std, env, ..Proc::default() };
+    let p = Proc { parent: crate::pid(), image: win.clone(), cmdline, cwd, suspend: (flags & 4 != 0) as u32, inherit: list, std: startup.std, env, reserved2: startup.reserved2, ..Proc::default() };
     // (DEBUG_PROCESS, DEBUG_ONLY_THIS_PROCESS: the creating thread's debug object, made if
     // it has none; a debuggee's children: crate::dbg)
     let port = if flags & 3 != 0 { crate::dbg::connect() } else { None };
@@ -333,7 +354,7 @@ pub fn create_process(c: &mut Ctx, wide: bool) -> u32 {
     let dir = (dir != 0).then(|| arg_str(dir, wide));
     // (CREATE_UNICODE_ENVIRONMENT: a block of UTF-16 strings)
     let env = (c.a(6) != 0).then(|| env_block_vars(c.a(6), flags & 0x400 != 0));
-    let pid = match spawn(&prog, app.is_some(), &args, cmd, dir, inherit, flags, startup_std(si), env) {
+    let pid = match spawn(&prog, app.is_some(), &args, cmd, dir, inherit, flags, startup_of(si), env) {
         Ok(pid) => pid,
         Err(e) => {
             last_error(e);

@@ -877,3 +877,53 @@ proptest! {
         prop_assert!(k.xmsgs.is_empty() && k.vm.is_empty());
     }
 }
+
+/// Two processes sharing the kernel as kern::with does: each works on its own copy, reads the
+/// shared bytes again when they changed, and writes its copy back only when its generation
+/// moved. Every reference change has to move it, or the next process's write brings the old
+/// count back (msvcrt:file test_pipes: the parent's close of its write end was lost under the
+/// child's next write, and the reader never saw EOF).
+#[derive(Clone, Debug)]
+enum RefOp {
+    Add(bool),
+    Release(bool),
+}
+proptest! {
+    #[test]
+    fn reference_changes_reach_the_other_process(ops in prop::collection::vec(prop_oneof![any::<bool>().prop_map(RefOp::Add), any::<bool>().prop_map(RefOp::Release)], 1..40)) {
+        use enc::Enc as _;
+        let (a, b) = (ROOT_PID, ROOT_PID + PID_STEP);
+        let mut k = Kern::default();
+        let (_r, w) = k.create_anon(0, a).unwrap();
+        // (each process holds the end twice, so a release never destroys it here)
+        for _ in 0..2 { k.add_ref(w, b); }
+        k.add_ref(w, a);
+        let mut shared = Vec::new();
+        k.put(&mut shared);
+        let mut model = [2u32, 2u32];
+        let mut copies = [(Kern::get(&mut shared.as_slice()).unwrap(), shared.clone()), (Kern::get(&mut shared.as_slice()).unwrap(), shared.clone())];
+        for op in ops {
+            let (who, add) = match op { RefOp::Add(x) => (x, true), RefOp::Release(x) => (x, false) };
+            let i = usize::from(who);
+            let pid = if who { b } else { a };
+            // a release only of a reference it holds, never the last one
+            if !add && model[i] <= 1 { continue; }
+            let (copy, seen) = &mut copies[i];
+            if *seen != shared {
+                *copy = Kern::get(&mut shared.as_slice()).unwrap();
+                *seen = shared.clone();
+            }
+            let before = copy.generation;
+            if add { copy.add_ref(w, pid); model[i] += 1; } else { copy.release(w, pid); model[i] -= 1; }
+            prop_assert_ne!(copy.generation, before, "a reference change must be stored");
+            let mut out = Vec::new();
+            copy.put(&mut out);
+            shared = out.clone();
+            *seen = out;
+        }
+        let k = Kern::get(&mut shared.as_slice()).unwrap();
+        let refs = &k.ends[&w].refs;
+        let count = |pid: u32| refs.iter().find(|r| r.0 == pid).map_or(0, |r| r.1);
+        prop_assert_eq!((count(a), count(b)), (model[0], model[1]));
+    }
+}

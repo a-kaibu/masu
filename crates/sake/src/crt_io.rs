@@ -60,8 +60,95 @@ fn with_fds<R>(f: impl FnOnce(&mut Vec<Option<Fd>>) -> R) -> R {
                 osf: 0,
             }));
         }
+        inherit_fds(&mut g);
     }
     f(&mut g)
+}
+
+/// ioinfo flags of the descriptors a spawned process inherits (STARTUPINFO lpReserved2)
+const FOPEN: u8 = 0x01;
+const FPIPE: u8 = 0x08;
+const FAPPEND: u8 = 0x20;
+const FTEXT: u8 = 0x80;
+
+/// One inherited descriptor: its ioinfo flags and handle
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct Inherited {
+    pub flags: u8,
+    pub handle: u32,
+}
+/// lpReserved2 as the C runtime lays it out: the count (a DWORD), a flags byte per descriptor,
+/// then a handle per descriptor (pointer-sized; INVALID_HANDLE_VALUE for none)
+pub(crate) fn encode_inherited(fds: &[Inherited], x64: bool) -> Vec<u8> {
+    let mut w = kome::num::u32_of(fds.len()).to_le_bytes().to_vec();
+    w.extend(fds.iter().map(|d| d.flags));
+    for d in fds {
+        if x64 {
+            let h = if d.handle == u32::MAX { u64::MAX } else { u64::from(d.handle) };
+            w.extend(h.to_le_bytes());
+        } else {
+            w.extend(d.handle.to_le_bytes());
+        }
+    }
+    w
+}
+/// The descriptors in lpReserved2 (as many as its count and size both hold)
+pub(crate) fn decode_inherited(b: &[u8], x64: bool) -> Vec<Inherited> {
+    let Some(n) = b.first_chunk::<4>().map(|c| kome::num::us(u32::from_le_bytes(*c))) else { return Vec::new() };
+    let hs: usize = if x64 { 8 } else { 4 };
+    let rest = b.get(4..).unwrap_or(&[]);
+    let fit = rest.len().checked_div(hs.saturating_add(1)).unwrap_or(0);
+    let n = n.min(fit);
+    let (flags, handles) = rest.split_at(n);
+    flags.iter().zip(handles.chunks_exact(hs)).map(|(&flags, h)| {
+        let handle = if x64 {
+            let v = h.first_chunk::<8>().map_or(u64::MAX, |c| u64::from_le_bytes(*c));
+            if v == u64::MAX { u32::MAX } else { kome::num::lo32(v) }
+        } else {
+            h.first_chunk::<4>().map_or(u32::MAX, |c| u32::from_le_bytes(*c))
+        };
+        Inherited { flags, handle }
+    }).collect()
+}
+/// What a child gets of this process's descriptors: the open pipe ends whose handle is
+/// inheritable (sake hands other processes pipes, not files); none past the last
+fn inherited_fds() -> Vec<Inherited> {
+    let mut out: Vec<Inherited> = with_fds(|t| t.iter().map(|d| match d {
+        Some(Fd { kind: Kind::Pipe(_), text, append, osf }) if *osf != 0 && obj::inherits(*osf) => {
+            let mut flags = FOPEN | FPIPE;
+            if *text {
+                flags |= FTEXT;
+            }
+            if *append {
+                flags |= FAPPEND;
+            }
+            Inherited { flags, handle: *osf }
+        }
+        Some(Fd { kind: Kind::Std(_) | Kind::File(_) | Kind::Pipe(_), .. }) | None => Inherited { flags: 0, handle: u32::MAX },
+    }).collect());
+    while out.last().is_some_and(|d| d.flags == 0) {
+        out.pop();
+    }
+    out
+}
+/// A child's descriptors from its STARTUPINFO lpReserved2: the open ones whose handle is a pipe
+/// end it inherited (process::start_child put them at their numbers)
+fn inherit_fds(t: &mut Vec<Option<Fd>>) {
+    for (i, d) in decode_inherited(crate::k32::reserved2(), mem::x64()).into_iter().enumerate() {
+        if d.flags & FOPEN == 0 || d.handle == u32::MAX {
+            continue;
+        }
+        let Some(p) = obj::with(|o| match o.objs.get(&d.handle) {
+            Some((Obj::Pipe(p), _)) => Some(*p),
+            _ => None,
+        }) else { continue };
+        if t.len() <= i {
+            t.resize(i.saturating_add(1), None);
+        }
+        if let Some(slot) = t.get_mut(i) {
+            *slot = Some(Fd { kind: Kind::Pipe(p), text: d.flags & FTEXT != 0, append: d.flags & FAPPEND != 0, osf: d.handle });
+        }
+    }
 }
 
 fn get(fd: u32) -> Option<Fd> {
@@ -702,7 +789,8 @@ fn fdopen(fd: u32, mode: &[u8]) -> u32 {
     match get(fd).map(|d| d.kind) {
         Some(Kind::File(f)) => new_stream_of(f, fd, mode),
         Some(Kind::Std(i)) => var_at(Var::Iob) + file_size() * i as u32,
-        Some(Kind::Pipe(_)) | None => {
+        Some(Kind::Pipe(p)) => new_stream_of_pipe(p, fd, mode),
+        None => {
             set_errno(EBADF);
             0
         }
@@ -1632,7 +1720,9 @@ fn spawn_crt(mode: u32, path: u32, argv: u32, wide: bool) -> u32 {
     }
     let prog = path_arg(path, wide);
     let (cmd, args) = spawn_command_line(&argv_strings(argv, wide));
-    match crate::process::spawn(&prog, false, &args, Some(cmd), None, true, 0, None, None) {
+    // (the descriptors go as lpReserved2, as the C runtime's spawn passes them)
+    let startup = crate::process::Startup { std: None, reserved2: Some(encode_inherited(&inherited_fds(), mem::x64())) };
+    match crate::process::spawn(&prog, false, &args, Some(cmd), None, true, 0, startup, None) {
         Err(_) => {
             set_errno(ENOENT);
             u32::MAX

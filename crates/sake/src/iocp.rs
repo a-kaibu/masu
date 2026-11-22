@@ -430,39 +430,95 @@ pub fn wait_overlapped(c: &mut Ctx, ov: u32, ms: u32, alertable: bool) -> u32 {
     }
 }
 
-/// GetOverlappedResult(h, ov, &bytes, wait) / GetOverlappedResultEx(h, ov, &bytes, ms, alertable)
+/// How GetOverlappedResultEx ends
+#[derive(Debug, PartialEq, Eq)]
+enum Got {
+    /// reads the OVERLAPPED: its status as the last error, InternalHigh to *bytes, TRUE when
+    /// the status is not an error (STATUS_PENDING too, after a wait that ended)
+    Read,
+    /// FALSE with this last error
+    Fail(u32),
+    /// FALSE, the failed wait's last error kept
+    WaitFailed,
+}
+
+/// GetOverlappedResultEx(h, ov, &bytes, ms, alertable). GetOverlappedResult(h, ov, &bytes, wait)
+/// is GetOverlappedResultEx(h | 1, ov, &bytes, wait ? INFINITE : 0, FALSE), and the low bit
+/// marks that legacy call: it does not wait for an OVERLAPPED that is done, and its wait's
+/// timeout reads the OVERLAPPED anyway. Otherwise the wait comes whatever the status, on
+/// hEvent as given, else on h without the bit; WAIT_TIMEOUT and WAIT_IO_COMPLETION are the
+/// last error then (kernelbase clean-room notes, sake-re/kernelbase/overlapped.md; Wine
+/// kernel32:file test_overlapped).
 fn overlapped_result(c: &mut Ctx, ex: bool) -> u32 {
     let (ov, bp) = (c.a(1), c.a(2));
-    let (ms, alertable) = if ex { (c.a(3), c.a(4) != 0) } else { (if c.a(3) != 0 { u32::MAX } else { 0 }, false) };
     if ov == 0 {
         last_error(87);
         return 0;
     }
-    if rp(ov) == STATUS_PENDING {
-        if ms == 0 {
-            last_error(996); // ERROR_IO_INCOMPLETE
-            return 0;
+    let (h, ms, alertable) = if ex { (c.a(0), c.a(3), c.a(4) != 0) } else { (c.a(0) | 1, if c.a(3) != 0 { u32::MAX } else { 0 }, false) };
+    match overlapped_got(c, h, ov, ms, alertable) {
+        Got::Read => {
+            let s = rp(ov);
+            mem::put32(bp, crate::mem::rp(crate::mem::ga(ov) + ps()));
+            // (BaseSetLastNTError: RtlNtStatusToDosError's table, as the test compares it)
+            last_error(crate::nt::dos_error(s));
+            u32::from(s & 0x8000_0000 == 0)
         }
-        let r = wait_overlapped(c, ov, ms, alertable);
-        if rp(ov) == STATUS_PENDING {
-            last_error(match r {
-                crate::apc::WAIT_IO_COMPLETION => crate::apc::WAIT_IO_COMPLETION,
-                0x102 => 258,
-                _ => 996,
-            });
-            return 0;
+        Got::Fail(e) => {
+            last_error(e);
+            0
         }
+        Got::WaitFailed => 0,
     }
-    let k = ps();
-    mem::put32(bp, crate::mem::rp(crate::mem::ga(ov) + k));
-    let s = rp(ov);
-    if s != 0 {
-        last_error(nt_to_win32(s));
-        return 0;
+}
+
+/// What GetOverlappedResultEx does first: end now, or wait (pure: iocp_tests checks it)
+#[derive(Debug, PartialEq, Eq)]
+enum First {
+    Now(Got),
+    Wait,
+}
+fn first_step(pending: bool, ms: u32, legacy: bool) -> First {
+    if ms == 0 {
+        return First::Now(if pending { Got::Fail(996) } else { Got::Read }); // ERROR_IO_INCOMPLETE
     }
-    // (success clears the last error: tests/winref/golden/pipes-32)
-    last_error(0);
-    1
+    if legacy && !pending { First::Now(Got::Read) } else { First::Wait }
+}
+/// How the wait's result `r` ends it
+fn after_wait(r: u32, legacy: bool) -> Got {
+    match r {
+        0 => Got::Read,
+        obj::WAIT_TIMEOUT if legacy => Got::Read,
+        obj::WAIT_TIMEOUT => Got::Fail(258),
+        crate::apc::WAIT_IO_COMPLETION => Got::Fail(crate::apc::WAIT_IO_COMPLETION),
+        _ => Got::WaitFailed,
+    }
+}
+
+fn get_overlapped_result(c: &mut Ctx) -> u32 {
+    overlapped_result(c, false)
+}
+fn get_overlapped_result_ex(c: &mut Ctx) -> u32 {
+    overlapped_result(c, true)
+}
+
+fn overlapped_got(c: &mut Ctx, h: u32, ov: u32, ms: u32, alertable: bool) -> Got {
+    let legacy = h & 1 != 0;
+    if let First::Now(g) = first_step(rp(ov) == STATUS_PENDING, ms, legacy) {
+        return g;
+    }
+    let ev = crate::mem::rp(mem::ga(ov).at(2, ps()) + 8);
+    let on = if ev != 0 { ev } else { h & !1 };
+    // (sake signals no file object: a wait on one waits for the OVERLAPPED instead, iocp::complete)
+    let r = if obj::io_object(on) {
+        let done = || rp(ov) != STATUS_PENDING;
+        if alertable { crate::apc::wait_or(c, &[], false, ms, &done) } else { obj::wait(&[], false, ms, Some(&done)) }
+    } else if alertable {
+        crate::apc::wait(c, &[on], false, ms)
+    } else {
+        obj::wait(&[on], false, ms, None)
+    };
+    after_wait(r, legacy)
 }
 
 /// A wait_packet error as an NTSTATUS
@@ -548,8 +604,8 @@ pub fn init() {
     implement(d, "GetQueuedCompletionStatus", GetQueuedCompletionStatus);
     implement(d, "GetQueuedCompletionStatusEx", GetQueuedCompletionStatusEx);
     implement(d, "PostQueuedCompletionStatus", PostQueuedCompletionStatus);
-    implement(d, "GetOverlappedResult", |c| overlapped_result(c, false));
-    implement(d, "GetOverlappedResultEx", |c| overlapped_result(c, true));
+    implement(d, "GetOverlappedResult", get_overlapped_result);
+    implement(d, "GetOverlappedResultEx", get_overlapped_result_ex);
     // CancelIo(h) / CancelIoEx(h, ov): sockets' and pipes' IO waits
     implement(d, "CancelIo", |c| {
         let h = c.a(0);
@@ -698,5 +754,88 @@ mod tests {
             }
             prop_assert!(with(|s| !s.ports.contains_key(&k)));
         }
+    }
+}
+
+/// GetOverlappedResult(Ex) against the Wine kernel32:file test_overlapped oracle
+#[cfg(test)]
+mod overlapped_tests {
+    use super::*;
+    use crate::test_guest::{call, enter, guest_thread};
+    use proptest::prelude::*;
+
+    const STATUSES: [u32; 3] = [0, STATUS_PENDING, 0xc000_00e9];
+
+    proptest! {
+        /// test_overlapped's will_wait: wait && (pending || (ex && !(file_bits & 1))), and a
+        /// call that does not wait reads the OVERLAPPED unless it is pending (ERROR_IO_INCOMPLETE)
+        #[test]
+        fn it_waits_when_the_wine_oracle_says(ex in any::<bool>(), wait in any::<bool>(), file_bits in prop::sample::select(vec![0u32, 1, 2, 3, 0xdead_beef]), si in 0usize..3) {
+            let status = STATUSES[si];
+            let pending = status == STATUS_PENDING;
+            let (h, ms) = if ex { (file_bits, if wait { 2 } else { 0 }) } else { (file_bits | 1, if wait { u32::MAX } else { 0 }) };
+            let will_wait = wait && (pending || (ex && file_bits & 1 == 0));
+            let got = first_step(pending, ms, h & 1 != 0);
+            if will_wait {
+                prop_assert_eq!(got, First::Wait);
+            } else if pending {
+                prop_assert_eq!(got, First::Now(Got::Fail(996)));
+            } else {
+                prop_assert_eq!(got, First::Now(Got::Read));
+            }
+        }
+
+        /// after the wait: a timeout reads the OVERLAPPED only for GetOverlappedResult (the
+        /// oracle's wait_timeouts excludes ex && file_bits & 1), an APC is WAIT_IO_COMPLETION
+        #[test]
+        fn a_wait_ends_as_the_oracle_says(r in prop::sample::select(vec![0u32, 0x80, 0xc0, 0x102, u32::MAX]), legacy in any::<bool>()) {
+            let want = match r {
+                0 => Got::Read,
+                0x102 if legacy => Got::Read,
+                0x102 => Got::Fail(258),
+                0xc0 => Got::Fail(0xc0),
+                _ => Got::WaitFailed,
+            };
+            prop_assert_eq!(after_wait(r, legacy), want);
+        }
+    }
+
+    fn ov_with(status: u32, ev: u32) -> u32 {
+        let ov = mem::heap_alloc(4 * ps() + 8, true);
+        wp(ov, status);
+        crate::mem::wp(crate::mem::ga(ov) + ps(), 0xabcd);
+        crate::mem::wp(crate::mem::ga(ov).at(2, ps()) + 8, ev);
+        ov
+    }
+
+    #[test]
+    fn the_calls_end_as_on_windows() {
+        let _g = enter();
+        guest_thread();
+        let ev = obj::add(obj::Obj::Event { manual: false, set: false });
+        let out_own = mem::Scratch::new(4, true);
+        let out = out_own.get();
+        let res = |r: u32| (r, crate::k32::get_last_error(), r32(out));
+        // a done OVERLAPPED: GetOverlappedResultEx waits on its event anyway
+        let ov = ov_with(0, ev);
+        mem::put32(out, 0xdead_beef);
+        assert_eq!(res(call(get_overlapped_result_ex, &[0, ov, out, 2, 0])), (0, 258, 0xdead_beef));
+        // GetOverlappedResult does not
+        assert_eq!(res(call(get_overlapped_result, &[0, ov, out, 1])), (1, 0, 0xabcd));
+        // a pending one whose event is set: TRUE with ERROR_IO_PENDING after the wait
+        let ov = ov_with(STATUS_PENDING, ev);
+        mem::put32(out, 0xdead_beef);
+        assert_eq!(res(call(get_overlapped_result, &[0, ov, out, 0])), (0, 996, 0xdead_beef));
+        crate::k32::set_event(ev);
+        assert_eq!(res(call(get_overlapped_result, &[0, ov, out, 1])), (1, 997, 0xabcd));
+        // an error status: FALSE with it as the last error, the bytes read
+        let ov = ov_with(0xc000_00e9, ev);
+        assert_eq!(call(get_overlapped_result, &[0, ov, out, 0]), 0);
+        assert_eq!(crate::k32::get_last_error(), 59, "ERROR_UNEXP_NET_ERR");
+        // no event, no handle: the wait fails
+        let ov = ov_with(STATUS_PENDING, 0);
+        assert_eq!(call(get_overlapped_result_ex, &[0, ov, out, 2, 0]), 0);
+        assert_eq!(crate::k32::get_last_error(), 6);
+        drop(out_own);
     }
 }

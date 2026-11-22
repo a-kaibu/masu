@@ -6979,6 +6979,14 @@ pub fn set_std_handles(h: Option<(u32, u32, u32)>) {
         STD_GIVEN.store(true, Ordering::Relaxed);
     }
 }
+/// STARTUPINFO's lpReserved2 bytes this process was started with (the C runtime's descriptors)
+static RESERVED2: OnceLock<Vec<u8>> = OnceLock::new();
+pub fn set_reserved2(b: Option<Vec<u8>>) {
+    if let Some(b) = b && RESERVED2.set(b).is_err() {}
+}
+pub(crate) fn reserved2() -> &'static [u8] {
+    RESERVED2.get().map_or(&[], Vec::as_slice)
+}
 fn GetStdHandle(c: &mut Ctx) -> u32 {
     match c.a(0) {
         0xffff_fff6 => std_handle(0),
@@ -7702,51 +7710,78 @@ fn GetFileInformationByHandle(c: &mut Ctx) -> u32 {
     1
 }
 
-/// GetFileInformationByHandleEx(file, class, buffer, size): the classes Python's os.stat and
-/// os.path ask for (basic, standard, attribute tag, id)
+/// How GetFileInformationByHandleEx asks ntdll for a FILE_INFO_BY_HANDLE_CLASS
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum InfoQuery {
+    /// NtQueryInformationFile(class)
+    File(u32),
+    /// NtQueryDirectoryFile(class, restart scan)
+    Dir(u32, bool),
+    /// NtQueryVolumeInformationFile(class)
+    Volume(u32),
+}
+/// FILE_INFO_BY_HANDLE_CLASS -> (the ntdll query, the least buffer size); None for the classes
+/// only SetFileInformationByHandle takes and the unknown ones (ERROR_INVALID_PARAMETER).
+/// kernelbase's table (clean-room notes sake-re/kernelbase/file-info.md).
+pub(crate) fn info_query(class: u32) -> Option<(InfoQuery, u32)> {
+    use InfoQuery::{Dir, File, Volume};
+    Some(match class {
+        0 => (File(4), 40),         // FileBasicInfo
+        1 => (File(5), 24),         // FileStandardInfo
+        2 => (File(9), 8),          // FileNameInfo
+        7 => (File(22), 32),        // FileStreamInfo
+        8 => (File(28), 16),        // FileCompressionInfo
+        9 => (File(35), 8),         // FileAttributeTagInfo
+        10 => (Dir(37, false), 112), // FileIdBothDirectoryInfo
+        11 => (Dir(37, true), 112), // FileIdBothDirectoryRestartInfo
+        13 => (File(55), 116),      // FileRemoteProtocolInfo
+        14 => (Dir(2, false), 72),  // FileFullDirectoryInfo
+        15 => (Dir(2, true), 72),   // FileFullDirectoryRestartInfo
+        16 => (Volume(11), 28),     // FileStorageInfo (FileFsSectorSizeInformation)
+        17 => (File(17), 4),        // FileAlignmentInfo
+        18 => (File(59), 24),       // FileIdInfo
+        19 => (Dir(60, false), 96), // FileIdExtdDirectoryInfo
+        20 => (Dir(60, true), 96),  // FileIdExtdDirectoryRestartInfo
+        23 => (File(71), 4),        // FileCaseSensitiveInfo
+        24 => (File(48), 8),        // FileNormalizedNameInfo
+        _ => return None,
+    })
+}
+
+/// GetFileInformationByHandleEx(file, class, buffer, size): the class's ntdll query (a size
+/// short of the class's is ERROR_BAD_LENGTH first; a stream query that gives nothing is
+/// STATUS_END_OF_FILE)
 fn GetFileInformationByHandleEx(c: &mut Ctx) -> u32 {
-    let Some(f) = obj::file(c.a(0)) else {
-        last_error(6);
+    let (h, class, p, size) = (c.a(0), c.a(1), c.a(2), c.a(3));
+    let Some((q, least)) = info_query(class) else {
+        last_error(87);
         return 0;
     };
-    let Ok(m) = f.f.locked().metadata() else { return 0 };
-    let (class, p, size) = (c.a(1), c.a(2), c.a(3));
-    let need = match class {
-        0 => 40,
-        1 => 24,
-        9 => 8,
-        18 => 24,
-        _ => {
-            last_error(87); // ERROR_INVALID_PARAMETER: "not this kind of file" to Python
-            return 0;
-        }
-    };
-    if size < need {
-        last_error(24);
+    if size < least {
+        last_error(24); // ERROR_BAD_LENGTH
         return 0;
     }
-    mem::fill(p, need, 0);
-    let t = m.modified().map_or(0, files::filetime);
-    match class {
-        0 => {
-            for o in [0, 8, 16, 24] {
-                put64((mem::ga(p) + o).get(), t);
+    let io_own = mem::Scratch::new(16, true);
+    let io = io_own.get();
+    let st = match q {
+        InfoQuery::File(k) => c.call(crate::export_once!("ntdll", "NtQueryInformationFile"), &[h, io, p, size, k]),
+        InfoQuery::Volume(k) => c.call(crate::export_once!("ntdll", "NtQueryVolumeInformationFile"), &[h, io, p, size, k]),
+        InfoQuery::Dir(k, restart) => {
+            let st = c.call(crate::export_once!("ntdll", "NtQueryDirectoryFile"), &[h, 0, 0, 0, io, p, size, k, 0, 0, u32::from(restart)]);
+            if st == 0x103 {
+                let w = c.call(crate::export_once!("ntdll", "NtWaitForSingleObject"), &[h, 0, 0]);
+                if w & 0x8000_0000 != 0 { w } else { r32(io) }
+            } else {
+                st
             }
-            crate::mem::w32(mem::ga(p) + 32, files::attrs(&m));
         }
-        1 => {
-            put64(p, m.len().next_multiple_of(4096));
-            put64((mem::ga(p) + 8).get(), m.len());
-            crate::mem::w32(mem::ga(p) + 16, 1);
-            mem::write((mem::ga(p) + 21).get(), &[u8::from(m.is_dir())]);
-        }
-        9 => w32(p, files::attrs(&m)),
-        _ => {
-            put64(p, 0x1234);
-            // (a file id from the path: os.path.samefile compares them)
-            let h = kome::golden::Fnv::of(f.path.to_ascii_lowercase().as_bytes());
-            put64((mem::ga(p) + 8).get(), h);
-        }
+    };
+    let info = crate::mem::rp(mem::ga(io) + mem::ps());
+    drop(io_own);
+    let st = if st & 0x8000_0000 == 0 && class == 7 && info == 0 { 0xc000_0011 } else { st };
+    if st & 0x8000_0000 != 0 {
+        last_error(crate::nt::dos_error(st));
+        return 0;
     }
     1
 }
@@ -9393,6 +9428,19 @@ fn startup_info(p: u32, wide: bool) -> u32 {
     mem::fill(p, size, 0);
     w32(p, size);
     crate::mem::wp(mem::ga(p).at(mem::ps(), 2), if wide { dw } else { da });
+    // cbReserved2, lpReserved2: a copy of what the parent gave (one, kept)
+    let r2 = reserved2();
+    if let Ok(n) = u16::try_from(r2.len()) && n != 0 {
+        static COPY: OnceLock<u32> = OnceLock::new();
+        let at = *COPY.get_or_init(|| {
+            let a = mem::heap_alloc(u32::from(n), true);
+            mem::write(a, r2);
+            a
+        });
+        let (cb, lp) = if mem::x64() { (66, 72) } else { (50, 52) };
+        crate::mem::w16(mem::ga(p) + cb, n);
+        crate::mem::wp(mem::ga(p) + lp, at);
+    }
     if STD_GIVEN.load(Ordering::Relaxed) {
         crate::mem::w32(mem::ga(p) + flags, 0x100);
         for i in 0..3 {
@@ -11382,3 +11430,7 @@ mod calendar_tests;
 #[cfg(test)]
 #[path = "k32_search_tests.rs"]
 mod search_tests;
+
+#[cfg(test)]
+#[path = "k32_fileinfo_tests.rs"]
+mod fileinfo_tests;

@@ -1198,6 +1198,7 @@ pub fn main(exe: &str, args: &[String]) -> ! {
         }
         files::set_cwd(&r.cwd);
         k32::set_std_handles(r.std);
+        k32::set_reserved2(r.reserved2.clone());
         process::start_child(&r);
         suspended = r.suspend > 0;
     }

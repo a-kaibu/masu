@@ -230,6 +230,8 @@ pub struct Proc {
     pub service: Option<String>,
     /// its environment (CreateProcess's lpEnvironment, else its parent's), None: sake's own
     pub env: Option<Vec<(String, String)>>,
+    /// STARTUPINFO's cbReserved2 / lpReserved2 bytes (the C runtime's inherited descriptors)
+    pub reserved2: Option<Vec<u8>>,
 }
 
 /// A top-level window of a process, for the others (FindWindow, messages to it)
@@ -470,6 +472,9 @@ impl Kern {
                 Some(r) => r.1 += 1,
                 None => end.refs.push((pid, 1)),
             }
+            // (a change the other processes must see: unmarked, kern::with did not store it,
+            // and the next process's store brought the old count back)
+            self.changed();
         }
     }
 
@@ -482,7 +487,11 @@ impl Kern {
                 end.refs.remove(i);
             }
         }
-        if end.refs.is_empty() {
+        // (stored for the others even when the end stays: msvcrt:file test_pipes never saw EOF,
+        // the parent's close was lost under the child's next store)
+        let gone = end.refs.is_empty();
+        self.changed();
+        if gone {
             self.destroy(e);
         }
     }
@@ -1454,7 +1463,7 @@ impl Enc for (u32, u32, u32) {
 crate::enc_struct!(Msg { data, pos, id });
 crate::enc_struct!(End { server, pipe, state, conn, queue, msg_type, outsize, insize, max, msg_read, nonblock, refs, sent, done });
 crate::enc_struct!(Pipe { max, instances, sharing, msg_type, outsize, insize, timeout, listeners });
-crate::enc_struct!(Proc { parent, image, cmdline, cwd, exit, kill, suspend, inherit, std, service, env });
+crate::enc_struct!(Proc { parent, image, cmdline, cwd, exit, kill, suspend, inherit, std, service, env, reserved2 });
 impl Enc for Sync {
     fn put(&self, w: &mut Vec<u8>) {
         match *self {

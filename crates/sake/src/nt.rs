@@ -207,6 +207,7 @@ pub fn dos_error(st: u32) -> u32 {
         0xc000_007f => 112,  // DISK_FULL
         0xc000_009a => 1450, // INSUFFICIENT_RESOURCES: ERROR_NO_SYSTEM_RESOURCES
         0xc000_00bb => 50,   // NOT_SUPPORTED
+        0xc000_00e9 => 59,   // UNEXPECTED_IO_ERROR: ERROR_UNEXP_NET_ERR
         0xc000_0101 => 145,  // DIRECTORY_NOT_EMPTY: ERROR_DIR_NOT_EMPTY
         0xc000_0103 => 267,  // NOT_A_DIRECTORY: ERROR_DIRECTORY
         0xc000_0135 => 126,  // DLL_NOT_FOUND: ERROR_MOD_NOT_FOUND
@@ -836,11 +837,24 @@ fn nt_query_information_file(c: &mut Ctx) -> u32 {
     if class == 18 {
         return file_all_information(c, h, io, out, len);
     }
+    if class == 22 {
+        return file_stream_information(c, h, io, out, len);
+    }
     let need = match class {
         4 => 40,
         5 => 24,
         14 => 8,
+        // FileAlignmentInformation (byte alignment), FileCaseSensitiveInformation (none)
+        17 | 71 => 4,
+        // FileCompressionInformation: compressed size, format NONE
+        28 => 16,
         34 => 56,
+        // FileAttributeTagInformation: attributes, reparse tag
+        35 => 8,
+        // FileNormalizedNameInformation: as FileNameInformation (sake's names are normal)
+        48 => return file_name_information(h, io, out, len),
+        // FileIdInformation: volume serial (as GetFileInformationByHandle's), 128-bit id
+        59 => 24,
         _ => {
             iosb(io, 0xc000_0003, 0);
             return 0xc000_0003; // STATUS_INVALID_INFO_CLASS
@@ -848,6 +862,11 @@ fn nt_query_information_file(c: &mut Ctx) -> u32 {
     };
     if len < need {
         return 0xc000_0004; // STATUS_INFO_LENGTH_MISMATCH
+    }
+    if matches!(class, 17 | 71) {
+        crate::mem::w32(mem::ga(out), 0);
+        iosb(io, 0, 4);
+        return 0;
     }
     if class == 14 {
         let p_own = mem::Scratch::new(8, true);
@@ -862,6 +881,21 @@ fn nt_query_information_file(c: &mut Ctx) -> u32 {
     let (attrs, size_hi, size_lo) = (r32(i), crate::mem::r32(mem::ga(i) + 32), crate::mem::r32(mem::ga(i) + 36));
     match class {
         4 => basic(out, i.saturating_add(4), attrs),
+        28 => {
+            mem::fill(out, 16, 0);
+            crate::mem::w32(mem::ga(out), size_lo);
+            crate::mem::w32(mem::ga(out) + 4, size_hi);
+        }
+        35 => {
+            crate::mem::w32(mem::ga(out), attrs);
+            crate::mem::w32(mem::ga(out) + 4, 0);
+        }
+        59 => {
+            mem::fill(out, 24, 0);
+            crate::mem::w32(mem::ga(out), crate::mem::r32(mem::ga(i) + 28));
+            crate::mem::w32(mem::ga(out) + 8, crate::mem::r32(mem::ga(i) + 48));
+            crate::mem::w32(mem::ga(out) + 12, crate::mem::r32(mem::ga(i) + 44));
+        }
         5 => {
             for o in [0, 8] {
                 crate::mem::w32(mem::ga(out) + o, size_lo);
@@ -928,6 +962,34 @@ fn file_all_information(c: &mut Ctx, h: u32, io: u32, out: u32, len: u32) -> u32
     mem::write((mem::ga(out) + 96).get(), &w);
     iosb(io, st, n.saturating_add(96));
     st
+}
+/// FileStreamInformation: a file's one unnamed stream "::$DATA" (FILE_STREAM_INFORMATION
+/// { next, name length, size, allocation size, name }); a directory has none (0 bytes)
+fn file_stream_information(c: &mut Ctx, h: u32, io: u32, out: u32, len: u32) -> u32 {
+    const NAME: &str = "::$DATA";
+    let Some(i) = by_handle(c, h) else { return 0xc000_0008 };
+    let (attrs, size_hi, size_lo) = (r32(i), crate::mem::r32(mem::ga(i) + 32), crate::mem::r32(mem::ga(i) + 36));
+    mem::heap_free(i);
+    if attrs & 0x10 != 0 {
+        iosb(io, 0, 0);
+        return 0;
+    }
+    let w: Vec<u16> = NAME.encode_utf16().collect();
+    let need = mem::wbytes(w.len()).saturating_add(24);
+    if len < need {
+        iosb(io, 0x8000_0005, 0);
+        return 0x8000_0005; // STATUS_BUFFER_OVERFLOW
+    }
+    mem::fill(out, need, 0);
+    crate::mem::w32(mem::ga(out) + 4, mem::wbytes(w.len()));
+    let size = u64::from(size_hi) << 32 | u64::from(size_lo);
+    mem::put64((mem::ga(out) + 8).get(), size);
+    mem::put64((mem::ga(out) + 16).get(), size.next_multiple_of(4096));
+    for (k, &u) in w.iter().enumerate() {
+        crate::mem::w16((mem::ga(out) + 24).at(kome::num::u32_of(k), 2), u);
+    }
+    iosb(io, 0, need);
+    0
 }
 /// (status, bytes given, the bytes to write) for a Windows path and a buffer of `len` >= 8
 fn file_name_info(win: &str, len: u32) -> (u32, u32, Vec<u8>) {
@@ -1406,7 +1468,7 @@ fn dir_class(class: u32) -> Option<DirClass> {
     let (fixed, len_at, name_at) = dir_class_layout(class)?;
     Some(DirClass { class, fixed, len_at, name_at })
 }
-fn dir_class_layout(class: u32) -> Option<(u32, u32, u32)> {
+pub(crate) fn dir_class_layout(class: u32) -> Option<(u32, u32, u32)> {
     Some(match class {
         1 => (64, 60, 64),   // FileDirectoryInformation
         2 => (68, 60, 68),   // FileFullDirectoryInformation

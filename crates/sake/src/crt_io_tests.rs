@@ -415,3 +415,30 @@ mod env_copies {
         mem::heap_free(c);
     }
 }
+
+proptest! {
+    /// lpReserved2's descriptors come back as they went, at both widths (count, flag bytes,
+    /// pointer-sized handles; INVALID_HANDLE_VALUE stays none)
+    #[test]
+    fn inherited_descriptors_round_trip(fds in prop::collection::vec((any::<u8>(), prop_oneof![Just(u32::MAX), 0u32..0x10000]), 0..40), x64 in any::<bool>()) {
+        let fds: Vec<Inherited> = fds.into_iter().map(|(flags, handle)| Inherited { flags, handle }).collect();
+        let b = encode_inherited(&fds, x64);
+        prop_assert_eq!(b.len(), 4 + fds.len() * if x64 { 9 } else { 5 });
+        prop_assert_eq!(decode_inherited(&b, x64), fds);
+    }
+
+    /// a short or lying block gives only what it holds (a child reads what a program crafted)
+    #[test]
+    fn a_short_reserved2_gives_what_fits(b in prop::collection::vec(any::<u8>(), 0..64), x64 in any::<bool>()) {
+        let got = decode_inherited(&b, x64);
+        let room = b.len().saturating_sub(4) / if x64 { 9 } else { 5 };
+        prop_assert!(got.len() <= room);
+    }
+}
+
+/// The C runtime's layout, 32-bit: count 2, flags 0x09 0x89, handles 0x10 0x14
+#[test]
+fn reserved2_layout_is_the_crts() {
+    let b = encode_inherited(&[Inherited { flags: 0x09, handle: 0x10 }, Inherited { flags: 0x89, handle: 0x14 }], false);
+    assert_eq!(b, [2, 0, 0, 0, 0x09, 0x89, 0x10, 0, 0, 0, 0x14, 0, 0, 0]);
+}

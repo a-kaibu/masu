@@ -616,7 +616,13 @@ fn release_build_only(tree: &Tree) -> Hits {
 }
 
 /// what must stay in place: (file, text, why)
-pub const REQUIRED: [(&str, &str, &str); 36] = [
+pub const REQUIRED: [(&str, &str, &str); 42] = [
+    ("crates/sake/src/kern.rs", "        let gone = end.refs.is_empty();\n        self.changed();", "a pipe end's reference count change marks the shared kernel changed (unmarked, the next process's store brought the old count back and a reader never saw EOF; msvcrt:file test_pipes, 2026-11-22)"),
+    ("crates/sake/src/iocp.rs", "    let (h, ms, alertable) = if ex { (c.a(0), c.a(3), c.a(4) != 0) } else { (c.a(0) | 1, if c.a(3) != 0 { u32::MAX } else { 0 }, false) };", "GetOverlappedResult is GetOverlappedResultEx(h | 1, ...) as in kernelbase (it looped while the status stayed pending: kernel32:file timed out; 2026-11-22)"),
+    ("crates/sake/src/apc.rs", "    if !handles.iter().all(|&h| obj::is_pseudo(h) || obj::waitable(&[h])) {", "an alertable wait on a handle that is no waitable object fails before APCs run (2026-11-22)"),
+    ("crates/sake/src/k32.rs", "    let Some((q, least)) = info_query(class) else {", "GetFileInformationByHandleEx goes through kernelbase's class table to ntdll (FileNameInfo failed and the test looped over a garbage length; 2026-11-22)"),
+    ("crates/sake/src/crt_io.rs", "    let startup = crate::process::Startup { std: None, reserved2: Some(encode_inherited(&inherited_fds(), mem::x64())) };", "_spawn hands the child its descriptors in STARTUPINFO lpReserved2 (the child had none: msvcrt:file test_pipes hung; 2026-11-22)"),
+    ("crates/sake/src/crt_io.rs", "        Some(Kind::Pipe(p)) => new_stream_of_pipe(p, fd, mode),", "_fdopen of a pipe descriptor makes a stream over the pipe (it failed with EBADF; 2026-11-22)"),
     ("crates/sake/src/imagecert.rs", "    implement(\"imagehlp\", \"ImageAddCertificate\", ImageAddCertificate);", "ImageAddCertificate / ImageRemoveCertificate write the certificate table (they were unimplemented and answered 0; 2026-11-22)"),
     ("crates/sake/src/files.rs", "    let w = admin_share(&w).unwrap_or(w);", "\\\\SAKE\\C$\\x is this machine's C:\\x (GetLongPathName of a UNC path to the guest's own drive found nothing; 2026-11-22)"),
     ("crates/sake/src/files.rs", "    resolve_found(w).or_else(|| crate::sysdll::make(w))", "system32 holds a file for each DLL sake implements, as Windows does (CopyFile and NtOpenFile of kernel32.dll found none; 2026-11-22)"),

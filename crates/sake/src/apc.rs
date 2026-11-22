@@ -76,11 +76,21 @@ fn thread_of(h: u32) -> Option<(u32, bool)> {
 
 /// An alertable WaitForMultipleObjects
 pub fn wait(c: &mut Ctx, handles: &[u32], all: bool, ms: u32) -> u32 {
+    wait_or(c, handles, all, ms, &|| false)
+}
+/// An alertable wait that `extra` also ends (as handles.len(), when no APC ran)
+pub fn wait_or(c: &mut Ctx, handles: &[u32], all: bool, ms: u32, extra: &dyn Fn() -> bool) -> u32 {
+    // (a handle that is no waitable object fails the wait before any APC runs: Wine
+    // kernel32:file test_overlapped's wait_fails with an APC queued)
+    if !handles.iter().all(|&h| obj::is_pseudo(h) || obj::waitable(&[h])) {
+        crate::k32::last_error(6);
+        return obj::WAIT_FAILED;
+    }
     if run(c) {
         return WAIT_IO_COMPLETION;
     }
     let me = crate::cur().tid;
-    let r = obj::wait(handles, all, ms, Some(&|| pending(me)));
+    let r = obj::wait(handles, all, ms, Some(&|| pending(me) || extra()));
     if r == handles.len() as u32 && run(c) { WAIT_IO_COMPLETION } else { r }
 }
 

@@ -2137,6 +2137,9 @@ struct Stream {
     /// the guest FILE
     at: u32,
     f: Option<Arc<File>>,
+    /// a stream over a pipe descriptor (_fdopen): reads and writes go to the pipe, its
+    /// read-ahead is never given back (a pipe does not seek)
+    pipe: Option<crate::pipe::Handle>,
     /// its descriptor (_fileno)
     fd: u32,
     eof: bool,
@@ -2236,10 +2239,13 @@ impl Stream {
     fn new(at: u32, f: Option<Arc<File>>, fd: u32, flag: u32, eof: bool) -> Stream {
         w32(at + flag_off(), flag);
         w32(at + flag_off() + 4, fd);
-        Stream { at, f, fd, eof, unget: None, text: false, chunk: None, rbuf: Vec::new(), rpos: 0, tell_from: None }
+        Stream { at, f, pipe: None, fd, eof, unget: None, text: false, chunk: None, rbuf: Vec::new(), rpos: 0, tell_from: None }
     }
     /// Gives back getc's read-ahead: the file is at the stream's position again
     fn sync(&mut self) {
+        if self.pipe.is_some() {
+            return;
+        }
         let left = self.rbuf.len() - self.rpos;
         if left > 0 && let Some(f) = &self.f {
             f.seek(SeekFrom::Current(-(left as i64)));
@@ -2261,10 +2267,61 @@ impl Stream {
     fn pos(&self, f: &File) -> Option<u64> {
         Some(f.seek(SeekFrom::Current(0))? - (self.rbuf.len() - self.rpos) as u64)
     }
+    /// The next raw byte of a pipe stream: its read-ahead, else what one read of the pipe
+    /// gives (it waits for a writer; None once every writer closed)
+    fn raw_pipe(&mut self, p: crate::pipe::Handle) -> Option<u8> {
+        if self.rpos == self.rbuf.len() {
+            self.rbuf = crate::pipe::crt_read_vec(p, kome::num::u32_of(RBUF)).unwrap_or_default();
+            self.rpos = 0;
+        }
+        let b = *self.rbuf.get(self.rpos)?;
+        self.rpos = self.rpos.saturating_add(1);
+        Some(b)
+    }
+    /// A pipe stream's next character (text mode: CR LF as LF, Ctrl+Z ends it)
+    fn getc_pipe(&mut self, p: crate::pipe::Handle) -> Option<u8> {
+        let b = self.raw_pipe(p)?;
+        if !self.text {
+            return Some(b);
+        }
+        match b {
+            0x1a => {
+                self.rpos = self.rpos.saturating_sub(1);
+                None
+            }
+            b'\r' => match self.raw_pipe(p) {
+                Some(b'\n') => Some(b'\n'),
+                Some(_) => {
+                    self.rpos = self.rpos.saturating_sub(1);
+                    Some(b'\r')
+                }
+                None => Some(b'\r'),
+            },
+            b => Some(b),
+        }
+    }
+    /// fread of a pipe stream: characters until `n` or the pipe's end (as msvcrt's, which reads
+    /// again while a read gives less)
+    fn read_pipe(&mut self, p: crate::pipe::Handle, n: usize) -> Vec<u8> {
+        let mut out = Vec::with_capacity(n.min(RBUF));
+        if let Some(b) = self.unget.take() {
+            out.push(b);
+        }
+        while out.len() < n {
+            match self.getc_pipe(p) {
+                Some(b) => out.push(b),
+                None => break,
+            }
+        }
+        out
+    }
     /// One character: the ungot one, else the file's (text mode translated); None at the end
     fn getc(&mut self) -> Option<u8> {
         if let Some(b) = self.unget.take() {
             return Some(b);
+        }
+        if let Some(p) = self.pipe {
+            return self.getc_pipe(p);
         }
         let f = self.f.clone()?;
         if self.text && self.chunk.is_none() {
@@ -2295,6 +2352,11 @@ impl Stream {
     /// what is asked past the end of the file ("read it all": 0x7fffffff) costs nothing.
     /// None: no file.
     fn read_guest(&mut self, buf: u32, n: u32) -> Option<u32> {
+        if let Some(p) = self.pipe {
+            let v = self.read_pipe(p, kome::num::us(n));
+            mem::write(buf, &v);
+            return Some(kome::num::u32_of(v.len()));
+        }
         self.sync();
         let f = self.f.clone()?;
         let mut got = 0;
@@ -2311,6 +2373,9 @@ impl Stream {
     }
     /// Up to `n` characters (fread): chunks of the file, translated in text mode
     fn read(&mut self, n: usize) -> Vec<u8> {
+        if let Some(p) = self.pipe {
+            return self.read_pipe(p, n);
+        }
         self.sync();
         let mut out = Vec::with_capacity(n.min(1 << 20));
         if let Some(b) = self.unget.take() {
@@ -2368,6 +2433,14 @@ impl Stream {
     fn write(&mut self, b: &[u8]) -> bool {
         self.sync();
         self.tell_from = None;
+        if let Some(p) = self.pipe {
+            let v: Vec<u8> = if self.text { b.iter().flat_map(|&x| if x == b'\n' { vec![b'\r', x] } else { vec![x] }).collect() } else { b.to_vec() };
+            let own = mem::Scratch::new(kome::num::u32_of(v.len()).max(1), true);
+            mem::write(own.get(), &v);
+            let r = crate::pipe::crt_write(p, own.get(), kome::num::u32_of(v.len()));
+            drop(own);
+            return r.is_ok_and(|n| kome::num::us(n) == v.len());
+        }
         let Some(f) = &self.f else {
             crate::k32::console_write(&a2s(b));
             return true;
@@ -2453,6 +2526,15 @@ fn text_mode(mode: &[u8]) -> bool {
     mode.contains(&b't') || !mode.contains(&b'b') && data("_fmode").map_or(0, r32) & 0x8000 == 0
 }
 /// A stream over descriptor `fd`'s file (fclose closes the descriptor too).
+/// _fdopen of a pipe descriptor: a stream that reads and writes the pipe
+fn new_stream_of_pipe(p: crate::pipe::Handle, fd: u32, mode: &[u8]) -> u32 {
+    let fp = mem::heap_alloc(file_size(), true);
+    let mut st = Stream::new(fp, None, fd, mode_flag(mode), false);
+    st.pipe = Some(p);
+    st.text = text_mode(mode);
+    FILES.locked().get_or_insert_with(HashMap::default).insert(fp, Arc::new(Mutex::new(st)));
+    fp
+}
 fn new_stream_of(f: Arc<File>, fd: u32, mode: &[u8]) -> u32 {
     let fp = mem::heap_alloc(file_size(), true);
     let mut st = Stream::new(fp, Some(f), fd, mode_flag(mode), false);
@@ -2763,7 +2845,7 @@ fn getc_of(fp: u32) -> u32 {
 }
 /// fgetc on a stream whose lock is held: the character, or u32::MAX (EOF) setting feof
 fn getc_in(s: &mut Stream) -> u32 {
-    if s.f.is_none() && s.unget.is_none() {
+    if s.f.is_none() && s.pipe.is_none() && s.unget.is_none() {
         return u32::MAX;
     }
     match s.getc() {

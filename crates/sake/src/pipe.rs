@@ -116,15 +116,17 @@ pub fn crt_dup(p: Handle) -> u32 {
 /// A synchronous read of up to `n` bytes into `buf` for the C runtime's _read: waits for data,
 /// Ok(bytes), or the NT status (PIPE_BROKEN: every writer closed and nothing left).
 pub fn crt_read(p: Handle, buf: u32, n: u32) -> Result<u32, u32> {
+    let d = crt_read_vec(p, n)?;
+    mem::write(buf, &d);
+    Ok(kome::num::u32_of(d.len()))
+}
+/// crt_read's bytes (a stream over a pipe descriptor reads them into its buffer)
+pub fn crt_read_vec(p: Handle, n: u32) -> Result<Vec<u8>, u32> {
     if !p.read {
         return Err(kern::ACCESS_DENIED);
     }
     let e = p.end;
-    let r = kern::block(None, &|| false, move |k: &mut Kern| {
-        let (d, _) = k.read(e, n)?;
-        mem::write(buf, &d);
-        Ok(d.len() as u32)
-    });
+    let r = kern::block(None, &|| false, move |k: &mut Kern| Ok(k.read(e, n)?.0));
     pump();
     r
 }
@@ -668,43 +670,6 @@ fn CallNamedPipeW(c: &mut Ctx) -> u32 {
     call_named(c, true)
 }
 
-/// GetOverlappedResult(h, ov, &n, wait)
-fn GetOverlappedResult(c: &mut Ctx) -> u32 {
-    overlapped_result(c.a(1), c.a(2), if c.a(3) != 0 { 0xffff_ffff } else { 0 })
-}
-/// GetOverlappedResultEx(h, ov, &n, ms, alertable)
-fn GetOverlappedResultEx(c: &mut Ctx) -> u32 {
-    overlapped_result(c.a(1), c.a(2), c.a(3))
-}
-fn overlapped_result(ov: u32, pn: u32, ms: u32) -> u32 {
-    let until = (ms != 0xffff_ffff).then(|| Instant::now() + Duration::from_millis(ms as u64));
-    while mem::rp(ov) == PENDING {
-        if ms == 0 {
-            last_error(996); // ERROR_IO_INCOMPLETE
-            return 0;
-        }
-        if until.is_some_and(|t| Instant::now() >= t) {
-            last_error(258); // WAIT_TIMEOUT
-            return 0;
-        }
-        match ov_event(ov) {
-            0 => std::thread::sleep(Duration::from_millis(1)),
-            ev => {
-                obj::wait(&[ev], false, 20, None);
-            }
-        }
-    }
-    let s = mem::rp(ov);
-    put32(pn, mem::rp(ov + mem::ps()));
-    if s == SUCCESS {
-        // (Windows clears the last error then: tests/winref/golden/pipes-32)
-        last_error(0);
-        1
-    } else {
-        fail(s)
-    }
-}
-
 /// Cancels the pending I/O of handle `h` that `pick` picks; whether there was any.
 fn cancel(h: u32, pick: impl Fn(&Pending) -> bool) -> bool {
     let mut any = false;
@@ -763,8 +728,6 @@ pub fn register() {
         GetNamedPipeInfo,
         CallNamedPipeA,
         CallNamedPipeW,
-        GetOverlappedResult,
-        GetOverlappedResultEx,
         CancelIo,
         CancelIoEx,
         GetNamedPipeClientProcessId,
