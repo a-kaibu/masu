@@ -209,9 +209,12 @@ pub fn file_index(host: &str, m: &kura::fs::Metadata) -> u64 {
     kome::golden::Fnv::of(host.to_lowercase().as_bytes())
 }
 
+#[derive(Default)]
 pub struct Find {
     pub entries: Vec<(String, kura::fs::Metadata)>,
     pub at: usize,
+    /// the entries' 8.3 short names (shortname.rs), by long name
+    pub shorts: std::collections::HashMap<String, String>,
 }
 
 static CWD: Mutex<String> = Mutex::new(String::new());
@@ -404,7 +407,8 @@ pub fn resolve(w: &str) -> Option<String> {
             at = cand;
             continue;
         }
-        let found = kura::fs::name_nocase(&at, comp)?;
+        // (a short name, PROGRA~1: the entry that has it)
+        let found = kura::fs::name_nocase(&at, comp).or_else(|| crate::shortname::long_of(&at, comp))?;
         at = if at == "/" { format!("/{found}") } else { format!("{at}/{found}") };
     }
     Some(at)
@@ -746,7 +750,8 @@ pub fn find(w: &str) -> Option<Find> {
         let h = resolve(&full)?;
         let m = kura::fs::metadata(&h).ok()?;
         let name = h.rsplit('/').next().unwrap_or("").to_string();
-        return Some(Find { entries: vec![(name, m)], at: 0 });
+        let shorts = h.rsplit_once('/').and_then(|(d, _)| crate::shortname::short_of(if d.is_empty() { "/" } else { d }, &name)).map(|s| (name.clone(), s)).into_iter().collect();
+        return Some(Find { entries: vec![(name, m)], at: 0, shorts });
     }
     if let Ok(m) = kura::fs::metadata(&hd) {
         // ("." and ".." as listed entries: only where the pattern takes them, as "*", not "*.ttf")
@@ -758,16 +763,21 @@ pub fn find(w: &str) -> Option<Find> {
             }
         }
     }
+    let mut all = Vec::new();
     for e in kura::fs::read_dir(&hd).ok()?.flatten() {
         let name = e.file_name().to_string_lossy().into_owned();
-        if wild(pat, &name) && let Ok(m) = e.metadata() {
+        let m = e.metadata().ok();
+        all.push((name.encode_utf16().collect::<Vec<u16>>(), m.as_ref().map_or(0, kura::fs::Metadata::ino)));
+        if wild(pat, &name) && let Some(m) = m {
             entries.push((name, m));
         }
     }
     if entries.is_empty() {
         return None;
     }
-    Some(Find { entries, at: 0 })
+    // (the short names come from every entry of the directory, matched or not)
+    let shorts = all.iter().zip(crate::shortname::assign(&all)).filter_map(|((n, _), s)| Some((String::from_utf16_lossy(n), String::from_utf16_lossy(&s?)))).collect();
+    Some(Find { entries, at: 0, shorts })
 }
 
 #[cfg(test)]

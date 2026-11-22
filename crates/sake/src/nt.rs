@@ -1496,7 +1496,7 @@ fn nt_query_directory_file(c: &mut Ctx) -> u32 {
         // NTFS's order: "." and "..", then the names compared in upper case
         entries.sort_by_cached_key(|(n, _)| (n != ".", n != "..", upcase(n)));
         let none = entries.is_empty();
-        *scan = Some((mask, crate::files::Find { entries, at: 0 }));
+        *scan = Some((mask, crate::files::Find { entries, ..Default::default() }));
         if none {
             // (nothing at all on a handle's first call; a restart that finds nothing has
             // reached the end)
