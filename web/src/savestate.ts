@@ -15,6 +15,18 @@ import type { Reply, Request } from "./snapz-worker";
 import { memGate } from "./memgate";
 import { sakeBase, type SakeBuild } from "./runtime";
 import { bgraToRgba } from "./screen-stats";
+import {
+  cache,
+  encodeIndex,
+  localIndex,
+  localName,
+  merge,
+  parseIndex,
+  publish,
+  readLocal,
+} from "./snapshot-store";
+
+export { merge };
 
 type SakeName = SakeBuild["name"];
 
@@ -498,48 +510,10 @@ const serverUrl = (name: string) => new URL(`saves/${encodeURIComponent(name)}`,
 const oldFileName = (game: string, slot: number) => `state.${game}.${slot}`;
 const fileName = (game: string, hash: string) => `state.${game}.${hash}`;
 const indexName = (game: string) => `state.${game}.index`;
-const localName = (info: Pick<StateInfo, "slot" | "hash">) =>
-  info.hash ? `${info.hash}.snap` : `${info.slot}.snap`;
-
 /** A state file's name by its content (hex, 128 bits of SHA-256). */
 export async function stateHash(file: Uint8Array<ArrayBuffer>): Promise<string> {
   const d = new Uint8Array(await crypto.subtle.digest("SHA-256", file));
   return Array.from(d.subarray(0, 16), (b) => b.toString(16).padStart(2, "0")).join("");
-}
-
-async function dir(game: string, create: boolean): Promise<FileSystemDirectoryHandle | null> {
-  try {
-    const root = await navigator.storage.getDirectory();
-    const states = await root.getDirectoryHandle("states", { create });
-    return await states.getDirectoryHandle(game, { create });
-  } catch {
-    return null;
-  }
-}
-async function readLocal(game: string, name: string): Promise<Uint8Array<ArrayBuffer> | null> {
-  try {
-    const f = await (await dir(game, false))?.getFileHandle(name);
-    return f ? new Uint8Array(await (await f.getFile()).arrayBuffer()) : null;
-  } catch {
-    return null;
-  }
-}
-async function writeLocal(game: string, name: string, data: Uint8Array<ArrayBuffer>): Promise<void> {
-  const d = await dir(game, true);
-  if (!d) throw new Error("この端末に保存できません");
-  const w = await (await d.getFileHandle(name, { create: true })).createWritable();
-  await w.write(data);
-  await w.close();
-}
-/** Removes this browser's state files no entry of `index` names. */
-async function pruneLocal(game: string, index: StateInfo[]): Promise<void> {
-  const d = await dir(game, false);
-  if (!d) return;
-  const keep = new Set(index.map(localName));
-  const gone: string[] = [];
-  for await (const name of (d as unknown as { keys(): AsyncIterable<string> }).keys())
-    if (name.endsWith(".snap") && !keep.has(name)) gone.push(name);
-  for (const name of gone) await d.removeEntry(name).catch(() => {});
 }
 
 /** A request's time limit: STATE_WAIT_MS, and a second per SLOW_LINK bytes of an upload (a
@@ -569,24 +543,9 @@ async function serverPut(name: string, data: Uint8Array<ArrayBuffer>, revision: 
   return true;
 }
 
-const parseIndex = (b: Uint8Array | null): StateInfo[] => {
-  try {
-    return b ? (JSON.parse(new TextDecoder().decode(b)) as { states: StateInfo[] }).states : [];
-  } catch {
-    return [];
-  }
-};
-const encodeIndex = (v: StateInfo[]) => new TextEncoder().encode(JSON.stringify({ states: v }));
-/** The newer of each slot's two entries. */
-export function merge(a: StateInfo[], b: StateInfo[]): StateInfo[] {
-  const m = new Map<number, StateInfo>();
-  for (const s of [...a, ...b]) if (!m.has(s.slot) || m.get(s.slot)!.created < s.created) m.set(s.slot, s);
-  return [...m.values()].sort((x, y) => x.slot - y.slot);
-}
-
 /** `game`'s states (this browser's and the server's, the newer of each slot). */
 export async function listStates(game: string): Promise<StateInfo[]> {
-  const local = parseIndex(await readLocal(game, "index.json"));
+  const local = await localIndex(game);
   const remote = await serverGet(indexName(game)).then(
     (r) => parseIndex(r.data),
     () => [],
@@ -614,13 +573,7 @@ export async function putState(
 ): Promise<{ uploaded: Promise<void>; hash: string }> {
   info = { ...info, hash: await stateHash(file) };
   const hash = info.hash!;
-  await writeLocal(game, localName(info), file);
-  const local = merge(
-    parseIndex(await readLocal(game, "index.json")).filter((s) => s.slot !== info.slot),
-    [info],
-  );
-  await writeLocal(game, "index.json", encodeIndex(local));
-  await pruneLocal(game, local).catch(() => {});
+  await publish(game, info, file);
   if (!upload) return { uploaded: Promise.resolve(), hash };
   const uploaded = (async () => {
     // (the file once: already there is the same bytes)
@@ -642,7 +595,7 @@ export async function getState(game: string, info: StateInfo): Promise<Uint8Arra
   if (info.hash) {
     if (local && (await stateHash(local)) === info.hash) return local;
   } else {
-    const localInfo = parseIndex(await readLocal(game, "index.json")).find((s) => s.slot === info.slot);
+    const localInfo = (await localIndex(game)).find((s) => s.slot === info.slot);
     if (local && localInfo?.created === info.created) return local;
   }
   const remote = (await serverGet(info.hash ? fileName(game, info.hash) : oldFileName(game, info.slot))).data;
@@ -652,13 +605,7 @@ export async function getState(game: string, info: StateInfo): Promise<Uint8Arra
   }
   if (info.hash && (await stateHash(remote)) !== info.hash)
     throw new Error("サーバーのステートが壊れています");
-  // (kept here too, for the next time)
-  await writeLocal(game, localName(info), remote).catch(() => {});
-  const idx = merge(
-    parseIndex(await readLocal(game, "index.json")).filter((s) => s.slot !== info.slot),
-    [info],
-  );
-  await writeLocal(game, "index.json", encodeIndex(idx)).catch(() => {});
-  await pruneLocal(game, idx).catch(() => {});
+  // (kept here too, for the next time; a slot saved here meanwhile stays as it is)
+  await cache(game, info, remote).catch(() => {});
   return remote;
 }
