@@ -1121,6 +1121,11 @@ test("simulation: an acknowledgement while a start's GET is out keeps the newer 
     expect((await starting).data).toEqual(blob(2));
     expect(device.current()).toEqual(blob(2));
     expect(server.data).toEqual(blob(2));
+    // (and A's next save goes over the revision of what it started from, not its older GET's:
+    // no other write came, so no SaveConflict; review 22bb061 §3)
+    expect(await a.storeSaves("game", blob(3))).toMatchObject({ kind: "sent" });
+    expect(server.data).toEqual(blob(3));
+    expect(device.current()).toEqual(blob(3));
   });
 });
 

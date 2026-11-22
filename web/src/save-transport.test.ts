@@ -12,7 +12,7 @@ test("a lost acknowledgement can be recovered only for identical saved bytes", a
       ? new Response(new Uint8Array([7]), { headers: { etag: '"1"' } })
       : new Response(null, { status: 404 });
   });
-  await transport.load("/save", null);
+  transport.adopt("/save", await transport.load("/save", null));
   await transport.store("/save", new Uint8Array([7]), null);
   await expect(transport.store("/save", new Uint8Array([8]), null)).rejects.toThrow("別の端末");
 });
@@ -30,7 +30,7 @@ test("writes await the previous acknowledgement and carry its revision", async (
     return new Response(null, { status: 204, headers: { etag: `"${revisions.length}"` } });
   };
   const transport = new SaveTransport(request);
-  await transport.load("/save", null);
+  transport.adopt("/save", await transport.load("/save", null));
   const a = transport.store("/save", new Uint8Array([1]), null);
   const b = transport.store("/save", new Uint8Array([2]), null);
   await new Promise((r) => setTimeout(r, 0));
@@ -47,7 +47,7 @@ test("failed writes do not advance the revision", async () => {
     revisions.push(new Headers(init.headers).get("if-match")!);
     return new Response(null, { status: revisions.length === 1 ? 503 : 204, headers: { etag: '"1"' } });
   });
-  await transport.load("/save", null);
+  transport.adopt("/save", await transport.load("/save", null));
   await expect(transport.store("/save", new Uint8Array([1]), null)).rejects.toThrow();
   await transport.store("/save", new Uint8Array([2]), null);
   expect(revisions).toEqual(['"0"', '"0"']);
@@ -99,7 +99,7 @@ test("a request that never answers fails after its time limit, and the next save
   const t0 = Date.now();
   await expect(transport.load("/save", null)).rejects.toThrow();
   up = true;
-  await transport.load("/save", null);
+  transport.adopt("/save", await transport.load("/save", null));
   up = false;
   await expect(transport.store("/save", new Uint8Array([1]), null)).rejects.toThrow();
   expect(Date.now() - t0).toBeLessThan(5000);
@@ -118,7 +118,7 @@ test("an upload's time limit grows with its size", async () => {
     limits.push(init.signal?.aborted ? Date.now() - t0 : -1);
     return new Response(null, { status: 204, headers: { etag: '"1"' } });
   }, 50);
-  await transport.load("/save", null);
+  transport.adopt("/save", await transport.load("/save", null));
   // (100 KiB at SLOW_LINK: 50 ms + about 1.6 s, not aborted at 150 ms)
   await transport.store("/save", new Uint8Array(100 * 1024), null);
   expect(limits).toEqual([-1]);

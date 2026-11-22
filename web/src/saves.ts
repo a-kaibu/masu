@@ -1,4 +1,4 @@
-import { SaveConflict, SaveTransport } from "./save-transport";
+import { SaveConflict, SaveTransport, type ServerCopy } from "./save-transport";
 import { withRetries } from "./net";
 import { snapping } from "./savestate";
 import { portablePath, same } from "./file-records";
@@ -305,14 +305,13 @@ export async function loadSaves(name: string, notice?: (message: string) => void
   const before = await localLock(name, () => readCurrent(name));
   const holds = (generation: string | null | undefined, local: Uint8Array | null): LoadOutcome["local"] =>
     local && generation ? { kind: "holds", generation } : { kind: "behind", generation: generation ?? null };
-  let remote: Uint8Array<ArrayBuffer> | null;
-  let covered: boolean;
+  let copy: ServerCopy;
   try {
     // (offline: no tries at all; started from the app kept on the device, sw.ts)
     if (!navigator.onLine) throw new Error("offline");
     // (an unsent copy here: the server says whether an upload of this browser superseded it)
     const asked = before?.dirty ? before.generation : null;
-    ({ data: remote, covered } = await withRetries(() => transport.load(url, asked), 3));
+    copy = await withRetries(() => transport.load(url, asked), 3);
   } catch (e) {
     console.warn(`saves: server out of reach, starting from this browser's copy: ${String(e)}`);
     return localLock(name, async (): Promise<LoadOutcome> => {
@@ -327,7 +326,7 @@ export async function loadSaves(name: string, notice?: (message: string) => void
       return { data: local, local: holds(sync?.generation, local), server };
     });
   }
-  const revision = transport.revision(url) ?? '"0"';
+  const { data: remote, covered, revision } = copy;
   type Decided =
     | { readonly kind: "changed" | "decided"; readonly outcome: LoadOutcome }
     | {
@@ -342,6 +341,9 @@ export async function loadSaves(name: string, notice?: (message: string) => void
     // (any change of the record while the GET was out, an acknowledgement's too: its answer
     // may be older than what this browser now has, and is not taken)
     if (before?.rev !== sync?.rev || before?.generation !== sync?.generation) {
+      // (and not its revision either: the next store goes over the one this copy is of, as
+      // after a start out of reach; review 22bb061 §3)
+      transport.startedOffline(url, local, sync?.adopted ? null : sync?.base);
       const server: LoadOutcome["server"] =
         local && sync && !sync.dirty && sync.base
           ? { kind: "holds", revision: sync.base }
@@ -350,6 +352,9 @@ export async function loadSaves(name: string, notice?: (message: string) => void
     }
     // (unsent here and not superseded: this browser's copy is the newest)
     const unsent = local && sync?.dirty && !covered ? { local, sync } : null;
+    // (the server's copy is what the next store goes over: the game starts from it, or this
+    // browser's copy is sent over it now)
+    transport.adopt(url, copy);
     if (remote && !unsent) {
       if (local && sync?.adopted && !same(local, remote)) await stash(name, "local", local);
       // (this browser's copy not written: the record it would have replaced is behind)

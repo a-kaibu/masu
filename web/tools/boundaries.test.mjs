@@ -135,3 +135,25 @@ test("the runtime's files are named in runtime.ts alone", () => {
     "/src/savestate.ts:1: jit-version.txt is named by runtime.ts only (its manifest)",
   ]);
 });
+
+test("SaveTransport.load does not keep a revision", () => {
+  const files = {
+    "/src/save-transport.ts": `
+      export class SaveTransport {
+        private revisions = new Map<string, string>();
+        async load(url: string) { const r = "x"; this.revisions.set(url, r); return r; }
+        adopt(url: string, r: string) { this.revisions.set(url, r); }
+      }
+    `,
+  };
+  const options = { noLib: true, module: ts.ModuleKind.ESNext };
+  const host = ts.createCompilerHost(options);
+  host.fileExists = (f) => f in files;
+  host.directoryExists = (dir) => dir === "/src";
+  host.getSourceFile = (f) =>
+    files[f] === undefined ? undefined : ts.createSourceFile(f, files[f], ts.ScriptTarget.Latest, true);
+  const findings = check(ts.createProgram(Object.keys(files), options, host)).filter((f) =>
+    f.includes("must not"),
+  );
+  expect(findings).toEqual(["/src/save-transport.ts:4: load must not touch this.revisions"]);
+});
