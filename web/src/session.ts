@@ -111,3 +111,23 @@ export function inputTarget(target: EventTarget | null): InputTarget {
   const el = target as { closest?: (s: string) => unknown } | null;
   return el && typeof el.closest === "function" && el.closest(HOST_UI) ? "overlay" : "game";
 }
+
+/** Whether a game was started in this page (play.ts start). Leaving a game reloads the page
+ * (play.ts leave, backToList), so nothing else reloads it under a game: a job that would (the
+ * server's update, review 22bb061 §6) leaves that reload to the player's leaving. */
+export class PageGame {
+  #started = false;
+  get started(): boolean {
+    return this.#started;
+  }
+  begin(): void {
+    this.#started = true;
+  }
+  /** Reloads unless a game started: true when it did. */
+  reload(reload: () => void = () => location.reload()): boolean {
+    if (this.#started) return false;
+    reload();
+    return true;
+  }
+}
+export const pageGame = new PageGame();

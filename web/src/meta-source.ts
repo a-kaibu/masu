@@ -103,11 +103,12 @@ export interface Candidate {
   best: boolean;
 }
 
-/** The ErogameScape games most like `game`'s names, or `q`. */
-export async function candidates(game: string, q = ""): Promise<Candidate[]> {
+/** The ErogameScape games most like `game`'s names, or `q`. `signal`: the ask (latest.ts), so a
+ * search the user replaced is cancelled and its answer not taken. */
+export async function candidates(game: string, q: string, signal: AbortSignal): Promise<Candidate[]> {
   const url = new URL(`api/library/${encodeURIComponent(game)}/candidates`, location.href);
   if (q.trim()) url.searchParams.set("q", q.trim());
-  const r = await fetch(url);
+  const r = await fetch(url, { signal });
   if (!r.ok) throw await failure(r);
   return (await r.json()) as Candidate[];
 }

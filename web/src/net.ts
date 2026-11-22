@@ -35,6 +35,8 @@ async function sleep(ms: number, signal?: AbortSignal): Promise<void> {
         signal?.removeEventListener("abort", done);
         resolve();
       };
+      // (already aborted: no wait, as its listener would never run)
+      if (signal?.aborted) return resolve();
       const timer = setTimeout(done, t);
       signal?.addEventListener("abort", done);
     });
@@ -65,6 +67,8 @@ async function once(
     Math.min(1000, stallMs / 4),
   );
   try {
+    // (an "abort" listener on a signal already aborted never runs: the request would go)
+    outer?.throwIfAborted();
     const response = await request(url, { ...init, signal: abort.signal });
     last = Date.now();
     if (!response.ok) {
@@ -145,6 +149,9 @@ export async function fetchRetry(
       let error: unknown;
       let after = 0;
       try {
+        // (an ask cancelled before this try, or while it waited for the budget, sends nothing
+        // and takes no token: review 22bb061 §6)
+        opt.signal?.throwIfAborted();
         if (opt.budget !== undefined) await gate(opt.budget, opt.signal);
         const { response, data } = await once(String(url), { ...init, signal: opt.signal }, stallMs, request);
         if (data) return data;
@@ -155,7 +162,9 @@ export async function fetchRetry(
         after = Math.min((Number(response.headers.get("retry-after")) || 0) * 1000, 30000);
         if (response.status === 429 && opt.budget !== undefined) drain(after || 5000);
       } catch (e) {
-        if (e instanceof HttpError || opt.signal?.aborted) throw e;
+        if (e instanceof HttpError) throw e;
+        // (cancelled: the caller's reason, not what the cut try failed with)
+        if (opt.signal?.aborted) throw opt.signal.reason;
         error = e;
       }
       if (Date.now() - start > giveUpMs) throw error;

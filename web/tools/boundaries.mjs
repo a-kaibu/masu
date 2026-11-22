@@ -64,6 +64,130 @@ const untouched = [
 /** @type {[string, string][]} */
 const folders = [["states", "snapshot-store.ts"]];
 
+/** Files that may reload the page themselves: the run's owner (leaving a game reloads), and
+ * PageGame, which reloads only with no game. Anywhere else a reload is the player's click (an
+ * `on…` handler of the JSX) or PageGame.reload (review 22bb061 §6: the server's update reloaded
+ * under a game started meanwhile). */
+const reloaders = ["play.ts", "session.ts"];
+
+function reloads(source, errors) {
+  if (reloaders.some((f) => source.fileName.endsWith("/src/" + f))) return;
+  const clicked = (n) => {
+    for (let p = n.parent; p; p = p.parent)
+      if (ts.isJsxAttribute(p) && /^on[A-Z]/.test(p.name.getText(source))) return true;
+    return false;
+  };
+  const look = (n) => {
+    if (
+      ts.isPropertyAccessExpression(n) &&
+      n.name.text === "reload" &&
+      /(^|\.)location$/.test(n.expression.getText(source)) &&
+      !clicked(n)
+    ) {
+      const line = source.getLineAndCharacterOfPosition(n.getStart()).line + 1;
+      errors.push(
+        `${source.fileName}:${line}: the page reloads by the player's click or pageGame.reload only`,
+      );
+    }
+    ts.forEachChild(n, look);
+  };
+  look(source);
+}
+
+/** The view picks the status line's look from its phase, never from its words (review 22bb061
+ * §6: a spinner guessed by /^エラー|ません/): a regex run over a status in src/ui is an error. */
+function statusGuess(source, errors) {
+  if (!source.fileName.includes("/src/ui/")) return;
+  const look = (n) => {
+    if (
+      ts.isCallExpression(n) &&
+      ts.isPropertyAccessExpression(n.expression) &&
+      ["test", "exec", "match", "search"].includes(n.expression.name.text)
+    ) {
+      const regex = ts.isRegularExpressionLiteral(n.expression.expression);
+      const subject = regex ? n.arguments[0] : n.expression.expression;
+      const pattern = regex || (n.arguments[0] && ts.isRegularExpressionLiteral(n.arguments[0]));
+      if (pattern && subject && /status/i.test(subject.getText(source))) {
+        const line = source.getLineAndCharacterOfPosition(n.getStart()).line + 1;
+        errors.push(
+          `${source.fileName}:${line}: a status is told apart by its phase, not by a regex over its words`,
+        );
+      }
+    }
+    ts.forEachChild(n, look);
+  };
+  look(source);
+}
+
+/** Runners side by side are jobs.ts's workers/pool: `Promise.all(Array.from(...))` of them says
+ * the job's end at the first failure while the others still run (review 22bb061 §6). */
+function runnerPools(source, errors) {
+  if (source.fileName.endsWith("/src/jobs.ts")) return;
+  const look = (n) => {
+    if (
+      ts.isCallExpression(n) &&
+      ts.isPropertyAccessExpression(n.expression) &&
+      n.expression.expression.getText(source) === "Promise" &&
+      ["all", "race", "any"].includes(n.expression.name.text) &&
+      n.arguments[0] &&
+      ts.isCallExpression(n.arguments[0]) &&
+      n.arguments[0].expression.getText(source) === "Array.from" &&
+      n.arguments[0].arguments.length === 2
+    ) {
+      const line = source.getLineAndCharacterOfPosition(n.getStart()).line + 1;
+      errors.push(
+        `${source.fileName}:${line}: runners side by side are jobs.ts workers (all stopped before the end)`,
+      );
+    }
+    ts.forEachChild(n, look);
+  };
+  look(source);
+}
+
+/** A signal's "abort" listener never runs when it was aborted before: a function that listens
+ * must also look at `.aborted` (or throwIfAborted) of the same signal (review 22bb061 §6, a
+ * fetch sent for an ask already cancelled). */
+function abortListeners(source, errors) {
+  const text = (e) => e.getText(source).replace(/\?$/, "");
+  const look = (node) => {
+    if (ts.isFunctionLike(node)) {
+      const listens = [];
+      const checks = new Set();
+      const walk = (n) => {
+        if (n !== node && ts.isFunctionLike(n)) return look(n);
+        if (
+          ts.isCallExpression(n) &&
+          ts.isPropertyAccessExpression(n.expression) &&
+          n.expression.name.text === "addEventListener" &&
+          n.arguments[0] &&
+          ts.isStringLiteralLike(n.arguments[0]) &&
+          n.arguments[0].text === "abort"
+        )
+          listens.push(n);
+        if (
+          ts.isPropertyAccessExpression(n) &&
+          (n.name.text === "aborted" || n.name.text === "throwIfAborted")
+        )
+          checks.add(text(n.expression));
+        ts.forEachChild(n, walk);
+      };
+      ts.forEachChild(node, walk);
+      for (const n of listens) {
+        const signal = text(n.expression.expression);
+        if (!checks.has(signal)) {
+          const line = source.getLineAndCharacterOfPosition(n.getStart()).line + 1;
+          errors.push(
+            `${source.fileName}:${line}: an "abort" listener on ${signal} without a look at ${signal}.aborted first`,
+          );
+        }
+      }
+      return;
+    }
+    ts.forEachChild(node, look);
+  };
+  look(source);
+}
+
 export function check(program) {
   const checker = program.getTypeChecker();
   const allowed = new Map();
@@ -196,6 +320,10 @@ export function check(program) {
       ts.forEachChild(node, (child) => visit(child, owner, method));
     }
     visit(source);
+    abortListeners(source, errors);
+    reloads(source, errors);
+    statusGuess(source, errors);
+    runnerPools(source, errors);
   }
   return errors;
 }

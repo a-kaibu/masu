@@ -126,6 +126,8 @@ export function reclaim(dead: number, now = Date.now(), buf = netBudget()): bool
 /** Waits until a request of class `cls` may go (or `signal` aborts): a timer for when it may,
  * not a look every 50 ms per waiter (many waiters during a 429's pause each kept a timer). */
 export async function gate(cls: number, signal?: AbortSignal): Promise<void> {
+  // (a cancelled ask takes no token: one taken for it is a request another class waits for)
+  signal?.throwIfAborted();
   while (!take(cls)) {
     signal?.throwIfAborted();
     // (others take tokens too: a look again by then, at most a second away)
