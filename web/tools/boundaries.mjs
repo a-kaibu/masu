@@ -36,6 +36,22 @@ const names = [
   ["snapz.mjs", "runtime.ts"],
 ];
 
+/** Declarations whose code must call a function: [file, declaration, callee]. */
+/** @type {[string, string, string][]} */
+const mustCall = [
+  // (the keys the page gives the game: never one typed in its own UI; review 22bb061 §5)
+  ["play.ts", "key", "inputTarget"],
+];
+
+/** Fields a module's classes may not declare: [file, field, why]. */
+/** @type {[string, string, string][]} */
+const noFields = [
+  // (a decoder's process ended: a Lifetime (session.ts), checked after each await; review 22bb061 §5)
+  ["video.ts", "stopped", "a Lifetime"],
+  ["idec.ts", "stopped", "a Lifetime"],
+  ["adec.ts", "stopped", "a Lifetime"],
+];
+
 /** Methods that must not touch a field of their class: [file, method, field]. */
 /** @type {[string, string, string][]} */
 const untouched = [
@@ -63,6 +79,29 @@ export function check(program) {
     }
     allowed.set(checker.getSymbolAtLocation(declaration.name), { source, name, callers, declaration });
   }
+  for (const [file, name, callee] of mustCall) {
+    const source = program.getSourceFiles().find((f) => f.fileName.endsWith("/src/" + file));
+    if (!source) continue;
+    let found = false;
+    let calls = false;
+    const look = (node, inside) => {
+      if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.name.text === name) {
+        found = true;
+        inside = true;
+      }
+      if (
+        inside &&
+        ts.isCallExpression(node) &&
+        ts.isIdentifier(node.expression) &&
+        node.expression.text === callee
+      )
+        calls = true;
+      ts.forEachChild(node, (c) => look(c, inside));
+    };
+    look(source, false);
+    if (!found) errors.push(`${file}: missing declaration ${name}`);
+    else if (!calls) errors.push(`${source.fileName}: ${name} must call ${callee}`);
+  }
   for (const source of program.getSourceFiles()) {
     if (
       source.isDeclarationFile ||
@@ -73,6 +112,12 @@ export function check(program) {
     function visit(node, owner, method) {
       if (ts.isFunctionDeclaration(node)) owner = node;
       if (ts.isMethodDeclaration(node) && ts.isIdentifier(node.name)) method = node.name.text;
+      if (ts.isPropertyDeclaration(node) && ts.isIdentifier(node.name))
+        for (const [file, field, why] of noFields)
+          if (source.fileName.endsWith("/src/" + file) && node.name.text === field) {
+            const line = source.getLineAndCharacterOfPosition(node.getStart()).line + 1;
+            errors.push(`${source.fileName}:${line}: no "${field}" field: ${why}`);
+          }
       if (method && ts.isPropertyAccessExpression(node) && node.expression.kind === ts.SyntaxKind.ThisKeyword)
         for (const [file, m, field] of untouched)
           if (source.fileName.endsWith("/src/" + file) && m === method && node.name.text === field) {

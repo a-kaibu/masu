@@ -205,6 +205,8 @@ export async function startWebGame(
     for (const { path } of tree.files.values())
       if (path.startsWith(at.dir)) names.push(path.slice(at.dir.length));
 
+  // (this start: the frame starts on its first init only, FrameStart)
+  const launch = crypto.randomUUID();
   const frame = document.createElement("iframe");
   frame.id = "frame";
   // (cross-origin-isolated: its synchronous reads wait on a SharedArrayBuffer, sync-read.ts)
@@ -234,7 +236,7 @@ export async function startWebGame(
       ]);
     } else if (m?.masu === "hello") {
       // (each page of the game asks: a reload gets the saves as they are now)
-      const init: Init = { masu: "init", items: [...items], base, names };
+      const init: Init = { masu: "init", launch, items: [...items], base, names };
       // (a page with Node: a port to the tree's worker for the synchronous reads, sync-read.ts)
       const ch = new MessageChannel();
       if (wiring.syncReads) reads.postMessage({ port: ch.port1 } satisfies TreeWorkerAsk, [ch.port1]);
