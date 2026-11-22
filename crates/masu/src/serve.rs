@@ -578,13 +578,18 @@ const SHARED: &str = "_shared";
 /// Whether two saved regions are the same translation's (any thread could have built either).
 #[cfg(test)]
 fn same(a: &saved::Entry, b: &saved::Entry) -> bool {
-    a.roots == b.roots && a.code == b.code && a.text == b.text && (a.build > 0) == (b.build > 0)
+    a.roots == b.roots && a.code == b.code && a.text == b.text && (a.build > 0) == (b.build > 0) && a.pages == b.pages
 }
 
 /// What [`same`] compares, hashed: two regions with the same key are the same translation's.
 fn same_key(e: &saved::Entry) -> [u8; 32] {
     let mut h = blake3::Hasher::new();
-    h.update(&[(e.build > 0) as u8]).update(&(e.roots.len() as u64).to_le_bytes());
+    // (made with the page checks or not: two translations, each run takes the one it can run)
+    let pages = match e.pages {
+        koji::jit::Pages::Unchecked => 0u8,
+        koji::jit::Pages::Checked => 1,
+    };
+    h.update(&[(e.build > 0) as u8, pages]).update(&(e.roots.len() as u64).to_le_bytes());
     for r in &e.roots {
         h.update(&r.to_le_bytes());
     }
@@ -1795,7 +1800,7 @@ mod tests {
     /// `n` regions from `base` (one function each).
     fn regions(n: u32, base: u32) -> Vec<saved::Entry> {
         (0..n)
-            .map(|i| saved::Entry { roots: vec![base + i * 16], starts: vec![(base + i * 16, 0)], code: vec![(base + i * 16, 4)], text: (base + i).to_le_bytes().to_vec(), build: 0, sites: vec![] })
+            .map(|i| saved::Entry { roots: vec![base + i * 16], starts: vec![(base + i * 16, 0)], code: vec![(base + i * 16, 4)], text: (base + i).to_le_bytes().to_vec(), build: 0, sites: vec![], pages: koji::jit::Pages::Checked })
             .collect()
     }
 
@@ -2246,7 +2251,9 @@ mod tests {
         (small(), pairs(), pairs(), proptest::collection::vec(0u8..3, 0..3), 0u32..3, small())
     }
     fn make((roots, starts, code, text, build, sites): Fields) -> saved::Entry {
-        saved::Entry { roots, starts, code, text, build, sites }
+        // (the kind of checks taken from the build: either kind with either build)
+        let pages = if roots.len() % 2 == 0 { koji::jit::Pages::Checked } else { koji::jit::Pages::Unchecked };
+        saved::Entry { roots, starts, code, text, build, sites, pages }
     }
 
     proptest::proptest! {
