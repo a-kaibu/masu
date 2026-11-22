@@ -10,13 +10,26 @@
 // The lock is only ever freed by its holder (or, once the page has terminated the worker that
 // held it, by the page: reclaim). A taker that cannot have it soon gives up without touching the
 // budget and tries again later (formal/tla/BudgetLock.tla).
+// The constants and each step on the values are host/net-core.mjs's, the worker's too.
 
-/** Request classes, most urgent first (as fetch-bridge.js MASU_CLASS). */
-export const CLASS = { game: 0, ahead: 1, hint: 2, warm: 3, save: 4 } as const;
-export const RATE = 9;
-export const BURST = 40;
-export const RESERVE = [-RATE * 5, 0, 8, 16, 16];
-export const BYTES = 40;
+import {
+  MASU_BUDGET_BYTES,
+  MASU_BURST,
+  MASU_CLASS,
+  MASU_RATE,
+  MASU_RESERVE,
+  masuBudgetDrainStep,
+  masuBudgetFresh,
+  masuBudgetShare,
+  masuBudgetTakeStep,
+} from "../../host/net-core.mjs";
+
+/** Request classes, most urgent first. */
+export const CLASS = MASU_CLASS;
+export const RATE = MASU_RATE;
+export const BURST = MASU_BURST;
+export const RESERVE = MASU_RESERVE;
+export const BYTES = MASU_BUDGET_BYTES;
 /** The page's tag in the lock word (the network workers it starts get 2, 3, ...). */
 export const PAGE_TAG = 1;
 
@@ -24,7 +37,7 @@ let shared: SharedArrayBuffer | ArrayBuffer | undefined;
 
 /** Fresh values for a budget made at `now`. */
 export function fresh(buf: SharedArrayBuffer | ArrayBuffer, now = Date.now()): void {
-  new Float64Array(buf, 8, 4).set([BURST, now, 0, 1]);
+  masuBudgetFresh(new Float64Array(buf, 8, 4), now);
 }
 
 /** The page's budget (made once): handed to the network worker (play.ts, Module.masuNetBudget). */
@@ -54,27 +67,10 @@ function withBudget<T>(f: (v: Float64Array) => T, buf = netBudget(), tag = PAGE_
   }
 }
 
-/** The budget's share, read as a number in (0, 1] (a buffer from before shares: 1). */
-function shareOf(v: Float64Array): number {
-  const s = v[3]!;
-  return s > 0 && s <= 1 ? s : 1;
-}
-
 /** Takes one request of class `cls` (refilled to `now`): whether it may go. None while the
  * bucket asked to wait (drain), nor while the lock is held elsewhere (gate tries again). */
 export function take(cls: number, now = Date.now(), buf?: SharedArrayBuffer | ArrayBuffer): boolean {
-  return (
-    withBudget((v) => {
-      if (now < v[2]!) return false;
-      const s = shareOf(v);
-      const dt = Math.max(0, now - v[1]!) / 1000;
-      v[0] = Math.min(BURST * s, v[0]! + dt * RATE * s);
-      v[1] = Math.max(v[1]!, now);
-      if (v[0] - 1 < (RESERVE[cls] ?? 0) * s) return false;
-      v[0] -= 1;
-      return true;
-    }, buf)?.v ?? false
-  );
+  return withBudget((v) => masuBudgetTakeStep(v, cls, now), buf)?.v ?? false;
 }
 
 /** Tabs told of this page's drains at once (shareAcrossTabs). */
@@ -84,11 +80,7 @@ let told: ((until: number) => void) | undefined;
  * is held elsewhere, it lands as soon as the lock is free (tried again after a few ms). */
 export function drain(ms: number, now = Date.now(), buf?: SharedArrayBuffer | ArrayBuffer): void {
   const until = now + ms;
-  const done = withBudget((v) => {
-    v[2] = Math.max(v[2]!, until);
-    v[0] = Math.min(v[0]!, 0);
-    v[1] = Math.max(v[1]!, until);
-  }, buf);
+  const done = withBudget((v) => masuBudgetDrainStep(v, until), buf);
   if (!done) setTimeout(() => drain(ms, now, buf), 5);
   else if (!buf || buf === shared) told?.(until);
 }
@@ -100,7 +92,7 @@ export function waitFor(cls: number, now = Date.now(), buf?: SharedArrayBuffer |
     withBudget((v) => {
       // (none goes while the bucket asked to wait; then the tokens refill from the last refill)
       const from = Math.max(now, v[2]!);
-      const s = shareOf(v);
+      const s = masuBudgetShare(v);
       const want = (RESERVE[cls] ?? 0) * s + 1;
       if (Math.min(BURST * s, v[0]! + (Math.max(0, from - v[1]!) / 1000) * RATE * s) >= want)
         return from - now;
@@ -118,7 +110,7 @@ export function reclaim(dead: number, now = Date.now(), buf = netBudget()): bool
   if (dead === 0 || Atomics.compareExchange(lock, 0, dead, PAGE_TAG) !== dead) return false;
   const v = new Float64Array(buf, 8, 4);
   const until = Number.isFinite(v[2]) ? v[2]! : 0;
-  v.set([0, Math.max(now, until), until, shareOf(v)]);
+  v.set([0, Math.max(now, until), until, masuBudgetShare(v)]);
   Atomics.compareExchange(lock, 0, PAGE_TAG, 0);
   return true;
 }

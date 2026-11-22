@@ -328,11 +328,36 @@ export function check(program) {
   return errors;
 }
 
+/**
+ * host/net-core.mjs is the one source of what the page and the network worker do the same way
+ * (review 22bb061 §7): fetch-bridge.js declares none of its names again (a second copy that
+ * drifts), and the worker's source (masuFetchWorkerSource) takes each of its functions (a
+ * worker missing one fails only there, at its first call).
+ */
+export function checkNetCore(core, bridge) {
+  const errors = [];
+  const names = [...core.matchAll(/^export (?:var|function|async function) (\w+)/gm)].map((m) => m[1]);
+  const fns = [...core.matchAll(/^export (?:async )?function (\w+)/gm)].map((m) => m[1]);
+  for (const name of names)
+    if (new RegExp(`^(?:var|let|const|function|async function) ${name}\\b`, "m").test(bridge))
+      errors.push(`host/fetch-bridge.js: ${name} is host/net-core.mjs's (one source)`);
+  const list = /const fns = \[([^\]]*)\]/.exec(bridge)?.[1];
+  if (list === undefined) errors.push("host/fetch-bridge.js: masuFetchWorkerSource's fns list not found");
+  else {
+    const given = new Set(list.split(",").map((x) => x.trim()));
+    for (const f of fns)
+      if (!given.has(f)) errors.push(`host/fetch-bridge.js: the network worker's source lacks ${f} (masuFetchWorkerSource)`);
+  }
+  return errors;
+}
+
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   const config = ts.readConfigFile("tsconfig.json", (path) => ts.sys.readFile(path));
   if (config.error) throw new Error(ts.flattenDiagnosticMessageText(config.error.messageText, "\n"));
   const parsed = ts.parseJsonConfigFileContent(config.config, ts.sys, process.cwd());
   const errors = check(ts.createProgram(parsed.fileNames, parsed.options));
+  const host = (f) => ts.sys.readFile(new URL(`../../host/${f}`, import.meta.url).pathname) ?? "";
+  errors.push(...checkNetCore(host("net-core.mjs"), host("fetch-bridge.js")));
   for (const message of errors) console.error(message);
   if (errors.length) process.exitCode = 1;
 }

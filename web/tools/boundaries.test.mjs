@@ -1,6 +1,6 @@
 import ts from "typescript";
 import { expect, test } from "vitest";
-import { check } from "./boundaries.mjs";
+import { check, checkNetCore } from "./boundaries.mjs";
 
 test("save metadata writes and unchecked runtime bytes stay with their callers", () => {
   const files = {
@@ -299,4 +299,17 @@ test("runners side by side go through jobs.ts", () => {
   expect(
     check(ts.createProgram(Object.keys(files), options, host)).filter((f) => f.includes("runners")),
   ).toEqual(["/src/a.ts:4: runners side by side are jobs.ts workers (all stopped before the end)"]);
+});
+
+test("net-core.mjs is the one source: the bridge copies none of it, and its worker takes each function", () => {
+  const core = "export var MASU_A = 1;\nexport function masuF() {}\nexport async function masuG() {}\n";
+  const good = "var MASU_B = 2;\nfunction masuWorker() { masuF(); }\nconst fns = [masuF, masuG, masuWorker];\n";
+  expect(checkNetCore(core, good)).toEqual([]);
+  const bad = "var MASU_A = 1;\nfunction masuF() {}\nfunction masuFx() {}\nconst fns = [masuF, masuFx];\n";
+  expect(checkNetCore(core, bad)).toEqual([
+    "host/fetch-bridge.js: MASU_A is host/net-core.mjs's (one source)",
+    "host/fetch-bridge.js: masuF is host/net-core.mjs's (one source)",
+    "host/fetch-bridge.js: the network worker's source lacks masuG (masuFetchWorkerSource)",
+  ]);
+  expect(checkNetCore(core, "")).toEqual(["host/fetch-bridge.js: masuFetchWorkerSource's fns list not found"]);
 });

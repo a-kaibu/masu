@@ -5,11 +5,12 @@
 // from the bucket (direct.ts) and are kept in OPFS (chunkstore.ts, shared with the worker):
 // content-addressed, so never stale; only chunks checked against their name (BLAKE3) are kept.
 
+import { MASU_RETRY_STATUS, masuBackoff } from "../../host/net-core.mjs";
 import { drain, gate } from "./budget";
 import { deviceChunks, listChunks, type ChunkStore } from "./chunkstore";
 import { directFetcher } from "./direct";
 
-const RETRY = new Set([0, 408, 425, 429, 500, 502, 503, 504]);
+const RETRY = new Set(MASU_RETRY_STATUS);
 /** A kept chunk's length (trimChunks). */
 const SIZE = "x-masu-size";
 
@@ -46,9 +47,7 @@ async function sleep(ms: number, signal?: AbortSignal): Promise<void> {
 }
 
 /** The delay before retry `attempt` (from 0): exponential with jitter, at most 8 s. */
-export function backoff(attempt: number): number {
-  return Math.min(8000, 300 * 2 ** attempt) * (0.5 + Math.random() * 0.5);
-}
+export const backoff: (attempt: number) => number = masuBackoff;
 
 /** One try with the whole body read; aborted when no byte arrives for `stallMs`. */
 async function once(
