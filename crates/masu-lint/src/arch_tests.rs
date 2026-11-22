@@ -151,6 +151,11 @@ fn fixture(r: Rule) -> Fixture {
             good: &[("crates/kura/src/d3d11/mod.rs", "fn options() {\n    for k in 0..10 {}\n    let s = dxwgsl::translate_logic(c, a, l);\n    let (o, k) = logic::targets(b, f, m, r);\n    let r = dxwgsl::sample_rate(c) && page_multisamples(p);\n    logic::split(&w, &copies, stash.as_ref(), topo, &cuts, flip);\n}\n")],
             mutate: ("crates/kura/src/d3d11/mod.rs", |t| Some(t.replace("for k in 0..10 {", "for k in 1..10 {"))),
         },
+        Rule::SnormTargets => Fixture {
+            bad: &[("crates/kura/src/d3d11/logic.rs", "fn snorm_twin(v: u32) -> Option<(u32, [u32; 4])> {\n    // 31 => Some((f::P_RGBA8SI, [8, 8, 8, 8])), named in a comment\n    None\n}\n")],
+            good: &[("crates/kura/src/d3d11/logic.rs", "fn snorm_twin(v: u32) -> Option<(u32, [u32; 4])> {\n    match v {\n        31 => Some((f::P_RGBA8SI, [8, 8, 8, 8])),\n        51 => Some((f::P_RG8SI, [8, 8, 0, 0])),\n        63 => Some((f::P_R8SI, [8, 0, 0, 0])),\n        _ => None,\n    }\n}\nfn t() { let l = Logic { store: Store::Snorm(b) }; }\n")],
+            mutate: ("crates/kura/src/d3d11/mod.rs", |t| Some(t.replace("logic::twin_of(", "logic::copy_of("))),
+        },
         Rule::D3d9Status => Fixture {
             bad: &[
                 ("crates/kura/src/d3d9/device.rs", "const D3DOK_NOAUTOGEN: u32 = 0x0876_087f;\n"),

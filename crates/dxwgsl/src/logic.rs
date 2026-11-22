@@ -144,12 +144,15 @@ pub enum Sign {
 ///   multisampled, or a shader of sample rate);
 /// - `Stash`: the source's bits into a multisampled stash of the target's format, and a mark
 ///   of 1 at output location `mark` (a pixel-rate shader over a multisampled target: the
-///   resolve pass, [`resolve_wgsl`], applies the op to each sample it marked).
+///   resolve pass, [`resolve_wgsl`], applies the op to each sample it marked);
+/// - `Snorm`: an 8-bit SNORM target drawn as its SINT twin (crate::snorm): the output's bytes,
+///   blended over the twin's copy when the target blends.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Hash, PartialOrd, Ord)]
 pub enum Store {
     Plain,
     Direct(Op),
     Stash { op: Op, mark: u32 },
+    Snorm(Option<crate::snorm::Blend>),
 }
 
 /// An integer target for the pixel shader: its slot, how it is written, the bits of each of
@@ -167,14 +170,18 @@ impl Logic {
     /// The logic op, if any.
     pub fn op(&self) -> Option<Op> {
         match self.store {
-            Store::Plain => None,
+            Store::Plain | Store::Snorm(_) => None,
             Store::Direct(op) | Store::Stash { op, .. } => Some(op),
         }
     }
 
-    /// Whether the target's copy is read (by the shader, `Direct`, or the resolve pass).
+    /// Whether the target's copy is read (by the shader, `Direct` and a blending `Snorm`, or
+    /// the resolve pass).
     pub fn reads_copy(&self) -> bool {
-        self.op().is_some_and(Op::reads_dst)
+        match self.store {
+            Store::Snorm(b) => b.is_some_and(|b| b.reads_dst()),
+            Store::Plain | Store::Direct(_) | Store::Stash { .. } => self.op().is_some_and(Op::reads_dst),
+        }
     }
 
     /// The channels' masks as a WGSL vec4<u32>.
@@ -248,16 +255,29 @@ pub fn saturate(bits: u32, sign: Sign, v: u32) -> u32 {
 }
 
 /// What the target holds (its channels' bits) after a pixel of source `s` (the shader's
-/// output bits) over `d` (the target's channels' bits), by the module's rule.
+/// output bits) over `d` (the target's channels' bits), by the module's rule; an SNORM target
+/// with no second source and a constant of 0 ([`result_with`]).
 pub fn result(l: &Logic, s: [u32; 4], d: [u32; 4]) -> [u32; 4] {
-    std::array::from_fn(|c| {
-        let (bits, sv, dv) = (l.bits.get(c).copied().unwrap_or(0), s.get(c).copied().unwrap_or(0), d.get(c).copied().unwrap_or(0));
-        let max = channel_max(bits);
-        match l.op() {
-            None => saturate(bits, l.sign, sv),
-            Some(op) => op.apply(sv & max, dv & max) & max,
-        }
-    })
+    result_with(l, s, [0; 4], [0.0; 4], d)
+}
+
+/// [`result`] with the second source's output bits `s1` (SV_Target1) and the blend state's
+/// constant `k`, which an SNORM target's blend may read (crate::snorm::blend).
+pub fn result_with(l: &Logic, s: [u32; 4], s1: [u32; 4], k: [f32; 4], d: [u32; 4]) -> [u32; 4] {
+    let byte = |b: i8| u32::from(b.cast_unsigned());
+    let snorm = |v: [u32; 4]| v.map(|b| kome::num::lo8(b).cast_signed());
+    match l.store {
+        Store::Snorm(None) => s.map(|v| byte(crate::snorm::store(f32::from_bits(v)))),
+        Store::Snorm(Some(b)) => crate::snorm::blend(&b, s.map(f32::from_bits), s1.map(f32::from_bits), snorm(d), k).map(byte),
+        Store::Plain | Store::Direct(_) | Store::Stash { .. } => std::array::from_fn(|c| {
+            let (bits, sv, dv) = (l.bits.get(c).copied().unwrap_or(0), s.get(c).copied().unwrap_or(0), d.get(c).copied().unwrap_or(0));
+            let max = channel_max(bits);
+            match l.op() {
+                None => saturate(bits, l.sign, sv),
+                Some(op) => op.apply(sv & max, dv & max) & max,
+            }
+        }),
+    }
 }
 
 /// The first binding of the multisampled stashes of a pixel-rate shader's sources (the

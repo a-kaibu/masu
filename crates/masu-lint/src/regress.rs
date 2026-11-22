@@ -272,6 +272,38 @@ pub(super) fn logic_ops(tree: &Tree) -> Hits {
     out
 }
 
+// --- snorm-targets ------------------------------------------------------------------------------
+
+/// 8-bit SNORM render targets (2026-11-22: kura dropped every clear of and draw to them,
+/// WebGPU rendering to no SNORM format)
+const SNORM_SITES: [(&str, &str, &str); 9] = [
+    ("crates/kura/src/d3d11/mod.rs", "logic::twin_of(", "a draw to an SNORM target is not drawn to its SINT twin (logic::twin_of)"),
+    ("crates/kura/src/d3d11/mod.rs", "logic::snorm_twin(*fmt).is_some()", "ClearRenderTargetView of an SNORM view does not write its texels (the page clears no SNORM pass)"),
+    ("crates/kura/src/d3d11/mod.rs", "logic::split(&w, &copies, stash.as_ref(), &twins,", "a draw's SNORM twins are not loaded before its primitives and stored back after (logic::split)"),
+    ("crates/kura/src/d3d11/logic.rs", "31 => Some((f::P_RGBA8SI, [8, 8, 8, 8])),", "R8G8B8A8_SNORM views have no SINT twin"),
+    ("crates/kura/src/d3d11/logic.rs", "51 => Some((f::P_RG8SI, [8, 8, 0, 0])),", "R8G8_SNORM views have no SINT twin"),
+    ("crates/kura/src/d3d11/logic.rs", "63 => Some((f::P_R8SI, [8, 0, 0, 0])),", "R8_SNORM views have no SINT twin"),
+    ("crates/kura/src/d3d11/logic.rs", "store: Store::Snorm(b)", "an SNORM target's store does not carry its blend (logic::targets)"),
+    ("crates/dxwgsl/src/wgsl.rs", "Store::Snorm(blend) =>", "an SNORM target's output does not go through logic_output's store and blend"),
+    ("crates/dxwgsl/src/snorm.rs", "#[path = \"snorm_tests.rs\"]", "the SNORM conversions and blend are no longer checked against WARP's answers (snorm_tests.rs)"),
+];
+
+/// SNORM targets dropped
+pub(super) fn snorm_targets(tree: &Tree) -> Hits {
+    let mut out = Hits::new();
+    for (path, needle, why) in SNORM_SITES {
+        let f = Rel::new(path);
+        if tree.is_made_up() && !tree.has(&f) {
+            continue;
+        }
+        let code = tree.code(&f, true);
+        if !code.contains(needle) {
+            out.push((f, 1, why.to_owned()));
+        }
+    }
+    out
+}
+
 // --- d3d9-status-codes ------------------------------------------------------------------------
 
 /// d3d9.h's codes by name: MAKE_D3DHRESULT(code) = 0x8876_0000 | code (D3DERR_), MAKE_D3DSTATUS

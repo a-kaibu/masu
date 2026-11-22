@@ -48,22 +48,42 @@ pub fn int_bits(page: u32) -> Option<([u32; 4], Sign)> {
     })
 }
 
+/// The SINT twin (its page format) and the channels' bits of a render target view of an
+/// 8-bit SNORM DXGI format (R8G8B8A8_SNORM 31, R8G8_SNORM 51, R8_SNORM 63): WebGPU draws to no
+/// SNORM format, the page draws to the twin (dxwgsl::snorm). None for the other formats.
+pub fn snorm_twin(view_dxgi: u32) -> Option<(u32, [u32; 4])> {
+    match view_dxgi {
+        31 => Some((f::P_RGBA8SI, [8, 8, 8, 8])),
+        51 => Some((f::P_RG8SI, [8, 8, 0, 0])),
+        63 => Some((f::P_R8SI, [8, 0, 0, 0])),
+        _ => None,
+    }
+}
+
 /// What the blend state (kura's words: AlphaToCoverage, IndependentBlend, 8 targets of 8
 /// words, then (LogicOpEnable, LogicOp) per target) asks of targets of these page formats
-/// (multisampled or not) under a pixel shader of sample rate or not: how the shader writes
-/// each integer target, and the targets left as they are (NOOP: their write mask 0). A
-/// multisampled target with an op that reads it under a pixel-rate shader is a stash, its
-/// mark at the first location no target takes (`formats.len()`).
-pub fn targets(blend: &[u32], formats: &[u32], multisampled: &[bool], sample_rate: bool) -> (Vec<Logic>, Vec<u32>) {
+/// (`views`: the render target views' DXGI formats; multisampled or not) under a pixel shader
+/// of sample rate or not: how the shader writes each integer target and each 8-bit SNORM one
+/// (its blend: WARP ignores a logic op there, winref d3d11logic), and the targets left as they
+/// are (NOOP: their write mask 0). A multisampled target with an op that reads it under a
+/// pixel-rate shader is a stash, its mark at the first location no target takes
+/// (`formats.len()`).
+pub fn targets(blend: &[u32], formats: &[u32], views: &[u32], multisampled: &[bool], sample_rate: bool) -> (Vec<Logic>, Vec<u32>) {
     let independent = blend.get(1).copied().unwrap_or(0) != 0;
     let mark = lo32(formats.len());
     let (mut out, mut kept) = (Vec::new(), Vec::new());
     for (i, &page) in formats.iter().enumerate() {
-        let Some((bits, sign)) = int_bits(page) else { continue };
         let rt = if independent { i } else { 0 };
-        let at = |k: usize| blend.get(66usize.saturating_add(rt.saturating_mul(2)).saturating_add(k)).copied().unwrap_or(0);
         let target = lo32(i);
         let ms = multisampled.get(i).copied().unwrap_or(false);
+        if let Some((_, bits)) = views.get(i).copied().and_then(snorm_twin) {
+            let w = |k: usize| blend.get(2usize.saturating_add(rt.saturating_mul(8)).saturating_add(k)).copied().unwrap_or(0);
+            let b = if w(0) != 0 { dxwgsl::snorm::Blend::of([w(1), w(2), w(3), w(4), w(5), w(6)]) } else { None };
+            out.push(Logic { target, store: Store::Snorm(b), bits, sign: Sign::Signed, multisampled: ms });
+            continue;
+        }
+        let Some((bits, sign)) = int_bits(page) else { continue };
+        let at = |k: usize| blend.get(66usize.saturating_add(rt.saturating_mul(2)).saturating_add(k)).copied().unwrap_or(0);
         let store = match Op::of(at(1)).filter(|_| at(0) != 0) {
             None => Store::Plain,
             Some(Op::Noop) => {
@@ -152,11 +172,42 @@ pub fn unbound(b: u32, multisampled: bool, sign: Sign) -> [u32; 8] {
 const COPY_OF: u32 = 0;
 const STASH_OF: u32 = 0x100;
 const MARK: u32 = 0x200;
+const TWIN_OF: u32 = 0x300;
+
+/// An SNORM target's SINT twin for a draw: the target's slot, the twin's page texture and
+/// format, the level's size, and the page's copies of the target's bits into the twin before
+/// the draw (`load`) and back after it (`store`).
+#[derive(Clone, Copy, Debug)]
+pub struct Twin {
+    pub target: u32,
+    pub twin: u32,
+    pub page: u32,
+    pub w: u32,
+    pub h: u32,
+    pub load: [u32; 14],
+    pub store: [u32; 14],
+}
+
+/// The twin of SNORM target `l` (Store::Snorm) at view `rtv`, made the first time and kept by
+/// the target's slot, size and format (one level and layer).
+pub fn twin_of(d: &mut D11, rtv: u32, l: &Logic, view_dxgi: u32) -> Option<Twin> {
+    let (page, _) = snorm_twin(view_dxgi)?;
+    let (tex, level, layer, _, w, h, _) = target_texture(d, rtv)?;
+    let twin = scratch(d, (TWIN_OF | l.target, w, h, page, false));
+    // (COPY's filter 2: the bits of another format of the same size, render/d3d.rs copy_rect)
+    let sub = level | layer << 16;
+    let load = [gpu::COPY, tex, sub, 0, 0, w, h, twin, 0, 0, 0, w, h, 2];
+    let store = [gpu::COPY, twin, 0, 0, 0, w, h, tex, sub, 0, 0, w, h, 2];
+    Some(Twin { target: l.target, twin, page, w, h, load, store })
+}
 
 /// The copy for target view `rtv` with logic op `l` (its scratch texture by the target's slot:
-/// two targets of one size and format have a copy each).
-pub fn copy_of(d: &mut D11, rtv: u32, l: &Logic) -> Option<Copy> {
-    let (tex, level, layer, ms, w, h, page) = target_texture(d, rtv)?;
+/// two targets of one size and format have a copy each); an SNORM target's of its twin.
+pub fn copy_of(d: &mut D11, rtv: u32, l: &Logic, twins: &[Twin]) -> Option<Copy> {
+    let (tex, level, layer, ms, w, h, page) = match twins.iter().find(|t| t.target == l.target) {
+        Some(t) => (t.twin, 0, 0, false, t.w, t.h, t.page),
+        None => target_texture(d, rtv)?,
+    };
     let copy = scratch(d, (COPY_OF | l.target, w, h, page, ms));
     let b = dxwgsl::logic::LOGIC_DST.saturating_add(l.target);
     let mut entry = unbound(b, ms, l.sign);
@@ -239,13 +290,18 @@ pub unsafe fn cuts(d: &mut D11, st: &State, start: u32, count: u32) -> Vec<bool>
 /// Records DRAW2 command `w` (its last words: indexed, count, instances, start, base, first
 /// instance, the hash) as one draw per instance and primitive (`topo`, `cuts` as for
 /// [`primitives`]), each after `copies` (and, with a stash, the mark's clear and the stash's
-/// targets before it, the resolves after it); a strip's odd triangle with pipeline `flipped`.
-pub fn split(w: &[u32], copies: &[Copy], stash: Option<&Stash>, topo: u32, cuts: &[bool], flipped: u32) {
+/// targets before it, the resolves after it); a strip's odd triangle with pipeline `flipped`;
+/// SNORM targets' `twins` loaded with their targets' bits before them all and stored back
+/// after.
+pub fn split(w: &[u32], copies: &[Copy], stash: Option<&Stash>, twins: &[Twin], topo: u32, cuts: &[bool], flipped: u32) {
     let n = w.len();
     let Some(tail) = w.get(n.saturating_sub(7)..) else { return };
     let [_, count, instances, start, _, first_instance, _] = <[u32; 7]>::try_from(tail).unwrap_or([0; 7]);
     let prims = primitives(topo, count, cuts);
     gpu::record(|q| {
+        for t in twins {
+            q.cmd(&t.load);
+        }
         for k in 0..instances {
             for p in &prims {
                 for c in copies {
@@ -276,6 +332,9 @@ pub fn split(w: &[u32], copies: &[Copy], stash: Option<&Stash>, topo: u32, cuts:
                     }
                 }
             }
+        }
+        for t in twins {
+            q.cmd(&t.store);
         }
     });
 }

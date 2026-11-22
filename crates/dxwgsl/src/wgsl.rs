@@ -2792,7 +2792,9 @@ fn translate_with(code: &[u8], pixel: bool, ps: Option<&[u8]>, sprite: Option<f3
                 // (an integer target: its output as the target stores it, the attachment's type)
                 Some(l) => {
                     fields.push(format!("@location({r}) c{r}: vec4<{}>", l.scalar()));
-                    logic_output(l, r, k, &mut params, &mut post, &mut m, &mut bindings);
+                    // (an SNORM target's blend may read SV_Target1, the second source)
+                    let src1 = if w.outputs.contains_key(&1) { "bitcast<vec4<f32>>(o1)" } else { "vec4<f32>()" };
+                    logic_output(l, r, k, src1, &mut params, &mut post, &mut m, &mut bindings);
                 }
                 None => {
                     fields.push(format!("@location({r}) c{r}: {}", vty(k, 4)));
@@ -2804,7 +2806,7 @@ fn translate_with(code: &[u8], pixel: bool, ps: Option<&[u8]>, sprite: Option<f3
         // samples it writes, for the resolve pass)
         if let Some(mark) = logic.iter().find_map(|l| match l.store {
             crate::logic::Store::Stash { mark, .. } => Some(mark),
-            crate::logic::Store::Plain | crate::logic::Store::Direct(_) => None,
+            crate::logic::Store::Plain | crate::logic::Store::Direct(_) | crate::logic::Store::Snorm(_) => None,
         }) {
             fields.push(format!("@location({mark}) lg_mark: u32"));
             post.push("out.lg_mark = 1u;".into());
@@ -2927,16 +2929,36 @@ fn translate_with(code: &[u8], pixel: bool, ps: Option<&[u8]>, sprite: Option<f3
 }
 
 /// An integer target's output (crate::logic): saturated (`Plain`), the op's result over the
-/// target's copy at the pixel (the sample, multisampled: `Direct`), or the source's bits into
-/// the stash and the mark (`Stash`). The pixel's position and sample index are the entry
-/// point's own parameters when the shader reads them already.
-fn logic_output(l: &crate::logic::Logic, r: u32, k: K, params: &mut Vec<String>, post: &mut Vec<String>, m: &mut String, bindings: &mut Vec<(u32, Binding)>) {
+/// target's copy at the pixel (the sample, multisampled: `Direct`), the source's bits into
+/// the stash and the mark (`Stash`), or an SNORM target's bytes, blended over its copy or not
+/// (`Snorm`, crate::snorm; `src1` the second source, a vec4<f32>). The pixel's position and
+/// sample index are the entry point's own parameters when the shader reads them already.
+#[allow(clippy::too_many_arguments)]
+fn logic_output(l: &crate::logic::Logic, r: u32, k: K, src1: &str, params: &mut Vec<String>, post: &mut Vec<String>, m: &mut String, bindings: &mut Vec<(u32, Binding)>) {
     use crate::logic::Store;
     let o = if k == K::U { format!("o{r}") } else { format!("bitcast<vec4<u32>>(o{r})") };
     let max = l.max_wgsl();
     match l.store {
         Store::Plain => post.push(format!("out.c{r} = {};", l.saturate_wgsl(&o))),
         Store::Stash { .. } => post.push(format!("out.c{r} = {};", l.bits_out_wgsl(&format!("{o} & {max}")))),
+        Store::Snorm(blend) => {
+            snorm_helpers(m);
+            let src = format!("bitcast<vec4<f32>>({o})");
+            match blend {
+                None => post.push(format!("out.c{r} = sn_store({src});")),
+                Some(b) => {
+                    if b.reads_constant() && !bindings.iter().any(|(_, x)| *x == Binding::BlendConstant) {
+                        m.push_str(&format!("@group(1) @binding({}) var<uniform> sn_k: vec4<f32>;\n", crate::snorm::SNORM_CONSTANT));
+                        bindings.push((crate::snorm::SNORM_CONSTANT, Binding::BlendConstant));
+                    }
+                    let dst = if b.reads_dst() { target_copy(l, r, params, m, bindings) } else { "vec4<i32>()".to_owned() };
+                    // (sn_k, unbound when the blend reads no constant: 0)
+                    let k = if b.reads_constant() { "" } else { "let sn_k = vec4<f32>();" };
+                    let body = crate::snorm::blend_wgsl(&b, &src, src1, &dst, &format!("out.c{r}"));
+                    post.push(format!("{{ {k} {} }}", body.join(" ")));
+                }
+            }
+        }
         // (an op of the source alone (CLEAR SET COPY COPY_INVERTED): no copy read, no sample
         // index (which would make the shader run per sample))
         Store::Direct(op) if !op.reads_dst() => {
@@ -2945,28 +2967,41 @@ fn logic_output(l: &crate::logic::Logic, r: u32, k: K, params: &mut Vec<String>,
             post.push(format!("out.c{r} = {};", l.bits_out_wgsl(&format!("({v}) & {max}"))));
         }
         Store::Direct(op) => {
-            let b = crate::logic::LOGIC_DST.saturating_add(r);
-            let sk = l.scalar();
-            let ty = if l.multisampled { format!("texture_multisampled_2d<{sk}>") } else { format!("texture_2d<{sk}>") };
-            m.push_str(&format!("@group(1) @binding({b}) var lgd{r}: {ty};\n"));
-            bindings.push((b, Binding::LogicDst { multisampled: l.multisampled, sign: l.sign }));
-            let builtin = |params: &mut Vec<String>, what: &str, name: &str, ty: &str| -> String {
-                let found = params.iter().find(|p| p.contains(&format!("@builtin({what})"))).and_then(|p| p.split_whitespace().nth(1)).map(|n| n.trim_end_matches(':').to_owned());
-                found.unwrap_or_else(|| {
-                    params.push(format!("@builtin({what}) {name}: {ty}"));
-                    name.to_owned()
-                })
-            };
-            let pos = builtin(params, "position", "lg_pos", "vec4<f32>");
-            let index = if l.multisampled { builtin(params, "sample_index", "lg_si", "u32") } else { "0".to_owned() };
+            let load = target_copy(l, r, params, m, bindings);
             post.push(format!("let lg_s{r} = {o} & {max};"));
-            let zero = format!("vec4<{sk}>()");
-            let load = format!("select({zero}, textureLoad(lgd{r}, vec2<i32>({pos}.xy), {index}), all(vec2<u32>({pos}.xy) < textureDimensions(lgd{r})))");
             post.push(format!("let lg_d{r} = {};", l.bits_in_wgsl(&load)));
             let v = op.wgsl(&format!("lg_s{r}"), &format!("lg_d{r}"));
             post.push(format!("out.c{r} = {};", l.bits_out_wgsl(&format!("({v}) & {max}"))));
         }
     }
+}
+
+/// crate::snorm's WGSL helpers in the module, once.
+fn snorm_helpers(m: &mut String) {
+    if !m.contains("fn sn_store(") {
+        m.push_str(crate::snorm::HELPERS);
+    }
+}
+
+/// The WGSL expression of target `r`'s copy at the pixel (its sample, multisampled), the copy
+/// declared at LOGIC_DST + r (the attachment's type: vec4<u32> or vec4<i32>).
+fn target_copy(l: &crate::logic::Logic, r: u32, params: &mut Vec<String>, m: &mut String, bindings: &mut Vec<(u32, Binding)>) -> String {
+    let b = crate::logic::LOGIC_DST.saturating_add(r);
+    let sk = l.scalar();
+    let ty = if l.multisampled { format!("texture_multisampled_2d<{sk}>") } else { format!("texture_2d<{sk}>") };
+    m.push_str(&format!("@group(1) @binding({b}) var lgd{r}: {ty};\n"));
+    bindings.push((b, Binding::LogicDst { multisampled: l.multisampled, sign: l.sign }));
+    let builtin = |params: &mut Vec<String>, what: &str, name: &str, ty: &str| -> String {
+        let found = params.iter().find(|p| p.contains(&format!("@builtin({what})"))).and_then(|p| p.split_whitespace().nth(1)).map(|n| n.trim_end_matches(':').to_owned());
+        found.unwrap_or_else(|| {
+            params.push(format!("@builtin({what}) {name}: {ty}"));
+            name.to_owned()
+        })
+    };
+    let pos = builtin(params, "position", "lg_pos", "vec4<f32>");
+    let index = if l.multisampled { builtin(params, "sample_index", "lg_si", "u32") } else { "0".to_owned() };
+    let zero = format!("vec4<{sk}>()");
+    format!("select({zero}, textureLoad(lgd{r}, vec2<i32>({pos}.xy), {index}), all(vec2<u32>({pos}.xy) < textureDimensions(lgd{r})))")
 }
 
 pub mod expand;
