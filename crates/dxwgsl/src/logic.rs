@@ -147,14 +147,26 @@ pub enum Sign {
 ///   multisampled target: the resolve pass, [`resolve_wgsl`], applies the op to each sample it
 ///   marked);
 /// - `Snorm`: an 8-bit SNORM target drawn as its SINT twin (crate::snorm): the output's bytes,
-///   blended over the twin's copy when the target blends.
+///   blended over the twin's copy when the target blends;
+/// - `SnormStash`: a multisampled SNORM target (its page texture the SINT twin) whose blend
+///   reads it under a pixel-rate shader: the sources (SV_Target0 and 1) into the target's
+///   buffer ([`SNORM_SRC`]) by the pixel, the samples covered marked (`mark`: always the first
+///   such target's location, the target itself unwritten), and the resolve pass
+///   (crate::snorm::resolve_wgsl) blends at each marked sample.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Hash, PartialOrd, Ord)]
 pub enum Store {
     Plain,
     Direct(Op),
     Stash { op: Op, mark: Mark },
     Snorm(Option<crate::snorm::Blend>),
+    SnormStash { blend: crate::snorm::Blend, mark: Mark },
 }
+
+/// The first binding of the SnormStash targets' source buffers: SNORM_SRC + the target's slot,
+/// a storage buffer of u32: word 0 the target's width, then 8 words a pixel (row by row from
+/// word 4): the bits of SV_Target0's four channels, then SV_Target1's.
+pub const SNORM_SRC: u32 = 950;
+const _: () = assert!(SNORM_SRC + 8 <= LOGIC_DST);
 
 /// Where a draw's stash pass marks the samples it covers:
 /// - `Slot`: an R8_UINT attachment at that output location, 1 at a covered sample: a location
@@ -212,8 +224,25 @@ impl Logic {
     /// The logic op, if any.
     pub fn op(&self) -> Option<Op> {
         match self.store {
-            Store::Plain | Store::Snorm(_) => None,
+            Store::Plain | Store::Snorm(_) | Store::SnormStash { .. } => None,
             Store::Direct(op) | Store::Stash { op, .. } => Some(op),
+        }
+    }
+
+    /// Whether the target is a stash ([`Store::Stash`] or [`Store::SnormStash`]): the resolve
+    /// pass writes it.
+    pub fn stashed(&self) -> bool {
+        match self.store {
+            Store::Stash { .. } | Store::SnormStash { .. } => true,
+            Store::Plain | Store::Direct(_) | Store::Snorm(_) => false,
+        }
+    }
+
+    /// The stash's mark, if a stash.
+    pub fn mark(&self) -> Option<Mark> {
+        match self.store {
+            Store::Stash { mark, .. } | Store::SnormStash { mark, .. } => Some(mark),
+            Store::Plain | Store::Direct(_) | Store::Snorm(_) => None,
         }
     }
 
@@ -226,7 +255,7 @@ impl Logic {
     pub fn stash_bits(&self) -> [u32; 4] {
         match self.store {
             Store::Stash { mark: Mark::Carried { by, .. }, .. } if by == self.target => carry(self.bits).map_or(self.bits, |c| c.0),
-            Store::Plain | Store::Direct(_) | Store::Stash { .. } | Store::Snorm(_) => self.bits,
+            Store::Plain | Store::Direct(_) | Store::Stash { .. } | Store::Snorm(_) | Store::SnormStash { .. } => self.bits,
         }
     }
 
@@ -235,6 +264,7 @@ impl Logic {
     pub fn reads_copy(&self) -> bool {
         match self.store {
             Store::Snorm(b) => b.is_some_and(|b| b.reads_dst()),
+            Store::SnormStash { blend, .. } => blend.reads_dst(),
             Store::Plain | Store::Direct(_) | Store::Stash { .. } => self.op().is_some_and(Op::reads_dst),
         }
     }
@@ -323,7 +353,7 @@ pub fn result_with(l: &Logic, s: [u32; 4], s1: [u32; 4], k: [f32; 4], d: [u32; 4
     let snorm = |v: [u32; 4]| v.map(|b| kome::num::lo8(b).cast_signed());
     match l.store {
         Store::Snorm(None) => s.map(|v| byte(crate::snorm::store(f32::from_bits(v)))),
-        Store::Snorm(Some(b)) => crate::snorm::blend(&b, s.map(f32::from_bits), s1.map(f32::from_bits), snorm(d), k).map(byte),
+        Store::Snorm(Some(b)) | Store::SnormStash { blend: b, .. } => crate::snorm::blend(&b, s.map(f32::from_bits), s1.map(f32::from_bits), snorm(d), k).map(byte),
         Store::Plain | Store::Direct(_) | Store::Stash { .. } => std::array::from_fn(|c| {
             let (bits, sv, dv) = (l.bits.get(c).copied().unwrap_or(0), s.get(c).copied().unwrap_or(0), d.get(c).copied().unwrap_or(0));
             let max = channel_max(bits);

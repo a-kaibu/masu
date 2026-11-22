@@ -60,6 +60,15 @@ pub fn snorm_twin(view_dxgi: u32) -> Option<(u32, [u32; 4])> {
     }
 }
 
+/// The page format of a texture of DXGI format `fmt` (dimension `dim`, `layers`, `mips`,
+/// `samples`, bind flags `bind`) when it is an 8-bit SNORM one the page multisamples: its SINT
+/// twin (snorm_twin), which WebGPU multisamples (2D, one level and layer, no UAV: render::d3d
+/// create_texture2's conditions).
+pub fn snorm_ms_page(fmt: u32, dim: u32, layers: u32, mips: u32, samples: u32, bind: u32) -> Option<u32> {
+    let (page, _) = snorm_twin(fmt)?;
+    (samples > 1 && dim == 2 && layers <= 1 && mips <= 1 && bind & 0x80 == 0 && crate::render::d3d::page_multisamples(page)).then_some(page)
+}
+
 /// What the blend state (kura's words: AlphaToCoverage, IndependentBlend, 8 targets of 8
 /// words, then (LogicOpEnable, LogicOp) per target) asks of targets of these page formats
 /// (`views`: the render target views' DXGI formats; multisampled or not) under a pixel shader
@@ -81,7 +90,13 @@ pub fn targets(blend: &[u32], formats: &[u32], views: &[u32], multisampled: &[bo
         if let Some((_, bits)) = views.get(i).copied().and_then(snorm_twin) {
             let w = |k: usize| blend.get(2usize.saturating_add(rt.saturating_mul(8)).saturating_add(k)).copied().unwrap_or(0);
             let b = if w(0) != 0 { dxwgsl::snorm::Blend::of([w(1), w(2), w(3), w(4), w(5), w(6)]) } else { None };
-            out.push(Logic { target, store: Store::Snorm(b), bits, sign: Sign::Signed, multisampled: ms });
+            // (multisampled under a pixel-rate shader, a blend that reads the target: per
+            // sample in the resolve pass, WARP's shader still once a pixel)
+            let store = match b {
+                Some(blend) if ms && !sample_rate && blend.reads_dst() => Store::SnormStash { blend, mark },
+                Some(_) | None => Store::Snorm(b),
+            };
+            out.push(Logic { target, store, bits, sign: Sign::Signed, multisampled: ms });
             continue;
         }
         let Some((bits, sign)) = int_bits(page) else { continue };
@@ -97,7 +112,17 @@ pub fn targets(blend: &[u32], formats: &[u32], views: &[u32], multisampled: &[bo
         };
         out.push(Logic { target, store, bits, sign, multisampled: ms });
     }
-    if formats.len() >= 8 {
+    // (an SNORM stash writes its target in the resolve pass alone: its location the mark's,
+    // the first one's, for every stash)
+    if let Some(at) = out.iter().find(|l| matches!(l.store, Store::SnormStash { .. })).map(|l| l.target) {
+        for l in &mut out {
+            l.store = match l.store {
+                Store::Stash { op, .. } => Store::Stash { op, mark: Mark::Slot(at) },
+                Store::SnormStash { blend, .. } => Store::SnormStash { blend, mark: Mark::Slot(at) },
+                s @ (Store::Plain | Store::Direct(_) | Store::Snorm(_)) => s,
+            };
+        }
+    } else if formats.len() >= 8 {
         let stashes = || out.iter().filter(|l| matches!(l.store, Store::Stash { .. }));
         // (none can carry it: the first stash's location the mark's, its source in LOGIC_SRC)
         let carrier = stashes().find_map(|l| dxwgsl::logic::carry(l.bits).map(|(_, channel, bit)| Mark::Carried { by: l.target, channel, bit }));
@@ -219,6 +244,30 @@ fn src_buffer(d: &mut D11, w: u32, h: u32) -> u32 {
 }
 
 const TWIN_OF: u32 = 0x400;
+const SNORM_SRC_OF: u32 = 0x500;
+const RESOLVE_OF: u32 = 0x600;
+
+/// The single-sampled SINT texture (page format `page`) a multisampled SNORM texture of `w` x
+/// `h` is resolved into before its bits are copied into the resolve's target (made the first
+/// time).
+pub fn resolve_twin(d: &mut D11, w: u32, h: u32, page: u32) -> u32 {
+    scratch(d, (RESOLVE_OF, w, h, page, false))
+}
+
+/// SNORM stash `target`'s SNORM_SRC buffer of a target of `w` x `h` (made the first time:
+/// word 0 the width, 8 words a pixel from word 4).
+fn snorm_src_buffer(d: &mut D11, target: u32, w: u32, h: u32) -> u32 {
+    *d.logic_scratch.entry((SNORM_SRC_OF | target, w, h, 0, false)).or_insert_with(|| {
+        let id = super::page_id();
+        let size = lo32(u64::from(w).saturating_mul(u64::from(h)).saturating_mul(32).saturating_add(16).min(u64::from(u32::MAX)));
+        gpu::record(|q| {
+            let off = q.blob(&w.to_le_bytes());
+            q.cmd(&[gpu::CREATE_BUFFER, id, size]);
+            q.cmd(&[gpu::WRITE_BUFFER, id, 0, off, 4]);
+        });
+        id
+    })
+}
 
 /// An SNORM target's SINT twin for a draw: the target's slot, the twin's page texture and
 /// format, the level's size, and the page's copies of the target's bits into the twin before
@@ -238,7 +287,11 @@ pub struct Twin {
 /// the target's slot, size and format (one level and layer).
 pub fn twin_of(d: &mut D11, rtv: u32, l: &Logic, view_dxgi: u32) -> Option<Twin> {
     let (page, _) = snorm_twin(view_dxgi)?;
-    let (tex, level, layer, _, w, h, _) = target_texture(d, rtv)?;
+    let (tex, level, layer, _, w, h, own) = target_texture(d, rtv)?;
+    // (a multisampled SNORM texture is its twin on the page: snorm_ms_page)
+    if own == page {
+        return None;
+    }
     let twin = scratch(d, (TWIN_OF | l.target, w, h, page, false));
     // (COPY's filter 2: the bits of another format of the same size, render/d3d.rs copy_rect)
     let sub = level | layer << 16;
@@ -269,28 +322,36 @@ pub fn copy_of(d: &mut D11, rtv: u32, l: &Logic, twins: &[Twin]) -> Option<Copy>
 pub struct Stash {
     pub targets: Vec<u32>,
     pub clear: [u32; 11],
-    pub resolves: Vec<[u32; 15]>,
-    /// the pixel shader's LOGIC_SRC entry (a stash at the mark's location)
-    pub src: Option<[u32; 8]>,
+    pub resolves: Vec<Vec<u32>>,
+    /// the pixel shader's LOGIC_SRC entry (a stash at the mark's location) and SNORM_SRC ones
+    /// (SNORM stashes)
+    pub src: Vec<[u32; 8]>,
 }
 
 /// The stash passes of a draw to targets `colors` (SET_TARGETS2's (tex level layer) words)
 /// and depth `depth` ((tex level layer)), its stash targets `stashes` (multisampled ones) with
-/// their write masks `masks` and copies `copies`.
-pub fn stash_of(d: &mut D11, rtvs: &[u32], colors: &[u32], depth: [u32; 3], stashes: &[&Logic], masks: &[u32], copies: &[Copy]) -> Option<Stash> {
+/// their write masks `masks` and copies `copies`; an SNORM stash's resolve reads the blend
+/// constant from page buffer `constant`.
+#[allow(clippy::too_many_arguments)]
+pub fn stash_of(d: &mut D11, rtvs: &[u32], colors: &[u32], depth: [u32; 3], stashes: &[&Logic], masks: &[u32], copies: &[Copy], constant: u32) -> Option<Stash> {
     let first = stashes.first()?;
-    let Store::Stash { mark, .. } = first.store else { return None };
+    let mark = first.mark()?;
     let (_, _, _, _, w, h, _) = target_texture(d, rtvs.get(usize::try_from(first.target).ok()?).copied()?)?;
     let mut targets = colors.to_vec();
     let mut resolves = Vec::new();
     let mut stash_tex = Vec::new();
-    let mut src = None;
+    let mut src = Vec::new();
     for l in stashes {
         let rtv = rtvs.get(usize::try_from(l.target).ok()?).copied()?;
         let (_, _, _, _, tw, th, _) = target_texture(d, rtv)?;
-        let stash = if l.buffered() {
+        let stash = if let Store::SnormStash { .. } = l.store {
+            // (its sources by the pixel; the target stays where it is, unwritten)
+            let b = snorm_src_buffer(d, l.target, tw, th);
+            src.push([dxwgsl::logic::SNORM_SRC.saturating_add(l.target), 10, b, 0, 0, 0, 0, 0]);
+            b
+        } else if l.buffered() {
             let b = src_buffer(d, tw, th);
-            src = Some([dxwgsl::logic::LOGIC_SRC, 10, b, 0, 0, 0, 0, 0]);
+            src.push([dxwgsl::logic::LOGIC_SRC, 10, b, 0, 0, 0, 0, 0]);
             b
         } else {
             let s = scratch(d, (STASH_OF | l.target, tw, th, uint_page(l.stash_bits())?, true));
@@ -313,17 +374,29 @@ pub fn stash_of(d: &mut D11, rtvs: &[u32], colors: &[u32], depth: [u32; 3], stas
     };
     let (ch, bit) = mark.flag();
     for (l, &(_, stash)) in stashes.iter().zip(&stash_tex) {
-        let Store::Stash { op, .. } = l.store else { continue };
         let rtv = rtvs.get(usize::try_from(l.target).ok()?).copied()?;
         let (tex, ..) = target_texture(d, rtv)?;
         let copy = copies.iter().find(|c| c.entry[0] == dxwgsl::logic::LOGIC_DST.saturating_add(l.target)).map_or(0, |c| c.entry[2]);
         let mask = masks.get(usize::try_from(l.target).ok()?).copied().unwrap_or(0xf);
+        let op = match l.store {
+            Store::Stash { op, .. } => op,
+            Store::SnormStash { blend, .. } => {
+                // (SNORM_RESOLVE: the target, its copy, its sources, the mark, the write mask,
+                // the blend's six words, the mark's channel and bit, the constant's buffer)
+                let mut r = vec![gpu::SNORM_RESOLVE, tex, copy, stash, mark_tex, mask];
+                r.extend_from_slice(&blend.words());
+                r.extend_from_slice(&[ch, bit, constant]);
+                resolves.push(r);
+                continue;
+            }
+            Store::Plain | Store::Direct(_) | Store::Snorm(_) => continue,
+        };
         let sign = match l.sign {
             Sign::Unsigned => 0,
             Sign::Signed => 1,
         };
         let op_word = Op::ALL.iter().position(|&o| o == op).map_or(0, lo32);
-        resolves.push([gpu::LOGIC_RESOLVE, tex, copy, stash, mark_tex, mask, op_word, l.bits[0], l.bits[1], l.bits[2], l.bits[3], sign, ch, bit, u32::from(l.buffered())]);
+        resolves.push(vec![gpu::LOGIC_RESOLVE, tex, copy, stash, mark_tex, mask, op_word, l.bits[0], l.bits[1], l.bits[2], l.bits[3], sign, ch, bit, u32::from(l.buffered())]);
     }
     let mut set = vec![gpu::SET_TARGETS2, lo32(targets.len() / 3)];
     set.extend_from_slice(&targets);

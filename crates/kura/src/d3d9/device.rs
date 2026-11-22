@@ -1294,6 +1294,11 @@ unsafe fn d3d9_call(d: &mut D3d, m: u32, this: u32, a: &dyn Fn(usize) -> u32) ->
             // (as Windows answers: no D32 depth buffers and no R8G8B8 textures, which GPUs
             // have not had for long; creating them still works)
             // (cube textures: no depth stencil ones, no depth or X8B8G8R8 formats, winref d3d9cube)
+            // (D3DUSAGE_DEPTHSTENCIL with a color format: D3DERR_INVALIDCALL, a depth format
+            // Windows makes no buffers of: D3DERR_NOTAVAILABLE, winref d3d9dev)
+            if usage & USAGE_DEPTHSTENCIL != 0 && rtype != RT_CUBETEX && !fmt::is_depth(f) {
+                return D3DERR_INVALIDCALL;
+            }
             let ok = if rtype == RT_CUBETEX && !cube_format(usage, f) {
                 false
             } else if usage & USAGE_DEPTHSTENCIL != 0 {
