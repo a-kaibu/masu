@@ -656,33 +656,35 @@ fn setup_cases() -> Result<Vec<String>, String> {
             // their w, the line's words, the inputs' planes)
             type Slot = ([[f32; 4]; 3], setup::Plane, u32, setup::Plane, u32, [f32; 4], Vec<setup::Plane>);
             let of_line = |l: &setup::Line| -> Slot { (setup::line_region(l, &r), l.rhw, l.hi_col.to_bits(), l.z, l.hi_row.to_bits(), [l.x0, l.y0, l.dx, l.dy], l.attrs.clone()) };
-            let tri = |c: &[setup::Corner]| -> [setup::Corner; 3] { [c[0].clone(), c[1].clone(), c[2].clone()] };
+            // (the corners at the places given, None past the store's)
+            let pick = |at: [usize; 2]| -> Option<[setup::Corner; 2]> { Some([corners.get(at[0])?.clone(), corners.get(at[1])?.clone()]) };
+            let tri: Option<[setup::Corner; 3]> = corners.first_chunk::<3>().cloned();
             let mut made: Vec<(u32, Slot)> = Vec::new();
             match prim {
                 setup::Prim::Triangle => {
-                    for (f, fan) in (0u32..).zip(setup::triangle(&tri(&corners), &modes, &r)) {
+                    for (f, fan) in (0u32..).zip(tri.iter().flat_map(|c| setup::triangle(c, &modes, &r))) {
                         made.push((f, (fan.pos, fan.rhw, 0, fan.z, 0, [0.0; 4], fan.attrs)));
                     }
                 }
                 setup::Prim::Wire => {
-                    if !setup::triangle(&tri(&corners), &modes, &r).is_empty() {
-                        for (f, (a, b)) in (0u32..).zip([(0, 1), (1, 2), (2, 0)]) {
-                            if let Some(l) = setup::line(&[corners[a].clone(), corners[b].clone()], &modes, &r) {
+                    if tri.as_ref().is_some_and(|c| !setup::triangle(c, &modes, &r).is_empty()) {
+                        for (f, ab) in (0u32..).zip([[0, 1], [1, 2], [2, 0]]) {
+                            if let Some(l) = pick(ab).and_then(|e| setup::line(&e, &modes, &r)) {
                                 made.push((f, of_line(&l)));
                             }
                         }
                     }
                 }
                 setup::Prim::Line => {
-                    if let Some(l) = setup::line(&[corners[0].clone(), corners[1].clone()], &modes, &r) {
+                    if let Some(l) = pick([0, 1]).and_then(|e| setup::line(&e, &modes, &r)) {
                         made.push((0, of_line(&l)));
                     }
                 }
                 setup::Prim::Point => {
-                    if let Some(d) = setup::point(&corners[0], &modes, &r) {
+                    if let Some((c0, d)) = corners.first().and_then(|c0| Some((c0, setup::point(c0, &modes, &r)?))) {
                         let flat = |v: f32| setup::Plane { gx: 0.0, gy: 0.0, c: v };
                         let attrs: Vec<setup::Plane> = (0..d.attrs.len()).map(|k| match modes.get(k / 4) {
-                            Some(setup::Mode::Constant) => setup::Plane { gx: 0.0, gy: 0.0, c: f32::from_bits(corners[0].attrs.get(k).copied().unwrap_or(0)) },
+                            Some(setup::Mode::Constant) => setup::Plane { gx: 0.0, gy: 0.0, c: f32::from_bits(c0.attrs.get(k).copied().unwrap_or(0)) },
                             _ => flat(d.attrs.get(k).copied().unwrap_or(0.0)),
                         }).collect();
                         for (f, sq) in (0u32..).zip(setup::dot_squares(&d, &r)) {

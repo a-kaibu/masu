@@ -322,8 +322,8 @@ fn clip(c: &[Corner; 3], depth_clip: bool) -> Option<(Vec<Point>, Vec<usize>, [u
     };
     let mut table: Vec<Point> = rot
         .iter()
-        .map(|&i| {
-            let v = &c[i];
+        .filter_map(|&i| c.get(i))
+        .map(|v| {
             let [x, y, z, w] = v.pos;
             let (n, f) = if depth_clip { (z, w - z) } else { (0.0, 0.0) };
             let mut d = vec![n, f, w + x, w - x, w - y, w + y];
@@ -357,7 +357,7 @@ fn clip(c: &[Corner; 3], depth_clip: bool) -> Option<(Vec<Point>, Vec<usize>, [u
             let cross = |inside: usize, outside: usize, d_in: f32, d_out: f32, table: &mut Vec<Point>| -> usize {
                 let den = d_in - d_out;
                 let (Some(i), Some(o)) = (table.get(inside), table.get(outside)) else { return inside };
-                let p = std::array::from_fn(|q| lerp(i.p[q], o.p[q], d_in, den));
+                let p = lerp_pos(&i.p, &o.p, d_in, den);
                 let d = (0..planes).map(|q| {
                     let (x, y) = (i.d.get(q).copied().unwrap_or(0.0), o.d.get(q).copied().unwrap_or(0.0));
                     if q > k && or >> q & 1 != 0 { lerp(x, y, d_in, den) } else { x }
@@ -435,18 +435,35 @@ fn f32_of(v: i128) -> f32 {
     if neg { -f } else { f }
 }
 
+/// The clip space position from `i` toward `o`, each component as WARP's lerp.
+fn lerp_pos(i: &[f32; 4], o: &[f32; 4], d_in: f32, den: f32) -> [f32; 4] {
+    let mut p = *i;
+    for (v, &w) in p.iter_mut().zip(o) {
+        *v = lerp(*v, w, d_in, den);
+    }
+    p
+}
+
+/// A fan triangle's snapped corners widened (i32 differences and their products are exact in
+/// i128: wrapping never wraps) and its doubled area.
+fn wide(s: [(i32, i32); 3]) -> ([(i128, i128); 3], i128) {
+    let w = s.map(|(x, y)| (i128::from(x), i128::from(y)));
+    let [(x0, y0), (x1, y1), (x2, y2)] = w;
+    let det = y2.wrapping_sub(y0).wrapping_mul(x1.wrapping_sub(x0)).wrapping_sub(y0.wrapping_sub(y1).wrapping_mul(x0.wrapping_sub(x2)));
+    (w, det)
+}
+
 /// A fan triangle's geometry for its planes: x0, y0, dx10, dx02, dy01, dy20, inv; None for no
 /// area.
 fn geometry(s: [(i32, i32); 3]) -> Option<[f32; 7]> {
-    let [(x0, y0), (x1, y1), (x2, y2)] = s.map(|(x, y)| (i128::from(x), i128::from(y)));
-    let det = (y2 - y0) * (x1 - x0) - (y0 - y1) * (x0 - x2);
+    let ([(x0, y0), (x1, y1), (x2, y2)], det) = wide(s);
     if det == 0 {
         return None;
     }
     let e = f32::from_bits(0x3b80_0000);
     let px = |v: i128| f32_of(v) * e;
     let inv = 1.0 / (f32_of(det) * f32::from_bits(0x3780_0000));
-    Some([px(x0), px(y0), px(x1 - x0), px(x0 - x2), px(y0 - y1), px(y2 - y0), inv])
+    Some([px(x0), px(y0), px(x1.wrapping_sub(x0)), px(x0.wrapping_sub(x2)), px(y0.wrapping_sub(y1)), px(y2.wrapping_sub(y0)), inv])
 }
 
 /// The plane through a0, a1, a2 at a fan triangle of geometry g.
@@ -460,8 +477,7 @@ fn plane(g: &[f32; 7], a: [f32; 3]) -> Plane {
 
 /// Whether a fan triangle of doubled area `det` (its sign) is drawn.
 fn facing(s: [(i32, i32); 3], r: &Raster) -> bool {
-    let [(x0, y0), (x1, y1), (x2, y2)] = s.map(|(x, y)| (i128::from(x), i128::from(y)));
-    let det = (y2 - y0) * (x1 - x0) - (y0 - y1) * (x0 - x2);
+    let (_, det) = wide(s);
     let front = if r.front_ccw { det < 0 } else { det > 0 };
     match r.cull {
         Cull::None => true,
@@ -501,7 +517,7 @@ pub fn triangle(c: &[Corner; 3], modes: &[Mode], r: &Raster) -> Vec<Fan> {
     let vals: Vec<Vec<f32>> = (0..comps)
         .map(|k| {
             let mode = modes.get(k / 4).copied().unwrap_or(Mode::Undefined);
-            values(&table, rot, std::array::from_fn(|i| c[i].attrs.get(k).copied().unwrap_or(0)), mode)
+            values(&table, rot, c.each_ref().map(|v| v.attrs.get(k).copied().unwrap_or(0)), mode)
         })
         .collect();
     let mut out = Vec::new();
@@ -565,7 +581,7 @@ pub struct Line {
 fn clip_at(x: f32, y: f32, z: f32, r: &Raster) -> [f32; 4] {
     let [vx, vy, vw, vh, n, f] = r.viewport;
     let (hx, ox, hy, oy) = (vw * 0.5, vw * 0.5 + vx, -vh * 0.5, vh * 0.5 + vy);
-    let dz = if f == n { 0.0 } else { ((z - n) / (f - n)).clamp(0.0, 1.0) };
+    let dz = if same(f, n) { 0.0 } else { ((z - n) / (f - n)).clamp(0.0, 1.0) };
     [(x - ox) / hx, (y - oy) / hy, dz, 1.0]
 }
 
@@ -578,6 +594,11 @@ pub fn line_region(l: &Line, r: &Raster) -> [[f32; 4]; 3] {
     [(bx0, by0), (bx0 + 2.0 * (bx1 - bx0), by0), (bx0, by0 + 2.0 * (by1 - by0))].map(|(x, y)| clip_at(x, y, line_at(l.z, x, y), r))
 }
 
+/// a == b as f32 compares (0 and -0 alike, a NaN like nothing)
+fn same(a: f32, b: f32) -> bool {
+    a.partial_cmp(&b) == Some(std::cmp::Ordering::Equal)
+}
+
 /// ceil(v) - 0.5 as WARP computes it (round to nearest, up when below)
 fn owner(v: f32) -> f32 {
     let n = v.round_ties_even();
@@ -587,7 +608,7 @@ fn owner(v: f32) -> f32 {
 
 fn diamond(x: f32, y: f32, cx: f32, cy: f32, xmajor: bool) -> bool {
     let d = (x - cx).abs() + (y - cy).abs();
-    let inclusive = y > cy || (y == cy && !xmajor && x > cx);
+    let inclusive = y > cy || (same(y, cy) && !xmajor && x > cx);
     if inclusive { 0.5 >= d } else { 0.5 > d }
 }
 
@@ -626,19 +647,21 @@ fn clip_line(c: &[Corner; 2], depth_clip: bool) -> Option<(Vec<Point>, [usize; 2
         if !out[0] && !out[1] {
             continue;
         }
-        let (i, o) = if out[1] { (0, 1) } else { (1, 0) };
-        let (inside, outside) = (ends[i], ends[o]);
-        let (d_in, d_out) = (d[i], d[o]);
+        // (the end outside moves: [inside, outside] as the ends and their distances)
+        let flip = |v: [usize; 2]| if out[1] { v } else { [v[1], v[0]] };
+        let [inside, outside] = flip(ends);
+        let [d_in, d_out] = if out[1] { d } else { [d[1], d[0]] };
         let den = d_in - d_out;
         let (Some(a), Some(b)) = (table.get(inside), table.get(outside)) else { return None };
-        let p = std::array::from_fn(|q| lerp(a.p[q], b.p[q], d_in, den));
+        let p = lerp_pos(&a.p, &b.p, d_in, den);
         let dd = (0..planes).map(|q| {
             let (x, y) = (a.d.get(q).copied().unwrap_or(0.0), b.d.get(q).copied().unwrap_or(0.0));
             if q > k { lerp(x, y, d_in, den) } else { x }
         });
         let pt = Point { p, d: dd.collect(), made: Some(Made { inside, outside, d_in, d_out, den }) };
         table.push(pt);
-        ends[o] = table.len().saturating_sub(1);
+        let moved = table.len().saturating_sub(1);
+        ends = flip([inside, moved]);
     }
     Some((table, ends))
 }
@@ -651,7 +674,7 @@ pub fn line(c: &[Corner; 2], modes: &[Mode], r: &Raster) -> Option<Line> {
     let e = f32::from_bits(0x3b80_0000);
     let at = |k: usize| scr.get(k).map_or((0.0, 0.0), |v| (f32_of(i128::from(v.0.0)) * e, f32_of(i128::from(v.0.1)) * e));
     let ((x0, y0), (x1, y1)) = (at(ends[0]), at(ends[1]));
-    if x0 == x1 && y0 == y1 {
+    if same(x0, x1) && same(y0, y1) {
         return None;
     }
     let xmajor = (x0 - x1).abs() >= (y0 - y1).abs();
@@ -661,7 +684,7 @@ pub fn line(c: &[Corner; 2], modes: &[Mode], r: &Raster) -> Option<Line> {
     let in_e = diamond(x1, y1, cx1, cy1, xmajor);
     let (hi_col, hi_row) = (f32::from_bits(0x3f00_0001), if xmajor { 0.5 } else { f32::from_bits(0x3f00_0001) });
     let (mut sx, mut sy, mut sdx, mut sdy) = (x0, y0, dx, dy);
-    if in_s && in_e && cx0 == cx1 && cy0 == cy1 {
+    if in_s && in_e && same(cx0, cx1) && same(cy0, cy1) {
         (sx, sy, sdx, sdy) = (-0.5, -0.5, 0.0, 0.0);
     } else {
         if in_s {

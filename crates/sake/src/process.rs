@@ -122,13 +122,13 @@ pub fn quote(a: &str) -> String {
         return a.to_string();
     }
     let mut out = String::from("\"");
-    let mut slashes = 0;
+    let mut slashes: usize = 0;
     for ch in a.chars() {
         match ch {
-            '\\' => slashes += 1,
+            '\\' => slashes = slashes.saturating_add(1),
             '"' => {
                 // (the n already written, n more and one for the quote)
-                out.extend(std::iter::repeat_n('\\', slashes + 1));
+                out.extend(std::iter::repeat_n('\\', slashes.saturating_add(1)));
                 out.push('"');
                 slashes = 0;
                 continue;
