@@ -5029,12 +5029,9 @@ unsafe fn draw_with(d: &mut D11, st: &State, indexed: bool, count: u32, instance
     let copies: Vec<logic::Copy> = logic_ops.iter().filter(|l| l.reads_copy()).filter_map(|l| logic::copy_of(d, st.rtvs.get(us(l.target)).copied().unwrap_or(0), l)).collect();
     // (a stash's copy is the resolve's, not the shader's)
     let mut ps_over: Vec<[u32; 8]> = copies.iter().filter(|c| !stashed.iter().any(|l| c.entry[0] == dxwgsl::logic::LOGIC_DST.saturating_add(l.target))).map(|c| c.entry).collect();
-<<<<<<< Updated upstream
     if let Some(e) = store.and_then(|sd| sd.setup) {
         ps_over.push(e);
     }
-=======
->>>>>>> Stashed changes
     let stash = logic::stash_of(d, &st.rtvs, &colors, [dt, dl, dly], &stashed, &masks, &copies);
     ps_over.extend(stash.as_ref().and_then(|s| s.src));
     for (stage, binds) in [(0usize, &vb), (1usize, &ps.as_ref().map_or_default(|p| p.1.clone()))] {
