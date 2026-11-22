@@ -1,6 +1,6 @@
 #!/bin/bash
 # Trace checks: the trace tests (cargo test ... _trace) drive kura's (and sake's) graphics API
-# code with random calls and write each run as a TLA+ module, with the name of the spec it
+# code (and masu's saves) with random calls and write each run as a TLA+ module, with the name of the spec it
 # follows in SPEC; TLC checks every one against formal/tla/<spec>.tla through <spec>Trace.tla:
 #   ComRefs   D3D9/D3D11 object lifetimes: results, objects handed back, which are alive
 #   Locks     D3D9 surface locks and copies: results, what locks and page readbacks show
@@ -10,6 +10,7 @@
 #   GlPrograms GL shaders and programs: deferred deletes, attach/link/use errors, queries
 #   Binds11   D3D11 inputs and outputs of the same subresources: what the slots hold
 #   D2dDraw   sake's D2D BeginDraw/EndDraw/Flush, drawing calls and clips: what each returns
+#   SaveApi   masu's saves on a fake bucket failing at random: answers, rows, revisions named
 #
 #   formal/trace.sh       TLC=path/to/tlc; MASU_TRACE_SEEDS (default 20 per test);
 #                         KEEP=dir copies each failing trace (and TLC's output) there
@@ -18,6 +19,7 @@ HERE=$(cd "$(dirname "$0")" && pwd)
 TLC=${TLC:-tlc}
 dir=$(mktemp -d)
 MASU_TRACE_DIR=$dir cargo test -q --manifest-path "$HERE/../Cargo.toml" -p kura -p sake --lib _trace || [ -n "${KEEP_GOING:-}" ] || exit 1
+MASU_TRACE_DIR=$dir cargo test -q --manifest-path "$HERE/../Cargo.toml" -p masu --bin masu _trace || [ -n "${KEEP_GOING:-}" ] || exit 1
 fail=0; n=0
 for t in "$dir"/*/; do
   spec=$(cat "$t/SPEC")

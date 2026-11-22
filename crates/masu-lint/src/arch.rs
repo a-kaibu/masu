@@ -66,6 +66,8 @@ pub enum Rule {
     GuestScratch,
     HandStd,
     KaniFeatures,
+    KaniCover,
+    VerusMirror,
     UncheckedOutput,
     HandLock,
     StageRun,
@@ -76,7 +78,7 @@ pub enum Rule {
 }
 
 impl Rule {
-    pub const ALL: [Rule; 56] = [
+    pub const ALL: [Rule; 58] = [
         Rule::BuildOutput,
         Rule::HresultCopy,
         Rule::KomeCopy,
@@ -126,6 +128,8 @@ impl Rule {
         Rule::GuestScratch,
         Rule::HandStd,
         Rule::KaniFeatures,
+        Rule::KaniCover,
+        Rule::VerusMirror,
         Rule::UncheckedOutput,
         Rule::HandLock,
         Rule::StageRun,
@@ -187,6 +191,8 @@ impl Rule {
             Rule::GuestScratch => "guest-scratch",
             Rule::HandStd => "hand-std",
             Rule::KaniFeatures => "kani-features",
+            Rule::KaniCover => "kani-cover",
+            Rule::VerusMirror => "verus-mirror",
             Rule::UncheckedOutput => "unchecked-output",
             Rule::HandLock => "hand-lock",
             Rule::StageRun => "stage-run",
@@ -247,6 +253,8 @@ impl Rule {
             Rule::NoReturnHandler => "a Windows function that does not come back (modern::NORETURN: ExitProcess, exit, abort, _assert..) is `fn(&mut Ctx) -> !` registered with noreturn! (api::NoReturn checks it; 2026-11-21): a handler that returns a value lets the guest run on past it",
             Rule::WildcardUnreachable => "no `_ => unreachable!()` arm outside tests (2026-11-21, user rule: exhaustive matches, no `_` catch-alls): take the value that cannot come out by a type (an enum, `!` as a type argument, a const-built table)",
             Rule::GuestScratch => "a guest block one sake function uses for the length of a call is a mem::Scratch (2026-11-21: 355 hand pairs converted): it is freed on every way out of the function, where a hand-written heap_free at the end leaked it on each early return; a block the guest keeps stays heap_alloc",
+            Rule::VerusMirror => "a Verus proof (formal/verus/*.rs) is a copy of the code it is about (Verus checks its own copy, not the crate), so a test of that code reads it (`include_str!` of the proof file) and compares the two: a proof whose copy drifted from the real code proves nothing about it (2026-11-22, the formal-verification plan: CDC's proof had its own bounds and casts)",
+            Rule::KaniCover => "a Kani proof (`#[kani::proof]`) that narrows its inputs (`kani::assume`, an early `return`, a `let .. else`) shows with `kani::cover!` that the cases it is about are still reached (assumptions that contradict each other make every assertion after them vacuous: the proof passes and proves nothing), and every crate with a proof is in formal/kani.sh's `for c in` list (a proof no script runs is no proof; 2026-11-22, the formal-verification plan)",
             Rule::KaniFeatures => "a crate formal/kani.sh compiles (or links) names the Rust 1.100 library features Kani's older nightly has unstable in `#![cfg_attr(kani, feature(..))]` in its lib.rs (2026-11-21: Vec::from_fn stopped every proof; review e18bf44)",
             Rule::UncheckedOutput => "a command's stdout is its answer only when its exit status says it worked: check `.status.success()` (an empty `git ls-files` from a copy without .git was \"no files\"; review e18bf44)",
             Rule::HandLock => "a lock between processes is a lock file opened through masu's lockfile::LockFile: Windows' File::open opens no directory, and the store's writers locked the store directory itself (`masu add` failed on Windows; review e18bf44)",
@@ -310,6 +318,8 @@ impl Rule {
             Rule::GuestScratch => modern::guest_scratch(tree),
             Rule::HandStd => modern::hand_std(tree),
             Rule::KaniFeatures => regress::kani_features(tree),
+            Rule::KaniCover => regress::kani_cover(tree),
+            Rule::VerusMirror => regress::verus_mirror(tree),
             Rule::UncheckedOutput => regress::unchecked_output(tree),
             Rule::HandLock => regress::hand_lock(tree),
             Rule::StageRun => regress::stage_run(tree),

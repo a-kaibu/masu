@@ -487,10 +487,15 @@ static KANI_FOR: LazyLock<Option<Regex>> = LazyLock::new(|| rx(r"(?m)^\s*for\s+c
 static KANI_GATE: LazyLock<Option<Regex>> = LazyLock::new(|| rx(r"#!\[\s*cfg_attr\s*\(\s*kani\s*,\s*feature\s*\(([^)]*)\)\s*\)\s*\]"));
 static KANI_USES: LazyLock<Vec<(&'static str, Option<Regex>)>> = LazyLock::new(|| KANI_UNSTABLE.iter().map(|(f, r)| (*f, rx(r))).collect());
 
+/// the crates formal/kani.sh runs `cargo kani` in (`crates/x`)
+fn kani_roots(tree: &Tree) -> Vec<String> {
+    let script = tree.text(&Rel::new(KANI_SCRIPT));
+    KANI_FOR.as_ref().and_then(|r| r.captures(&script)).and_then(|c| c.get(1)).map_or_default(|m| m.as_str().split_whitespace().map(|c| format!("crates/{c}")).collect())
+}
+
 /// the crates `cargo kani` compiles: the script's and every crate they link by path
 pub(super) fn kani_crates(tree: &Tree) -> BTreeSet<String> {
-    let script = tree.text(&Rel::new(KANI_SCRIPT));
-    let roots: Vec<String> = KANI_FOR.as_ref().and_then(|r| r.captures(&script)).and_then(|c| c.get(1)).map_or_default(|m| m.as_str().split_whitespace().map(|c| format!("crates/{c}")).collect());
+    let roots = kani_roots(tree);
     let mut seen = BTreeSet::new();
     let mut todo = roots;
     while let Some(c) = todo.pop() {
@@ -536,6 +541,76 @@ pub(super) fn kani_features(tree: &Tree) -> Hits {
                     out.push((f.clone(), l, format!("uses {feature}, unstable in Kani's compiler: {lib} needs `#![cfg_attr(kani, feature({feature}))]`")));
                 }
             }
+        }
+    }
+    out
+}
+
+// --- kani-cover -------------------------------------------------------------------------------
+
+/// The `#[kani::proof]` fns of a file (in any module, `#[cfg(kani)]` ones included): (name,
+/// line, whether it narrows its inputs, whether it has a `kani::cover!`)
+fn kani_proofs(file: &syn::File) -> Vec<(String, usize, bool, bool)> {
+    use quote::ToTokens;
+    use syn::visit::Visit;
+    struct V(Vec<(String, usize, bool, bool)>);
+    impl<'a> Visit<'a> for V {
+        fn visit_item_fn(&mut self, f: &'a syn::ItemFn) {
+            let proof = f.attrs.iter().any(|a| {
+                let p: Vec<String> = a.path().segments.iter().map(|s| s.ident.to_string()).collect();
+                p == ["kani", "proof"]
+            });
+            if proof {
+                let toks = f.block.to_token_stream().to_string();
+                let words: Vec<&str> = toks.split_whitespace().collect();
+                let body: String = words.concat();
+                let narrows = body.contains("kani::assume(") || words.contains(&"return");
+                let covers = body.contains("kani::cover!(");
+                self.0.push((f.sig.ident.to_string(), crate::syntax::line(f.sig.ident.span()), narrows, covers));
+            }
+            syn::visit::visit_item_fn(self, f);
+        }
+    }
+    let mut v = V(Vec::new());
+    v.visit_file(file);
+    v.0
+}
+
+pub(super) fn kani_cover(tree: &Tree) -> Hits {
+    let mut out = Hits::new();
+    // (the script's own crates: `cargo kani` in a crate checks that crate's proofs, not those of
+    // the crates it links)
+    let run: BTreeSet<String> = kani_roots(tree).into_iter().collect();
+    for f in tree.rs(&["crates/"]) {
+        let Ok(file) = syn::parse_file(&tree.text(&f)) else { continue };
+        let proofs = kani_proofs(&file);
+        for (name, l, narrows, covers) in &proofs {
+            if *narrows && !covers {
+                out.push((f.clone(), *l, format!("Kani proof `{name}` narrows its inputs (assume / return / let-else) but has no `kani::cover!`: show the cases it is about are reached")));
+            }
+        }
+        // (crates/<c>/src/..: the crate is crates/<c>)
+        let mut parts = f.0.splitn(3, '/');
+        let (Some(_), Some(c)) = (parts.next(), parts.next()) else { continue };
+        let krate = format!("crates/{c}");
+        if let Some((name, l, ..)) = proofs.first()
+            && !run.contains(&krate)
+        {
+            out.push((f.clone(), *l, format!("Kani proof `{name}` is in {krate}, which formal/kani.sh does not run (`for c in ...; do`)")));
+        }
+    }
+    out
+}
+
+// --- verus-mirror -----------------------------------------------------------------------------
+
+pub(super) fn verus_mirror(tree: &Tree) -> Hits {
+    let mut out = Hits::new();
+    let read: String = tree.rs(&["crates/"]).iter().map(|f| tree.text(f)).filter(|t| t.contains("formal/verus/")).collect();
+    for f in tree.rs(&["formal/verus/"]) {
+        let Some(name) = f.as_str().rsplit('/').next() else { continue };
+        if !read.contains(&format!("formal/verus/{name}\")")) {
+            out.push((f.clone(), 1, format!("no test reads {f} (`include_str!(\"../../../formal/verus/{name}\")` in a test of the code it is a copy of, comparing the two)")));
         }
     }
     out

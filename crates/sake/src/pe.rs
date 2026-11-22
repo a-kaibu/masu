@@ -2420,9 +2420,13 @@ mod proofs {
         kani::assume(n <= 24);
         let r32 = |o: u32| if o as usize + 4 <= n as usize { u32::from_le_bytes(t[o as usize..o as usize + 4].try_into().unwrap()) } else { 0 };
         let r16 = |o: u32| if o as usize + 2 <= n as usize { u16::from_le_bytes(t[o as usize..o as usize + 2].try_into().unwrap()) as u32 } else { 0 };
+        let mut fixed = 0u32;
         reloc_targets(0, n, size, r32, r16, |o, w| {
             assert!(o as u64 + if w { 8 } else { 4 } <= size as u64);
+            fixed += 1;
         });
+        kani::cover!(fixed > 0, "a block's fixups applied");
+        kani::cover!(fixed == 0 && n >= 10, "a block whose fixups all fall outside the image");
     }
 
     #[kani::proof]
