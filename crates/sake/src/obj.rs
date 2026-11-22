@@ -727,7 +727,8 @@ fn wait_held(handles: &[u32], all: bool, ms: u32, extra: Option<&dyn Fn() -> boo
 /// wait_held, `ending` run before this thread ends in it (TerminateThread).
 fn wait_held_then(handles: &[Option<Key>], all: bool, ms: u32, extra: Option<&dyn Fn() -> bool>, ending: &dyn Fn()) -> u32 {
     let tid = crate::cur().tid;
-    let deadline = (ms != 0xffff_ffff).then(|| kome::time::from_now(Duration::from_millis(u64::from(ms))));
+    // (a restored copy's wait called again ends when the saved one would have)
+    let deadline = crate::snap::wait_end(ms);
     let cv = CV.with(Arc::clone);
     let mut g = lock();
     // (whether it waited: only a waiter that was woken defers to its signaler)

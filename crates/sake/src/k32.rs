@@ -974,16 +974,10 @@ pub(crate) fn suspend_count(tid: u32, suspend: bool) -> Result<u32, u32> {
 
 /// Blocks a new thread created suspended until ResumeThread.
 /// Waits while thread object `k` is created suspended and not resumed yet.
-pub fn wait_gate(k: obj::Key) {
-    let mut g = GATE.locked();
-    while g.iter().any(|&(x, n)| x == k && n > 0) {
-        g = kome::locks::wait(&GATE_CV, g);
-    }
-    g.retain(|&(x, _)| x != k);
-}
-
-/// wait_gate for a new thread that will run `start(param)`: it may stand still for a save
-/// state meanwhile (snap.rs START).
+/// A new thread that will run `start(param)` waits for its first ResumeThread (the gate of its
+/// object `k`); it may stand still for a save state meanwhile (snap.rs START), in a restored
+/// copy too (a restored copy's wait that could not stand still kept the next state from being
+/// taken).
 pub fn wait_gate_start(k: obj::Key, start: u32, param: u32) {
     let mut g = GATE.locked();
     while g.iter().any(|&(x, n)| x == k && n > 0) {
@@ -1473,10 +1467,10 @@ fn Sleep(c: &mut Ctx) -> u32 {
     0
 }
 
-/// Sleeps `ms` (INFINITE: for good); a save state may be taken meanwhile (the call starts over
-/// in a restored copy).
+/// Sleeps `ms` (INFINITE: for good); a save state may be taken meanwhile (a restored copy calls
+/// it again and sleeps what was left, snap::wait_end).
 pub(crate) fn sleep_ms(ms: u32) {
-    let end = (ms != u32::MAX).then(|| kome::time::from_now(std::time::Duration::from_millis(u64::from(ms))));
+    let end = crate::snap::wait_end(ms);
     loop {
         let left = match end {
             Some(e) => match e.checked_duration_since(std::time::Instant::now()) {
@@ -11560,7 +11554,7 @@ mod gate_tests {
             }
             if model == 0 {
                 // (the gate is open: the thread would start; its wait returns at once)
-                wait_gate(k);
+                wait_gate_start(k, 0, 0);
                 prop_assert_eq!(count(k), None);
             } else {
                 GATE.locked().retain(|(x, _)| *x != k);

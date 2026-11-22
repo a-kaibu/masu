@@ -92,6 +92,25 @@ for bits in 32 64; do
     echo "FAIL snapinit $bits: the whole run, or the state not asked for in the callback"; tail -3 $o.whole $o.a; fail=1
   fi
 done
+# timed waits cut in the middle (host/tests/snapwait.c): a restored copy waits what was left of
+# each, so every wait is on time and the pieces are the whole run (a wait that started over
+# was late by the time it had already waited)
+for bits in 32 64; do
+  cc=i686-w64-mingw32-gcc; [ $bits = 64 ] && cc=x86_64-w64-mingw32-gcc
+  $cc -O2 "$ROOT/host/tests/snapwait.c" -o "$OUT/snapwait-$bits.exe" || exit 1
+  EXE=$OUT/snapwait-$bits.exe
+  o=$OUT/snapwait-$bits
+  run > $o.whole
+  if [ "$(tail -1 $o.whole)" != end ] || grep -Eq 'wrong answer|early|late' $o.whole; then
+    echo "FAIL snapwait $bits: the whole run"; cat $o.whole; fail=1; continue
+  fi
+  for t in ${WAIT_TIMES:-1.5 4.0 6.5}; do
+    run MASU_SNAP_SAVE="$o-$t.snap@$t" MASU_SNAP_EXIT=1 > $o.a
+    run MASU_SNAP_LOAD="$o-$t.snap" > $o.b
+    cat $o.a $o.b > $o.ab
+    check "snapwait $bits @$t: each wait on time after the state" $o.ab $o.whole
+  done
+done
 # a program with another process: no state (the kernel they share is outside the memory), the
 # program goes on
 i686-w64-mingw32-gcc -O2 "$ROOT/host/tests/snapproc.c" -o "$OUT/snapproc.exe" &&
