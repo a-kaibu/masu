@@ -57,14 +57,14 @@ const FUNC_DESCR_NOEXCEPT: u32 = 4;
 const FH3_PARAMS: u32 = 11;
 const FH4_PARAMS: u32 = 10;
 
-/// Where the current exception (record, context) is kept: the TEB's free page after errno.
-const CUR_EXC_TEB: u32 = crate::crt::ERRNO_TEB + 0x10;
+/// Where the current exception (record, context) is kept (cxx::PTD_TEB's layout; x64 here)
+const CUR_EXC_TEB: u32 = crate::cxx::PTD_TEB + 16;
 
-/// _set_se_translator's function, per thread (after the current exception)
+/// _set_se_translator's function, per thread
 const SE_TRANSLATOR_TEB: u32 = crate::cxx::SE_TRANSLATOR_TEB;
 /// The exception (record u32, frame u64) whose translator returned: its handler, called again,
 /// goes on without it.
-const SE_TRANSLATED_TEB: u32 = SE_TRANSLATOR_TEB + 8;
+const SE_TRANSLATED_TEB: u32 = crate::crt::ERRNO_TEB + 0x20;
 /// Where the translator returns to (seh64's walk passes it too).
 pub const TRANSLATE_TRAP: u32 = 0xffff_0060;
 /// The translator's call below the handler's return address: TRANSLATE_TRAP, the home space,
@@ -1031,11 +1031,15 @@ fn C_specific_handler(c: &mut Ctx) -> u32 {
 
 /// __current_exception / __current_exception_context: the thread's EXCEPTION_RECORD* and
 /// CONTEXT* slots
-fn __current_exception(_: &mut Ctx) -> u32 {
-    crate::cur().teb + CUR_EXC_TEB
+pub(crate) fn __current_exception(_: &mut Ctx) -> u32 {
+    crate::cur().teb + crate::cxx::cur_exc_teb()
 }
-fn __current_exception_context(_: &mut Ctx) -> u32 {
-    crate::cur().teb + CUR_EXC_TEB + 8
+pub(crate) fn __current_exception_context(_: &mut Ctx) -> u32 {
+    crate::cur().teb + crate::cxx::cur_exc_teb() + crate::mem::ps()
+}
+/// __processing_throw: the thread's count of throws being processed (an int)
+pub(crate) fn __processing_throw(_: &mut Ctx) -> u32 {
+    crate::cur().teb + crate::cxx::cur_exc_teb() + 2 * crate::mem::ps()
 }
 /// __uncaught_exceptions: none in flight between a throw and its catch outside a dispatch
 fn __uncaught_exceptions(_: &mut Ctx) -> u32 {
@@ -1051,6 +1055,7 @@ pub fn register() {
         implement(d, "__C_specific_handler", C_specific_handler);
         implement(d, "__current_exception", __current_exception);
         implement(d, "__current_exception_context", __current_exception_context);
+        implement(d, "__processing_throw", __processing_throw);
         implement(d, "__uncaught_exceptions", __uncaught_exceptions);
     }
     implement("vcruntime140", "_set_se_translator", _set_se_translator);

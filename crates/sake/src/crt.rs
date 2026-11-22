@@ -106,6 +106,15 @@ fn errno_of(e: i32) {
         set_errno(e as u32);
     }
 }
+/// A secure (_s) function's error: EINVAL and ERANGE go through the invalid parameter handler
+/// first, as the CRT's parameter checks do (ucrtbase:misc test_invalid_parameter_handler);
+/// STRUNCATE and EILSEQ only set errno
+fn errno_s(c: &mut Ctx, e: i32) {
+    if e == 22 || e == 34 {
+        io::invalid_parameter(c);
+    }
+    errno_of(e);
+}
 
 // ---------------------------------------------------------------------------------------------
 // data exports
@@ -461,6 +470,25 @@ fn exit(c: &mut Ctx) -> ! {
 fn _exit(c: &mut Ctx) -> ! {
     unsafe { libc::exit(c.a(0) as i32) }
 }
+
+/// at_quick_exit functions, run (last first) by quick_exit alone: exit runs atexit's
+static AT_QUICK_EXIT: Mutex<Vec<u32>> = Mutex::new(Vec::new());
+
+/// _crt_at_quick_exit / at_quick_exit(func): 0
+fn _crt_at_quick_exit(c: &mut Ctx) -> u32 {
+    AT_QUICK_EXIT.locked().push(c.a(0));
+    0
+}
+/// quick_exit(code): the at_quick_exit functions, then the process ends without atexit's
+/// (ucrtbase:misc test_quick_exit)
+fn quick_exit(c: &mut Ctx) -> ! {
+    let code = c.a(0);
+    loop {
+        let Some(f) = AT_QUICK_EXIT.locked().pop() else { break };
+        c.call(f, &[]);
+    }
+    unsafe { libc::exit(code as i32) }
+}
 fn abort(_: &mut Ctx) -> ! {
     eprintln!("sake: abort()");
     unsafe { libc::exit(3) }
@@ -525,13 +553,16 @@ fn __pctype_func(_: &mut Ctx) -> u32 {
 /// x87 control word and MXCSR: x86 sets and reports the x87 one (and the SSE rounding and
 /// masks with it), x64 only MXCSR (no precision control there: Windows' answer is 0x8001f).
 const EM_BITS: [(u32, u32); 6] = [(0x10, 0), (0x80000, 1), (0x8, 2), (0x4, 3), (0x2, 4), (0x1, 5)];
-pub fn fp_control(c: &Ctx) -> u32 {
-    if mem::x64() {
-        let m = c.cpu.mxcsr;
-        let em = EM_BITS.iter().filter(|&&(_, b)| m >> (7 + b) & 1 != 0).fold(0, |a, &(f, _)| a | f);
-        return em | (m >> 13 & 3) << 8;
-    }
-    let cw = c.cpu.fpu.cw as u32;
+/// _EM_AMBIGUOUS: x86's x87 and SSE control words do not agree (masks or rounding)
+const EM_AMBIGUOUS: u32 = 0x8000_0000;
+/// The CRT's word for MXCSR: its masks and rounding
+fn sse_control(m: u32) -> u32 {
+    let em = EM_BITS.iter().filter(|&&(_, b)| m >> (7 + b) & 1 != 0).fold(0, |a, &(f, _)| a | f);
+    em | (m >> 13 & 3) << 8
+}
+/// The CRT's word for the x87 control word: masks, rounding, precision, infinity control
+fn x87_control(cw: u16) -> u32 {
+    let cw = u32::from(cw);
     let em = EM_BITS.iter().filter(|&&(_, b)| cw >> b & 1 != 0).fold(0, |a, &(f, _)| a | f);
     let pc = match cw >> 8 & 3 {
         0 => 0x20000,
@@ -540,20 +571,65 @@ pub fn fp_control(c: &Ctx) -> u32 {
     };
     em | (cw >> 10 & 3) << 8 | pc | (cw >> 12 & 1) << 18
 }
+/// x86: both words, with _EM_AMBIGUOUS when their masks or rounding differ (ucrtbase:misc
+/// test__control87_2); x64 MXCSR's alone
+pub fn fp_control(c: &Ctx) -> u32 {
+    let sse = sse_control(c.cpu.mxcsr);
+    if mem::x64() {
+        return sse;
+    }
+    let x87 = x87_control(c.cpu.fpu.cw);
+    x87 | sse | if (x87 ^ sse) & 0x8031f != 0 { EM_AMBIGUOUS } else { 0 }
+}
+fn em_of(v: u32, shift: u32) -> u32 {
+    EM_BITS.iter().filter(|&&(f, _)| v & f != 0).fold(0, |a, &(_, b)| a | 1 << (b + shift))
+}
+fn set_sse_control(c: &mut Ctx, new: u32, mask: u32) -> u32 {
+    let v = (sse_control(c.cpu.mxcsr) & !mask) | (new & mask);
+    c.cpu.mxcsr = (c.cpu.mxcsr & !(0x3f << 7 | 3 << 13)) | em_of(v, 7) | (v >> 8 & 3) << 13;
+    sse_control(c.cpu.mxcsr)
+}
+fn set_x87_control(c: &mut Ctx, new: u32, mask: u32) -> u32 {
+    let v = (x87_control(c.cpu.fpu.cw) & !mask) | (new & mask);
+    let pc = match v & 0x30000 {
+        0x20000 => 0,
+        0x10000 => 2,
+        _ => 3,
+    };
+    c.cpu.fpu.cw = (c.cpu.fpu.cw & 0xe0c0) as u16 | em_of(v, 0) as u16 | (pc << 8 | (v >> 8 & 3) << 10 | (v >> 18 & 1) << 12) as u16 | 0x40;
+    x87_control(c.cpu.fpu.cw)
+}
 pub fn set_fp_control(c: &mut Ctx, new: u32, mask: u32) -> u32 {
-    let v = (fp_control(c) & !mask) | (new & mask);
-    let em = |shift: u32| EM_BITS.iter().filter(|&&(f, _)| v & f != 0).fold(0, |a, &(_, b)| a | 1 << (b + shift));
-    let rc = v >> 8 & 3;
-    c.cpu.mxcsr = (c.cpu.mxcsr & !(0x3f << 7 | 3 << 13)) | em(7) | rc << 13;
+    let mask = mask & !EM_AMBIGUOUS;
+    set_sse_control(c, new, mask);
     if !mem::x64() {
-        let pc = match v & 0x30000 {
-            0x20000 => 0,
-            0x10000 => 2,
-            _ => 3,
-        };
-        c.cpu.fpu.cw = (c.cpu.fpu.cw & 0xe0c0) as u16 | em(0) as u16 | (pc << 8 | rc << 10 | (v >> 18 & 1) << 12) as u16 | 0x40;
+        set_x87_control(c, new, mask);
     }
     fp_control(c)
+}
+/// __control87_2(new, mask, &x87, &sse): each word given a place is set and its value put
+/// there (x86 only, 1)
+fn __control87_2(c: &mut Ctx) -> u32 {
+    let (new, mask, x87, sse) = (c.a(0), c.a(1), c.a(2), c.a(3));
+    if x87 != 0 {
+        let v = set_x87_control(c, new, mask);
+        w32(x87, v);
+    }
+    if sse != 0 {
+        let v = set_sse_control(c, new, mask);
+        w32(sse, v);
+    }
+    1
+}
+/// __fpe_flt_rounds: FLT_ROUNDS of the rounding in force (toward zero 0, nearest 1, up 2,
+/// down 3)
+fn __fpe_flt_rounds(c: &mut Ctx) -> u32 {
+    match fp_control(c) >> 8 & 3 {
+        0 => 1,
+        1 => 3,
+        2 => 2,
+        _ => 0,
+    }
 }
 fn _controlfp(c: &mut Ctx) -> u32 {
     // (the denormal mask stays as it is)
@@ -1018,6 +1094,13 @@ fn wcstok(c: &mut Ctx) -> u32 {
 fn wcstok_s(c: &mut Ctx) -> u32 {
     tok(2, c.a(0), c.a(1), c.a(2))
 }
+fn ucrt_wcstok(c: &mut Ctx) -> u32 {
+    let ctx = match c.a(2) {
+        0 => tok_ctx() + 8,
+        p => p,
+    };
+    tok(2, c.a(0), c.a(1), ctx)
+}
 fn wcslen(c: &mut Ctx) -> u32 {
     wstr(c.a(0)).len() as u32
 }
@@ -1305,7 +1388,7 @@ fn xtoa_s<T: Unit>(c: &mut Ctx, signed: bool, bits: u32) -> u32 {
     if buf != 0 {
         put_units(buf, &v_buf);
     }
-    errno_of(e);
+    errno_s(c, e);
     e as u32
 }
 /// The `n` units at `p` as they are (NULs included).
@@ -1962,6 +2045,49 @@ macro_rules! math1e {
 }
 math1e!(sqrt = f64::sqrt, sin = f64::sin, cos = f64::cos, tan = f64::tan, asin = f64::asin, acos = f64::acos,
     atan = f64::atan, exp = f64::exp, log = f64::ln, log10 = f64::log10, sinh = f64::sinh, cosh = f64::cosh, tanh = f64::tanh);
+/// _logb(x): x's unbiased exponent as a double (logb: -inf and ERANGE for 0, |x| for an
+/// infinity)
+fn _logb(c: &mut Ctx) -> u32 {
+    let x = c.f64(0);
+    ret_logb(c, x)
+}
+fn ret_logb(c: &mut Ctx, x: f64) -> u32 {
+    let r = logb_of(x);
+    math_errno(c, &[x], r);
+    ret(c, r)
+}
+pub(crate) fn logb_of(x: f64) -> f64 {
+    if x.is_nan() {
+        return x;
+    }
+    if x.is_infinite() {
+        return f64::INFINITY;
+    }
+    if x == 0.0 {
+        return f64::NEG_INFINITY;
+    }
+    f64::from(frexp_of(x).1 - 1)
+}
+/// _scalb(x, long e): x * 2^e (ldexp's rounding, ERANGE when it overflows)
+fn _scalb(c: &mut Ctx) -> u32 {
+    let mut a = Args(0);
+    let (x, e) = (a.f64(c), a.p(c) as i32);
+    let r = scale(x, e);
+    math_errno(c, &[x], r);
+    ret(c, r)
+}
+/// lldiv / imaxdiv (a, b): {quot, rem} of two 64-bit integers, through the hidden result
+/// pointer (the first argument on both machines); b = 0 leaves it as it is
+fn lldiv(c: &mut Ctx) -> u32 {
+    let mut a = Args(0);
+    let out = a.p(c);
+    let (x, y) = (a.u64(c) as i64, a.u64(c) as i64);
+    if y != 0 {
+        mem::w64(out, x.wrapping_div(y) as u64);
+        mem::w64(out + 8, x.wrapping_rem(y) as u64);
+    }
+    out
+}
 fn pow(c: &mut Ctx) -> u32 {
     let mut a = Args(0);
     let (x, y) = (a.f64(c), a.f64(c));
@@ -3069,7 +3195,7 @@ fn mem_s(c: &mut Ctx, f: fn(Option<&mut [u8]>, Option<&[u8]>, usize) -> i32) -> 
         Some(e) => e,
         None => f(None, src.as_deref(), n),
     };
-    errno_of(e);
+    errno_s(c, e);
     e as u32
 }
 fn _controlfp_s(c: &mut Ctx) -> u32 {
@@ -3303,7 +3429,7 @@ fn __stdio_common_vswscanf(c: &mut Ctx) -> u32 {
 // The destination is viewed as `size` units; the source is read as a string.
 
 /// A view of the destination: narrow ones in place, wide ones as a copy written back after.
-fn sec_call<T: Unit>(d: u32, size: u32, need: u32, f: impl FnOnce(Option<&mut [T]>) -> i32) -> u32 {
+fn sec_call<T: Unit>(c: &mut Ctx, d: u32, size: u32, need: u32, f: impl FnOnce(Option<&mut [T]>) -> i32) -> u32 {
     let e = if d == 0 {
         f(None)
     } else {
@@ -3315,7 +3441,7 @@ fn sec_call<T: Unit>(d: u32, size: u32, need: u32, f: impl FnOnce(Option<&mut [T
         put_units(d, &v);
         e
     };
-    errno_of(e);
+    errno_s(c, e);
     e as u32
 }
 /// How much of a destination of `size` units a copy of `src_len` units can touch.
@@ -3328,18 +3454,18 @@ fn copy_s<T: Unit>(c: &mut Ctx, append: bool) -> u32 {
     let (d, sz, s) = (c.a(0), size(c, 1), c.a(2));
     let src = (s != 0).then(|| gstr::<T>(s));
     let need = reach::<T>(d, sz, src.as_ref().map_or(0, |v| v.len()), append);
-    sec_call::<T>(d, sz, need, |dst| if append { crt::sec::strcat_s(dst, src.as_deref()) } else { crt::sec::strcpy_s(dst, src.as_deref()) })
+    sec_call::<T>(c, d, sz, need, |dst| if append { crt::sec::strcat_s(dst, src.as_deref()) } else { crt::sec::strcpy_s(dst, src.as_deref()) })
 }
 fn ncopy_s<T: Unit>(c: &mut Ctx, append: bool) -> u32 {
     let (d, sz, s, n) = (c.a(0), size(c, 1), c.a(2), size(c, 3));
     let count = if n == u32::MAX { crt::sec::TRUNCATE } else { n as usize };
     let src = (s != 0).then(|| gstrn::<T>(s, n.min(sz.saturating_add(1))));
     if d == 0 && sz != 0 {
-        set_errno(22);
+        errno_s(c, 22);
         return 22;
     }
     let need = reach::<T>(d, sz, src.as_ref().map_or(0, |v| v.len()), append);
-    sec_call::<T>(d, sz, need, |dst| if append { crt::sec::strncat_s(dst, src.as_deref(), count) } else { crt::sec::strncpy_s(dst, src.as_deref(), count) })
+    sec_call::<T>(c, d, sz, need, |dst| if append { crt::sec::strncat_s(dst, src.as_deref(), count) } else { crt::sec::strncpy_s(dst, src.as_deref(), count) })
 }
 /// strncpy_s(dst, size, src, count): count _TRUNCATE (-1) copies what fits
 fn strncpy_s(c: &mut Ctx) -> u32 {
@@ -3377,7 +3503,7 @@ fn _mbsnbcpy_s(c: &mut Ctx) -> u32 {
         if !truncate && split && count < capacity { return 42; }
         if truncate && cut { 80 } else { 0 }
     })();
-    errno_of(result);
+    errno_s(c, result);
     result as u32
 }
 fn wcsncpy_s(c: &mut Ctx) -> u32 {
@@ -4209,6 +4335,55 @@ fn mb_chars(s: &[u8]) -> Vec<(usize, u32)> {
     }
     v
 }
+/// _mbsspn's rule: how many bytes of `s` from its start are characters of `set` (by whole
+/// multibyte characters). As Windows (ucrtbase:string test_mbsspn): a lead byte at the end of
+/// `s` ends the span; a lead byte at the end of `set` matches any character.
+pub(crate) fn mbsspn(s: &[u8], set: &[u8], lead: impl Fn(u8) -> bool) -> usize {
+    let mut i = 0;
+    while i < s.len() {
+        let ch: &[u8] = if lead(s[i]) {
+            match s.get(i + 1) {
+                Some(_) => &s[i..i + 2],
+                None => break,
+            }
+        } else {
+            &s[i..=i]
+        };
+        let mut j = 0;
+        let mut found = false;
+        while j < set.len() {
+            if lead(set[j]) {
+                let Some(&t) = set.get(j + 1) else {
+                    found = true;
+                    break;
+                };
+                if ch == [set[j], t] {
+                    found = true;
+                    break;
+                }
+                j += 2;
+            } else {
+                if ch == [set[j]] {
+                    found = true;
+                    break;
+                }
+                j += 1;
+            }
+        }
+        if !found {
+            break;
+        }
+        i += ch.len();
+    }
+    i
+}
+fn _mbsspn(c: &mut Ctx) -> u32 {
+    if c.a(0) == 0 || c.a(1) == 0 {
+        io::invalid_parameter(c);
+        return 0;
+    }
+    mbsspn(&cstr(c.a(0)), &cstr(c.a(1)), crate::text::is_lead) as u32
+}
 fn _mbschr(c: &mut Ctx) -> u32 {
     let (p, ch) = (c.a(0), c.a(1) & 0xffff);
     let s = cstr(p);
@@ -4415,7 +4590,7 @@ pub fn init() {
     ] {
         implement("ucrtbase", name, f);
     }
-    crate::noreturn!("msvcrt"; exit, _exit, abort, _purecall, _invalid_parameter_noinfo_noreturn, terminate);
+    crate::noreturn!("msvcrt"; exit, _exit, quick_exit, abort, _purecall, _invalid_parameter_noinfo_noreturn, terminate);
     crate::noreturn!("ucrtbase", "__std_terminate", terminate);
     reg!(_set_fmode, _get_initial_narrow_environment, _get_initial_wide_environment, _initialize_onexit_table,
         _register_onexit_function, _execute_onexit_table, _cexit,
@@ -4443,6 +4618,9 @@ pub fn init() {
         ("__telemetry_main_return_trigger", ucrt_zero),
         ("_c_exit", ucrt_zero),
         ("_crt_atexit", atexit),
+        ("_crt_at_quick_exit", _crt_at_quick_exit),
+        ("imaxdiv", lldiv),
+        ("at_quick_exit", _crt_at_quick_exit),
         ("_seh_filter_dll", _seh_filter_exe),
         ("__strncnt", strnlen),
         ("localtime", localtime32),
@@ -4460,13 +4638,13 @@ pub fn init() {
     reg!(towlower, towupper, _tolower, _toupper, iswspace, iswdigit, iswalpha, wcstol, wcstoul, _wtoi, wcstod);
     implement("msvcrt", "_wtol", _wtoi);
     reg!(_wcsdup, _wcslwr, _wcsupr, wcstok_s, strtok_s, strtok, wcstok);
-    // (ucrtbase's wcstok takes a context)
-    implement("ucrtbase", "wcstok", wcstok_s);
+    // (ucrtbase's wcstok takes a context; NULL is the thread's own, wcstok's)
+    implement("ucrtbase", "wcstok", ucrt_wcstok);
     reg!(localeconv);
     reg!(strcpy_s, wcscpy_s, strcat_s, wcscat_s, wcsncpy_s);
     reg!(_itoa_s, _ultoa_s, _i64toa_s, _ui64toa_s);
     reg!(puts, putchar, setvbuf, _strrev, _ultoa, _i64toa, _ui64toa, _atoi64, div, _isnan, _finite, _fpclass, _hypot,
-        _ecvt, _fcvt, _gcvt, _mbslen, _mbschr, _mbsrchr, _mbsstr, _mbstok_s, _mbsinc, _mbsnextc, _ismbcspace, _mbctohira, _mbctokata,
+        _ecvt, _fcvt, _gcvt, _mbslen, _mbsspn, _mbschr, _mbsrchr, _mbsstr, _mbstok_s, _mbsinc, _mbsnextc, _ismbcspace, _mbctohira, _mbctokata,
         _mbcjistojms, _mbcjmstojis, _mbsupr, _mbslwr, _setmbcp, _getmbcp, asctime);
     implement("msvcrt", "ldiv", div);
     reg!(strncpy_s, _mbsnbcpy_s, ___lc_codepage_func, ___lc_locale_name_func, ___lc_handle_func, _seh_filter_exe);
@@ -4523,7 +4701,7 @@ pub fn init() {
     reg!(_initterm, _initterm_e, _onexit, atexit, __dllonexit, __getmainargs, __set_app_type,
         __p__fmode, __p__commode, __p___argc, __p___argv, __p___wargv, __p__wcmdln, __p__wenviron, __wgetmainargs,
         __p__environ, __p___initenv, __p__acmdln,
-        __p___mb_cur_max, ___mb_cur_max_func, __pctype_func, _controlfp, _control87, _clearfp, _statusfp, _fpreset,
+        __p___mb_cur_max, ___mb_cur_max_func, __pctype_func, _controlfp, _control87, __control87_2, __fpe_flt_rounds, _logb, _scalb, lldiv, _clearfp, _statusfp, _fpreset,
         _XcptFilter, signal, _lock, _unlock, _errno, __doserrno,
         malloc, calloc, realloc, _recalloc, free, _msize,
         memcpy, memmove, memset, memcmp, memchr, strlen, strcpy, strncpy, strcat, strncat, strcmp, strncmp,
@@ -5385,5 +5563,54 @@ mod crt_resolution_tests {
         // (a system DLL still finds kernel32's, ntdll's...)
         assert_eq!(api::fallbacks("kernel32"), ["kernel32", "kernelbase", "ntdll", "msvcrt", "user32"]);
         assert_eq!(api::fallbacks("ucrtbase"), ["msvcrt"]);
+    }
+}
+
+/// _mbsspn by whole characters, against Windows' answers (ucrtbase:string test_mbsspn) and
+/// the span's own definition
+#[cfg(test)]
+mod mbsspn_tests {
+    use super::mbsspn;
+    use proptest::prelude::*;
+
+    fn sjis(b: u8) -> bool {
+        matches!(b, 0x81..=0x9f | 0xe0..=0xfc)
+    }
+
+    #[test]
+    fn windows_answers() {
+        let s = b" 2019\x94\x4e6\x8c\x8e29\x93\xfa";
+        assert_eq!(mbsspn(b"cabernet", b"abc", sjis), 3);
+        assert_eq!(mbsspn(b"shiraz", b"abc", sjis), 0);
+        assert_eq!(mbsspn(b"cabernet", b"", sjis), 0);
+        assert_eq!(mbsspn(s, b"0123456789 \x94\x4e", sjis), 8);
+        assert_eq!(mbsspn(s, b" \x94\x4e\x8c\x8e", sjis), 1);
+        assert_eq!(mbsspn(&s[8..], b"0123456789 \x94\x4e", sjis), 0);
+        assert_eq!(mbsspn(&s[8..], b" \x94\x4e\x8c\x8e", sjis), 2);
+        assert_eq!(mbsspn(s, b"\x8e", sjis), 14);
+    }
+
+    proptest! {
+        #[test]
+        fn the_span_is_characters_of_the_set(s in prop::collection::vec(1u8..=255, 0..24), set in prop::collection::vec(1u8..=255, 0..8)) {
+            let n = mbsspn(&s, &set, sjis);
+            prop_assert!(n <= s.len());
+            // (single-byte strings and sets: the span is the bytes of the set from the start)
+            if !s.iter().chain(&set).any(|&b| sjis(b)) {
+                let want = s.iter().take_while(|b| set.contains(b)).count();
+                prop_assert_eq!(n, want);
+            }
+            // (a set ending in a lone lead byte takes every whole character)
+            let mut lone = set.clone();
+            lone.retain(|&b| !sjis(b));
+            lone.push(0x8e);
+            let all = mbsspn(&s, &lone, sjis);
+            let whole = if s.last().is_some_and(|&b| sjis(b)) && {
+                let mut i = 0;
+                while i + 1 < s.len() { i += if sjis(s[i]) { 2 } else { 1 }; }
+                i == s.len() - 1
+            } { s.len() - 1 } else { s.len() };
+            prop_assert_eq!(all, whole);
+        }
     }
 }

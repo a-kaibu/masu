@@ -33,7 +33,6 @@ constant-handler	crates/sake/src/crt.rs	fn fflush(_: &mut Ctx) -> u32 {	escape: 
 constant-handler	crates/sake/src/crt.rs	fn setvbuf(_: &mut Ctx) -> u32 {	escape: implement Windows' behavior (Win32 thread)
 constant-handler	crates/sake/src/crt.rs	fn signal(_: &mut Ctx) -> u32 {	escape: implement Windows' behavior (Win32 thread)
 constant-handler	crates/sake/src/crt.rs	fn ucrt_zero(_: &mut Ctx) -> u32 {	escape: implement Windows' behavior (Win32 thread)
-constant-handler	crates/sake/src/crt_io.rs	fn _get_invalid_parameter_handler(_: &mut Ctx) -> u32 {	escape: implement Windows' behavior (Win32 thread)
 constant-handler	crates/sake/src/crt_io.rs	fn _kbhit(_: &mut Ctx) -> u32 {	escape: implement Windows' behavior (Win32 thread)
 constant-handler	crates/sake/src/crt_io.rs	fn _tzset(_: &mut Ctx) -> u32 {	escape: implement Windows' behavior (Win32 thread)
 constant-handler	crates/sake/src/crt_io.rs	fn conio_eof(_: &mut Ctx) -> u32 {	escape: implement Windows' behavior (Win32 thread)

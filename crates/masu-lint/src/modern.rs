@@ -36,7 +36,7 @@ pub const LE: &str = "crates/kome/src/le.rs";
 /// each is `fn NAME(c: &mut Ctx) -> !`.
 pub const NORETURN: &[(&str, &[&str])] = &[
     ("crates/sake/src/k32.rs", &["ExitProcess", "FatalAppExitA", "ExitThread", "_endthreadex", "_endthread", "FreeLibraryAndExitThread"]),
-    ("crates/sake/src/crt.rs", &["exit", "_exit", "abort", "_purecall", "_invalid_parameter_noinfo_noreturn", "terminate"]),
+    ("crates/sake/src/crt.rs", &["exit", "_exit", "quick_exit", "abort", "_purecall", "_invalid_parameter_noinfo_noreturn", "terminate"]),
     ("crates/sake/src/crt_io.rs", &["_assert", "_wassert", "_amsg_exit"]),
 ];
 

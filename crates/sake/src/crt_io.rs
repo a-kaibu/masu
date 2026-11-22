@@ -373,7 +373,23 @@ fn path_arg(p: u32, wide: bool) -> String {
 }
 
 /// _open's work: the descriptor, or -1 with errno.
+/// The CreateFile share mode of a CRT one (_SH_*) for an open with `oflag` (None: one the CRT
+/// refuses). _SH_SECURE shares reading with a reader and nothing with a writer (UCRT's rule).
+fn share_of(sh: u32, oflag: u32) -> Option<u32> {
+    match sh {
+        0x10 => Some(0),
+        0x20 => Some(1),
+        0x30 => Some(2),
+        0x40 => Some(3),
+        0x80 => Some(if oflag & 3 == 0 { 1 } else { 0 }),
+        _ => None,
+    }
+}
+/// _open's descriptor of `path` (_SH_DENYNO)
 fn open(path: &str, oflag: u32) -> u32 {
+    open_shared(path, oflag, 3)
+}
+fn open_shared(path: &str, oflag: u32, share: u32) -> u32 {
     let access = match oflag & 3 {
         O_WRONLY => 0x4000_0000,
         O_RDWR => 0xc000_0000,
@@ -386,7 +402,7 @@ fn open(path: &str, oflag: u32) -> u32 {
         (false, _, true) => 5,
         (false, _, false) => 3,
     };
-    match crate::files::open(path, access, disp) {
+    match crate::files::open_shared(path, access, disp, Some(share)).map(|f| f.0) {
         // (a directory does not open as a descriptor)
         Ok(f) if f.dir => {
             set_errno(EACCES);
@@ -412,29 +428,60 @@ fn _open(c: &mut Ctx) -> u32 {
 fn _wopen(c: &mut Ctx) -> u32 {
     open(&path_arg(c.a(0), true), c.a(1))
 }
-/// _sopen / _wsopen (path, oflag, share, pmode): the share mode is not checked
+/// _sopen / _wsopen (path, oflag, share, pmode): the descriptor, -1 (EINVAL for a share mode
+/// that is none)
+fn sopen(c: &mut Ctx, wide: bool) -> u32 {
+    let oflag = c.a(1);
+    let Some(share) = share_of(c.a(2), oflag) else {
+        invalid_parameter(c);
+        return u32::MAX;
+    };
+    open_shared(&path_arg(c.a(0), wide), oflag, share)
+}
 fn _sopen(c: &mut Ctx) -> u32 {
-    open(&path_arg(c.a(0), false), c.a(1))
+    sopen(c, false)
 }
 fn _wsopen(c: &mut Ctx) -> u32 {
-    open(&path_arg(c.a(0), true), c.a(1))
+    sopen(c, true)
+}
+/// The secure opens' rule (_sopen_s, _sopen_dispatch with secure): &fd, path, a share mode that
+/// is one, and with _O_CREAT a pmode of _S_IREAD | _S_IWRITE alone, else the invalid parameter
+/// handler, fd -1 and EINVAL (ucrtbase:misc test__sopen_s, test__sopen_dispatch)
+fn open_dispatch(c: &mut Ctx, path: u32, wide: bool, oflag: u32, sh: u32, pmode: u32, pfd: u32, secure: bool) -> u32 {
+    if pfd == 0 {
+        invalid_parameter(c);
+        return EINVAL;
+    }
+    w32(pfd, u32::MAX);
+    let share = share_of(sh, oflag);
+    let bad_mode = secure && oflag & O_CREAT != 0 && pmode & !0x180 != 0;
+    let (Some(share), false, false) = (share, path == 0, bad_mode) else {
+        invalid_parameter(c);
+        return EINVAL;
+    };
+    let fd = open_shared(&path_arg(path, wide), oflag, share);
+    w32(pfd, fd);
+    if fd == u32::MAX { r32(super::_errno(c)) } else { 0 }
 }
 /// _sopen_s / _wsopen_s (&fd, path, oflag, share, pmode): errno
 fn sopen_s(c: &mut Ctx, wide: bool) -> u32 {
-    let (pfd, path) = (c.a(0), c.a(1));
-    if pfd == 0 || path == 0 {
-        set_errno(EINVAL);
-        return EINVAL;
-    }
-    let fd = open(&path_arg(path, wide), c.a(2));
-    w32(pfd, fd);
-    if fd == u32::MAX { r32(super::_errno(c)) } else { 0 }
+    let (pfd, path, oflag, sh, pmode) = (c.a(0), c.a(1), c.a(2), c.a(3), c.a(4));
+    open_dispatch(c, path, wide, oflag, sh, pmode, pfd, true)
 }
 fn _sopen_s(c: &mut Ctx) -> u32 {
     sopen_s(c, false)
 }
 fn _wsopen_s(c: &mut Ctx) -> u32 {
     sopen_s(c, true)
+}
+/// _sopen_dispatch / _wsopen_dispatch (path, oflag, share, pmode, &fd, secure): errno
+fn _sopen_dispatch(c: &mut Ctx) -> u32 {
+    let (path, oflag, sh, pmode, pfd, secure) = (c.a(0), c.a(1), c.a(2), c.a(3), c.a(4), c.a(5));
+    open_dispatch(c, path, false, oflag, sh, pmode, pfd, secure != 0)
+}
+fn _wsopen_dispatch(c: &mut Ctx) -> u32 {
+    let (path, oflag, sh, pmode, pfd, secure) = (c.a(0), c.a(1), c.a(2), c.a(3), c.a(4), c.a(5));
+    open_dispatch(c, path, true, oflag, sh, pmode, pfd, secure != 0)
 }
 fn bad() -> u32 {
     set_errno(EBADF);
@@ -972,7 +1019,10 @@ fn stat(c: &mut Ctx, k: StatKind, wide: bool) -> u32 {
         set_errno(EINVAL);
         return u32::MAX;
     }
-    if !stat_name_ok(&path) {
+    // (the UCRT takes a directory's name with a separator after it, not a file's: ucrtbase:misc
+    // test__stat32; msvcrt takes neither)
+    let ucrt_dir = is_ucrt(c) && !path.contains(['*', '?']);
+    if !stat_name_ok(&path) && !ucrt_dir {
         set_errno(ENOENT);
         return u32::MAX;
     }
@@ -981,6 +1031,10 @@ fn stat(c: &mut Ctx, k: StatKind, wide: bool) -> u32 {
         set_errno(ENOENT);
         return u32::MAX;
     };
+    if !stat_name_ok(&path) && !m.is_dir() {
+        set_errno(ENOENT);
+        return u32::MAX;
+    }
     put_stat(p, k, &info_of(&m, &host));
     0
 }
@@ -2026,12 +2080,37 @@ fn _popen(_: &mut Ctx) -> u32 {
 // ---------------------------------------------------------------------------------------------
 // misc
 
+// The invalid parameter handler: a CRT function given an argument it refuses calls the thread's
+// handler (_set_thread_local_invalid_parameter_handler), else the process's, with
+// (NULL, NULL, NULL, 0, 0) as the release CRTs do, then answers its error (ucrtbase's tests
+// check the call, errno and the answer). With neither set it answers the error and goes on
+// (msvcrt.dll's way; ucrtbase would end the process there).
+static IPH: Mutex<u32> = Mutex::new(0);
+thread_local!(static IPH_THREAD: std::cell::Cell<u32> = const { std::cell::Cell::new(0) });
+
+/// A refused argument: the handler is called, errno is EINVAL
+pub(super) fn invalid_parameter(c: &mut Ctx) {
+    let h = match IPH_THREAD.with(std::cell::Cell::get) {
+        0 => *IPH.locked(),
+        h => h,
+    };
+    if h != 0 {
+        // (wide expression, function, file, line, reserved)
+        c.call(h, &[0, 0, 0, 0, 0]);
+    }
+    set_errno(22);
+}
 fn _set_invalid_parameter_handler(c: &mut Ctx) -> u32 {
-    static H: Mutex<u32> = Mutex::new(0);
-    std::mem::replace(&mut *H.locked(), c.a(0))
+    std::mem::replace(&mut *IPH.locked(), c.a(0))
 }
 fn _get_invalid_parameter_handler(_: &mut Ctx) -> u32 {
-    0
+    *IPH.locked()
+}
+fn _set_thread_local_invalid_parameter_handler(c: &mut Ctx) -> u32 {
+    IPH_THREAD.with(|h| h.replace(c.a(0)))
+}
+fn _get_thread_local_invalid_parameter_handler(_: &mut Ctx) -> u32 {
+    IPH_THREAD.with(std::cell::Cell::get)
 }
 /// _assert / _wassert (message, file, line)
 fn assert_fail(c: &mut Ctx, wide: bool) -> ! {
@@ -2674,6 +2753,8 @@ pub(super) fn init() {
         _sopen,
         _wsopen,
         _sopen_s,
+        _sopen_dispatch,
+        _wsopen_dispatch,
         _wsopen_s,
         _close,
         _read,
@@ -2771,7 +2852,9 @@ pub(super) fn init() {
         _isctype_l,
         _isctype
     );
-    implement("msvcrt", "_set_thread_local_invalid_parameter_handler", _set_invalid_parameter_handler);
+    reg!(_set_thread_local_invalid_parameter_handler, _get_thread_local_invalid_parameter_handler);
+    implement("msvcrt", "_isblank_l", isblank);
+    implement("msvcrt", "_iswblank_l", iswblank);
     implement("msvcrt", "_iswctype_l", iswctype);
     reg!(
         _iswalpha_l,
@@ -2820,10 +2903,15 @@ fn _mbstrlen(c: &mut Ctx) -> u32 {
     }
     n
 }
-/// _memicmp(a, b, n): ASCII letters without case
+/// _memicmp(a, b, n) / _memicmp_l(a, b, n, locale): ASCII letters without case; a null
+/// pointer with n > 0 is an invalid parameter (_NLSCMPERROR)
 pub(super) fn _memicmp(c: &mut Ctx) -> u32 {
     // (in place: n is the guest's, and two lowered copies of it were made first)
     let (n, a, b) = (c.a(2), c.a(0), c.a(1));
+    if n != 0 && (a == 0 || b == 0) {
+        invalid_parameter(c);
+        return 0x7fff_ffff;
+    }
     (0..n).map(|i| (mem::r8(a + i).to_ascii_lowercase(), mem::r8(b + i).to_ascii_lowercase())).find(|(x, y)| x != y).map_or(0, |(x, y)| x.cmp(&y) as i32 as u32)
 }
 /// _wmakepath_s(path, size, drive, dir, fname, ext): errno
@@ -2891,6 +2979,7 @@ fn _makepath(c: &mut Ctx) -> u32 { makepath(c, false) }
 fn _wmakepath(c: &mut Ctx) -> u32 { makepath(c, true) }
 
 pub(super) fn init2() {
+    implement("msvcrt", "_memicmp_l", _memicmp);
     reg!(_mbstrlen, _memicmp, _wmakepath_s, _makepath_s, _makepath, _wmakepath);
 }
 
