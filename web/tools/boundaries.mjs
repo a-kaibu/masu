@@ -36,6 +36,13 @@ const names = [
   ["snapz.mjs", "runtime.ts"],
 ];
 
+/** Declarations whose code must call a function: [file, declaration, callee]. */
+/** @type {[string, string, string][]} */
+const mustCall = [
+  // (the keys the page gives the game: never one typed in its own UI; review 22bb061 §5)
+  ["play.ts", "key", "inputTarget"],
+];
+
 /** Methods that must not touch a field of their class: [file, method, field]. */
 /** @type {[string, string, string][]} */
 const untouched = [
@@ -62,6 +69,29 @@ export function check(program) {
       continue;
     }
     allowed.set(checker.getSymbolAtLocation(declaration.name), { source, name, callers, declaration });
+  }
+  for (const [file, name, callee] of mustCall) {
+    const source = program.getSourceFiles().find((f) => f.fileName.endsWith("/src/" + file));
+    if (!source) continue;
+    let found = false;
+    let calls = false;
+    const look = (node, inside) => {
+      if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.name.text === name) {
+        found = true;
+        inside = true;
+      }
+      if (
+        inside &&
+        ts.isCallExpression(node) &&
+        ts.isIdentifier(node.expression) &&
+        node.expression.text === callee
+      )
+        calls = true;
+      ts.forEachChild(node, (c) => look(c, inside));
+    };
+    look(source, false);
+    if (!found) errors.push(`${file}: missing declaration ${name}`);
+    else if (!calls) errors.push(`${source.fileName}: ${name} must call ${callee}`);
   }
   for (const source of program.getSourceFiles()) {
     if (

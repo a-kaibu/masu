@@ -139,3 +139,27 @@ test("planes laid out as kura::idec::Layout and as Chrome lays out 21x13 JPEGs",
   ] as const)
     expect(planesSize("I420", w, h)).toBe(w * h + 2 * ((w + 1) >> 1) * ((h + 1) >> 1));
 });
+
+test("a decode that finishes after the process ended calls nothing of it, held by the gate or not (review 22bb061 §5)", async () => {
+  for (const held of [false, true]) {
+    const k = new FakeKura();
+    const gate = new Gate();
+    let finish!: () => void;
+    const slow: Decode = (file) => new Promise((ok) => (finish = () => ok(fake(file))));
+    k.files.set(1, { data: [1, 1, 3], listed: false, px: 0, w: 0, h: 0 });
+    const d = new ImageDecode(k, () => {}, slow, gate, false, false);
+    await tick(5);
+    expect(k.lists).toBe(1);
+    if (held) await gate.close();
+    d.stop();
+    finish();
+    await tick(10);
+    if (held) gate.open();
+    await tick(10);
+    expect(k.done).toEqual([]);
+    // (and nothing listed after)
+    k.files.set(2, { data: [1, 1, 3], listed: false, px: 0, w: 0, h: 0 });
+    d.tick();
+    expect(k.lists).toBe(1);
+  }
+});

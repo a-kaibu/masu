@@ -8,6 +8,7 @@
 
 import { watchDoorbell } from "./doorbell";
 import { memGate, type Gate } from "./memgate";
+import { Lifetime } from "./session";
 
 export interface IdecWasm {
   wasmMemory: WebAssembly.Memory;
@@ -119,12 +120,16 @@ export class ImageDecode {
       this.note("idec: this browser's JPEG decoder does not give Windows' pixels: pictures decode in wasm");
       return;
     }
+    // (the process ended while the check ran: nothing is listed of it)
+    if (this.life.over) return;
     // (the first list says there is a page)
     this.tick();
     if (watch) void this.watch();
   }
 
-  private stopped = false;
+  /** the process's: over once it ended (stop); review 22bb061 §5, a decode that finished after
+   * stop() called the guest's done */
+  private readonly life = new Lifetime();
 
   private watch(): Promise<void> {
     return watchDoorbell(
@@ -132,19 +137,20 @@ export class ImageDecode {
       this.doorbell,
       () => this.tick(),
       this.note,
-      () => this.stopped,
+      () => this.life.over,
       "idec",
     );
   }
 
   /** The process ended (play.ts): no more looks. */
   stop(): void {
-    this.stopped = true;
+    this.life.end();
   }
 
   /** Files waiting: each copied out and decoded (on each doorbell). */
   tick(): void {
     // (a save state is being taken: listed once it is done, as the guest waits for an answer)
+    if (this.life.over) return;
     if (this.gate.closed) return this.gate.run(() => this.tick(), this.tickKey);
     const n = this.wasm._vnhost_idec_list(this.io, MAX);
     const u32 = new Uint32Array(this.wasm.wasmMemory.buffer, this.io, n * 3);
@@ -162,7 +168,10 @@ export class ImageDecode {
     } catch (e) {
       this.note(`idec ${id}: ${String(e)}`);
     }
+    if (this.life.over) return;
     this.gate.run(() => {
+      // (held while a state was taken, and the process ended meanwhile)
+      if (this.life.over) return;
       let ok = 0;
       if (r) {
         const p = this.wasm._vnhost_idec_begin(id, r.width, r.height, r.layout) >>> 0;

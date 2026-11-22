@@ -23,6 +23,7 @@ import { chunkCacheMb } from "./chunkcache";
 import { keepSaving, loadSaves, movedSaves, type LoadOutcome, type SavesModule } from "./saves";
 import { memGate } from "./memgate";
 import { startWebGame } from "./html";
+import { inputTarget, ProcessTable } from "./session";
 import { argsText, hasRun, missingFeature, readPlan, SAKE_NEEDS, sakeArguments } from "./launch-plan";
 import { linuxKeycode } from "./keymap";
 import { AutoAdvance, DEFAULT_SETTINGS, parseSettings, type AutoSettings } from "./autoadvance";
@@ -489,7 +490,10 @@ async function boot(audio: Promise<AudioOut>): Promise<void> {
   let activeModule: SakeModule | undefined;
   let rootModule: SakeModule | undefined;
   let rootExited = false;
-  let pendingChildren = 0;
+  // (the run's processes: the last one to end, whichever, ends the run and goes back; review
+  // 22bb061 §5: a child without a window left after the root was never noticed)
+  const procs = new ProcessTable(() => setTimeout(closeGame, 0));
+  currentRun = procs;
   const moduleArg = {
     vnvmAccount,
     vnvmSensitive,
@@ -577,7 +581,7 @@ async function boot(audio: Promise<AudioOut>): Promise<void> {
       console.log(`exit code ${code}`);
       stopPlay?.();
       rootExited = true;
-      exited = childProcesses.size === 0 && pendingChildren === 0;
+      procs.rootExited();
     },
     printErr: (line: string) => {
       if (shirusu.take(line)) return;
@@ -599,7 +603,7 @@ async function boot(audio: Promise<AudioOut>): Promise<void> {
     sharedFs: SharedArrayBuffer,
   ): void {
     noStates();
-    pendingChildren++;
+    const ticket = procs.child();
     const surface = document.createElement("canvas");
     surface.className = "process-screen";
     surface.dataset.pid = String(request.pid);
@@ -608,17 +612,10 @@ async function boot(audio: Promise<AudioOut>): Promise<void> {
     canvas.after(surface);
     let child: SakeModule | undefined;
     let finished = false;
-    let settled = false;
     let rect = 0;
     let observer: ResizeObserver | undefined;
     let timer: ReturnType<typeof setInterval> | undefined;
     let stopWatch: (() => void) | undefined;
-    const settle = () => {
-      if (!settled) {
-        settled = true;
-        pendingChildren--;
-      }
-    };
     const finish = () => {
       if (finished) return;
       finished = true;
@@ -635,16 +632,15 @@ async function boot(audio: Promise<AudioOut>): Promise<void> {
         (window as unknown as { vnvmSake: SakeModule }).vnvmSake = rootModule;
         void audio.then((out) => out.attach(rootModule!));
       }
-      if (rootExited && !childProcesses.size && !pendingChildren) exited = true;
+      ticket.ended();
     };
     const failed = () => {
-      settle();
       finish();
       toast.error("プログラムを起動できませんでした。");
     };
     // (a second or third 4 GB memory is what a phone refuses: then the module makes its own, or
     // its start fails through the catch below; a throw here used to escape spawn with
-    // pendingChildren up for good, and the page never went back to the list)
+    // its ticket open for good, and the page never went back to the list)
     let memory: WebAssembly.Memory | undefined;
     if (build.memory)
       try {
@@ -674,12 +670,8 @@ async function boot(audio: Promise<AudioOut>): Promise<void> {
       quit: () => {},
     })
       .then((module) => {
-        settle();
         child = module;
-        if (finished) {
-          if (rootExited && !childProcesses.size && !pendingChildren) exited = true;
-          return;
-        }
+        if (finished) return;
         childProcesses.add(module);
         module._vnhost_render_resize(
           ...surfaceSize(canvas.clientWidth, canvas.clientHeight, devicePixelRatio),
@@ -744,7 +736,7 @@ async function boot(audio: Promise<AudioOut>): Promise<void> {
         );
         clearInterval(timer);
         new Uint8Array(vnvmAccount, 4).fill(0);
-      } else if (Date.now() >= until || exited) {
+      } else if (Date.now() >= until || procs.ended) {
         clearInterval(timer);
         new Uint8Array(vnvmAccount, 4).fill(0);
       }
@@ -1255,10 +1247,8 @@ function watch(
   // the drawing's WebGPU device lost and made again, or not (host/vngpu.js)
   let lost = 0;
   const frame = () => {
-    if (exited) {
-      stop();
-      return closeGame();
-    }
+    // (the run ended: its table goes back, ProcessTable's onEnded)
+    if (runEnded()) return stop();
     if (!live()) return stop();
     // (a state is being taken: the memory stays as it is)
     if (memGate.closed) return;
@@ -1318,10 +1308,11 @@ function attachAuto(current: () => SakeModule): void {
   const a = new AutoAdvance({
     push: (kind, x, y, data) => {
       // (the game is gone: closeGame stops this)
-      if (exited) return;
+      if (runEnded()) return;
       memGate.run(() => void current()._vnhost_render_input(kind, x, y, data));
     },
-    closed: () => memGate.closed,
+    // (a state being taken, or the page's UI taking the keys: no clicks for the game meanwhile)
+    closed: () => memGate.closed || inputTarget(document.activeElement) === "overlay",
     // (no pointer yet: the middle of the screen, low, where the text usually is)
     at: () => pointerAt ?? [Math.round(canvas.width / 2), Math.round(canvas.height * 0.85)],
   });
@@ -1424,6 +1415,9 @@ function attachInput(current: () => SakeModule): void {
     { passive: false },
   );
   const key = (kind: number) => (e: KeyboardEvent) => {
+    // (a key typed in the page's own UI is its own: not the game's, and not kept from it;
+    // review 22bb061 §5, a Tab in a field went to the game and moved no focus)
+    if (inputTarget(e.target) === "overlay") return;
     const vk = virtualKey(e.code);
     if (!vk) return;
     // PC scan code set 1 matches the Linux keycodes below 89
@@ -1443,6 +1437,8 @@ function attachInput(current: () => SakeModule): void {
     for (const d of r.keys) push(KEY_UP, 0, 0, d);
   };
   window.addEventListener("blur", away);
+  // (the page's UI taking the keys, a dialog opened: what the game had held is let go)
+  document.addEventListener("focusin", (e) => inputTarget(e.target) === "overlay" && away());
   document.addEventListener("visibilitychange", () => document.visibilityState === "hidden" && away());
 }
 
@@ -1542,8 +1538,10 @@ main().catch((e) => {
 
 /** After the game quit: leaves fullscreen and goes back to the start screen (a fresh page). */
 let saveNow: () => Promise<void> = async () => {};
-/** The program ended the runtime (Module.onExit). */
-let exited = false;
+/** The running game's processes (boot's); none before it starts. */
+let currentRun: ProcessTable | undefined;
+/** The run ended: its last process did. */
+const runEnded = () => currentRun?.ended ?? false;
 
 /** The program the game started in its own place (a launcher's game), run when it exits. */
 let nextRun: { run: string; args: string } | undefined;

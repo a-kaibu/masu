@@ -119,7 +119,7 @@ addEventListener("message", (e) => {
     // (a port to the worker for the synchronous reads, as html.ts)
     const ch = new MessageChannel();
     w.postMessage({ port: ch.port1 }, [ch.port1]);
-    frame.contentWindow.postMessage({ masu: "init", items: [], base: origin + "/tree/g/", names: ${JSON.stringify(names)} }, origin, [ch.port2]);
+    frame.contentWindow.postMessage({ masu: "init", launch: "t", items: [], base: origin + "/tree/g/", names: ${JSON.stringify(names)} }, origin, [ch.port2]);
   }
 });
 window.startGame = () => {

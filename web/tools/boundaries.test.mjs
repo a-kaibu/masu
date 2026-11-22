@@ -157,3 +157,25 @@ test("SaveTransport.load does not keep a revision", () => {
   );
   expect(findings).toEqual(["/src/save-transport.ts:4: load must not touch this.revisions"]);
 });
+
+test("the page's key handler asks where each key goes", () => {
+  const run = (code) => {
+    const files = { "/src/play.ts": code };
+    const options = { noLib: true, module: ts.ModuleKind.ESNext };
+    const host = ts.createCompilerHost(options);
+    host.fileExists = (f) => f in files;
+    host.directoryExists = (dir) => dir === "/src";
+    host.getSourceFile = (f) =>
+      files[f] === undefined ? undefined : ts.createSourceFile(f, files[f], ts.ScriptTarget.Latest, true);
+    return check(ts.createProgram(Object.keys(files), options, host)).filter((f) => f.includes("key"));
+  };
+  expect(run("function a() { const key = (k) => (e) => { push(k); }; }")).toEqual([
+    "/src/play.ts: key must call inputTarget",
+  ]);
+  expect(
+    run(
+      "function a() { const key = (k) => (e) => { if (inputTarget(e.target) === 'overlay') return; push(k); }; }",
+    ),
+  ).toEqual([]);
+  expect(run("const other = 1;")).toEqual(["play.ts: missing declaration key"]);
+});
