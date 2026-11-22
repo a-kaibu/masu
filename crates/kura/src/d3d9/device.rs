@@ -3803,7 +3803,9 @@ fn make_mips(d: &mut D3d, t: u32) {
     if tx.mips == (Mips::Auto { stale: true }) && tx.gpu != 0 {
         tx.mips = Mips::Auto { stale: false };
         let g = tx.gpu;
-        gpu::record(|q| q.cmd(&[gpu::GEN_MIPS, g]));
+        // (SetAutoGenFilterType's filter: D3DTEXF_POINT 1, the others a box)
+        let cmd = if tx.filter == 1 { gpu::GEN_MIPS_POINT } else { gpu::GEN_MIPS };
+        gpu::record(|q| q.cmd(&[cmd, g]));
     }
 }
 
@@ -5292,8 +5294,10 @@ unsafe fn draw_one(d: &mut D3d, prim: u32, src: Src, prims: u32) -> u32 {
     let mut texs: Vec<(u32, u32, u32)> = Vec::new(); // (binding slot, page texture, sampler key)
     for &s in samplers.iter() {
         let t = st.textures.get(us(s)).copied().unwrap_or(0);
+        // (the levels the page holds: an AUTOGENMIPMAP texture's whole chain, which GetLevelCount
+        // does not show but draws sample, winref d3d9tex)
         let (gpu_tex, f, levels) = match d.objs.get(&t).map(|o| &o.data) {
-            Some(Data::Texture(tx)) => (tx.gpu, tx.fmt, tx.level_count()),
+            Some(Data::Texture(tx)) => (tx.gpu, tx.fmt, if tx.mips == Mips::Given { tx.level_count() } else { tx.w.max(tx.h).max(tx.depth).bit_width() }),
             _ => (0, 0, 1),
         };
         if fmt::no_alpha(f) {
@@ -5305,8 +5309,11 @@ unsafe fn draw_one(d: &mut D3d, prim: u32, src: Src, prims: u32) -> u32 {
         }
         let ss = &st.ss[us(s)];
         let mip = if levels > 1 { ss[7] } else { 0 };
+        // (D3DSAMP_MAXMIPLEVEL: the most detailed level a mip filter reads, at most the last;
+        // bits 16-20, the sampler's lodMinClamp)
+        let most_detailed = if mip == 0 { 0 } else { ss[9].min(levels.saturating_sub(1)).min(31) };
         let am = dxwgsl::addr::sampler_mode;
-        let skey = (am(ss[1]) & 7) | (am(ss[2]) & 7) << 3 | (ss[5] & 3) << 6 | (ss[6] & 3) << 8 | (mip & 3) << 10 | (am(ss[3]) & 7) << 12;
+        let skey = (am(ss[1]) & 7) | (am(ss[2]) & 7) << 3 | (ss[5] & 3) << 6 | (ss[6] & 3) << 8 | (mip & 3) << 10 | (am(ss[3]) & 7) << 12 | most_detailed << 16;
         texs.push((s, gpu_tex, skey));
     }
     // (bits 8..12 of the pixel block)

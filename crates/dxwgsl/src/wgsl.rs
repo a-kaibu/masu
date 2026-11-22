@@ -306,6 +306,8 @@ struct W {
     mask_out: bool,
     used_cb: std::collections::BTreeSet<u32>,
     used_t: std::collections::BTreeSet<u32>,
+    /// textures `ld` reads by level (Binding::LoadTexture: tl<n>)
+    used_tl: std::collections::BTreeSet<u32>,
     used_s: std::collections::BTreeSet<u32>,
     nonfinite: bool,
     /// helper functions the body calls (see HELPERS)
@@ -326,6 +328,8 @@ type R<T> = Result<T, String>;
 
 /// The binding of the raw and structured views' ranges (Binding::BufferRanges).
 pub const BUFFER_RANGES: u32 = 498;
+/// The bindings of the textures `ld` reads by level: 800 + register (Binding::LoadTexture).
+pub const LOAD_TEXTURES: u32 = 800;
 
 /// The declarations of a program, read into `w`.
 fn declarations(w: &mut W, p: &Program) -> R<()> {
@@ -1085,6 +1089,7 @@ impl W {
             mask_out: false,
             used_cb: Default::default(),
             used_t: Default::default(),
+            used_tl: Default::default(),
             used_s: Default::default(),
             nonfinite: false,
             helpers: Default::default(),
@@ -1408,12 +1413,18 @@ impl W {
     }
 
     fn texture(&mut self, o: &Operand) -> R<(u32, u32, K, bool)> {
+        let t = self.texture_decl(o)?;
+        self.used_t.insert(t.0);
+        Ok(t)
+    }
+
+    /// A texture operand's register and declaration, the register not marked used.
+    fn texture_decl(&self, o: &Operand) -> R<(u32, u32, K, bool)> {
         if o.ty != tpf::RESOURCE {
             return Err(format!("resource operand type {}", o.ty));
         }
         let n = o.reg();
         let r = self.res.get(&n).ok_or(format!("t{n} not declared"))?;
-        self.used_t.insert(n);
         Ok((n, r.dim, r.ret, r.depth))
     }
 
@@ -1533,7 +1544,16 @@ impl W {
     /// slices, a sample past its samples: D3D11 functional spec 7.12, out-of-bounds fetches
     /// return 0; WGSL's textureLoad there is any texel or 0)
     fn load(&mut self, i: &Inst) -> R<()> {
-        let (t, dim, k, depth) = self.texture(i.op(2)?)?;
+        let (t, dim, k, depth) = self.texture_decl(i.op(2)?)?;
+        // (by level: from tl<t>, every level's view, the SRV's first level added; buffers
+        // and multisampled textures: from t<t>; Binding::LoadTexture)
+        let by_level = !matches!(dim, 1) && i.op != Opcode::LdMs;
+        if by_level {
+            self.used_tl.insert(t);
+        } else {
+            self.used_t.insert(t);
+        }
+        let tv = if by_level { format!("tl{t}") } else { format!("t{t}") };
         let swz = i.op(2)?.swizzle();
         let o = i.op(1)?;
         let off = i.offset;
@@ -1569,23 +1589,26 @@ impl W {
         let mut args = vec![a.clone()];
         let lv = match &level {
             Some(l) => {
+                // (the level in the SRV, then in every level's view tl<t>)
                 let lv = self.fresh();
                 self.line(&format!("let {lv} = {l};"));
-                ok.push(format!("bitcast<u32>({lv}) < textureNumLevels(t{t})"));
-                Some(lv)
+                ok.push(format!("bitcast<u32>({lv}) < bv.l{t}.y"));
+                let abs = self.fresh();
+                self.line(&format!("let {abs} = bitcast<u32>({lv}) + bv.l{t}.x;"));
+                Some(abs)
             }
             None => None,
         };
         let at = match (&lv, &sample) {
-            (Some(lv), _) => format!("textureDimensions(t{t}, {lv})"),
-            (None, Some(_)) => format!("textureDimensions(t{t})"),
-            (None, None) => format!("textureDimensions(t{t}, 0)"),
+            (Some(lv), _) => format!("textureDimensions({tv}, {lv})"),
+            (None, Some(_)) => format!("textureDimensions({tv})"),
+            (None, None) => format!("textureDimensions({tv}, 0)"),
         };
         ok.insert(0, format!("all(bitcast<vec{n}<u32>>({a}) < {at})"));
         if let Some(sl) = slice {
             let v = self.fresh();
             self.line(&format!("let {v} = {sl};"));
-            ok.push(format!("bitcast<u32>({v}) < textureNumLayers(t{t})"));
+            ok.push(format!("bitcast<u32>({v}) < textureNumLayers({tv})"));
             args.push(v);
         }
         match (lv, sample) {
@@ -1593,16 +1616,16 @@ impl W {
             (None, Some(si)) => {
                 let v = self.fresh();
                 self.line(&format!("let {v} = {si};"));
-                ok.push(format!("bitcast<u32>({v}) < textureNumSamples(t{t})"));
+                ok.push(format!("bitcast<u32>({v}) < textureNumSamples({tv})"));
                 args.push(v);
             }
             (None, None) => args.push("0".into()),
         }
         let (args, ok) = (args.join(", "), ok.join(" && "));
         if depth {
-            self.vec4_result(i, format!("select(vec4<f32>(), vec4<f32>(textureLoad(t{t}, {args}), 0.0f, 0.0f, 1.0f), {ok})"), K::F, swz)
+            self.vec4_result(i, format!("select(vec4<f32>(), vec4<f32>(textureLoad({tv}, {args}), 0.0f, 0.0f, 1.0f), {ok})"), K::F, swz)
         } else {
-            self.vec4_result(i, format!("select(vec4<{}>(), textureLoad(t{t}, {args}), {ok})", k.s()), k, swz)
+            self.vec4_result(i, format!("select(vec4<{}>(), textureLoad({tv}, {args}), {ok})", k.s()), k, swz)
         }
     }
 
@@ -2578,9 +2601,26 @@ fn module_decls(w: &mut W, m: &mut String, bindings: &mut Vec<(u32, Binding)>, g
         };
         bindings.push((16 + n, Binding::Texture(vd, st)));
     }
+    // (textures `ld` reads by level: every level's view, the SRV's levels in `bv`)
+    for &n in &w.used_tl {
+        let r = w.res.get(&n).ok_or_else(|| format!("ld of t{n}, which no dcl_resource declares"))?;
+        let (ty, vd) = texture_type(r.dim, r.ret, r.depth)?;
+        let b = n.saturating_add(LOAD_TEXTURES);
+        m.push_str(&format!("@group({group}) @binding({b}) var tl{n}: {ty};\n"));
+        let st = if r.depth {
+            3
+        } else {
+            match r.ret {
+                K::U => 1,
+                K::I => 2,
+                K::F => 0,
+            }
+        };
+        bindings.push((b, Binding::LoadTexture(vd, st)));
+    }
     // raw and structured views: whole buffers from a 256-byte aligned offset, the view's own
     // range in `bv` (BufferRanges)
-    let mut ranges = Vec::new();
+    let mut ranges: Vec<(String, u32)> = w.used_tl.iter().map(|&n| (format!("l{n}"), n.saturating_add(LOAD_TEXTURES))).collect();
     // (registers are below 128: check_registers)
     for &n in &w.used_tb {
         let b = n.saturating_add(500);

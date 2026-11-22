@@ -47,6 +47,9 @@ pub enum Rule {
     ClearRounding,
     PsQuads,
     D3d9Status,
+    LoadEveryLevel,
+    ConsoleLines,
+    KnownDiffs,
     BooleanArg,
     TypedRegisters,
     NtdllOwnCrt,
@@ -68,7 +71,7 @@ pub enum Rule {
 }
 
 impl Rule {
-    pub const ALL: [Rule; 48] = [
+    pub const ALL: [Rule; 51] = [
         Rule::BuildOutput,
         Rule::HresultCopy,
         Rule::KomeCopy,
@@ -99,6 +102,9 @@ impl Rule {
         Rule::ClearRounding,
         Rule::PsQuads,
         Rule::D3d9Status,
+        Rule::LoadEveryLevel,
+        Rule::ConsoleLines,
+        Rule::KnownDiffs,
         Rule::BooleanArg,
         Rule::TypedRegisters,
         Rule::NtdllOwnCrt,
@@ -152,6 +158,9 @@ impl Rule {
             Rule::ClearRounding => "clear-rounding",
             Rule::PsQuads => "ps-quads",
             Rule::D3d9Status => "d3d9-status-codes",
+            Rule::LoadEveryLevel => "load-every-level",
+            Rule::ConsoleLines => "console-lines",
+            Rule::KnownDiffs => "known-diffs",
             Rule::BooleanArg => "boolean-arg",
             Rule::TypedRegisters => "typed-registers",
             Rule::NtdllOwnCrt => "ntdll-own-crt",
@@ -203,8 +212,11 @@ impl Rule {
             Rule::DepthGuard => "the depth limits on recursion over game and file input stay (regress::DEPTH_GUARDS; review b00/b04/b07: damaged traces, MSI conditions, shaders, .x files nesting without end blew the stack): keep the const and the check against it; a new limit is added to the list",
             Rule::WgslLoadBounds => "a texel fetch outside its texture is 0 in Direct3D (2026-11-21: ld gave WGSL's texel there): dxwgsl writes textureLoad only as select(zero, textureLoad(..), address in bounds), on one line",
             Rule::ClearRounding => "Windows clears 16-bit and 11/10-bit float channels toward zero (2026-11-21: kura rounded them to the nearest, winref d3d11clear): kura's clear.rs makes them with f16_rtz / rtz_bits, never format::f16_bits",
-            Rule::PsQuads => "PSInvocations is whole 2x2 quads of the rasterized triangles (2026-11-21: kura answered the occlusion samples): dxwgsl's clip pass adds ps_quads to counter PS_QUADS and kura's PIPELINE_STATISTICS reads c::PS_QUADS",
+            Rule::PsQuads => "PSInvocations is whole 2x2 quads of the rasterized triangles and, for a line, 2 for each quad WARP's line rasterizer visits (2026-11-21: kura answered the occlusion samples; lines were counted by the quads they light): dxwgsl's clip pass adds ps_pairs to counter PS_PAIRS, kura's PIPELINE_STATISTICS reads c::PS_PAIRS, a line is counted by line_visits / ps_line_visits and a triangle by its edge DDA's spans (spans / ps_edge_x, BigEdgeIterator's big_edge_x / ps_big_edge_x past ±2^20); ps_tests.rs checks the spans against exact geometry and shaderconf's ps_cases runs the WGSL against the Rust rule on WebGPU",
             Rule::D3d9Status => "a Direct3D 9 status code is d3d9.h's (2026-11-21: D3DOK_NOAUTOGEN was 0x0876_087f, not MAKE_D3DSTATUS(2159) = 0x0876_086f, and its tests copied it; winref d3d9tex): a D3DERR_/D3DOK_/S_ const in kura's d3d9 or sake's d3dx9 has the value regress::D3D9_CODES gives its name, and a new name is added there from the header",
+            Rule::LoadEveryLevel => "ld by level reads a view of every level of the texture, the SRV's first level added in the shader (2026-11-21: SwiftShader's textureLoad of a level below a view's base level reads level 2 * base, winref d3d11minlod's load row): dxwgsl's load() reads tl<t> at bv.l<t>, kura binds it with load_texture_entry and fills it with load_texture_levels",
+            Rule::ConsoleLines => "the program's console output goes through k32::console_write, a line at a time (2026-11-21: crt's printf wrote with eprint!, and a line split in two where the program waited for the GPU, winref d3d9tex): no eprint! in crates/sake/src",
+            Rule::KnownDiffs => "a difference from Windows is made right, not listed (2026-11-21: OutputMergerLogicOp 0 for WARP's 1 sat in tests/winref/known.txt because WebGPU has no logic ops, and the page could emulate them): every line of tests/winref/known.txt is a known site with its why, the list only goes down; a new line fails, and fixing the behavior is the way past it",
             Rule::BooleanArg => "a BOOLEAN parameter is its low byte (2026-11-20, RtlAnsiStringToUnicodeString read c.a(2) != 0): read it with c.boolean(i); win32.rs BOOLEAN_ARGS lists them",
             Rule::TypedRegisters => "koji's registers are named, not numbered (2026-11-20, Farcall comparison): Cpu::regs/hi are Gprs indexed by Gpr (EAX..EDI), sreg/sbase Segs indexed by Seg, Cpu::gpr takes a Reg64; write the register's name (koji::EBX, Seg::Ss, Reg64::R8), not Gpr::ALL[3] or values()[3], and give Gprs/Segs no index, conversion or public field that takes a number",
             Rule::Utf8OneDecoder => "sake decodes UTF-8 by one rule, Windows' (RtlUTF8ToUnicodeN: a wrong second byte is swallowed with its lead into one U+FFFD, not Unicode's maximal subparts; 2026-11-21, MultiByteToWideChar had its own): only rtlstr.rs splits bytes with utf8_chunks; elsewhere call crate::rtlstr::utf8_units",
@@ -259,6 +271,9 @@ impl Rule {
             Rule::ClearRounding => regress::clear_rounding(tree),
             Rule::PsQuads => regress::ps_quads(tree),
             Rule::D3d9Status => regress::d3d9_status(tree),
+            Rule::LoadEveryLevel => regress::load_every_level(tree),
+            Rule::ConsoleLines => regress::console_lines(tree),
+            Rule::KnownDiffs => regress::known_diffs(tree),
             Rule::BooleanArg => crate::win32::boolean_arg(tree),
             Rule::TypedRegisters => typed_registers(tree),
             Rule::NtdllOwnCrt => crate::win32::ntdll_own_crt(tree),
@@ -591,7 +606,13 @@ fn release_build_only(tree: &Tree) -> Hits {
 }
 
 /// what must stay in place: (file, text, why)
-pub const REQUIRED: [(&str, &str, &str); 29] = [
+pub const REQUIRED: [(&str, &str, &str); 35] = [
+    ("crates/sake/src/files.rs", "    let w = admin_share(&w).unwrap_or(w);", "\\\\SAKE\\C$\\x is this machine's C:\\x (GetLongPathName of a UNC path to the guest's own drive found nothing; 2026-11-22)"),
+    ("crates/sake/src/files.rs", "    resolve_found(w).or_else(|| crate::sysdll::make(w))", "system32 holds a file for each DLL sake implements, as Windows does (CopyFile and NtOpenFile of kernel32.dll found none; 2026-11-22)"),
+    ("crates/sake/src/k32.rs", "    if path == 0 && !own_path && let Some(w) = crate::actctx::redirect_file(&n) {", "SearchPath with no path first redirects the name through the activation context (RtlDosSearchPath_Ustr flag 1; it searched only the folders; 2026-11-22)"),
+    ("crates/sake/src/k32.rs", "    crate::dllpath::search_path().split(';').filter(|d| !d.is_empty()).map(|d| if d == \".\" { files::cwd() } else { d.to_string() }).collect()", "SearchPath's folders are RtlGetSearchPath's: one order for both (2026-11-22)"),
+    ("crates/sake/src/k32.rs", "    if files::is_dir(&f) && files::resolve(&files::cwd()).is_some_and(|cwd| cwd == f || cwd.starts_with(&format!(\"{}/\", f.trim_end_matches('/')))) {", "the current directory and its parents cannot be moved: ERROR_SHARING_VIOLATION (it moved; 2026-11-22)"),
+    ("crates/sake/src/nt.rs", "                w.splice(0..0, \"\\\\\\\\?\\\\\".encode_utf16());", "an NT name is literal: \\??\\C:\\x.dll  (trailing spaces) is no x.dll (it was trimmed as a DOS name; 2026-11-22)"),
     (".github/workflows/ci.yml", "pack::tests::adding_a_small_game_takes_the_store_lock_file", "masu add runs on Windows itself: the store's lock opened a directory there and failed (review e18bf44)"),
     ("crates/sake/src/api.rs", "if is_crt(dll) { &[\"msvcrt\"] }", "a CRT's exports fall back to msvcrt's only: ucrtbase!strtol resolved to ntdll's own CRT, which takes no 0x prefix alone (review e18bf44)"),
     ("crates/sake/src/files.rs", "        let found = kura::fs::name_nocase(&at, comp).or_else(|| crate::shortname::long_of(&at, comp))?;", "a path component may be an entry's 8.3 short name (PROGRA~1), as on NTFS (opening by short name failed; 2026-11-21)"),

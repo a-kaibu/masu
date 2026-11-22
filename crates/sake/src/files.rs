@@ -159,9 +159,13 @@ pub fn missing(w: &str) -> u32 {
     if invalid_name(w) {
         return ERROR_INVALID_NAME;
     }
+    // (a \\?\ name's folders are taken as they are: "C:\windows.\x" is under no "windows")
+    let literal = if w.starts_with("\\\\?\\") { "\\\\?\\" } else { "" };
     let full = full_path(w);
+    let full = full.trim_prefix("\\\\?\\");
     match full.trim_end_matches('\\').rsplit_once('\\') {
-        Some((d, _)) if resolve(&format!("{d}\\")).is_none() => ERROR_PATH_NOT_FOUND,
+        // (a folder that is a file: "C:\a.txt\b")
+        Some((d, _)) if resolve(&format!("{literal}{d}\\")).is_none_or(|h| !is_dir(&h)) => ERROR_PATH_NOT_FOUND,
         _ => ERROR_FILE_NOT_FOUND,
     }
 }
@@ -289,6 +293,10 @@ fn full_path_trim(p: &str, trim: bool) -> String {
             p
         }
     } else if let Some(rest) = p.strip_prefix("\\\\?\\").or_else(|| p.strip_prefix("\\??\\")) {
+        // (\\?\UNC\server\share is the UNC path \\server\share)
+        if let Some(unc) = rest.get(..4).filter(|h| h.eq_ignore_ascii_case("UNC\\")).and_then(|_| rest.get(4..)) {
+            return full_path_trim(&format!("\\\\{unc}"), false);
+        }
         // (an NT or long path; an empty or driveless one is taken from the current directory)
         let rest = if rest.len() >= 2 && rest.as_bytes()[1] == b':' { rest.to_string() } else { format!("{}{}", cwd(), rest) };
         return full_path_trim(&rest, false);
@@ -356,15 +364,29 @@ fn full_path_trim(p: &str, trim: bool) -> String {
 /// Host path for a Windows path, without checking that it exists.
 pub fn to_host(w: &str) -> String {
     let w = full_path(w);
+    let w = admin_share(&w).unwrap_or(w);
     let w = w.trim_prefix("\\\\?\\");
     let w = &wow64_system(w);
-    let (drive, rest) = w.split_at(2);
+    // (no drive left: "\\?\" alone names nothing on the host)
+    let Some((drive, rest)) = w.get(..2).zip(w.get(2..)) else { return String::new() };
     let rest = rest.replace('\\', "/");
     match drive {
         "Z:" => if rest.is_empty() { "/".into() } else { rest },
         "C:" => format!("{}{}", c_root(), rest),
         d => format!("{}/{}{}", c_root(), &d[..1].to_ascii_lowercase(), rest),
     }
+}
+
+/// The drive path of a UNC path to this machine's administrative share of a drive:
+/// \\SAKE\C$\x (also by "localhost" or "127.0.0.1", Windows' own names for itself) is
+/// C:\x. `w` is a full path; None for any other
+pub fn admin_share(w: &str) -> Option<String> {
+    let rest = w.strip_prefix("\\\\")?;
+    let (srv, rest) = rest.split_once('\\').unwrap_or((rest, ""));
+    let (share, tail) = rest.split_once('\\').unwrap_or((rest, ""));
+    let me = [crate::lsa::COMPUTER, "localhost", "127.0.0.1"].iter().any(|n| n.eq_ignore_ascii_case(srv));
+    let letter = share.strip_suffix('$').filter(|l| l.len() == 1 && l.bytes().all(|b| b.is_ascii_alphabetic()))?;
+    me.then(|| format!("{}:\\{tail}", letter.to_ascii_uppercase()))
 }
 
 /// 64-bit Windows' other names for its system folder, as sake has one for both machines (its
@@ -391,12 +413,20 @@ fn exists(h: &str) -> bool {
     kura::fs::symlink_metadata(h).is_ok()
 }
 
-/// The host path of an existing file or directory `w` (case-insensitive match).
+/// The host path of an existing file or directory `w` (case-insensitive match); a system DLL
+/// sake implements gets its file in system32 then (sysdll.rs)
 pub fn resolve(w: &str) -> Option<String> {
+    resolve_found(w).or_else(|| crate::sysdll::make(w))
+}
+
+fn resolve_found(w: &str) -> Option<String> {
     if w.is_empty() {
         return None;
     }
     let h = to_host(w);
+    if h.is_empty() {
+        return None;
+    }
     if exists(&h) {
         return Some(h);
     }

@@ -1784,7 +1784,7 @@ fn fprintf_p<T: Unit>(c: &mut Ctx, locale: bool, list: bool) -> u32 {
 /// _printf_p(fmt, ...): the console
 fn printf_p<T: Unit>(c: &mut Ctx, locale: bool, list: bool) -> u32 {
     let Some(s) = legacy_p::<T>(c.a(0), &mut p_args(c, 1 + locale as u32, list)) else { return u32::MAX };
-    eprint!("{}", a2s(&units_to_ansi(&s)));
+    crate::k32::console_write(&a2s(&units_to_ansi(&s)));
     s.len() as u32
 }
 fn units_to_ansi<T: Unit>(s: &[T]) -> Vec<u8> {
@@ -1845,12 +1845,12 @@ fn p_init() {
 
 fn printf(c: &mut Ctx) -> u32 {
     let Some(s) = legacy::<u8>(c.a(0), &mut VaArgs::arg(c, 1)) else { return u32::MAX };
-    eprint!("{}", a2s(&s));
+    crate::k32::console_write(&a2s(&s));
     s.len() as u32
 }
 fn vprintf(c: &mut Ctx) -> u32 {
     let Some(s) = legacy::<u8>(c.a(0), &mut VaArgs::stack(c.a(1))) else { return u32::MAX };
-    eprint!("{}", a2s(&s));
+    crate::k32::console_write(&a2s(&s));
     s.len() as u32
 }
 // The scanf family: crt::scan with the pointers from the guest's variable arguments.
@@ -2369,7 +2369,7 @@ impl Stream {
         self.sync();
         self.tell_from = None;
         let Some(f) = &self.f else {
-            eprint!("{}", a2s(b));
+            crate::k32::console_write(&a2s(b));
             return true;
         };
         if self.text && b.contains(&b'\n') {
@@ -3878,12 +3878,12 @@ fn _Gettnames(_: &mut Ctx) -> u32 {
 fn puts(c: &mut Ctx) -> u32 {
     let mut s = cstr(c.a(0));
     s.push(b'\n');
-    eprint!("{}", a2s(&s));
+    crate::k32::console_write(&a2s(&s));
     0
 }
 fn putchar(c: &mut Ctx) -> u32 {
     let ch = c.a(0) & 0xff;
-    eprint!("{}", a2s(&[ch as u8]));
+    crate::k32::console_write(&a2s(&[ch as u8]));
     ch
 }
 fn setvbuf(_: &mut Ctx) -> u32 {

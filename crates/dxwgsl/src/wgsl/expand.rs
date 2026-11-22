@@ -127,8 +127,8 @@ pub mod counter {
     pub const GS_PRIMITIVES: u32 = 8;
     pub const C_INVOCATIONS: u32 = 9;
     pub const C_PRIMITIVES: u32 = 10;
-    /// PSInvocations / 4: the quads the pixel shader runs on (ps::invocations)
-    pub const PS_QUADS: u32 = 11;
+    /// PSInvocations / 2: the pairs of pixel shader invocations (ps::invocations)
+    pub const PS_PAIRS: u32 = 11;
     pub const N: u32 = 16;
 }
 
@@ -787,7 +787,7 @@ fn clip_count(p: array<vec4<f32>, 3>, n: u32) -> u32 {
 ";
 
 /// Each list primitive of a store through the clipper: counters C_INVOCATIONS (+1 each),
-/// C_PRIMITIVES (clip_count) and PS_QUADS (ps::WGSL's ps_quads, by the uniform's raster words).
+/// C_PRIMITIVES (clip_count) and PS_PAIRS (ps::WGSL's ps_pairs, by the uniform's raster words).
 /// `osgn`: the shader's outputs (its SV_Position).
 pub fn clip_pass(store: &Store, osgn: &[SigElement]) -> Result<Wgsl, String> {
     let stream = match store {
@@ -816,7 +816,7 @@ pub fn clip_pass(store: &Store, osgn: &[SigElement]) -> Result<Wgsl, String> {
         None => m.push_str("        p[c] = vec4<f32>(0.0f);\n"),
     }
     m.push_str("    }\n");
-    wln!(m, "    atomicAdd(&counters[{}u], 1u);\n    atomicAdd(&counters[{}u], clip_count(p, {corners}u));\n    atomicAdd(&counters[{}u], ps_quads(p, {corners}u));\n}}", counter::C_INVOCATIONS, counter::C_PRIMITIVES, counter::PS_QUADS);
+    wln!(m, "    atomicAdd(&counters[{}u], 1u);\n    atomicAdd(&counters[{}u], clip_count(p, {corners}u));\n    atomicAdd(&counters[{}u], ps_pairs(p, {corners}u));\n}}", counter::C_INVOCATIONS, counter::C_PRIMITIVES, counter::PS_PAIRS);
     Ok(Wgsl { code: m, bindings })
 }
 

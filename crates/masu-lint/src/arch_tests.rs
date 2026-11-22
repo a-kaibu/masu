@@ -134,7 +134,7 @@ fn fixture(r: Rule) -> Fixture {
         Rule::WgslLoadBounds => Fixture {
             bad: &[("crates/dxwgsl/src/wgsl.rs", "fn load() -> String {\n    format!(\"textureLoad(t{t}, {a}, {l})\")\n}\n")],
             good: &[("crates/dxwgsl/src/wgsl.rs", "fn load() -> String {\n    format!(\"select(vec4<f32>(), textureLoad(t{t}, {a}, {l}), {ok})\")\n}\n// textureLoad( named in a comment\n")],
-            mutate: ("crates/dxwgsl/src/wgsl.rs", |t| Some(t.replace("format!(\"select(vec4<{}>(), textureLoad(t{t}, {args}), {ok})\", k.s())", "format!(\"textureLoad(t{t}, {args})\")"))),
+            mutate: ("crates/dxwgsl/src/wgsl.rs", |t| Some(t.replace("format!(\"select(vec4<{}>(), textureLoad({tv}, {args}), {ok})\", k.s())", "format!(\"textureLoad({tv}, {args})\")"))),
         },
         Rule::ClearRounding => Fixture {
             bad: &[("crates/kura/src/d3d11/clear.rs", "use super::format::f16_bits;\nfn texel(v: f32) -> u32 { f16_bits(v) }\n")],
@@ -142,9 +142,9 @@ fn fixture(r: Rule) -> Fixture {
             mutate: ("crates/kura/src/d3d11/clear.rs", |t| Some(t.replace("sign | rtz_bits(", "f16_bits(v) | rtz_bits("))),
         },
         Rule::PsQuads => Fixture {
-            bad: &[("crates/kura/src/d3d11/query.rs", "const STATS: [u32; 3] = [c::GS_PRIMITIVES, c::C_INVOCATIONS, c::C_PRIMITIVES];\n// c::PS_QUADS named in a comment\n")],
-            good: &[("crates/kura/src/d3d11/query.rs", "const STATS: [u32; 4] = [c::GS_PRIMITIVES, c::C_INVOCATIONS, c::C_PRIMITIVES, c::PS_QUADS];\n")],
-            mutate: ("crates/dxwgsl/src/wgsl/expand.rs", |t| Some(t.replace("ps_quads(p,", "clip_count(p,"))),
+            bad: &[("crates/kura/src/d3d11/query.rs", "const STATS: [u32; 3] = [c::GS_PRIMITIVES, c::C_INVOCATIONS, c::C_PRIMITIVES];\n// c::PS_PAIRS named in a comment\n")],
+            good: &[("crates/kura/src/d3d11/query.rs", "const STATS: [u32; 4] = [c::GS_PRIMITIVES, c::C_INVOCATIONS, c::C_PRIMITIVES, c::PS_PAIRS];\n")],
+            mutate: ("crates/dxwgsl/src/wgsl/expand.rs", |t| Some(t.replace("ps_pairs(p,", "clip_count(p,"))),
         },
         Rule::D3d9Status => Fixture {
             bad: &[
@@ -156,6 +156,21 @@ fn fixture(r: Rule) -> Fixture {
                 ("crates/sake/src/d3d7.rs", "const D3DERR_INVALIDCALL: u32 = 0x8007_0057;\n"),
             ],
             mutate: ("crates/kura/src/d3d9/device.rs", |t| Some(t.replace("0x0876_086f", "0x0876_087f"))),
+        },
+        Rule::ConsoleLines => Fixture {
+            bad: &[("crates/sake/src/crt.rs", "fn puts(s: &str) { eprint!(\"{s}\"); }\n")],
+            good: &[("crates/sake/src/crt.rs", "fn puts(s: &str) { crate::k32::console_write(s); eprintln!(\"sake: puts\"); }\n// eprint!( in a comment\n")],
+            mutate: ("crates/sake/src/crt.rs", |t| Some(t.replacen("crate::k32::console_write(&a2s(&s));", "eprint!(\"{}\", a2s(&s));", 1))),
+        },
+        Rule::KnownDiffs => Fixture {
+            bad: &[("tests/winref/known.txt", "# a gap\nd3d11copy-* ^(want|got) +options logic_op \n")],
+            good: &[("tests/winref/known.txt", "# only comments\n\n   # and blanks\n")],
+            mutate: ("tests/winref/known.txt", |t| Some(format!("{t}d3d11-* ^(want|got) +made up \n"))),
+        },
+        Rule::LoadEveryLevel => Fixture {
+            bad: &[("crates/dxwgsl/src/wgsl.rs", "fn load() { let tv = format!(\"t{t}\"); }\n// format!(\"tl{t}\") + bv.l{t}.x in a comment\n")],
+            good: &[("crates/dxwgsl/src/wgsl.rs", "fn load() { let tv = format!(\"tl{t}\"); let a = format!(\"{lv} + bv.l{t}.x\"); }\n")],
+            mutate: ("crates/dxwgsl/src/wgsl.rs", |t| Some(t.replace("format!(\"tl{t}\")", "format!(\"t{t}\")"))),
         },
         Rule::DepthGuard => Fixture {
             bad: &[

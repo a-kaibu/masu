@@ -72,6 +72,10 @@ pub const COPY_BUFFER: u32 = 39; // src src_offset dst dst_offset size
 /// buffer `id` (counters the GPU adds to) grew by between COUNT_BEGIN and COUNT_END (mod 2^32).
 pub const COUNT_BEGIN: u32 = 40; // ticket id offset
 pub const COUNT_END: u32 = 41; // ticket
+/// GEN_MIPS with point filtering: each texel of a level the texel at (2x + 1, 2y + 1) of the one
+/// above (Direct3D 9's D3DTEXF_POINT AutoGenFilterType: winref d3d9tex's 1x1 level of the four
+/// quadrants is the bottom right one's).
+pub const GEN_MIPS_POINT: u32 = 42; // tex
 
 /// What a QUERY_END ends.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]

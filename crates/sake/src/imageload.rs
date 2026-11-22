@@ -202,7 +202,67 @@ fn ImageUnload(c: &mut Ctx) -> u32 {
     1
 }
 
+/// CheckSumMappedFile's sum of `data`: 16-bit little-endian words (an odd last byte alone)
+/// added with their carries folded back in; then, when `stored` (the image's CheckSum field) is
+/// given, its two halves taken out again (borrows folded the same way); then the length added
+pub fn pe_checksum(data: &[u8], stored: Option<u32>) -> u32 {
+    let mut sum: u32 = 0;
+    for w in data.chunks(2) {
+        let v = u32::from(*w.first().unwrap_or(&0)) | u32::from(*w.get(1).unwrap_or(&0)) << 8;
+        sum = sum.wrapping_add(v);
+        sum = (sum & 0xffff).wrapping_add(sum >> 16);
+    }
+    if let Some(cs) = stored {
+        for half in [cs & 0xffff, cs >> 16] {
+            if sum & 0xffff < half {
+                sum = sum.wrapping_sub(1);
+            }
+            sum = sum.wrapping_sub(half) & 0xffff;
+        }
+    }
+    (sum & 0xffff).wrapping_add(kome::num::u32_of(data.len()))
+}
+
+/// Where `data`'s optional header CheckSum field is, from its NT headers inside `data`: (NT
+/// headers' offset, the field's offset)
+pub fn checksum_field(data: &[u8]) -> Option<(u32, u32)> {
+    // (RtlImageNtHeader's test: "MZ", then "PE\0\0" at e_lfanew; the section table need not
+    // be there)
+    if data.get(..2)? != b"MZ" {
+        return None;
+    }
+    let nt = u32::from_le_bytes(data.get(0x3c..0x40)?.try_into().ok()?);
+    let n = usize::try_from(nt).ok()?;
+    if data.get(n..n.checked_add(4)?)? != b"PE\0\0" {
+        return None;
+    }
+    // (CheckSum: 64 bytes into the optional header, which starts 24 bytes into the NT headers)
+    let at = nt.checked_add(24 + 64)?;
+    data.get(usize::try_from(at).ok()?..usize::try_from(at.checked_add(4)?).ok()?)?;
+    Some((nt, at))
+}
+
+/// CheckSumMappedFile(base, length, &HeaderSum, &CheckSum): the NT headers (NULL for no PE
+/// image in those bytes, HeaderSum 0 then); an empty view or none is ERROR_INVALID_PARAMETER
+fn CheckSumMappedFile(c: &mut Ctx) -> u32 {
+    let (base, len, header_sum, sum) = (c.a(0), c.a(1), c.a(2), c.a(3));
+    if base == 0 || len == 0 || mem::accessible(base, len, false, true) < len {
+        crate::k32::last_error(87);
+        return 0;
+    }
+    let data = mem::bytes(base, len);
+    let field = checksum_field(&data);
+    let stored = field.and_then(|(_, at)| data.get(usize::try_from(at).ok()?..).and_then(|d| d.get(..4)).and_then(|b| b.try_into().ok()).map(u32::from_le_bytes));
+    w32(header_sum, stored.unwrap_or(0));
+    w32(sum, pe_checksum(&data, stored));
+    field.map_or(0, |(nt, _)| base.wrapping_add(nt))
+}
+
 pub fn init() {
+    for dll in ["imagehlp", "dbghelp"] {
+        implement(dll, "ImageNtHeader", crate::pe::RtlImageNtHeader);
+    }
+    implement("imagehlp", "CheckSumMappedFile", CheckSumMappedFile);
     for dll in ["imagehlp", "dbghelp"] {
         implement(dll, "MapAndLoad", MapAndLoad);
         implement(dll, "UnMapAndLoad", UnMapAndLoad);
@@ -215,6 +275,25 @@ pub fn init() {
 mod tests {
     use super::*;
     use proptest::prelude::*;
+
+    /// Windows' answers (Wine imagehlp:integrity): no PE header, so the plain sum plus length
+    #[test]
+    fn checksum_of_plain_bytes() {
+        assert_eq!(pe_checksum(&[0x11; 20], None), 0xaabe);
+        assert_eq!(pe_checksum(&[0x22; 20], None), 0x5569);
+        assert_eq!(pe_checksum(&[0x22; 10], None), 0xaab4);
+        assert_eq!(pe_checksum(&[0x22; 11], None), 0xaad7);
+    }
+
+    proptest! {
+        /// the stored CheckSum taken out of a sum that holds it gives the sum without it
+        #[test]
+        fn stored_checksum_cancels(mut d in proptest::collection::vec(any::<u8>(), 8..64), cs in any::<u32>()) {
+            let without = { let mut z = d.clone(); z[4..8].fill(0); pe_checksum(&z, None) };
+            d[4..8].copy_from_slice(&cs.to_le_bytes());
+            prop_assert_eq!(pe_checksum(&d, Some(cs)), without);
+        }
+    }
 
     /// A PE file: DOS header with e_lfanew `nt`, `count` sections, optional header of `opt`
     /// bytes (magic `magic`), `tail` more bytes.

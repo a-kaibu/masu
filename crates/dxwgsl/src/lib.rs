@@ -48,6 +48,12 @@ pub enum Binding {
     /// multisampled 2d), sample
     /// type (0 float, 1 uint, 2 sint, 3 depth)
     Texture(u32, u32),
+    /// texture t<n> as `ld` reads it (800 + n): a view of every level of the SRV's texture
+    /// (its layers as the SRV's), the SRV's first level and level count in BufferRanges. (A view
+    /// from a later level is not loaded from: SwiftShader's textureLoad of level l < base of a
+    /// view whose base level is `base` reads level 2 * base; measured 2026-11-21, winref
+    /// d3d11minlod's "load" row.) View dimension and sample type as for textures
+    LoadTexture(u32, u32),
     Sampler(bool),
     /// compute shaders: a write-only storage texture (a typed UAV): view dimension as for
     /// textures, its WebGPU format
@@ -62,7 +68,8 @@ pub enum Binding {
     Counter,
     /// the ranges of the views bound at these bindings (BUFFER_RANGES, a uniform): a
     /// vec4<u32> each, in order: the view's first dword in what is bound, its bytes, its
-    /// elements (raw views: its bytes), 0
+    /// elements (raw views: its bytes), 0; for a LoadTexture binding: the SRV's first level,
+    /// its level count, 0, 0
     BufferRanges(Vec<u32>),
 }
 
@@ -78,7 +85,7 @@ pub fn translate(code: &[u8], pixel: bool, ps: Option<&[u8]>) -> Result<Wgsl, St
     crate::wgsl::translate(code, pixel, ps)
 }
 
-pub use crate::wgsl::{BUFFER_RANGES, translate_addr, translate_compute, translate_point_sprite, thread_group, uav_slots, GsDecl, Phase, TessDecl, TessFactor, PATCH_CONSTANTS};
+pub use crate::wgsl::{BUFFER_RANGES, LOAD_TEXTURES, translate_addr, translate_compute, translate_point_sprite, thread_group, uav_slots, GsDecl, Phase, TessDecl, TessFactor, PATCH_CONSTANTS};
 /// Geometry shaders, stream output and clipper counts as compute passes (wgsl/expand.rs).
 pub use crate::wgsl::expand;
 

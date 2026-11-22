@@ -481,6 +481,10 @@ fn path_of(oa: u32) -> Result<u32, u32> {
             w.drain(..pre.len());
             if pre.ends_with("UNC\\") {
                 w.splice(0..0, [u16::from(b'\\'), u16::from(b'\\')]);
+            } else if w.get(1) == Some(&u16::from(b':')) {
+                // (an NT name is taken as it is: \\?\ keeps its components' trailing dots and
+                // spaces, "\??\C:\x.dll  " is no x.dll)
+                w.splice(0..0, "\\\\?\\".encode_utf16());
             }
             break;
         }
@@ -500,7 +504,8 @@ fn path_of(oa: u32) -> Result<u32, u32> {
             _ => None,
         });
         if let Some(d) = dir {
-            let pre: Vec<u16> = format!("{}\\", d.trim_end_matches('\\')).encode_utf16().collect();
+            // (literal too: \\?\)
+            let pre: Vec<u16> = format!("\\\\?\\{}\\", d.trim_end_matches('\\')).encode_utf16().collect();
             w.splice(0..0, pre);
         }
     }
@@ -543,7 +548,8 @@ fn create(c: &mut Ctx, out: u32, access: u32, oa: u32, io: u32, attrs: u32, shar
     // Windows said STATUS_NOT_A_DIRECTORY)
     let units = kome::num::u32_of(mem::wstr(path).len());
     let last = mem::ga(path).at(units.saturating_sub(1), 2);
-    if !existed && units > 1 && mem::r16(last) == 0x5c {
+    // (whether or not the name with it was found: lookups pass over a last '\\')
+    if units > 1 && mem::r16(last) == 0x5c {
         mem::w16(last, 0);
         let a = k32(c, "GetFileAttributesW", &[path]);
         mem::w16(last, 0x5c);

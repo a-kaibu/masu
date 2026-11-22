@@ -31,7 +31,7 @@ impl Counted {
     fn bytes(self) -> Vec<u8> {
         (0..u32::from(self.len)).map(|i| mem::r8(mem::ga(self.buf) + i)).collect()
     }
-    fn units(self) -> Vec<u16> {
+    pub fn units(self) -> Vec<u16> {
         (0..u32::from(self.len / 2)).map(|i| mem::r16(mem::ga(self.buf).at(i, 2))).collect()
     }
 }

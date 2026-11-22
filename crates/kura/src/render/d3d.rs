@@ -1550,8 +1550,12 @@ impl D3d {
                     i += 11;
                 }
                 GEN_MIPS => {
-                    self.gen_mips(a(1));
+                    self.gen_mips(a(1), true);
                     i += 2;
+                }
+                GEN_MIPS_POINT => {
+                    self.gen_mips(a(1), false);
+                    i = i.saturating_add(2);
                 }
                 DESTROY_SHADER => {
                     let id = a(1);
@@ -1712,7 +1716,7 @@ impl D3d {
         match op {
             // (level 0, x y w h)
             WRITE_TEXTURE | WRITE_TEXTURE_MEM if c[2] == 0 => self.touch_box(c[1], Some([c[3], c[4], c[3].saturating_add(c[5]), c[4].saturating_add(c[6])])),
-            CREATE_TEXTURE | CREATE_TEXTURE2 | DESTROY_TEXTURE | WRITE_TEXTURE | WRITE_TEXTURE_MEM | WRITE_TEXTURE2 | FILL | GEN_MIPS => self.touch(c[1]),
+            CREATE_TEXTURE | CREATE_TEXTURE2 | DESTROY_TEXTURE | WRITE_TEXTURE | WRITE_TEXTURE_MEM | WRITE_TEXTURE2 | FILL | GEN_MIPS | GEN_MIPS_POINT => self.touch(c[1]),
             COPY => self.touch(c[7]),
             RESOLVE => self.touch(c[1]),
             _ => {}
@@ -2388,7 +2392,7 @@ impl D3d {
             DESTROY_TEXTURE | CREATE_TEXTURE | CREATE_TEXTURE2 => {
                 self.clears.remove(&c[1]);
             }
-            WRITE_TEXTURE | WRITE_TEXTURE_MEM | FILL | PRESENT | PRESENT_FLIP | GEN_MIPS | WRITE_TEXTURE2 => self.settle(c[1]),
+            WRITE_TEXTURE | WRITE_TEXTURE_MEM | FILL | PRESENT | PRESENT_FLIP | GEN_MIPS | GEN_MIPS_POINT | WRITE_TEXTURE2 => self.settle(c[1]),
             READBACK => self.settle(c[2]),
             COPY => {
                 self.settle(c[1]);
@@ -2790,13 +2794,15 @@ impl D3d {
         let filter = |f: u32| if f >= 2 { "linear" } else { "nearest" };
         let mip = (key >> 10) & 3;
         let s = gpu::sampler(&format!(
-            r#"{{"addressModeU":{},"addressModeV":{},"addressModeW":{},"magFilter":{},"minFilter":{},"mipmapFilter":{},"lodMaxClamp":{}}}"#,
+            r#"{{"addressModeU":{},"addressModeV":{},"addressModeW":{},"magFilter":{},"minFilter":{},"mipmapFilter":{},"lodMinClamp":{},"lodMaxClamp":{}}}"#,
             q(pick(&ADDRESS, key & 7, "repeat")),
             q(pick(&ADDRESS, (key >> 3) & 7, "repeat")),
             q(pick(&ADDRESS, (key >> 12) & 7, "repeat")),
             q(filter((key >> 6) & 3)),
             q(filter((key >> 8) & 3)),
             q(if mip >= 2 { "linear" } else { "nearest" }),
+            // (D3DSAMP_MAXMIPLEVEL, bits 16-20: no mip filter, 0)
+            if mip == 0 { 0 } else { (key >> 16) & 31 },
             if mip == 0 { 0 } else { 32 }
         ));
         self.samplers.insert(key, s);
@@ -3689,13 +3695,16 @@ impl D3d {
         STATS[2].fetch_add(1, Relaxed);
     }
 
-    fn gen_mips(&mut self, tex: u32) {
+    /// Each level of `tex` from the one above: a box filter (`linear`: the four texels' mean)
+    /// or the texel at (2x + 1, 2y + 1) (nearest at the destination pixel's centre, which falls
+    /// exactly on that texel's corner).
+    fn gen_mips(&mut self, tex: u32, linear: bool) {
         let Some(t) = self.textures.get(&tex).filter(|t| t.levels >= 2 && t.dim == Dim::D2 && !is_depth(t.format)) else { return };
         let (format, layers, levels) = (t.format, t.layers, t.levels);
         self.end_pass();
         let pipe = self.blit_pipe(format);
         let slot = self.uniform_slot(&[0.0, 0.0, 1.0, 1.0]);
-        let smp = self.sampler2((1 << 9) | (1 << 10) | 2 | (2 << 3) | (2 << 6), 0, 0);
+        let smp = if linear { self.sampler2((1 << 9) | (1 << 10) | 2 | (2 << 3) | (2 << 6), 0, 0) } else { self.sampler2(2 | (2 << 3) | (2 << 6), 0, 0) };
         let layout = gpu::pipeline_group_layout(pipe, 0);
         self.open = true;
         for layer in 0..layers {
