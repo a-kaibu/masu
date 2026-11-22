@@ -16,8 +16,8 @@ pub struct File {
     pub write: bool,
     /// a directory's listing being read by NtQueryDirectoryFile, with the mask it took
     pub scan: Mutex<Option<(Vec<u16>, Find)>>,
-    /// its entry in OPEN (sharing checks), removed when the handle goes
-    share: u64,
+    /// its entry in OPEN (sharing checks): held for its Drop, which removes it with the handle
+    _share: Option<ShareEntry>,
     /// FILE_FLAG_DELETE_ON_CLOSE: the file goes with the last handle (or the process)
     delete: std::sync::atomic::AtomicBool,
     /// its crate::kern KFile once another process holds it too (0: this process's alone): the
@@ -60,9 +60,7 @@ impl Drop for File {
             locks.release(me);
         }
         drop(locks);
-        if self.share != 0 {
-            OPEN.locked().retain(|o| o.0 != self.share);
-        }
+        // (its sharing entry goes with `share`)
         let shared = self.shared.load(std::sync::atomic::Ordering::Acquire);
         if shared != 0 {
             let me = crate::pid();
@@ -151,8 +149,39 @@ fn access_bits(access: u32) -> u32 {
 /// ERROR_SHARING_VIOLATION when an open handle of `host` does not share what this one wants or
 /// this one does not share what that one has.
 fn share_conflict(host: &str, want: u32, share: u32) -> bool {
-    let key = host.to_lowercase();
-    OPEN.locked().iter().any(|o| o.1 == key && (want & !o.3 & 7 != 0 || o.2 & !share & 7 != 0))
+    conflicts(&OPEN.locked(), &host.to_lowercase(), want, share)
+}
+fn conflicts(open: &[(u64, String, u32, u32)], key: &str, want: u32, share: u32) -> bool {
+    open.iter().any(|o| o.1 == key && (want & !o.3 & 7 != 0 || o.2 & !share & 7 != 0))
+}
+
+/// A handle's entry in OPEN, checked against the others and put there under one lock (review
+/// 6852be1f: the check and the entry were taken under two, so two opens that exclude each other
+/// both got in between them). It leaves OPEN when dropped: with its File, or when the open fails
+/// after the check.
+pub struct ShareEntry(u64);
+
+impl ShareEntry {
+    /// The entry of an open of `host` for `access` sharing `share`, Err(ERROR_SHARING_VIOLATION)
+    /// when an open handle excludes it or it excludes one.
+    fn take(host: &str, access: u32, share: u32) -> Result<ShareEntry, u32> {
+        static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+        let key = host.to_lowercase();
+        let want = access_bits(access);
+        let mut open = OPEN.locked();
+        if conflicts(&open, &key, want, share) {
+            return Err(32);
+        }
+        let id = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        open.push((id, key, want, share));
+        Ok(ShareEntry(id))
+    }
+}
+
+impl Drop for ShareEntry {
+    fn drop(&mut self) {
+        OPEN.locked().retain(|o| o.0 != self.0);
+    }
 }
 
 /// Whether some handle keeps `host` from being deleted or renamed (opened without FILE_SHARE_DELETE).
@@ -279,7 +308,10 @@ pub fn set_cwd(d: &str) {
 
 fn c_root() -> String {
     static C: std::sync::OnceLock<String> = std::sync::OnceLock::new();
-    C.get_or_init(|| drive_root(std::env::var("SAKE_C").unwrap_or_else(|_| "/tmp/sake-c".into()))).clone()
+    let c = C.get_or_init(|| drive_root(std::env::var("SAKE_C").unwrap_or_else(|_| "/tmp/sake-c".into()))).clone();
+    // (the guest's names keep their short ones from here on: shortname's tables)
+    crate::shortname::watch();
+    c
 }
 
 /// The host directory of a drive, made when missing: C:\ is always there on Windows (stat,
@@ -303,9 +335,44 @@ pub fn is_dir<P: AsRef<std::path::Path>>(h: P) -> bool {
     kura::fs::metadata(h).is_ok_and(|m| m.is_dir())
 }
 
-/// Absolute Windows path of `p` (GetFullPathName): drive, no "." or "..", backslashes.
+/// Absolute Windows path of `p`, the one every file operation opens. A DOS path is made full
+/// by RtlGetFullPathName's rule, GetFullPathName's own (fullpath.rs: the current directory, the
+/// drives' "=X:" variables, "." and "..", trailing dots and spaces), its drive letter made
+/// upper case; a \\?\ or \??\ name is literal (its own mode: Literal below). The rule was
+/// once this file's own, and "D:x" with "=D:" set opened D:\x while GetFullPathName said
+/// D:\games\x (review b5dacf4 2.2).
 pub fn full_path(p: &str) -> String {
-    full_path_trim(p, true)
+    match FullMode::of(p) {
+        FullMode::Win32 => win32_full(p),
+        FullMode::Literal => full_path_trim(p, true),
+    }
+}
+
+/// How a path is made full (full_path)
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum FullMode {
+    /// RtlGetFullPathName_U's rule
+    Win32,
+    /// a \\?\ or \??\ name: no normalization but the prefix's
+    Literal,
+}
+
+impl FullMode {
+    fn of(p: &str) -> Self {
+        let p = p.replace('/', "\\");
+        if p.starts_with("\\\\?\\") || p.starts_with("\\??\\") { FullMode::Literal } else { FullMode::Win32 }
+    }
+}
+
+/// GetFullPathNameW's answer for `p` with the process's current directory and drives (the
+/// drive letter upper case, as the file system's names have it)
+fn win32_full(p: &str) -> String {
+    let w: Vec<u16> = p.encode_utf16().collect();
+    let mut t: Vec<u16> = crate::fullpath::process_env_full(&w, 0xfffe).text();
+    if t.get(1) == Some(&u16::from(b':')) && let Some(d) = t.first_mut() && let Ok(b) = u8::try_from(*d) {
+        *d = u16::from(b.to_ascii_uppercase());
+    }
+    String::from_utf16_lossy(&t)
 }
 /// full_path; `trim` false for a \\?\ path, whose last component keeps trailing dots and
 /// spaces (CreateFile of \\?\C:\d\a. makes "a."): such a path stays \\?\-prefixed so that
@@ -575,14 +642,14 @@ pub fn open_shared(w: &str, access: u32, disposition: u32, share: Option<u32>) -
     if let Some(h) = &existing {
         if kura::fs::metadata(h).is_ok_and(|m| m.is_dir()) {
             let f = kura::fs::File::open(h).map_err(|_| ERROR_ACCESS_DENIED)?;
-            return Ok((File { f: Mutex::new(f), path: h.clone(), dir: true, write: false, scan: Mutex::new(None), share: 0, delete: Default::default(), shared: Default::default() }, true));
+            return Ok((File { f: Mutex::new(f), path: h.clone(), dir: true, write: false, scan: Mutex::new(None), _share: None, delete: Default::default(), shared: Default::default() }, true));
         }
-        if share.is_some_and(|s| share_conflict(h, access_bits(access), s)) {
-            return Err(32);
-        }
-        if write && extra_attrs(h) & 1 != 0 {
-            return Err(ERROR_ACCESS_DENIED);
-        }
+    }
+    // (checked and entered at once; a file being made has its entry before it exists, so a
+    // second CreateFile of it racing this one sees it)
+    let entry = share.map(|s| ShareEntry::take(&host, access, s)).transpose()?;
+    if let Some(h) = &existing && write && extra_attrs(h) & 1 != 0 {
+        return Err(ERROR_ACCESS_DENIED);
     }
     let mut o = kura::fs::OpenOptions::new();
     o.read(true);
@@ -617,18 +684,7 @@ pub fn open_shared(w: &str, access: u32, disposition: u32, share: Option<u32>) -
         _ => return Err(87),
     }
     match o.open(&host) {
-        Ok(f) => {
-            let id = match share {
-                Some(s) => {
-                    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
-                    let id = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                    OPEN.locked().push((id, host.to_lowercase(), access_bits(access), s));
-                    id
-                }
-                None => 0,
-            };
-            Ok((File { f: Mutex::new(f), path: host, dir: false, write, scan: Mutex::new(None), share: id, delete: Default::default(), shared: Default::default() }, existing.is_some()))
-        }
+        Ok(f) => Ok((File { f: Mutex::new(f), path: host, dir: false, write, scan: Mutex::new(None), _share: entry, delete: Default::default(), shared: Default::default() }, existing.is_some())),
         Err(e) => Err(match io_err(&e) {
             IoErr::NotFound => {
                 if existing.is_none() && disposition != 3 {
@@ -648,6 +704,52 @@ fn left(f: &mut kura::fs::File) -> usize {
     let end = f.metadata().map_or(0, |m| m.len());
     let at = f.stream_position().unwrap_or(end);
     end.saturating_sub(at).min(usize::MAX as u64) as usize
+}
+
+/// Why a read or a write of a file did not move what it was asked to (review 6852be1f: a write
+/// from a buffer that is not guest memory wrote nothing and answered the count asked, a host
+/// read error was the end of the file). The end of the file is not one: a read there moves 0.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum IoFail {
+    /// the buffer is not all guest memory: ERROR_NOACCESS, nothing moved
+    NoAccess,
+    /// the host failed the read: ERROR_READ_FAULT
+    Read,
+    /// the host failed the write: ERROR_WRITE_FAULT
+    Write,
+}
+
+/// Why read_at read nothing: at or past the end, or the host failed.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum ReadAt {
+    Eof,
+    Fail(IoFail),
+}
+
+impl IoFail {
+    /// Its Windows error
+    pub fn code(self) -> u32 {
+        match self {
+            IoFail::NoAccess => 998,
+            IoFail::Read => 30,
+            IoFail::Write => 29,
+        }
+    }
+}
+
+/// Reads `buf` full from `f`: the bytes read (fewer at the end of the file), Err when the host
+/// failed (whatever came before it).
+fn read_full(f: &mut impl Read, buf: &mut [u8]) -> Result<usize, IoFail> {
+    let mut got = 0;
+    while let Some(rest) = buf.get_mut(got..).filter(|r| !r.is_empty()) {
+        match f.read(rest) {
+            Ok(0) => break,
+            Ok(k) => got = got.saturating_add(k),
+            Err(e) if e.kind() == std::io::ErrorKind::Interrupted => {}
+            Err(_) => return Err(IoFail::Read),
+        }
+    }
+    Ok(got)
 }
 
 impl File {
@@ -687,25 +789,17 @@ impl File {
     pub fn adopt(id: u32) -> Option<File> {
         let r = crate::kern::with(|k| k.file(id).cloned()).0?;
         let f = kura::fs::OpenOptions::new().read(true).write(r.write).open(&r.path).ok()?;
-        Some(File { f: Mutex::new(f), path: r.path, dir: false, write: r.write, scan: Mutex::new(None), share: 0, delete: Default::default(), shared: std::sync::atomic::AtomicU32::new(id) })
+        Some(File { f: Mutex::new(f), path: r.path, dir: false, write: r.write, scan: Mutex::new(None), _share: None, delete: Default::default(), shared: std::sync::atomic::AtomicU32::new(id) })
     }
-    pub fn read_into(&self, dst: u32, n: u32) -> u32 {
+    /// Up to `n` bytes from the file pointer into guest memory at `dst`: the bytes read (0 at
+    /// the end of the file).
+    pub fn read_into(&self, dst: u32, n: u32) -> Result<u32, IoFail> {
         let mut f = self.host();
         // SAFETY: the closure only reads the host file into the buffer, touching no guest memory;
         // the program handed the buffer to this read (another thread of its writing it meanwhile
         // would race on Windows too).
-        unsafe { crate::mem::view_mut_unchecked(dst, n, |buf| {
-            let mut got = 0;
-            while got < buf.len() {
-                match f.read(&mut buf[got..]) {
-                    Ok(0) => break,
-                    Ok(k) => got += k,
-                    Err(_) => break,
-                }
-            }
-            got as u32
-        }) }
-        .unwrap_or(0)
+        let got = unsafe { crate::mem::view_mut_unchecked(dst, n, |buf| read_full(&mut *f, buf)) };
+        got.ok_or(IoFail::NoAccess)?.map(kome::num::u32_of)
     }
     /// Up to `n` bytes into host memory (fewer at the end of the file)
     /// The buffer grows with what is read, so a large `n` (fread's "the rest of the file"
@@ -720,13 +814,16 @@ impl File {
     pub fn remaining(&self) -> usize {
         left(&mut self.host())
     }
-    pub fn write_bytes(&self, b: &[u8]) -> u32 {
+    /// `b` at the file pointer: its length, or why not
+    pub fn write_bytes(&self, b: &[u8]) -> Result<u32, IoFail> {
         let mut f = self.host();
-        f.write_all(b).map_or(0, |_| b.len() as u32)
+        f.write_all(b).map(|()| kome::num::u32_of(b.len())).map_err(|_| IoFail::Write)
     }
-    pub fn write_from(&self, src: u32, n: u32) -> u32 {
-        let mut f = self.host();
-        f.write_all(&crate::mem::bytes(src, n)).map_or(0, |()| n)
+    /// The `n` bytes of guest memory at `src` at the file pointer: `n`, or why not (NoAccess
+    /// before anything is written when they are not all guest memory)
+    pub fn write_from(&self, src: u32, n: u32) -> Result<u32, IoFail> {
+        let b = crate::mem::try_bytes(src, n).ok_or(IoFail::NoAccess)?;
+        self.write_bytes(&b)
     }
     pub fn seek(&self, pos: SeekFrom) -> Option<u64> {
         self.host().seek(pos).ok()
@@ -736,35 +833,33 @@ impl File {
     /// opened with FILE_FLAG_OVERLAPPED (`keep`) has no file pointer to move; a synchronous
     /// one's ends after what was read, as NtReadFile leaves it. Err(()): a read of some bytes
     /// that starts at or after the end (STATUS_END_OF_FILE: ReadFile fails with
-    /// ERROR_HANDLE_EOF when it was given an OVERLAPPED).
-    pub fn read_at(&self, start: Option<SeekFrom>, keep: bool, buf: &mut [u8]) -> Result<usize, ()> {
+    /// ERROR_HANDLE_EOF when it was given an OVERLAPPED); a host error is its own (ReadAt::Fail).
+    pub fn read_at(&self, start: Option<SeekFrom>, keep: bool, buf: &mut [u8]) -> Result<usize, ReadAt> {
         let mut f = self.host();
         let was = f.stream_position().unwrap_or(0);
         if let Some(s) = start && f.seek(s).is_err() {
-            return Err(());
+            return Err(ReadAt::Fail(IoFail::Read));
         }
-        let mut got = 0;
-        while got < buf.len() {
-            match f.read(&mut buf[got..]) {
-                Ok(0) | Err(_) => break,
-                Ok(k) => got += k,
-            }
-        }
+        let got = read_full(&mut *f, buf);
         if keep {
             let _ = f.seek(SeekFrom::Start(was));
         }
-        if got == 0 && !buf.is_empty() { Err(()) } else { Ok(got) }
+        match got {
+            Ok(0) if !buf.is_empty() => Err(ReadAt::Eof),
+            Ok(got) => Ok(got),
+            Err(e) => Err(ReadAt::Fail(e)),
+        }
     }
     /// WriteFile's write with an OVERLAPPED: at `start` (io_start: the end for
     /// FILE_WRITE_TO_END_OF_FILE; None: the file pointer), under one lock; past the end the
-    /// gap reads as zeros. `keep`: as read_at. The bytes written (0: it failed).
-    pub fn write_at(&self, start: Option<SeekFrom>, keep: bool, b: &[u8]) -> u32 {
+    /// gap reads as zeros. `keep`: as read_at. The bytes written, or why none.
+    pub fn write_at(&self, start: Option<SeekFrom>, keep: bool, b: &[u8]) -> Result<u32, IoFail> {
         let mut f = self.host();
         let was = f.stream_position().unwrap_or(0);
         if let Some(s) = start && f.seek(s).is_err() {
-            return 0;
+            return Err(IoFail::Write);
         }
-        let w = f.write_all(b).map_or(0, |_| b.len() as u32);
+        let w = f.write_all(b).map(|()| kome::num::u32_of(b.len())).map_err(|_| IoFail::Write);
         if keep {
             let _ = f.seek(SeekFrom::Start(was));
         }
@@ -867,7 +962,7 @@ pub fn find(w: &str) -> Option<Find> {
         }
     }
     let mut all = Vec::new();
-    for e in kura::fs::read_dir(&hd).ok()?.flatten() {
+    for e in crate::shortname::read_dir(&hd).ok()?.flatten() {
         let name = e.file_name().to_string_lossy().into_owned();
         let m = e.metadata().ok();
         all.push((name.encode_utf16().collect::<Vec<u16>>(), m.as_ref().map_or(0, kura::fs::Metadata::ino)));
@@ -912,6 +1007,54 @@ mod tests {
 
     use super::*;
     use proptest::prelude::*;
+
+    /// The reviewer's case: with "=Q:" naming Q:\games, "Q:save.dat" opens Q:\games\save.dat,
+    /// the file GetFullPathName names, not Q:\save.dat (review b5dacf4 2.2: files.rs had a
+    /// normalization of its own that went to the drive's root).
+    #[test]
+    fn a_drive_relative_name_opens_what_get_full_path_name_names() {
+        crate::k32::env_set("=Q:", Some("Q:\\games"));
+        let (games, root) = (to_host("Q:\\games\\save.dat"), to_host("Q:\\save.dat"));
+        kura::fs::create_dir_all(to_host("Q:\\games")).unwrap();
+        kura::fs::write(&games, b"games").unwrap();
+        kura::fs::write(&root, b"root").unwrap();
+        let w: Vec<u16> = "Q:save.dat".encode_utf16().collect();
+        let asked = String::from_utf16_lossy(&crate::fullpath::process_env_full(&w, 520).text());
+        assert_eq!(asked, "Q:\\games\\save.dat");
+        assert_eq!(full_path("Q:save.dat"), asked);
+        let opened = resolve(&full_path("Q:save.dat")).unwrap();
+        assert_eq!(kura::fs::read(&opened).unwrap(), b"games");
+        assert_eq!(kura::fs::read(resolve(&full_path(&asked)).unwrap()).unwrap(), b"games");
+        crate::k32::env_set("=Q:", None);
+    }
+
+    proptest! {
+        /// Any DOS path (relative, rooted, drive-relative with and without its drive's
+        /// variable, UNC, "." "..", trailing periods and spaces): the full path every operation
+        /// opens is GetFullPathName's answer (drive letter upper case), and the path that answer
+        /// names opens the same (making it full again changes nothing).
+        #[test]
+        fn operations_open_what_get_full_path_name_names(
+            head in proptest::sample::select(vec!["", "\\", "C:", "c:\\", "R:", "R:\\", "\\\\srv\\share\\", ".\\", "..\\"]),
+            parts in proptest::collection::vec(proptest::sample::select(vec!["a", "b.", "c..", ".", "..", "d ", "e. .", "f/g"]), 0..5),
+            set in proptest::bool::ANY,
+        ) {
+            crate::k32::env_set("=R:", set.then_some("R:\\"));
+            let p = format!("{head}{}", parts.join("\\"));
+            let w: Vec<u16> = p.encode_utf16().collect();
+            let mut asked: Vec<u16> = crate::fullpath::process_env_full(&w, 0xfffe).text();
+            if asked.get(1) == Some(&u16::from(b':')) && let Some(d) = asked.first_mut() && let Ok(b) = u8::try_from(*d) {
+                *d = u16::from(b.to_ascii_uppercase());
+            }
+            let asked = String::from_utf16_lossy(&asked);
+            let full = full_path(&p);
+            prop_assert_eq!(&full, &asked, "{}", p);
+            if !full.is_empty() {
+                prop_assert_eq!(full_path(&full), full.clone(), "{}", p);
+            }
+            crate::k32::env_set("=R:", None);
+        }
+    }
 
     /// Folder names that end in one period lose it (RGSS2's Game.exe loads
     /// "<RTP folder>.\RGSS202J.dll", #232); two or more periods stay; the last component
@@ -1207,33 +1350,33 @@ mod tests {
 
         let (root, w) = z_root("ovio");
         let f = open(&w("db"), 0xc000_0000, 2).unwrap();
-        assert_eq!(f.write_bytes(b"0123456789"), 10);
+        assert_eq!(f.write_bytes(b"0123456789"), Ok(10));
         f.seek(SeekFrom::Start(2));
         // a synchronous handle: at Offset, and the pointer after what was written / read
-        assert_eq!(f.write_at(io_start(5, 0, true), false, b"AB"), 2);
+        assert_eq!(f.write_at(io_start(5, 0, true), false, b"AB"), Ok(2));
         assert_eq!(f.seek(SeekFrom::Current(0)), Some(7));
         let mut b = [0u8; 3];
         assert_eq!(f.read_at(io_start(1, 0, false), false, &mut b), Ok(3));
         assert_eq!((&b, f.seek(SeekFrom::Current(0))), (b"123", Some(4)));
         // at or past the end: STATUS_END_OF_FILE, the pointer at Offset; nothing asked: fine
-        assert_eq!(f.read_at(io_start(10, 0, false), false, &mut b), Err(()));
-        assert_eq!(f.read_at(io_start(100, 0, false), false, &mut b), Err(()));
+        assert_eq!(f.read_at(io_start(10, 0, false), false, &mut b), Err(ReadAt::Eof));
+        assert_eq!(f.read_at(io_start(100, 0, false), false, &mut b), Err(ReadAt::Eof));
         assert_eq!(f.seek(SeekFrom::Current(0)), Some(100));
         assert_eq!(f.read_at(io_start(100, 0, false), false, &mut []), Ok(0));
         // fewer at the end
         assert_eq!(f.read_at(io_start(8, 0, false), false, &mut b), Ok(2));
         // past the end: a gap of zeros; the end; the pointer
-        assert_eq!(f.write_at(io_start(12, 0, true), false, b"x"), 1);
-        assert_eq!(f.write_at(io_start(!0, !0, true), false, b"yz"), 2);
+        assert_eq!(f.write_at(io_start(12, 0, true), false, b"x"), Ok(1));
+        assert_eq!(f.write_at(io_start(!0, !0, true), false, b"yz"), Ok(2));
         assert_eq!(f.seek(SeekFrom::Current(0)), Some(15));
         f.seek(SeekFrom::Start(0));
-        assert_eq!(f.write_at(io_start(!1, !0, true), false, b"P"), 1);
+        assert_eq!(f.write_at(io_start(!1, !0, true), false, b"P"), Ok(1));
         assert_eq!(std::fs::read(root.join("db")).unwrap(), b"P1234AB789\0\0xyz");
         // a FILE_FLAG_OVERLAPPED handle keeps no pointer: IO at Offset leaves it alone
         f.seek(SeekFrom::Start(3));
-        assert_eq!(f.write_at(io_start(0, 0, true), true, b"Q"), 1);
+        assert_eq!(f.write_at(io_start(0, 0, true), true, b"Q"), Ok(1));
         assert_eq!(f.read_at(io_start(9, 0, false), true, &mut b), Ok(3));
-        assert_eq!(f.read_at(io_start(99, 0, false), true, &mut b), Err(()));
+        assert_eq!(f.read_at(io_start(99, 0, false), true, &mut b), Err(ReadAt::Eof));
         assert_eq!(f.seek(SeekFrom::Current(0)), Some(3));
         drop(f);
         let _ = std::fs::remove_dir_all(&root);
@@ -1256,7 +1399,7 @@ mod tests {
                             f.seek(SeekFrom::Start(round as u64 * 7));
                         }
                         let b = [t ^ (round as u8); PAGE];
-                        assert_eq!(f.write_at(io_start(page * PAGE as u32, 0, true), false, &b), PAGE as u32);
+                        assert_eq!(f.write_at(io_start(page * PAGE as u32, 0, true), false, &b), Ok(PAGE as u32));
                     }
                 })
             })
@@ -1317,7 +1460,7 @@ mod tests {
                         if !b.is_empty() && data.len() < at + b.len() { data.resize(at + b.len(), 0); }
                         if !b.is_empty() { data[at..at + b.len()].copy_from_slice(&b); }
                         if !keep { pos = at + b.len(); }
-                        prop_assert_eq!(f.write_at(io_start(lo, hi, true), keep, &b), b.len() as u32);
+                        prop_assert_eq!(f.write_at(io_start(lo, hi, true), keep, &b), Ok(b.len() as u32));
                     }
                     Op::ReadAt(lo, hi, n) => {
                         let at = match (hi, lo) { (0xffff_ffff, 0xffff_fffe) => pos, (0xffff_ffff, _) => usize::MAX, _ => lo as usize };
@@ -1332,7 +1475,7 @@ mod tests {
                         }
                         let want = &data[at.min(data.len())..(at + n).min(data.len())];
                         if n > 0 && want.is_empty() {
-                            prop_assert_eq!(got, Err(()));
+                            prop_assert_eq!(got, Err(ReadAt::Eof));
                         } else {
                             prop_assert_eq!(got, Ok(want.len()));
                             prop_assert_eq!(&b[..want.len()], want);
@@ -1343,7 +1486,7 @@ mod tests {
                         if !b.is_empty() && data.len() < pos + b.len() { data.resize(pos + b.len(), 0); }
                         if !b.is_empty() { data[pos..pos + b.len()].copy_from_slice(&b); }
                         pos += b.len();
-                        prop_assert_eq!(f.write_bytes(&b), b.len() as u32);
+                        prop_assert_eq!(f.write_bytes(&b), Ok(b.len() as u32));
                     }
                     Op::Read(n) => {
                         let want = data[pos.min(data.len())..(pos + n).min(data.len())].to_vec();
@@ -1359,6 +1502,79 @@ mod tests {
             }
             drop(f);
             prop_assert_eq!(std::fs::read(root.join("db")).unwrap(), data);
+            let _ = std::fs::remove_dir_all(&root);
+        }
+    }
+
+    /// Review 6852be1f: CreateFile's sharing check and its entry were two locks apart, so
+    /// opens that exclude each other, racing, both got in. Threads open one file at once, each
+    /// asking no sharing, and hold what they got until all have tried: exactly one gets it, the
+    /// rest ERROR_SHARING_VIOLATION; for a file that exists and one being made (OPEN_ALWAYS).
+    #[test]
+    fn exclusive_opens_racing_let_one_in() {
+        let (root, w) = z_root("sharerace");
+        for round in 0..40 {
+            let path = w(&format!("f{}", round % 2));
+            if round % 4 < 2 {
+                std::fs::write(root.join(format!("f{}", round % 2)), b"x").unwrap();
+            } else {
+                let _ = std::fs::remove_file(root.join(format!("f{}", round % 2)));
+            }
+            let n = 8;
+            let go = std::sync::Arc::new(std::sync::Barrier::new(n));
+            let tried = std::sync::Arc::new(std::sync::Barrier::new(n));
+            let got: Vec<Result<bool, u32>> = std::thread::scope(|s| {
+                let hs: Vec<_> = (0..n)
+                    .map(|_| {
+                        let (go, tried, path) = (go.clone(), tried.clone(), path.clone());
+                        s.spawn(move || {
+                            go.wait();
+                            let r = open_shared(&path, 0xc000_0000, 4, Some(0));
+                            tried.wait();
+                            r.map(|(f, _)| {
+                                drop(f);
+                                true
+                            })
+                        })
+                    })
+                    .collect();
+                hs.into_iter().map(|h| h.join().unwrap()).collect()
+            });
+            assert_eq!(got.iter().filter(|r| r.is_ok()).count(), 1, "round {round}: {got:?}");
+            assert!(got.iter().all(|r| matches!(r, Ok(true) | Err(32))), "round {round}: {got:?}");
+            assert!(!OPEN.locked().iter().any(|o| o.1.contains("sharerace")), "every entry went with its handle");
+        }
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(48))]
+        /// Review 6852be1f: a write from a buffer that is not all guest memory moves nothing
+        /// and says NoAccess (it wrote nothing and answered the count); a read into one says
+        /// NoAccess; the end of the file reads 0 bytes, Ok, not an error; a read the host fails
+        /// (a directory) is an error, not the end. Against the bytes on the host.
+        #[test]
+        fn io_results_tell_their_cause(data in proptest::collection::vec(any::<u8>(), 1..300), bad in prop::sample::select(vec![0u32, 0x10, 0xffff_0000]), n in 1u32..64) {
+            let g = crate::test_guest::enter();
+            let (root, w) = z_root("iofail");
+            let f = open(&w("f"), 0xc000_0000, 2).map_err(|e| TestCaseError::fail(format!("{e}")))?;
+            prop_assert_eq!(f.write_bytes(&data), Ok(data.len() as u32));
+            prop_assert_eq!(f.write_from(bad, n), Err(IoFail::NoAccess));
+            prop_assert_eq!(std::fs::read(root.join("f")).ok(), Some(data.clone()), "nothing written");
+            f.seek(SeekFrom::Start(0));
+            prop_assert_eq!(f.read_into(bad, n), Err(IoFail::NoAccess));
+            let buf = crate::mem::Scratch::new(512, true);
+            let _ = &g;
+            prop_assert_eq!(f.read_into(buf.get(), 512), Ok(data.len() as u32));
+            prop_assert_eq!(crate::mem::bytes(buf.get(), data.len() as u32), data.clone());
+            prop_assert_eq!(f.read_into(buf.get(), n), Ok(0), "the end of the file");
+            prop_assert_eq!(f.write_from(buf.get(), n), Ok(n));
+            std::fs::create_dir_all(root.join("d")).map_err(|e| TestCaseError::fail(format!("{e}")))?;
+            let d = File { f: Mutex::new(kura::fs::File::open(root.join("d").to_string_lossy().as_ref()).map_err(|e| TestCaseError::fail(format!("{e}")))?), path: String::new(), dir: true, write: false, scan: Mutex::new(None), _share: None, delete: Default::default(), shared: Default::default() };
+            prop_assert_eq!(d.read_into(buf.get(), n), Err(IoFail::Read));
+            let mut host = [0u8; 4];
+            prop_assert_eq!(d.read_at(None, false, &mut host), Err(ReadAt::Fail(IoFail::Read)));
+            drop(buf);
             let _ = std::fs::remove_dir_all(&root);
         }
     }

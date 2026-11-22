@@ -729,7 +729,7 @@ fn remove_files(p: &Arc<Mutex<Package>>) -> u32 {
         let dir = pk.prop(&r.get(3).text());
         let pat = long_name(&r.get(2).text()).to_lowercase();
         let Some(hd) = crate::files::resolve(dir.trim_end_matches('\\')) else { continue };
-        for e in kura::fs::read_dir(&hd).into_iter().flatten().flatten() {
+        for e in crate::shortname::read_dir(&hd).into_iter().flatten().flatten() {
             let n = e.file_name().to_string_lossy().to_lowercase();
             if wildcard(&pat, &n) && kura::fs::metadata(e.path()).is_ok_and(|m| m.is_file()) {
                 let _ = kura::fs::remove_file(e.path());
@@ -823,7 +823,7 @@ fn remove_empty(pk: &Package, dirs: Vec<String>) {
         todo.pop()
     } {
         let Some(h) = crate::files::resolve(d.trim_end_matches('\\')) else { continue };
-        if kura::fs::remove_dir(&h).is_ok() && let Some((parent, _)) = d.trim_end_matches('\\').rsplit_once('\\') {
+        if crate::shortname::remove_dir(&h).is_ok() && let Some((parent, _)) = d.trim_end_matches('\\').rsplit_once('\\') {
             let parent = format!("{parent}\\");
             if own.contains(&parent.to_lowercase()) && !todo.contains(&parent) {
                 todo.push(parent);
@@ -963,11 +963,10 @@ fn file_path_locked(pk: &Package, key: &str) -> Option<String> {
 /// Calls entry(hInstall) of a custom action DLL; its result (ERROR_SUCCESS,
 /// ERROR_INSTALL_USEREXIT...).
 fn call_dll(c: &mut Ctx, p: &Arc<Mutex<Package>>, path: &str, entry: &str) -> u32 {
-    let base = crate::pe::load_library(c.cpu, path);
-    if base == 0 {
+    let Ok(base) = crate::pe::load_library(c.cpu, path) else {
         eprintln!("msi: custom action DLL {path} does not load");
         return ERROR_INSTALL_FAILURE;
-    }
+    };
     let Some(f) = crate::pe::proc_address(base, crate::pe::Import::Name(entry)) else {
         eprintln!("msi: {path} has no {entry}");
         return ERROR_INSTALL_FAILURE;
@@ -984,7 +983,7 @@ fn call_dll(c: &mut Ctx, p: &Arc<Mutex<Package>>, path: &str, entry: &str) -> u3
 
 /// Starts a program (CreateProcess) and, when `wait`, waits for it.
 fn run_program(c: &mut Ctx, cmd: &str, wait: bool) -> u32 {
-    let k32 = crate::pe::load_library(c.cpu, "kernel32.dll");
+    let Ok(k32) = crate::pe::load_library(c.cpu, "kernel32.dll") else { return ERROR_INSTALL_FAILURE };
     let f = |n: &str| crate::pe::proc_address(k32, crate::pe::Import::Name(n));
     let (Some(create), Some(wait_fn), Some(close)) = (f("CreateProcessW"), f("WaitForSingleObject"), f("CloseHandle")) else {
         return ERROR_INSTALL_FAILURE;

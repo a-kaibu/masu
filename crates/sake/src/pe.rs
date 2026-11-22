@@ -31,6 +31,9 @@ pub struct Module {
     pub deps: Vec<u32>,
     /// GetModuleHandleEx(PIN): never unloaded
     pub pinned: bool,
+    /// its DllMain(PROCESS_ATTACH) ran and answered TRUE: its unload tells it PROCESS_DETACH
+    /// (false while pending, and for one whose DllMain answered FALSE)
+    pub attached: bool,
 }
 
 /// The 64-bit address an image mapped at `base` (preferring `pref`) has.
@@ -191,6 +194,7 @@ pub fn load_datafile(data: &[u8], path: &str) -> Option<u32> {
         redirected: false,
         deps: Vec::new(),
         pinned: false,
+        attached: false,
     });
     Some(base)
 }
@@ -233,13 +237,9 @@ pub fn free_library(cpu: &mut Cpu, base: u32) -> bool {
 }
 
 fn unload(cpu: &mut Cpu, base: u32) {
-    // (not yet initialized: no DllMain to tell)
-    let fresh = {
-        let mut p = PENDING.locked();
-        let had = p.contains(&base);
-        p.retain(|&b| b != base);
-        had
-    };
+    // (not yet initialized, or its DllMain answered FALSE: no DllMain to tell)
+    PENDING.locked().retain(|&b| b != base);
+    let fresh = !with(base, |m| m.attached || !m.dll).unwrap_or(false);
     // (an exe's entry point is no DllMain)
     let entry = with(base, |m| if m.dll { m.entry } else { 0 }).unwrap_or(0);
     if !fresh {
@@ -724,6 +724,7 @@ pub fn load(data: Vec<u8>, path: &str, resolve: &mut dyn FnMut(&str, Import) -> 
         redirected: false,
         deps: Vec::new(),
         pinned: false,
+        attached: false,
     });
     ldr_add(base);
     // imports (after the module is listed: a DLL importing from itself, or a cycle)
@@ -1165,6 +1166,7 @@ pub fn hle_module(dll: &str) -> u32 {
         redirected: false,
         deps: Vec::new(),
         pinned: false,
+        attached: true,
     });
     drop(_making);
     ldr_add(base);
@@ -1298,14 +1300,86 @@ pub fn ldr_update(base: u32) {
 
 use crate::mem::w16;
 
-/// The folders SetDllDirectory / AddDllDirectory added to the search (after the exe's).
-pub static DLL_DIRS: Mutex<Vec<String>> = Mutex::new(Vec::new());
+/// How one load looks for the DLLs it names without a path (dllpath::plan): LoadLibraryEx's
+/// flags and the module whose folder they may take. A DLL's own imports are looked for as the
+/// load that brought it in did, the DLL itself the module (LOAD_WITH_ALTERED_SEARCH_PATH and
+/// LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR take its folder).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct LoadSearch {
+    pub module: Option<String>,
+    pub flags: u32,
+    pub missing: OnMissing,
+}
+
+/// What a DLL file that is not there, or an export a DLL file lacks, does to the load importing it
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum OnMissing {
+    /// LoadLibrary's (and its DLLs' imports): the load fails as Windows' does, what it mapped is
+    /// unmapped and no DllMain of it runs
+    #[default]
+    Fails,
+    /// The process's own imports: bound to a trap that logs, so a game naming a DLL nobody ships
+    /// still starts (the exe's load has no caller to answer an error to)
+    Traps,
+}
+
+/// Why LoadLibrary failed: its last error
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LoadFailure {
+    /// The DLL, or one it imports from, is not there: ERROR_MOD_NOT_FOUND
+    NotFound,
+    /// A DLL file it imports from lacks the function: ERROR_PROC_NOT_FOUND
+    NoProc,
+    /// The file is no image this process maps: ERROR_BAD_EXE_FORMAT
+    BadImage,
+    /// Its DllMain or a dependency's answered FALSE: unloaded again, ERROR_DLL_INIT_FAILED
+    /// (review 6852be1f)
+    Init,
+}
+
+impl LoadFailure {
+    pub fn error(self) -> u32 {
+        match self {
+            Self::NotFound => 126,
+            Self::NoProc => 127,
+            Self::BadImage => 193,
+            Self::Init => 1114,
+        }
+    }
+}
+
+/// The first import the load being made (the innermost load_dll_file) could not bind under
+/// OnMissing::Fails; each load keeps its own, the one it interrupted put back after it
+static MISSING: Mutex<Option<LoadFailure>> = Mutex::new(None);
+/// The images failed loads mapped: load_library_searching, which has the cpu, unloads them
+static ABANDONED: Mutex<Vec<u32>> = Mutex::new(Vec::new());
+
+/// An import of the load being made is missing (the first one says why it fails)
+fn note_missing(why: LoadFailure) {
+    MISSING.locked().get_or_insert(why);
+}
+
+impl LoadSearch {
+    /// The folders, in order: LdrGetDllPath's for this module and these flags (an invalid
+    /// combination, refused by LoadLibraryEx before a load starts, finds nothing)
+    fn folders(&self) -> Vec<String> {
+        crate::dllpath::dll_folders(self.module.as_deref(), self.flags).unwrap_or_else(|_| Vec::new())
+    }
+
+    /// The search for the imports of the DLL `win` this one found
+    fn of_dependency(&self, win: &str) -> Self {
+        Self { module: Some(win.to_string()), flags: self.flags, missing: self.missing }
+    }
+}
 
 /// A guest DLL, including third-party runtimes installed in system32 (SysWOW64 is the same folder).
 /// Known Windows DLLs there remain sake's own: an old Wine prefix must not replace
 /// its system implementations. This restriction does not apply to vendor DLLs
 /// such as SDRT's UCUtil50.dll, which the official MSI installs in SystemFolder.
-fn find_dll_file(dll: &str) -> Option<(String, String)> {
+/// A name without a path is looked for in `search`'s folders only, in their order (review
+/// b5dacf4 2.1: the loader had an order of its own, and SetDefaultDllDirectories, AddDllDirectory's
+/// place and LoadLibraryEx's LOAD_LIBRARY_SEARCH_* flags never reached it).
+fn find_dll_file(dll: &str, search: &LoadSearch) -> Option<(String, String)> {
     let name = if dll.contains('.') { dll.to_string() } else { format!("{dll}.dll") };
     let system_dll = api::is_system(name.rsplit(['\\', '/']).next().unwrap_or(&name));
     if name.contains('\\') || name.contains('/') || name.contains(':') {
@@ -1316,26 +1390,8 @@ fn find_dll_file(dll: &str) -> Option<(String, String)> {
         }
         return crate::files::resolve(&w).filter(|h| !system_dir || !wine_builtin(h)).map(|h| (h, w));
     }
-    let exe_dir = MODULES.r().iter().find(|m| !m.dll).map(|m| m.path.rsplit_once('\\').map_or_default(|x| x.0.to_string()));
-    let mut dirs: Vec<String> = exe_dir.into_iter().collect();
-    dirs.extend(DLL_DIRS.locked().iter().cloned());
-    // (AddDllDirectory's, newest first)
-    dirs.extend(crate::dllpath::user_dirs().into_iter().rev());
-    dirs.push(crate::files::cwd().trim_end_matches('\\').to_string());
-    // the folders of DLLs loaded by path (LOAD_WITH_ALTERED_SEARCH_PATH finds their dependencies there)
-    for m in MODULES.r().iter().filter(|m| m.dll && !m.hle) {
-        if let Some((d, _)) = m.path.rsplit_once('\\') && !dirs.iter().any(|x| x.eq_ignore_ascii_case(d)) {
-            dirs.push(d.to_string());
-        }
-    }
-    if !system_dll {
-        // (SysWOW64 is the same folder: files::wow64_system; the machine check below takes a
-        // runtime of this process's kind)
-        dirs.push("C:\\windows\\system32".into());
-        dirs.push("C:\\windows\\system".into());
-    }
-    for d in dirs.iter().filter(|d| !system_dll || !is_system_dir(d)) {
-        let w = format!("{d}\\{name}");
+    for d in search.folders().iter().filter(|d| !system_dll || !is_system_dir(d)) {
+        let w = format!("{}\\{name}", d.trim_end_matches('\\'));
         if let Some(h) = crate::files::resolve(&w) {
             // (an old Wine prefix's own builds there are not a vendor's: sake has none of
             // Wine's DLLs, and one it does not implement stays missing)
@@ -1365,12 +1421,13 @@ fn wine_stub(head: &[u8]) -> bool {
     head.get(0x40..0x60).is_some_and(|s| s.starts_with(b"Wine builtin DLL") || s.starts_with(b"Wine placeholder DLL"))
 }
 
-/// C:\windows\system32 (or SysWOW64, Sysnative: files::wow64_system) or C:\windows\system (a game run from there, or one that adds it with
+/// C:\windows\system32 (or SysWOW64, Sysnative: files::wow64_system), C:\windows\system or
+/// C:\windows, the system folders of the search (a game run from there, or one that adds it with
 /// SetDllDirectory, still gets sake's DLLs only)
 fn is_system_dir(d: &str) -> bool {
     let d = crate::files::wow64_system(&crate::files::full_path(d)).to_ascii_lowercase();
     let d = d.trim_end_matches('\\');
-    d == "c:\\windows\\system32" || d == "c:\\windows\\system"
+    d == "c:\\windows\\system32" || d == "c:\\windows\\system" || d == "c:\\windows"
 }
 
 
@@ -1392,14 +1449,15 @@ fn imports_hle(seen: &mut HashMap<String, bool>, dll: &str, find: impl FnOnce() 
     h
 }
 
-/// The import resolver for one image: resolve_import with that image's searches remembered.
-fn image_resolver() -> impl FnMut(&str, Import) -> u32 {
+/// The import resolver for one image: resolve_import with that image's searches remembered, its
+/// DLLs looked for as `search` says.
+fn image_resolver(search: LoadSearch) -> impl FnMut(&str, Import) -> u32 {
     let mut seen = HashMap::default();
-    move |dll, imp| resolve_import_with(&mut seen, dll, imp)
+    move |dll, imp| resolve_import_with(&mut seen, dll, imp, &search)
 }
 
-fn resolve_import_with(seen: &mut HashMap<String, bool>, dll: &str, imp: Import) -> u32 {
-    let hle = imports_hle(seen, dll, || find_dll_file(dll).is_some());
+fn resolve_import_with(seen: &mut HashMap<String, bool>, dll: &str, imp: Import, search: &LoadSearch) -> u32 {
+    let hle = imports_hle(seen, dll, || find_dll_file(dll, search).is_some());
     if hle {
         let name = match imp {
             Import::Name(n) => n.to_string(),
@@ -1413,14 +1471,24 @@ fn resolve_import_with(seen: &mut HashMap<String, bool>, dll: &str, imp: Import)
     }
     let base = match by_name(dll) {
         Some(b) => b,
-        None => match load_dll_file(dll) {
+        None => match load_dll_file(dll, search) {
             Ok(b) => {
                 // (its one reference is the importer's, counted once the importer is loaded)
                 with_mut(b, |m| m.refs = 0);
                 b
             }
             Err(e) => {
-                eprintln!("sake: import from {dll}: {e}");
+                if search.missing == OnMissing::Fails {
+                    if crate::env_on!("SAKE_TRACE_LOAD") {
+                        eprintln!("sake: import from {dll}: {e:?}");
+                    }
+                    note_missing(match e {
+                        DllError::Failed(why) => why,
+                        DllError::NotThere(_) => LoadFailure::NotFound,
+                    });
+                    return 0;
+                }
+                eprintln!("sake: import from {dll}: {e:?}");
                 let name = match imp {
                     Import::Name(n) => n.to_string(),
                     Import::Ordinal(o) => format!("#{o}"),
@@ -1434,6 +1502,13 @@ fn resolve_import_with(seen: &mut HashMap<String, bool>, dll: &str, imp: Import)
             Import::Name(n) => n.to_string(),
             Import::Ordinal(o) => format!("#{o}"),
         };
+        if search.missing == OnMissing::Fails {
+            if crate::env_on!("SAKE_TRACE_LOAD") {
+                eprintln!("sake: {dll} has no export {name}");
+            }
+            note_missing(LoadFailure::NoProc);
+            return 0;
+        }
         eprintln!("sake: {dll} has no export {name}");
         api::export(dll, &name)
     })
@@ -1515,47 +1590,96 @@ fn hle_data(dll: &str, name: &str) -> Option<u32> {
     (api::is_crt(&k) && !k.starts_with("vcruntime")).then(|| crate::crt::data(name)).flatten()
 }
 
-fn load_dll_file(dll: &str) -> Result<u32, String> {
-    let (host, win) = find_dll_file(dll).ok_or_else(|| format!("{dll} not found"))?;
-    let data = kura::fs::read(&host).map_err(|e| format!("{host}: {e}"))?;
+/// Why load_dll_file loaded nothing
+#[derive(Debug)]
+enum DllError {
+    /// Not found (or gone between the search and the read)
+    NotThere(String),
+    /// Mapped, or found and refused, failing as LoadLibrary fails (OnMissing::Fails); what it
+    /// mapped is on ABANDONED
+    Failed(LoadFailure),
+}
+
+fn load_dll_file(dll: &str, search: &LoadSearch) -> Result<u32, DllError> {
+    let (host, win) = find_dll_file(dll, search).ok_or_else(|| DllError::NotThere(format!("{dll} not found")))?;
+    let data = kura::fs::read(&host).map_err(|e| DllError::NotThere(format!("{host}: {e}")))?;
     if crate::env_on!("SAKE_TRACE_LOAD") {
         eprintln!("sake: loading {win} ({} bytes)", data.len());
     }
-    let base = load(data, &win, &mut image_resolver())?;
+    // (the load this one interrupts keeps its own missing import)
+    let outer = MISSING.locked().take();
+    let loaded = load(data, &win, &mut image_resolver(search.of_dependency(&win)));
+    let missing = std::mem::replace(&mut *MISSING.locked(), outer);
+    let base = match loaded {
+        Ok(b) => b,
+        Err(e) if search.missing == OnMissing::Fails => {
+            if crate::env_on!("SAKE_TRACE_LOAD") {
+                eprintln!("sake: {win}: {e}");
+            }
+            return Err(DllError::Failed(LoadFailure::BadImage));
+        }
+        Err(e) => return Err(DllError::NotThere(e)),
+    };
     crate::vorbis_hook::patch(base, with(base, |m| m.size).unwrap_or(0));
     crate::unity6::patch(&win, base, with(base, |m| m.size).unwrap_or(0));
     tls_module(base);
+    // (not initialized: unloading it runs no DllMain)
     PENDING.locked().push(base);
+    if let Some(why) = missing {
+        ABANDONED.locked().push(base);
+        return Err(DllError::Failed(why));
+    }
     Ok(base)
 }
 
-/// LoadLibrary: an existing module, one of ours, or a DLL file (initialized here).
-pub fn load_library(cpu: &mut Cpu, name: &str) -> u32 {
+/// A load that failed: the images it mapped unmapped (none was initialized), its failure answered
+fn abandon(cpu: &mut Cpu, why: LoadFailure) -> LoadFailure {
+    let gone = std::mem::take(&mut *ABANDONED.locked());
+    for b in gone {
+        if with(b, |_| ()).is_some() {
+            unload(cpu, b);
+        }
+    }
+    why
+}
+
+/// LoadLibrary: an existing module, one of ours, or a DLL file (initialized here), looked for
+/// in the default search (SetDefaultDllDirectories' when set).
+pub fn load_library(cpu: &mut Cpu, name: &str) -> Result<u32, LoadFailure> {
+    load_library_searching(cpu, name, &LoadSearch::default())
+}
+
+/// LoadLibraryEx without a data-file flag: load_library, looked for as `search` says.
+pub fn load_library_searching(cpu: &mut Cpu, name: &str, search: &LoadSearch) -> Result<u32, LoadFailure> {
     let _g = loader_lock();
     let key = api::dll_key(name);
     if let Some((b, path)) = sxs_module(name) {
         if b != 0 && with_mut(b, |m| m.refs += 1).is_some() {
-            return b;
+            return Ok(b);
         }
-        if let Ok(b) = load_dll_file(&path) {
-            if with_mut(b, |m| m.redirected = true).is_some() {
-                ldr_update(b);
+        match load_dll_file(&path, search) {
+            Ok(b) => {
+                if with_mut(b, |m| m.redirected = true).is_some() {
+                    ldr_update(b);
+                }
+                return init_loaded(cpu, b);
             }
-            init_dlls(cpu);
-            return b;
+            Err(DllError::Failed(why)) => return Err(abandon(cpu, why)),
+            // (the manifest's file is not there: looked for as the name says)
+            Err(DllError::NotThere(_)) => {}
         }
     }
     let qualified = name.contains(['\\', '/', ':']);
-    let at = if qualified { find_dll_file(name) } else { None };
+    let at = if qualified { find_dll_file(name, search) } else { None };
     let loaded = match &at {
         Some((_, w)) => by_path(w),
         None => by_name(name),
     };
     if let Some(b) = loaded {
         reload_if_freed(b);
-        return b;
+        return Ok(b);
     }
-    let file = if qualified { at } else { find_dll_file(name) };
+    let file = if qualified { at } else { find_dll_file(name, search) };
     if api::is_core(name) || (api::is_system(name) && file.is_none()) {
         // the Visual C++ runtimes bring the UCRT in with them (GetModuleHandle("ucrtbase.dll")
         // then finds it, as Wine's msvcp140 tests take setlocale from it)
@@ -1571,25 +1695,23 @@ pub fn load_library(cpu: &mut Cpu, name: &str) -> u32 {
         if let Some(p) = crate::actctx::builtin_dll_path(name) && with_mut(b, |m| m.path = p).is_some() {
             ldr_update(b);
         }
-        return b;
+        return if b == 0 { Err(LoadFailure::NotFound) } else { Ok(b) };
     }
-    match load_dll_file(name) {
-        Ok(b) => {
-            init_dlls(cpu);
-            b
-        }
-        Err(e) => {
+    match load_dll_file(name, search) {
+        Ok(b) => init_loaded(cpu, b),
+        Err(DllError::Failed(why)) => Err(abandon(cpu, why)),
+        Err(DllError::NotThere(e)) => {
             if crate::env_on!("SAKE_TRACE_LOAD") {
                 eprintln!("sake: LoadLibrary({name}): {e}");
             }
-            0
+            Err(LoadFailure::NotFound)
         }
     }
 }
 
 pub fn load_exe(_cpu: &mut Cpu, host: &str, win: &str) -> Result<u32, String> {
     let data = kura::fs::read(host).map_err(|e| e.to_string())?;
-    let base = load(data, win, &mut image_resolver())?;
+    let base = load(data, win, &mut image_resolver(LoadSearch { missing: OnMissing::Traps, ..LoadSearch::default() }))?;
     // the main exe: the JIT translates its writable code too, checking stores into it
     let size = with(base, |m| m.size).unwrap_or(0);
     kura::jit::exe_image(base, size);
@@ -1684,8 +1806,15 @@ fn tls_callbacks(cpu: &mut Cpu, base: u32, reason: u32) {
     }
 }
 
+/// A DLL whose DllMain(PROCESS_ATTACH) answered FALSE: it was told PROCESS_DETACH at once (as
+/// Windows' loader does) and counts as never attached, so its unload tells it nothing more.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct InitFailed(pub u32);
+
 /// DllMain(PROCESS_ATTACH) of the DLLs loaded since, and the exe's TLS callbacks the first time.
-pub fn init_dlls(cpu: &mut Cpu) {
+/// Err: one answered FALSE (review 6852be1f: LoadLibrary went on as if it had loaded); the ones
+/// after it stay pending.
+pub fn init_dlls(cpu: &mut Cpu) -> Result<(), InitFailed> {
     let _g = loader_lock();
     static EXE_DONE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
     loop {
@@ -1708,12 +1837,41 @@ pub fn init_dlls(cpu: &mut Cpu) {
             if crate::env_on!("SAKE_TRACE_LOAD") {
                 eprintln!("sake: DllMain of {:#x} {}: {ok}", base, with(base, |m| m.name.clone()).unwrap_or_default());
             }
+            // (a BOOL: only a DLL's DllMain answers; an exe's entry is not called here)
+            if ok == 0 && with(base, |m| m.dll).unwrap_or(false) {
+                crate::call(cpu, entry, &[base, 0, 0]);
+                tls_callbacks(cpu, base, 0);
+                return Err(InitFailed(base));
+            }
         }
+        let _ = with_mut(base, |m| m.attached = true);
     }
     if !EXE_DONE.swap(true, std::sync::atomic::Ordering::Relaxed) {
         let exe = MODULES.r().iter().find(|m| !m.dll).map(|m| m.base);
         if let Some(b) = exe {
             tls_callbacks(cpu, b, 1);
+        }
+    }
+    Ok(())
+}
+
+/// init_dlls for LoadLibrary of `b`: `b` when every DllMain answered TRUE; else the failed
+/// load's reference goes (FreeLibrary: `b` and the DLLs only it brought in are unloaded, those
+/// already attached told PROCESS_DETACH) and LoadFailure::Init.
+fn init_loaded(cpu: &mut Cpu, b: u32) -> Result<u32, LoadFailure> {
+    match init_dlls(cpu) {
+        Ok(()) => Ok(b),
+        Err(InitFailed(failed)) => {
+            if crate::env_on!("SAKE_TRACE_LOAD") {
+                eprintln!("sake: DllMain(PROCESS_ATTACH) of {failed:#x} failed: unloading {b:#x}");
+            }
+            free_library(cpu, b);
+            // (a DLL the failed one's DllMain could not undo: it was loaded by another
+            // LoadLibrary that is still pending, or by this one as `b` itself)
+            if failed != b && with(failed, |m| !m.attached).unwrap_or(false) {
+                free_library(cpu, failed);
+            }
+            Err(LoadFailure::Init)
         }
     }
 }
@@ -1760,6 +1918,7 @@ mod unload_tests {
             redirected: false,
             deps,
             pinned: false,
+            attached: true,
         });
     }
     fn refs(b: u32) -> Option<u32> {
@@ -2064,6 +2223,7 @@ mod path_tests {
             redirected: false,
             deps: Vec::new(),
             pinned: false,
+            attached: false,
         }
     }
 
@@ -2528,6 +2688,262 @@ mod resource_read_tests {
             if pieces.is_some() {
                 prop_assert_eq!(pieces, whole);
             }
+        }
+    }
+}
+
+/// The loader looks where LdrGetDllPath says, for each module and LoadLibraryEx's flags (review
+/// b5dacf4 2.1: find_dll_file had an order of its own, took the folder of every DLL loaded by
+/// path, and LoadLibraryEx's flags never reached it). winref dllsearch answers the same cases
+/// on Windows.
+#[cfg(test)]
+mod dll_search_tests {
+    use super::*;
+    use proptest::prelude::*;
+
+    const ALTERED: u32 = 0x8;
+    const DLL_LOAD_DIR: u32 = 0x100;
+    const APPLICATION_DIR: u32 = 0x200;
+    const SYSTEM32: u32 = 0x800;
+
+    pub(super) fn put(win: &str, body: &[u8]) {
+        let h = crate::files::to_host(win);
+        if let Some((d, _)) = h.rsplit_once('/') {
+            kura::fs::create_dir_all(d).unwrap();
+        }
+        kura::fs::write(&h, body).unwrap();
+    }
+
+    fn found(dll: &str, module: &str, flags: u32) -> Option<String> {
+        find_dll_file(dll, &LoadSearch { module: Some(module.into()), flags, missing: OnMissing::Fails }).map(|(_, w)| w)
+    }
+
+    #[test]
+    fn the_folder_of_the_dll_loaded_by_path_is_searched_only_when_the_flags_say() {
+        put("C:\\dlsa\\sub\\only.dll", b"sub");
+        put("C:\\dlsa\\sub\\lib.dll", b"lib");
+        let lib = "C:\\dlsa\\sub\\lib.dll";
+        assert_eq!(found("only.dll", lib, DLL_LOAD_DIR | SYSTEM32).as_deref(), Some("C:\\dlsa\\sub\\only.dll"));
+        assert_eq!(found("only.dll", lib, ALTERED).as_deref(), Some("C:\\dlsa\\sub\\only.dll"));
+        // (no flag: the module's folder is not in the search, whatever was loaded from it)
+        assert_eq!(found("only.dll", lib, 0), None);
+        assert_eq!(found("only.dll", lib, SYSTEM32), None);
+        assert_eq!(found("only.dll", lib, APPLICATION_DIR), None);
+    }
+
+    #[test]
+    fn an_invalid_combination_finds_nothing() {
+        put("C:\\dlsb\\x.dll", b"x");
+        assert_eq!(found("x.dll", "C:\\dlsb\\lib.dll", ALTERED | SYSTEM32), None);
+        assert_eq!(found("x.dll", "rel\\lib.dll", DLL_LOAD_DIR), None);
+    }
+
+    #[test]
+    fn imports_are_looked_for_from_the_dll_that_names_them() {
+        let s = LoadSearch { module: Some("C:\\dlsc\\app\\l.dll".into()), flags: DLL_LOAD_DIR, missing: OnMissing::Fails };
+        assert_eq!(s.of_dependency("C:\\dlsc\\sub\\l.dll"), LoadSearch { module: Some("C:\\dlsc\\sub\\l.dll".into()), flags: DLL_LOAD_DIR, missing: OnMissing::Fails });
+    }
+
+    proptest! {
+        /// A DLL put in any of the module's folder, the system folder or neither: a load finds
+        /// the first of LdrGetDllPath's folders that holds it, for every flag combination.
+        #[test]
+        fn the_loader_finds_the_first_of_ldr_get_dll_path_folders(
+            n in 0u32..1000,
+            in_module in proptest::bool::ANY,
+            flags in proptest::sample::select(vec![0, ALTERED, DLL_LOAD_DIR, DLL_LOAD_DIR | SYSTEM32, DLL_LOAD_DIR | APPLICATION_DIR, APPLICATION_DIR, SYSTEM32, ALTERED | DLL_LOAD_DIR]),
+        ) {
+            let dir = format!("C:\\dlsp{n}\\sub");
+            let module = format!("{dir}\\m.dll");
+            let dll = format!("pbt{n}.dll");
+            let at = format!("{dir}\\{dll}");
+            if in_module {
+                put(&at, b"m");
+            } else {
+                let _ = kura::fs::remove_file(crate::files::to_host(&at));
+            }
+            let want = crate::dllpath::dll_folders(Some(&module), flags).ok().and_then(|ds| {
+                ds.iter().map(|d| format!("{}\\{dll}", d.trim_end_matches('\\'))).find(|w| crate::files::resolve(w).is_some())
+            });
+            prop_assert_eq!(found(&dll, &module, flags), want.clone());
+            let module_searched = matches!(flags, ALTERED) || flags & DLL_LOAD_DIR != 0 && flags & ALTERED == 0;
+            prop_assert_eq!(want.is_some(), in_module && module_searched);
+        }
+    }
+}
+
+#[cfg(test)]
+mod missing_import_tests {
+    use super::dll_search_tests::put;
+    use super::*;
+    use proptest::prelude::*;
+
+    const ALTERED: u32 = 0x8;
+
+    /// A PE32 DLL with no code: one section holding its import of `import` (dll, function), if
+    /// any, and its exports `exports` (each at a byte of the section)
+    fn dll(import: Option<(&str, &str)>, exports: &[&str]) -> Vec<u8> {
+        let mut v = vec![0u8; 0x400];
+        v[..2].copy_from_slice(b"MZ");
+        v[0x3c..0x40].copy_from_slice(&0x40u32.to_le_bytes());
+        let put32 = |v: &mut Vec<u8>, at: usize, x: u32| v[at..at + 4].copy_from_slice(&x.to_le_bytes());
+        let put16 = |v: &mut Vec<u8>, at: usize, x: u16| v[at..at + 2].copy_from_slice(&x.to_le_bytes());
+        v[0x40..0x44].copy_from_slice(b"PE\0\0");
+        put16(&mut v, 0x44, 0x14c);
+        put16(&mut v, 0x46, 1);
+        put16(&mut v, 0x54, 224);
+        put16(&mut v, 0x56, 0x2102);
+        let opt = 0x58;
+        put16(&mut v, opt, 0x10b);
+        put32(&mut v, opt + 28, 0x1000_0000);
+        put32(&mut v, opt + 32, 0x1000);
+        put32(&mut v, opt + 36, 0x200);
+        put32(&mut v, opt + 56, 0x2000);
+        put32(&mut v, opt + 60, 0x200);
+        put32(&mut v, opt + 92, 16);
+        let dirs = opt + 96;
+        let sec = opt + 224;
+        v[sec..sec + 8].copy_from_slice(b".idata\0\0");
+        put32(&mut v, sec + 8, 0x200);
+        put32(&mut v, sec + 12, 0x1000);
+        put32(&mut v, sec + 16, 0x200);
+        put32(&mut v, sec + 20, 0x200);
+        put32(&mut v, sec + 36, 0xc000_0040);
+        // (rva 0x1000 + k is the file's 0x200 + k)
+        let at = |rva: u32| 0x200 + kome::num::us(rva - 0x1000);
+        let text = |v: &mut Vec<u8>, rva: u32, s: &str| v[at(rva)..at(rva) + s.len()].copy_from_slice(s.as_bytes());
+        if let Some((d, f)) = import {
+            put32(&mut v, dirs + 8, 0x1000);
+            put32(&mut v, dirs + 12, 40);
+            put32(&mut v, at(0x1000), 0x1040);
+            put32(&mut v, at(0x1000) + 12, 0x1080);
+            put32(&mut v, at(0x1000) + 16, 0x1060);
+            put32(&mut v, at(0x1040), 0x10a0);
+            put32(&mut v, at(0x1060), 0x10a0);
+            text(&mut v, 0x1080, d);
+            text(&mut v, 0x10a2, f);
+        }
+        if !exports.is_empty() {
+            let n = kome::num::u32_of(exports.len());
+            put32(&mut v, dirs, 0x1100);
+            put32(&mut v, dirs + 4, 40);
+            put32(&mut v, at(0x1100) + 16, 1);
+            put32(&mut v, at(0x1100) + 20, n);
+            put32(&mut v, at(0x1100) + 24, n);
+            put32(&mut v, at(0x1100) + 28, 0x1140);
+            put32(&mut v, at(0x1100) + 32, 0x1160);
+            put32(&mut v, at(0x1100) + 36, 0x1180);
+            for (i, e) in exports.iter().enumerate() {
+                let i32 = kome::num::u32_of(i);
+                put32(&mut v, at(0x1140) + 4 * i, 0x1190 + i32);
+                put32(&mut v, at(0x1160) + 4 * i, 0x11a0 + 0x10 * i32);
+                put16(&mut v, at(0x1180) + 2 * i, kome::num::lo16(i32));
+                text(&mut v, 0x11a0 + 0x10 * i32, e);
+            }
+        }
+        v
+    }
+
+    /// (the test disk outlives a run: a DLL a test puts later is gone again first)
+    fn gone(win: &str) {
+        let _ = kura::fs::remove_file(crate::files::to_host(win));
+    }
+
+    fn load(path: &str) -> Result<u32, LoadFailure> {
+        let mut cpu = koji::Cpu::default();
+        load_library_searching(&mut cpu, path, &LoadSearch { module: Some(path.into()), flags: ALTERED, missing: OnMissing::Fails })
+    }
+
+    /// No image of the failed load is left (its DLLs' names and paths free again)
+    fn none_left(paths: &[&str]) {
+        for p in paths {
+            assert_eq!(by_path(p), None, "{p} left loaded");
+        }
+        assert!(ABANDONED.locked().is_empty());
+        assert_eq!(*MISSING.locked(), None);
+    }
+
+    #[test]
+    fn a_dll_importing_from_a_dll_nobody_has_fails_with_mod_not_found() {
+        let _g = crate::test_guest::enter();
+        gone("C:\\mia\\mianothere.dll");
+        put("C:\\mia\\top.dll", &dll(Some(("mianothere.dll", "Fn")), &[]));
+        assert_eq!(load("C:\\mia\\top.dll"), Err(LoadFailure::NotFound));
+        assert_eq!(LoadFailure::NotFound.error(), 126);
+        none_left(&["C:\\mia\\top.dll"]);
+    }
+
+    #[test]
+    fn a_dll_importing_a_function_its_dll_lacks_fails_with_proc_not_found() {
+        let _g = crate::test_guest::enter();
+        put("C:\\mib\\miblib.dll", &dll(None, &["Other"]));
+        put("C:\\mib\\top.dll", &dll(Some(("miblib.dll", "Fn")), &[]));
+        assert_eq!(load("C:\\mib\\top.dll"), Err(LoadFailure::NoProc));
+        assert_eq!(LoadFailure::NoProc.error(), 127);
+        none_left(&["C:\\mib\\top.dll", "C:\\mib\\miblib.dll"]);
+    }
+
+    #[test]
+    fn a_missing_import_two_dlls_down_fails_the_load_and_unmaps_both() {
+        let _g = crate::test_guest::enter();
+        gone("C:\\mic\\micnothere.dll");
+        put("C:\\mic\\micmid.dll", &dll(Some(("micnothere.dll", "Fn")), &["Fn"]));
+        put("C:\\mic\\top.dll", &dll(Some(("micmid.dll", "Fn")), &[]));
+        assert_eq!(load("C:\\mic\\top.dll"), Err(LoadFailure::NotFound));
+        none_left(&["C:\\mic\\top.dll", "C:\\mic\\micmid.dll"]);
+        // (and once the missing DLL is there, the same load succeeds)
+        put("C:\\mic\\micnothere.dll", &dll(None, &["Fn"]));
+        let b = load("C:\\mic\\top.dll").unwrap();
+        assert_eq!(by_path("C:\\mic\\top.dll"), Some(b));
+        let mid = by_path("C:\\mic\\micmid.dll").unwrap();
+        assert_eq!(mem::r32(b + 0x1060), proc_address(mid, Import::Name("Fn")).unwrap());
+        let mut cpu = koji::Cpu::default();
+        assert!(free_library(&mut cpu, b));
+        none_left(&["C:\\mic\\top.dll", "C:\\mic\\micmid.dll", "C:\\mic\\micnothere.dll"]);
+    }
+
+    #[test]
+    fn the_process_own_imports_still_bind_a_missing_dll_to_traps() {
+        let _g = crate::test_guest::enter();
+        gone("C:\\mid\\midnothere.dll");
+        put("C:\\mid\\top.dll", &dll(Some(("midnothere.dll", "Fn")), &[]));
+        let traps = LoadSearch { module: Some("C:\\mid\\top.dll".into()), flags: ALTERED, missing: OnMissing::Traps };
+        let b = load_dll_file("C:\\mid\\top.dll", &traps).unwrap();
+        assert_ne!(mem::r32(b + 0x1060), 0);
+        let mut cpu = koji::Cpu::default();
+        unload(&mut cpu, b);
+        none_left(&["C:\\mid\\top.dll"]);
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(48))]
+        /// A chain of DLLs, each importing Fn from the next, the last from one that may be
+        /// missing or may lack Fn: the load answers what the chain's end makes it, and a failed
+        /// one leaves none of the chain loaded.
+        #[test]
+        fn a_chain_of_imports_loads_whole_or_not_at_all(n in 0u32..100_000, len in 1usize..4, end in 0u8..3) {
+            let _g = crate::test_guest::enter();
+            let dir = format!("C:\\mip{n}");
+            let name = |i: usize| format!("mip{n}x{i}.dll");
+            let paths: Vec<String> = (0..=len).map(|i| format!("{dir}\\{}", name(i))).collect();
+            for (i, p) in paths.iter().enumerate().take(len) {
+                put(p, &dll(Some((&name(i + 1), "Fn")), &["Fn"]));
+            }
+            // (end 0: the last is not there; 1: it lacks Fn; 2: it has it)
+            match end {
+                0 => gone(&paths[len]),
+                1 => put(&paths[len], &dll(None, &["Gn"])),
+                _ => put(&paths[len], &dll(None, &["Fn"])),
+            }
+            let want = match end { 0 => Err(LoadFailure::NotFound), 1 => Err(LoadFailure::NoProc), _ => Ok(()) };
+            let got = load(&paths[0]);
+            prop_assert_eq!(got.map(|_| ()), want);
+            if let Ok(b) = got {
+                let mut cpu = koji::Cpu::default();
+                prop_assert!(free_library(&mut cpu, b));
+            }
+            let all: Vec<&str> = paths.iter().map(String::as_str).collect();
+            none_left(&all);
         }
     }
 }

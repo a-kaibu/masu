@@ -29,7 +29,6 @@ constant-handler	crates/sake/src/crt.rs	fn _free_locale(_: &mut Ctx) -> u32 {	es
 constant-handler	crates/sake/src/crt.rs	fn _lock(_: &mut Ctx) -> u32 {	escape: implement Windows' behavior (Win32 thread)
 constant-handler	crates/sake/src/crt.rs	fn _seh_filter_exe(_: &mut Ctx) -> u32 {	escape: implement Windows' behavior (Win32 thread)
 constant-handler	crates/sake/src/crt.rs	fn _unlock(_: &mut Ctx) -> u32 {	escape: implement Windows' behavior (Win32 thread)
-constant-handler	crates/sake/src/crt.rs	fn ferror(_: &mut Ctx) -> u32 {	escape: implement Windows' behavior (Win32 thread)
 constant-handler	crates/sake/src/crt.rs	fn fflush(_: &mut Ctx) -> u32 {	escape: implement Windows' behavior (Win32 thread)
 constant-handler	crates/sake/src/crt.rs	fn setvbuf(_: &mut Ctx) -> u32 {	escape: implement Windows' behavior (Win32 thread)
 constant-handler	crates/sake/src/crt.rs	fn signal(_: &mut Ctx) -> u32 {	escape: implement Windows' behavior (Win32 thread)

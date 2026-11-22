@@ -11,9 +11,11 @@ use std::sync::Mutex;
 use crate::api::{implement, Ctx};
 use crate::mem::{self, r32, w32};
 
-const MMIOERR_CANNOTOPEN: u32 = 257;
+// (mmiscapi.h: MMIOERR_BASE 256 + 1, 5, 6, 9, 16; CANNOTWRITE was 260, MMIOERR_CANNOTCLOSE)
+const MMIOERR_FILENOTFOUND: u32 = 257;
+const MMIOERR_CANNOTREAD: u32 = 261;
+const MMIOERR_CANNOTWRITE: u32 = 262;
 const MMIOERR_CHUNKNOTFOUND: u32 = 265;
-const MMIOERR_CANNOTWRITE: u32 = 260;
 const MMIOERR_INVALIDFILE: u32 = 272;
 const MMIO_DIRTY: u32 = 0x1000_0000;
 const MMIO_ALLOCBUF: u32 = 0x0001_0000;
@@ -143,20 +145,22 @@ impl Mmio {
             Data::Mem(_, n) | Data::Handle(_, _, n, _) => *n,
         }
     }
-    /// copies up to `n` bytes at the position to guest `dst`
-    fn read(&mut self, dst: u32, n: u32) -> u32 {
+    /// copies up to `n` bytes at the position to guest `dst`: how many (None: the file's read
+    /// failed, nothing moved on)
+    fn read(&mut self, dst: u32, n: u32) -> Option<u32> {
         let n = n.min(self.len().saturating_sub(self.pos));
         match &self.data {
             Data::File(v) => mem::write(dst, part(v, self.pos, n)),
             Data::Mem(a, _) => mem::copy(dst, a + self.pos, n),
             Data::Handle(f, base, _, _) => {
-                let got = f.seek(std::io::SeekFrom::Start(base + self.pos as u64)).map_or(0, |_| f.read_into(dst, n));
+                f.seek(std::io::SeekFrom::Start(base + self.pos as u64))?;
+                let got = f.read_into(dst, n).ok()?;
                 self.pos += got;
-                return got;
+                return Some(got);
             }
         }
         self.pos += n;
-        n
+        Some(n)
     }
     /// writes guest bytes at the position (a file grows; memory stops at its end)
     fn write(&mut self, src: u32, n: u32) -> u32 {
@@ -246,7 +250,7 @@ fn open(c: &mut Ctx, wide: bool) -> u32 {
     };
     // deleting, parsing: not supported
     if flags & 0x0300 != 0 {
-        return fail(MMIOERR_CANNOTOPEN);
+        return fail(MMIOERR_FILENOTFOUND);
     }
     let writing = flags & 3 != 0;
     let mut out = None;
@@ -257,20 +261,20 @@ fn open(c: &mut Ctx, wide: bool) -> u32 {
     let data = if let Some(p) = proc {
         match read_via(c, p, name, info, flags) {
             Some(v) => Data::File(v),
-            None => return fail(MMIOERR_CANNOTOPEN),
+            None => return fail(MMIOERR_FILENOTFOUND),
         }
     } else if name == 0 && info != 0 && matches!(r32(info + 4), 0 | FOURCC_DOS) && r32(info + mi.adw) != 0 {
         // adwInfo[0]: an open file's handle (with no I/O procedure or the DOS one named, as
         // RGSS2 opens Game.rgss2a), read from where it is (a RIFF in an archive)
         let Some(d) = from_handle(r32(info + mi.adw)) else {
-            return fail(MMIOERR_CANNOTOPEN);
+            return fail(MMIOERR_FILENOTFOUND);
         };
         d
     } else if info != 0 && r32(info + 4) == FOURCC_MEM {
         Data::Mem(mem::rp(info + mi.buf), r32(info + mi.cch))
     } else {
         if name == 0 {
-            return fail(MMIOERR_CANNOTOPEN);
+            return fail(MMIOERR_FILENOTFOUND);
         }
         let path = crate::k32::arg_str(name, wide);
         if flags & 0x5000 == 0x4000 {
@@ -281,12 +285,12 @@ fn open(c: &mut Ctx, wide: bool) -> u32 {
             // MMIO_CREATE: a new, empty file
             let h = crate::files::resolve(&path).unwrap_or_else(|| crate::files::resolve_new(&path));
             if kura::fs::write(h, Vec::new()).is_err() {
-                return fail(MMIOERR_CANNOTOPEN);
+                return fail(MMIOERR_FILENOTFOUND);
             }
             out = Some(path);
             Data::File(Vec::new())
         } else {
-            let Some(v) = crate::files::resolve(&path).and_then(|h| kura::fs::read(h).ok()) else { return fail(MMIOERR_CANNOTOPEN) };
+            let Some(v) = crate::files::resolve(&path).and_then(|h| kura::fs::read(h).ok()) else { return fail(MMIOERR_FILENOTFOUND) };
             if writing {
                 out = Some(path);
             }
@@ -429,7 +433,7 @@ fn mmioFlush(c: &mut Ctx) -> u32 {
 }
 fn mmioRead(c: &mut Ctx) -> u32 {
     let (h, buf, n) = (c.a(0), c.a(1), c.i(2));
-    with(h, |f| f.read(buf, n.max(0) as u32)).unwrap_or(u32::MAX)
+    with(h, |f| f.read(buf, n.max(0) as u32)).flatten().unwrap_or(u32::MAX)
 }
 fn mmioWrite(c: &mut Ctx) -> u32 {
     let (h, buf, n) = (c.a(0), c.a(1), c.i(2));
@@ -613,7 +617,10 @@ fn mmioAdvance(c: &mut Ctx) -> u32 {
         let p = f.pos_of(info).unwrap_or(f.pos);
         let (b, n) = f.buffer(r32(info + self::info().cch));
         f.pos = p;
-        let got = f.read(b, n);
+        let Some(got) = f.read(b, n) else {
+            f.pos = p;
+            return MMIOERR_CANNOTREAD;
+        };
         f.pos = p;
         f.buf_off = p;
         f.buf_len = got;

@@ -146,6 +146,37 @@ jobs:
             target/loom
           key: ${{ steps.cargo-cache.outputs.cache-primary-key }}
 
+  # (koji's 32-bit JIT, translation validation: the wasm it generates for short integer
+  # sequences against x86's semantics, decided by Z3: formal/jit32tv.sh, tools/jit32tv)
+  jit32tv:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - name: Z3
+        run: sudo apt-get update -q && sudo apt-get install -yq --no-install-recommends z3
+      - run: tools/ci/rust-key.sh
+      - id: cargo-cache
+        uses: actions/cache/restore@v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            tools/jit32tv/target
+          key: jit32tv-${{ runner.os }}-${{ env.RUST_KEY }}-${{ hashFiles('tools/jit32tv/Cargo.lock') }}
+          restore-keys: |
+            jit32tv-${{ runner.os }}-${{ env.RUST_KEY }}-
+      - name: Translations
+        run: formal/jit32tv.sh
+      - if: ${{ !cancelled() && steps.cargo-cache.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            tools/jit32tv/target
+          key: ${{ steps.cargo-cache.outputs.cache-primary-key }}
+
   # (Verus: unbounded proofs of small algorithms, formal/verus.sh; the latest release, cached
   # under its tag, with the rust toolchain it asks for)
   verus:

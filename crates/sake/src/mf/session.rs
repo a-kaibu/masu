@@ -414,7 +414,7 @@ fn start_events(b: u32) {
     }
     static ENTRY: OnceLock<u32> = OnceLock::new();
     let entry = *ENTRY.get_or_init(|| crate::api::host_fn("mf_session_events", events_thread, 4));
-    if crate::spawn_gated(entry, b, 0x10000, crate::obj::new_thread_obj(0), false) == 0 {
+    if crate::spawn_gated(entry, b, 0x10000, crate::obj::new_thread_obj(0), None, crate::Lives::Helper) == 0 {
         session(b, |s| s.thread = false);
     }
 }

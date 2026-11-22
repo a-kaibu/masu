@@ -99,17 +99,17 @@ pub(super) fn fill(c: &mut Ctx, dlg: u32, inst: u32) {
         let ptr = ptr_own.get();
         if ptr == 0 { return; }
         for (i, &word) in words.iter().enumerate() { w16(ptr + i as u32 * 2, word); }
-        as_wide(true, || send(c, control, 0xc, 0, ptr));
+        as_wide(true, || send(c, control, 0xc, Wparam::ZERO, Lparam::addr(ptr)));
         mem::fill(ptr, bytes, 0);
         drop(ptr_own);
         invalidate(control, None, true);
     }
     // Browser settings own persistence; leave the vendor remember checkbox off.
     let remember = dlg_item(dlg, 1202);
-    if remember != 0 { send(c, remember, 0xf1, 0, 0); }
+    if remember != 0 { send(c, remember, 0xf1, Wparam::ZERO, Lparam::ZERO); }
     // Run the real handler after initialization. Never manufacture success or
     // automatically replay a failed authentication POST.
-    post(submit, 0xf5, 0, 0);
+    post(submit, 0xf5, Wparam::ZERO, Lparam::ZERO);
 }
 
 #[cfg(test)]

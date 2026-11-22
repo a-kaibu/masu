@@ -940,6 +940,23 @@ R 8.tagRECT 16 16 struct d3d8
  4 4 top i4
  8 8 right i4
  12 12 bottom i4
+R D2D1_HWND_RENDER_TARGET_PROPERTIES 16 24 struct d2d1
+ 0 0 hwnd H
+ 4 8 pixelSize S:D2D_SIZE_U
+ 12 16 presentOptions i4
+R D2D1_PIXEL_FORMAT 8 8 struct d2d1
+ 0 0 format i4
+ 4 4 alphaMode i4
+R D2D1_RENDER_TARGET_PROPERTIES 28 28 struct d2d1
+ 0 0 type i4
+ 4 4 pixelFormat S:D2D1_PIXEL_FORMAT
+ 12 12 dpiX f4
+ 16 16 dpiY f4
+ 20 20 usage i4
+ 24 24 minLevel i4
+R D2D_SIZE_U 8 8 struct d2d1
+ 0 0 width i4
+ 4 4 height i4
 R D3D11_AUTHENTICATED_CONFIGURE_OUTPUT 44 48 struct d3d11
  0 0 omac S:D3D11_OMAC
  16 16 ConfigureType S:_GUID

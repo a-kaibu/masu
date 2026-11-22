@@ -335,6 +335,11 @@ pub fn put64(a: impl Into<Ga>, v: u64) {
         w64(a, v)
     }
 }
+/// A copy of guest memory `a..a + n`, None where that is not all guest memory (what a write
+/// from a guest buffer reads: an empty copy is not a buffer of no bytes)
+pub fn try_bytes(a: u32, n: u32) -> Option<Vec<u8>> {
+    range(a, n).map(Range::copy_out)
+}
 /// A copy of guest memory `a..a + n`; empty where that is not all guest memory
 pub fn bytes(a: u32, n: u32) -> Vec<u8> {
     range(a, n).map_or_else(Vec::new, Range::copy_out)

@@ -5,3 +5,4 @@
 # It is recommended to check this file in to source control so that
 # everyone who runs the test benefits from these saved cases.
 cc ab9487aa242dd63b3cc53933c1dda756429e19277e8b3f5dafcdd046b0602c8e # shrinks to edges = [], ops = [(false, 0)], salt = 0
+cc a443e917794b71e37aeb9a711661530ed18372c8995078c015c7a91b35ef3049 # shrinks to n = 516, in_module = false, flags = 8

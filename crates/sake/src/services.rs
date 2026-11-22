@@ -313,7 +313,7 @@ fn dispatcher(c: &mut Ctx, wide: bool) -> u32 {
     if !connected { *ACTIVE.locked() = None; return fail(1063); }
     let entry = crate::api::host_fn("service main thread", main_thread, 4);
     let thread = obj::new_thread_obj(0);
-    if crate::spawn_gated(entry, 0, 0x100000, thread, false) == 0 {
+    if crate::spawn_gated(entry, 0, 0x100000, thread, None, crate::Lives::Program) == 0 {
         obj::close(thread);
         *ACTIVE.locked() = None;
         return fail(8);

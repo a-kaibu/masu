@@ -50,6 +50,7 @@ pub enum Rule {
     SnormTargets,
     Review6852be1,
     D3d9Status,
+    D3d9DevFormats,
     LoadEveryLevel,
     ConsoleLines,
     KnownDiffs,
@@ -77,10 +78,22 @@ pub enum Rule {
     PcsgPack,
     WarpSetup,
     RunPlan,
+    DllSearch,
+    FullPathOneRule,
+    ShortNameTable,
+    MissingImportFails,
+    DrawPlan,
+    MessageWidth,
+    D2dLayout,
+    HandleKey,
+    IoResult,
+    Lifetimes,
+    GdiLockOrder,
+    NotDone,
 }
 
 impl Rule {
-    pub const ALL: [Rule; 60] = [
+    pub const ALL: [Rule; 73] = [
         Rule::BuildOutput,
         Rule::HresultCopy,
         Rule::KomeCopy,
@@ -114,6 +127,7 @@ impl Rule {
         Rule::SnormTargets,
         Rule::Review6852be1,
         Rule::D3d9Status,
+        Rule::D3d9DevFormats,
         Rule::LoadEveryLevel,
         Rule::ConsoleLines,
         Rule::KnownDiffs,
@@ -141,6 +155,18 @@ impl Rule {
         Rule::PcsgPack,
         Rule::WarpSetup,
         Rule::RunPlan,
+        Rule::DllSearch,
+        Rule::FullPathOneRule,
+        Rule::ShortNameTable,
+        Rule::MissingImportFails,
+        Rule::DrawPlan,
+        Rule::MessageWidth,
+        Rule::D2dLayout,
+        Rule::HandleKey,
+        Rule::IoResult,
+        Rule::Lifetimes,
+        Rule::GdiLockOrder,
+        Rule::NotDone,
     ];
 
     /// the name a site list and a message use
@@ -179,6 +205,7 @@ impl Rule {
             Rule::SnormTargets => "snorm-targets",
             Rule::Review6852be1 => "kura-review-6852be1",
             Rule::D3d9Status => "d3d9-status-codes",
+            Rule::D3d9DevFormats => "d3d9dev-formats",
             Rule::LoadEveryLevel => "load-every-level",
             Rule::ConsoleLines => "console-lines",
             Rule::KnownDiffs => "known-diffs",
@@ -205,7 +232,19 @@ impl Rule {
             Rule::NanMinMax => "nan-min-max",
             Rule::PcsgPack => "pcsg-pack",
             Rule::WarpSetup => "warp-setup",
+            Rule::DllSearch => "dll-search",
+            Rule::FullPathOneRule => "full-path-one-rule",
+            Rule::ShortNameTable => "short-name-table",
+            Rule::MissingImportFails => "missing-import-fails",
+            Rule::DrawPlan => "draw-plan",
             Rule::RunPlan => "run-plan",
+            Rule::MessageWidth => "message-width",
+            Rule::D2dLayout => "d2d-layout",
+            Rule::HandleKey => "handle-key",
+            Rule::IoResult => "io-result",
+            Rule::Lifetimes => "lifetimes",
+            Rule::GdiLockOrder => "gdi-lock-order",
+            Rule::NotDone => "not-done",
         }
     }
 
@@ -240,10 +279,11 @@ impl Rule {
             Rule::WgslLoadBounds => "a texel fetch outside its texture is 0 in Direct3D (2026-11-21: ld gave WGSL's texel there): dxwgsl writes textureLoad only as select(zero, textureLoad(..), address in bounds), on one line",
             Rule::ClearRounding => "Windows clears 16-bit and 11/10-bit float channels toward zero (2026-11-21: kura rounded them to the nearest, winref d3d11clear): kura's clear.rs makes them with f16_rtz / rtz_bits, never format::f16_bits",
             Rule::PsQuads => "PSInvocations is whole 2x2 quads of the rasterized triangles and, for a line, 2 for each quad WARP's line rasterizer visits (2026-11-21: kura answered the occlusion samples; lines were counted by the quads they light): dxwgsl's clip pass adds ps_pairs to counter PS_PAIRS, kura's PIPELINE_STATISTICS reads c::PS_PAIRS, a line is counted by line_visits / ps_line_visits and a triangle by its edge DDA's spans (spans / ps_edge_x, BigEdgeIterator's big_edge_x / ps_big_edge_x past ±2^20); ps_tests.rs checks the spans against exact geometry and shaderconf's ps_cases runs the WGSL against the Rust rule on WebGPU",
-            Rule::LogicOps => "Direct3D 11.1 logic ops are applied, not refused (2026-11-22: kura answered OutputMergerLogicOp 0 and drew logic-op blend states as plain writes; WARP answers 1): D3D11_OPTIONS answers every BOOL from 0, the pixel shader of a draw with logic ops is dxwgsl::translate_logic (logic_output reads the target's copy at LOGIC_DST), a draw reading its target is split by logic::split after a copy of it, and the ops are checked against D3D11_LOGIC_OP's table (dxwgsl logic_tests.rs) and on Windows (winref d3d11logic)",
+            Rule::LogicOps => "Direct3D 11.1 logic ops are applied, not refused (2026-11-22: kura answered OutputMergerLogicOp 0 and drew logic-op blend states as plain writes; WARP answers 1): D3D11_OPTIONS answers every BOOL from 0, the pixel shader of a draw with logic ops is translated with them (dxwgsl::translate_views; logic_output reads the target's copy at LOGIC_DST), a draw reading its target is split by logic::split after a copy of it, and the ops are checked against D3D11_LOGIC_OP's table (dxwgsl logic_tests.rs) and on Windows (winref d3d11logic)",
             Rule::SnormTargets => "8-bit SNORM render targets are drawn, not dropped (2026-11-22: kura gave up on R8G8B8A8_SNORM, R8G8_SNORM and R8_SNORM targets because WebGPU renders to no SNORM format: ClearRenderTargetView and every draw to them did nothing, winref d3d11logic rgba8_snorm): the draw goes to the target's SINT twin (logic::twin_of, logic::snorm_twin), the pixel shader stores and blends the bytes itself (wgsl.rs logic_output's Store::Snorm, dxwgsl::snorm checked against WARP's answers in snorm_tests.rs, winref d3d11snorm), and an SNORM view's clear writes its texels",
             Rule::Review6852be1 => "what the review of kura at 6852be1 found stays fixed (2026-11-22): stream output targets and all 32 vertex buffer slots in the D3D11 hazards, UAVs resolved under KEEP, the shared JIT cache counting what its map holds, the JIT table limit the loader's, a shared VFS change taken back and answered ENOSPC when it cannot be published, handle access checked, readback ids global, a stop request the page can cancel, the audio list read page by page",
             Rule::D3d9Status => "a Direct3D 9 status code is d3d9.h's (2026-11-21: D3DOK_NOAUTOGEN was 0x0876_087f, not MAKE_D3DSTATUS(2159) = 0x0876_086f, and its tests copied it; winref d3d9tex): a D3DERR_/D3DOK_/S_ const in kura's d3d9 or sake's d3dx9 has the value regress::D3D9_CODES gives its name, and a new name is added there from the header",
+            Rule::D3d9DevFormats => "every format the winref d3d9dev probe asks about is one kura's d3d9_answers_as_the_golden names (2026-11-22: the probe grew A8..X8B8G8R8, the nightly golden came back with them, and the test panicked on the first unnamed one instead of checking kura's answers): each \"NAME\" of the probe's fm[] table is a \"NAME\" => arm in dev_tests.rs",
             Rule::LoadEveryLevel => "ld by level reads a view of every level of the texture, the SRV's first level added in the shader (2026-11-21: SwiftShader's textureLoad of a level below a view's base level reads level 2 * base, winref d3d11minlod's load row): dxwgsl's load() reads tl<t> at bv.l<t>, kura binds it with load_texture_entry and fills it with load_texture_levels",
             Rule::ConsoleLines => "the program's console output goes through k32::console_write, a line at a time (2026-11-21: crt's printf wrote with eprint!, and a line split in two where the program waited for the GPU, winref d3d9tex): no eprint! in crates/sake/src",
             Rule::KnownDiffs => "a difference from Windows is made right, not listed (2026-11-21: OutputMergerLogicOp 0 for WARP's 1 sat in tests/winref/known.txt because WebGPU has no logic ops, and the page could emulate them): every line of tests/winref/known.txt is a known site with its why, the list only goes down; a new line fails, and fixing the behavior is the way past it",
@@ -270,7 +310,20 @@ impl Rule {
             Rule::NanMinMax => "a NaN through Direct3D's min/max gives the other operand (winref d3d11tess: [maxtessfactor(5.5)] turned a NaN tess factor into 5.5 on Windows, and the domain shader read 5.5 back; masu kept the NaN and culled the patch): dxwgsl's float min/max go through d3d_min/d3d_max (WGSL leaves a NaN to the implementation), hlslc clamps a patch constant function's tess factors to [maxtessfactor] with min, kura's clamp gives the maximum for a NaN (regress::NAN_MIN_MAX / NAN_MIN_MAX_NOT)",
             Rule::PcsgPack => "hlslc packs a patch constant that is not a tess factor into a taken register's free components as d3dcompiler does (winref d3d11tess: `uint pid : PID` after SV_TessFactor[3] sits at r0.y on Windows; hlslc gave it a register of its own): regress::PCSG_PACK in lower.rs's sig()",
             Rule::WarpSetup => "a Direct3D 11 draw whose pixel shader reads interpolated inputs (or whose last stage writes clip/cull distances) goes through the setup pass, WARP's clipper and planes evaluated in the fragment shader (winref d3d11logic: WebGPU's rasterizer gave 3e9c28f4 where WARP gives 3e9c28f6): expand.rs asks setup_wanted and runs setup_draw, dxwgsl's pixel inputs come from expand::setup::inputs, and setup.rs's WGSL has no fma (a fused multiply-add rounds once where WARP rounds twice) (regress::WARP_SETUP / WARP_SETUP_NOT)",
+            Rule::DllSearch => "sake's loader looks for a DLL named without a path in LdrGetDllPath's folders for that load (its module and LoadLibraryEx's flags, SetDefaultDllDirectories' with none) and for a DLL's imports as the load that found it (review b5dacf4 2.1: find_dll_file had an order of its own with the folder of every DLL loaded by path in it, and LoadLibraryEx's LOAD_LIBRARY_SEARCH_* flags never reached it; winref dllsearch): pe::LoadSearch::folders is dllpath::dll_folders, LoadLibraryExW passes its flags, and pe.rs names no folders of its own (regress::DLL_SEARCH / DLL_SEARCH_NOT)",
+            Rule::FullPathOneRule => "every file operation opens the full path GetFullPathName names (review b5dacf4 2.2: CreateFile opened `D:save.dat` as D:\\save.dat while GetFullPathName answered from the `=D:` variable): files::full_path makes a Win32 name full with fullpath's RtlGetFullPathName_Ustr (regress::FULL_PATH)",
+            Rule::ShortNameTable => "an 8.3 name is given when its long name is made and kept in its folder's table until the name is removed or renamed, as NTFS keeps it (review b5dacf4 2.3: the short names were made again from every listing, so deleting one file changed another's, and a reload gave new ones): kura::fs tells the one watcher each name made and removed, sake watches from its first guest path, shortname reads the kept table, and sake lists and removes folders only through shortname::read_dir / remove_dir (the table is no guest entry) (regress::SHORT_NAMES)",
+            Rule::MissingImportFails => "a DLL LoadLibrary loads whose import names a DLL file that is not there (or a function its DLL file lacks) fails the LoadLibrary with ERROR_MOD_NOT_FOUND (ERROR_PROC_NOT_FOUND), the images that load mapped unmapped with no DllMain run, as Windows' loader does (review b5dacf4 2.1, winref dllsearch: the import was bound to a trap and the DLL loaded, crashing when called); only the process's own imports keep binding traps (OnMissing::Traps): resolve_import_with notes the failure, load_library_searching abandons the load, LoadLibrary answers its error (regress::MISSING_IMPORT)",
+            Rule::DrawPlan => "a D3D11 draw's topology, fill and indices on the page come from one typed plan (d3d11::DrawPlan::of: PageTopo, Indices::Draw or Made), and the logic-op split takes that plan's PageTopo with the indices it draws (review b5dacf4 3.1: an adjacency list made for the draw was split as the line list of a wireframe's edges, and topology numbers were matched by hand in three places): draw_with builds the plan, logic::primitives takes a PageTopo (regress::DRAW_PLAN)",
             Rule::RunPlan => "a test run that ran nothing, or less than it meant to, fails (review 6852be1f: compare.py passed with Windows' answers and an empty sake directory, winetest/run.py passed when the selected test program was missing): run.sh and run-browser.mjs write <out>/.plan/<runner> before running, compare.py fails on no plan, an empty plan, a planned probe without a result and a missing --require-plan, run.py plans every test before sharding and fails on a missing program or an expected test no longer listed, and --suite rostests runs on sake only what Windows passes (tests/rostests/windows-<arch>.tsv, required, every planned test measured; Windows runs them in conformance.yml) (rebuild::RUN_PLAN / RUN_PLAN_NOT)",
+            Rule::RunPlan => "a test run that ran nothing, or less than it meant to, fails (review 6852be1f: compare.py passed with Windows' answers and an empty sake directory, winetest/run.py passed when the selected test program was missing): run.sh and run-browser.mjs write <out>/.plan/<runner> before running, compare.py fails on no plan, an empty plan, a planned probe without a result and a missing --require-plan, run.py plans every test before sharding and fails on a missing program or an expected test no longer listed (rebuild::RUN_PLAN / RUN_PLAN_NOT)",
+            Rule::GdiLockOrder => "GDI takes its locks in one order, the GDI table, user32, a window surface, never back: a draw op's closure (gdi::draw / draw_src) finds no window, locks no surface and reads no source DC itself, draw_src hands it the source copied before the destination's surface is locked (review 6852be1f: a blit from a window DC found its target with the destination surface held while SetWindowPos resized a surface under user32's lock, and two blits between two windows locked their surfaces in opposite orders) (rebuild::gdi_lock_order)",
+            Rule::NotDone => "An export sake knows but does not implement answers its declared result's failure, from the Win32 metadata (crates/sake/src/returns.txt, written by tools/win32md: HRESULT E_NOTIMPL, NTSTATUS STATUS_NOT_IMPLEMENTED, WIN32_ERROR and SetLastError functions ERROR_CALL_NOT_IMPLEMENTED), typed as api::NotDone (review 6852be1f: 0 for all of them, S_OK / ERROR_SUCCESS / STATUS_SUCCESS with the outputs never written) (rebuild::NOT_DONE / _NOT)",
+            Rule::Lifetimes => "A DLL lives only once its DllMain answered TRUE, a process as long as one of the program's threads runs (review 6852be1f: LoadLibrary answered a DLL whose DllMain said FALSE, and the process ended with its first thread whatever else ran): pe::init_dlls answers Err(InitFailed), load_library a LoadFailure::Init (ERROR_DLL_INIT_FAILED) after unloading what it loaded, exit_thread asks crate::lives whether it was the last (rebuild::LIFETIMES / _NOT)",
+            Rule::IoResult => "A file read or write answers what happened, typed: the bytes moved, or files::IoFail (NoAccess for a buffer that is not guest memory, Read/Write for the host) and ReadAt::Eof apart from a failure; CreateFile's sharing check and its entry are one ShareEntry::take under one lock (review 6852be1f: WriteFile from a bad buffer wrote nothing and answered TRUE with the count, a read error was the end of the file, two exclusive opens racing both got in) (rebuild::IO_RESULT / _NOT)",
+            Rule::HandleKey => "A HANDLE finds its object only while it is open, and state kept per object is kept by obj::Key (review 6852be1f: Objs::key also took a closed first handle's number as the object's key, so a closed HANDLE reached an object a duplicate kept; the CREATE_SUSPENDED gate was kept by CreateThread's handle number, so ResumeThread through a duplicate missed it and the thread never started) (rebuild::HANDLE_KEY / _NOT)",
+            Rule::D2dLayout => "D2D's HWND render target reads D2D1_HWND_RENDER_TARGET_PROPERTIES and writes DXGI_SWAP_CHAIN_DESC from the header layouts (abi::layouts, from crates/apitrace/src/layouts.txt), never at x86 offsets by hand (review 6852be1f: pixelSize at +4 and OutputWindow at +44 on x64 too, the three outputs 4 bytes apart so 8-byte pointers overlapped) (rebuild::D2D_LAYOUT / _NOT)",
+            Rule::MessageWidth => "WPARAM, LPARAM, LRESULT and LONG_PTR keep their width (review 6852be1f: PostMessage read them with Ctx::a, the queue held u32, GetWindowLongPtr was GetWindowLong; an x64 wParam 0x1122334455667788 came back as 0x55667788): the entry points read them with Ctx::wparam/lparam/long_ptr and answer with ret_lresult/ret_long_ptr, MSG is written and read from abi::msg_layout, procedures are called through abi::call_wndproc, the LONG_PTR functions do not hand over to the 32-bit ones (rebuild::MESSAGE_WIDTH / _NOT)",
             Rule::HandStd => "what the standard library names since Rust 1.98..1.100 is not written by hand (2026-11-21: 10 toggles, 3 trim_prefix, 136 map_or_default, 13 ok_or, 19 Vec::from_fn replaced): x.toggle(), s.trim_prefix(p), o.map_or_default(f), c.ok_or(e), Vec::from_fn(v.len(), f)",
         }
     }
@@ -310,6 +363,7 @@ impl Rule {
             Rule::SnormTargets => regress::snorm_targets(tree),
             Rule::Review6852be1 => regress::review_6852be1(tree),
             Rule::D3d9Status => regress::d3d9_status(tree),
+            Rule::D3d9DevFormats => regress::d3d9dev_formats(tree),
             Rule::LoadEveryLevel => regress::load_every_level(tree),
             Rule::ConsoleLines => regress::console_lines(tree),
             Rule::KnownDiffs => regress::known_diffs(tree),
@@ -336,7 +390,19 @@ impl Rule {
             Rule::NanMinMax => regress::nan_min_max(tree),
             Rule::PcsgPack => regress::pcsg_pack(tree),
             Rule::WarpSetup => regress::warp_setup(tree),
+            Rule::DllSearch => regress::dll_search(tree),
+            Rule::FullPathOneRule => regress::full_path_one_rule(tree),
+            Rule::ShortNameTable => regress::short_name_table(tree),
+            Rule::MissingImportFails => regress::missing_import(tree),
+            Rule::DrawPlan => regress::draw_plan(tree),
             Rule::RunPlan => rebuild::needles(tree, &rebuild::RUN_PLAN, &rebuild::RUN_PLAN_NOT),
+            Rule::MessageWidth => rebuild::message_width(tree),
+            Rule::D2dLayout => rebuild::d2d_layout(tree),
+            Rule::HandleKey => rebuild::handle_key(tree),
+            Rule::IoResult => rebuild::io_result(tree),
+            Rule::Lifetimes => rebuild::lifetimes(tree),
+            Rule::GdiLockOrder => rebuild::gdi_lock_order(tree),
+            Rule::NotDone => rebuild::not_done(tree),
         };
         hits.into_iter().map(|(file, line, what)| Finding { rule: self, file, line, what }).collect()
     }
@@ -653,7 +719,7 @@ fn release_build_only(tree: &Tree) -> Hits {
 }
 
 /// what must stay in place: (file, text, why)
-pub const REQUIRED: [(&str, &str, &str); 52] = [
+pub const REQUIRED: [(&str, &str, &str); 55] = [
     ("crates/sake/src/files.rs", "        if self.shared != 0 && let Ok(p) = self.g.stream_position() {\n            let id = self.shared;\n            crate::kern::with(|k| k.set_file_pos(id, p));", "a file handle processes share keeps its file pointer in the kernel (the child's write did not move the parent's tell: msvcrt:file test_file_inherit; 2026-11-22)"),
     ("crates/sake/src/process.rs", "        Obj::File(f) => f.share().map(|id| KRef::File { id }),", "an inheritable file handle reaches the child (2026-11-22)"),
     ("crates/sake/src/k32.rs", "    // (lpSecurityAttributes's bInheritHandle: a child CreateProcess starts gets it)\n    sa_inherit(c.a(3), h)", "CreateFile honours bInheritHandle (msvcrt:file test_stdout_handle's file never reached the child; 2026-11-22)"),
@@ -705,6 +771,9 @@ pub const REQUIRED: [(&str, &str, &str); 52] = [
     (API, "pub type NoReturn = fn(&mut Ctx) -> !;", "noreturn! registers only handlers that do not come back: the type is the check (2026-11-21)"),
     (".github/workflows/ci.yml", "run: tools/ci/own-workspaces.sh", "every Cargo workspace of its own (fuzz harnesses, JIT tools) is compiled on every push (review e18bf44: three were broken and nothing said so)"),
     (".cargo/mutants.toml", "copy_vcs = true", "cargo-mutants' copy keeps .git: masu-lint lists the tracked files with git (without it the baseline failed and no mutant ran; review e18bf44)"),
+    (".github/workflows/formal.yml", "run: formal/jit32tv.sh", "koji's 32-bit translations are validated against x86's semantics by Z3 on every push (2026-11-22)"),
+    ("formal/jit32tv.sh", "--expect ../../formal/jit32tv-undecided.txt", "the cases jit32tv leaves undecided are exactly the listed ones: a new one fails, and so does one decided now (2026-11-22)"),
+    ("tools/jit32tv/src/main.rs", "koji::jit::translate_region(", "jit32tv checks the wasm koji itself generates for the region, not a model of the translator (2026-11-22)"),
     (".github/workflows/ci.yml", "cargo test --workspace --release", "masu-lint's own tests (each rule and each ratchet lint fires on its regression) run on every push"),
 ];
 

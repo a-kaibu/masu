@@ -151,12 +151,13 @@ fn lengths_with(r: &mut impl Read, p: Params, buf: &mut [u8]) -> std::io::Result
         while at < n {
             match c.next(&buf[at..n]) {
                 Some(k) => {
-                    out.push(cur + k as u64);
+                    // (a usize always fits a u64 on the targets masu builds for)
+                    out.push(cur + u64::try_from(k).unwrap_or(u64::MAX));
                     cur = 0;
                     at += k;
                 }
                 None => {
-                    cur += (n - at) as u64;
+                    cur += u64::try_from(n - at).unwrap_or(u64::MAX);
                     at = n;
                 }
             }

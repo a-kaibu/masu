@@ -70,7 +70,7 @@ fn multi(st: u32) -> bool {
     st & (LBS_MULTIPLESEL | LBS_EXTENDEDSEL) != 0
 }
 fn id_parent(h: u32) -> (u32, u32) {
-    with(|s| s.wins.get(&h).map_or((0, 0), |w| (w.id, w.parent)))
+    with(|s| s.wins.get(&h).map_or((0, 0), |w| (w.ctrl_id(), w.parent)))
 }
 fn client(h: u32) -> (i32, i32) {
     with(|s| s.wins.get(&h).map_or((0, 0), |w| (w.client.w(), w.client.h())))
@@ -84,7 +84,7 @@ fn notify(c: &mut Ctx, h: u32, code: u32) {
     }
     let (id, parent) = id_parent(h);
     if parent != 0 {
-        send(c, parent, 0x111, code << 16 | (id & 0xffff), h);
+        send(c, parent, 0x111, Wparam::dword(code << 16 | (id & 0xffff)), Lparam::handle(h));
     }
 }
 
@@ -130,7 +130,7 @@ fn measure_item(c: &mut Ctx, h: u32, index: i32, data: u32, height: i32) -> i32 
     w32(m + 12, client(h).0 as u32);
     w32(m + 16, height as u32);
     mem::wp(m + if ps == 8 { 24 } else { 20 }, data);
-    send(c, parent, 0x2c, id, m);
+    send(c, parent, 0x2c, Wparam::dword(id), Lparam::addr(m));
     let r = r32(m + 16) as i32;
     drop(m_own);
     r
@@ -283,7 +283,7 @@ fn delete_item(c: &mut Ctx, h: u32, index: usize, data: u32, gone: Gone) {
     let at = if ps == 8 { 16 } else { 12 };
     mem::wp(d + at, h);
     mem::wp(d + at + ps, data);
-    send(c, parent, 0x2d, id, d);
+    send(c, parent, 0x2d, Wparam::dword(id), Lparam::addr(d));
     drop(d_own);
 }
 
@@ -418,7 +418,7 @@ fn paint(c: &mut Ctx, h: u32) {
     }
     let (id, parent) = id_parent(h);
     // WM_CTLCOLORLISTBOX: the parent's brush (and colours set on the DC)
-    let mut bg = if parent != 0 { send(c, parent, 0x134, dc, h) } else { 0 };
+    let mut bg = if parent != 0 { send(c, parent, 0x134, Wparam::handle(dc), Lparam::handle(h)).lo32() } else { 0 };
     if bg == 0 {
         bg = crate::gdi::solid_brush(0xffffff);
     }
@@ -443,7 +443,7 @@ fn paint(c: &mut Ctx, h: u32) {
             mem::wp(d + at + pz, dc);
             r.write(d + at + 2 * pz);
             mem::wp(d + at + 2 * pz + 16, item.data);
-            send(c, parent, 0x2b, id, d);
+            send(c, parent, 0x2b, Wparam::dword(id), Lparam::addr(d));
             drop(d_own);
         } else {
             let (fill, fg) = if selected { (0xd77800, 0xffffff) } else { (0, if enabled { 0 } else { 0x6d6d6d }) };
@@ -877,7 +877,7 @@ pub(super) fn proc_fn(c: &mut Ctx) -> u32 {
             if inside {
                 let (_, parent) = id_parent(h);
                 if st & LBS_NOTIFY != 0 && parent != 0 {
-                    send(c, parent, 0x131, i as u32, lp);
+                    send(c, parent, 0x131, Wparam::dword(i as u32), Lparam::dword(lp));
                 }
                 list(h, |l| l.captured = true);
                 gcall(c, "user32", "SetCapture", &[h]);

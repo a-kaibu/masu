@@ -1617,7 +1617,10 @@ fn unimplemented_call(c: &mut Ctx, i: u32, known: bool) -> u32 {
         crate::fatal(c.cpu, &format!("call to {n}, which we neither implement nor know the arguments of"));
     }
     static SEEN: Mutex<Option<HashSet<u32>>> = Mutex::new(None);
-    let r = unimplemented_result(&n);
+    let (r, err) = unimplemented_result(&n).result();
+    if let Some(e) = err {
+        crate::k32::last_error(e);
+    }
     if SEEN.locked().get_or_insert_with(HashSet::default).insert(i) {
         eprintln!("sake: unimplemented {n} (returns {r:#x}), from {:#x}", r32(c.esp));
     }
@@ -1849,32 +1852,120 @@ mod spec_tests {
     }
 }
 
-/// What an export sake knows but doesn't implement returns: 0, except D3DX's functions that
-/// make an object, for which 0 is S_OK with the object pointer never written (ダイナマリサ3D
-/// called through the NULL D3DXCreateCubeTextureFromFileInMemory left, #126): E_NOTIMPL, a
-/// failure the game checks for.
-pub fn unimplemented_result(name: &str) -> u32 {
+/// How a function says it did not do its work, by its declared result (src/returns.txt, from
+/// the Win32 metadata by tools/win32md): what an export sake knows but doesn't implement answers.
+/// 0 was S_OK, ERROR_SUCCESS or STATUS_SUCCESS for most of them (review 6852be1f), so a caller
+/// went on with outputs never written.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum NotDone {
+    /// void, or a value with no failure of its own: 0
+    Zero,
+    /// HRESULT: E_NOTIMPL
+    Hresult,
+    /// NTSTATUS: STATUS_NOT_IMPLEMENTED
+    Ntstatus,
+    /// a WIN32_ERROR result (the registry's): ERROR_CALL_NOT_IMPLEMENTED
+    Win32,
+    /// SetLastError=true (BOOL, a handle, a count): 0, ERROR_CALL_NOT_IMPLEMENTED the last error
+    LastError,
+}
+
+impl NotDone {
+    const STATUS_NOT_IMPLEMENTED: u32 = 0xc000_0002;
+    const ERROR_CALL_NOT_IMPLEMENTED: u32 = 120;
+
+    fn parse(w: &str) -> Option<Self> {
+        match w {
+            "hresult" => Some(NotDone::Hresult),
+            "ntstatus" => Some(NotDone::Ntstatus),
+            "win32" => Some(NotDone::Win32),
+            "lasterror" => Some(NotDone::LastError),
+            _ => None,
+        }
+    }
+
+    /// (the result, the last error to set)
+    pub const fn result(self) -> (u32, Option<u32>) {
+        match self {
+            NotDone::Zero => (0, None),
+            NotDone::Hresult => (crate::hresult::E_NOTIMPL, None),
+            NotDone::Ntstatus => (Self::STATUS_NOT_IMPLEMENTED, None),
+            NotDone::Win32 => (Self::ERROR_CALL_NOT_IMPLEMENTED, None),
+            NotDone::LastError => (0, Some(Self::ERROR_CALL_NOT_IMPLEMENTED)),
+        }
+    }
+}
+
+/// returns.txt by (dll key, name).
+fn returns() -> &'static HashMap<(&'static str, &'static str), NotDone> {
+    static R: OnceLock<HashMap<(&'static str, &'static str), NotDone>> = OnceLock::new();
+    R.get_or_init(|| {
+        let mut m = HashMap::default();
+        for l in include_str!("returns.txt").lines() {
+            let mut it = l.split(' ');
+            if let (Some(d), Some(n), Some(k)) = (it.next(), it.next(), it.next().and_then(NotDone::parse)) {
+                m.insert((d, n), k);
+            }
+        }
+        m
+    })
+}
+
+/// What an export sake knows but doesn't implement says ("dll!name"): its declared result's
+/// failure (returns.txt). D3DX is not in the metadata: its functions that make an object answer
+/// E_NOTIMPL, as 0 is S_OK with the object pointer never written (ダイナマリサ3D called through
+/// the NULL D3DXCreateCubeTextureFromFileInMemory left, #126).
+pub fn unimplemented_result(name: &str) -> NotDone {
     let (dll, f) = name.split_once('!').unwrap_or(("", name));
-    let d3dx = dll.to_ascii_lowercase().starts_with("d3dx");
+    let key = dll_key(dll);
+    if let Some(k) = returns().get(&(key.as_str(), f)) {
+        return *k;
+    }
+    let d3dx = key.starts_with("d3dx");
     if d3dx && ["D3DXCreate", "D3DXLoad", "D3DXCompile", "D3DXAssemble", "D3DXPreprocess", "D3DXGetShader", "D3DXSave", "D3DXFilter", "D3DXComputeNormalMap"].iter().any(|p| f.starts_with(p)) {
-        0x8000_4001
+        NotDone::Hresult
     } else {
-        0
+        NotDone::Zero
     }
 }
 
 #[cfg(test)]
 mod unimplemented_tests {
-    use super::unimplemented_result;
+    use super::{returns, specs, unimplemented_result, NotDone};
     #[test]
     fn d3dx_object_makers_fail() {
-        assert_eq!(unimplemented_result("d3dx9_33!D3DXCreateCubeTextureFromFileInMemory"), 0x8000_4001);
-        assert_eq!(unimplemented_result("D3DX9_43!D3DXLoadMeshFromXInMemory"), 0x8000_4001);
-        assert_eq!(unimplemented_result("d3dx8!D3DXCreateSprite"), 0x8000_4001);
-        // (matrices, vectors, others: 0 as before)
-        assert_eq!(unimplemented_result("d3dx9_33!D3DXMatrixReflect"), 0);
-        assert_eq!(unimplemented_result("kernel32!CreateFileTransactedA"), 0);
-        assert_eq!(unimplemented_result("comdlg32!GetFileTitleA"), 0);
+        assert_eq!(unimplemented_result("d3dx9_33!D3DXCreateCubeTextureFromFileInMemory"), NotDone::Hresult);
+        assert_eq!(unimplemented_result("D3DX9_43!D3DXLoadMeshFromXInMemory"), NotDone::Hresult);
+        assert_eq!(unimplemented_result("d3dx8!D3DXCreateSprite"), NotDone::Hresult);
+        // (matrices, vectors: 0)
+        assert_eq!(unimplemented_result("d3dx9_33!D3DXMatrixReflect"), NotDone::Zero);
+    }
+
+    /// Each declared result's own failure, the DLL named as an import names it.
+    #[test]
+    fn the_metadata_says_how_each_fails() {
+        assert_eq!(unimplemented_result("KERNEL32.dll!CreateFileTransactedA"), NotDone::LastError);
+        assert_eq!(unimplemented_result("ole32.dll!CoCreateInstance"), NotDone::Hresult);
+        assert_eq!(unimplemented_result("advapi32!RegOpenKeyExA"), NotDone::Win32);
+        assert_eq!(unimplemented_result("ntdll!RtlAnsiStringToUnicodeString"), NotDone::Ntstatus);
+        assert_eq!(NotDone::Hresult.result(), (0x8000_4001, None));
+        assert_eq!(NotDone::Ntstatus.result(), (0xc000_0002, None));
+        assert_eq!(NotDone::Win32.result(), (120, None));
+        assert_eq!(NotDone::LastError.result(), (0, Some(120)));
+        // (void: 0, no error)
+        assert_eq!(unimplemented_result("kernel32!Sleep"), NotDone::Zero);
+    }
+
+    /// Every line is a spec function with a kind sake reads (a typo would answer 0 again).
+    #[test]
+    fn returns_txt_is_all_read() {
+        let lines = include_str!("returns.txt").lines().count();
+        assert!(lines > 5000, "{lines}");
+        assert_eq!(returns().len(), lines);
+        let sp = specs();
+        for (d, n) in returns().keys() {
+            assert!(sp.by_name.contains_key(&(*d, *n)), "{d} {n} not in specs.txt");
+        }
     }
 }
 

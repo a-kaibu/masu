@@ -562,7 +562,7 @@ impl Dev {
 fn post_all(out: Vec<(u32, u32)>, id: DevId) {
     for (w, code) in out {
         if w != 0 {
-            crate::user::post(w, MM_MCINOTIFY, code, id.0);
+            crate::user::post(w, MM_MCINOTIFY, crate::abi::Wparam::dword(code), crate::abi::Lparam::dword(id.0));
         }
     }
 }
@@ -657,7 +657,7 @@ fn finished(id: DevId) -> bool {
     post_all(out, id);
     sync_sound(id);
     if mciwnd != 0 {
-        crate::user::post(mciwnd, WM_MCIWND_MODE, 0, 0);
+        crate::user::post(mciwnd, WM_MCIWND_MODE, crate::abi::Wparam::ZERO, crate::abi::Lparam::ZERO);
     }
     false
 }
@@ -1626,7 +1626,7 @@ fn wnd_notify(c: &mut Ctx, h: u32) {
     let m = wnd_mode(h);
     let Some((parent, style, was)) = wnd(h, |w| (w.parent, w.style, std::mem::replace(&mut w.mode, m))) else { return };
     if was != m && style & MCIWNDF_NOTIFYMODE != 0 && parent != 0 {
-        crate::user::send(c, parent, MCIWNDM_NOTIFYMODE, h, m.code());
+        crate::user::send(c, parent, MCIWNDM_NOTIFYMODE, crate::abi::Wparam::handle(h), crate::abi::Lparam::dword(m.code()));
     }
 }
 

@@ -89,6 +89,37 @@ class Plan(unittest.TestCase):
         self.assertIn("test program missing", p.stdout)
 
 
+class Combine(unittest.TestCase):
+    """--repeat: a test is recorded by its worst run and judged by its best."""
+
+    @staticmethod
+    def r(status, failures=0):
+        return {"status": status, "failures": failures}
+
+    def test_mixed_runs(self):
+        worst, best = run.combine([self.r("ok"), self.r("fail", 3), self.r("ok")])
+        self.assertEqual((worst["status"], best["status"]), ("fail", "ok"))
+
+    def test_failure_counts_order_within_a_status(self):
+        worst, best = run.combine([self.r("fail", 2), self.r("fail", 9), self.r("fail", 5)])
+        self.assertEqual((worst["failures"], best["failures"]), (9, 2))
+
+    def test_crash_is_worse_than_fail(self):
+        worst, best = run.combine([self.r("fail", 50), self.r("crash")])
+        self.assertEqual((worst["status"], best["status"]), ("crash", "fail"))
+
+    def test_one_run(self):
+        worst, best = run.combine([self.r("timeout")])
+        self.assertIs(worst, best)
+
+    def test_repeat_needs_native(self):
+        import subprocess
+        p = subprocess.run([sys.executable, os.path.join(os.path.dirname(__file__), "run.py"), "--suite", "rostests", "--repeat", "3"],
+                           capture_output=True, text=True, check=False)
+        self.assertEqual(p.returncode, 2, p.stderr)
+        self.assertIn("only with --native", p.stderr)
+
+
 class Adopt(unittest.TestCase):
     """rostests on sake run what Windows passes, and a test Windows was not asked fails the run."""
 

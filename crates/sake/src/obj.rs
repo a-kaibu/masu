@@ -130,9 +130,12 @@ pub struct Objs {
 }
 
 impl Objs {
-    /// the object key of handle `h` (an object's key also finds it after its first handle closed)
+    /// the object key of open handle `h`: only the handle table answers (review 6852be1f: the
+    /// object's key, its first handle's number, also found it after that handle closed, so a
+    /// closed HANDLE still reached the object a duplicate kept). The modules that keep state
+    /// by object go through by_key.
     pub fn key(&self, h: &u32) -> Option<Key> {
-        self.handles.get(h).copied().or_else(|| self.map.contains_key(&Key(*h)).then_some(Key(*h)))
+        self.handles.get(h).copied()
     }
     pub fn get(&self, h: &u32) -> Option<&(Obj, u32)> {
         self.map.get(&self.key(h)?)
@@ -993,7 +996,9 @@ mod table_review_tests {
         /// Opens (add), duplicates and closes on a table whose numbers start just below
         /// HANDLE_LIMIT, against a model of the live handles: a new handle is never a live
         /// one, an object key, a pseudo-handle or below 0x100; names go with their object's
-        /// last handle and only then.
+        /// last handle and only then. Every number ever handed out finds its object exactly while
+        /// it is an open handle: a closed first handle (its object's key) finds nothing even while
+        /// a duplicate keeps the object (review 6852be1f).
         #[test]
         fn handles_are_never_live_ones(ops in proptest::collection::vec((0u8..4, 0usize..16), 1..300), start in 0u32..64) {
             let mut t = Table::new();
@@ -1036,6 +1041,9 @@ mod table_review_tests {
                 }
                 let got: std::collections::BTreeMap<String, u32> = t.names.iter().map(|(a, b)| (a.clone(), b.0)).collect();
                 prop_assert_eq!(&got, &names);
+                for h in (0x100..HANDLE_LIMIT).step_by(4).take(64).chain((HANDLE_LIMIT - 4 * 64..HANDLE_LIMIT).step_by(4)) {
+                    prop_assert_eq!(t.objs.key(&h).map(Key::first_handle), live.get(&h).copied(), "handle {:#x}", h);
+                }
             }
         }
     }

@@ -606,7 +606,7 @@ fn reg_builtin() -> HashMap<String, KeyData> {
     }
     // the installed fonts (DirectWrite's system collection reads this list)
     if let Some(dir) = crate::files::resolve("C:\\windows\\Fonts\\") {
-        let mut files: Vec<String> = kura::fs::read_dir(dir).into_iter().flatten().flatten().filter_map(|e| e.file_name().into_string().ok()).collect();
+        let mut files: Vec<String> = crate::shortname::read_dir(dir).into_iter().flatten().flatten().filter_map(|e| e.file_name().into_string().ok()).collect();
         files.sort();
         for f in files.iter().filter(|f| [".ttf", ".ttc", ".otf"].iter().any(|x| f.to_ascii_lowercase().ends_with(x))) {
             let stem = f.rsplit_once('.').map_or(f.as_str(), |x| x.0);
@@ -3304,7 +3304,7 @@ fn sh_expand(src: &str, files_only: bool) -> Vec<(String, bool)> {
         return crate::files::resolve(src).and_then(|h| kura::fs::metadata(&h).ok()).map_or_default(|m| vec![(src.to_string(), m.is_dir())]);
     }
     let Some(h) = crate::files::resolve(dir) else { return Vec::new() };
-    let mut out: Vec<(String, bool)> = kura::fs::read_dir(&h).into_iter().flatten().flatten().filter_map(|e| {
+    let mut out: Vec<(String, bool)> = crate::shortname::read_dir(&h).into_iter().flatten().flatten().filter_map(|e| {
         let name = e.file_name().into_string().ok()?;
         let is_dir = e.metadata().ok()?.is_dir();
         (wild_match(last, &name) && !(files_only && is_dir)).then(|| (format!("{dir}\\{name}"), is_dir))
@@ -3319,7 +3319,7 @@ fn sh_copy(src: &str, is_dir: bool, to: &str, recurse: bool) -> bool {
     }
     crate::files::make_dirs(to);
     let mut ok = true;
-    for e in kura::fs::read_dir(&h).into_iter().flatten().flatten() {
+    for e in crate::shortname::read_dir(&h).into_iter().flatten().flatten() {
         let (Ok(name), Ok(m)) = (e.file_name().into_string(), e.metadata()) else { continue };
         if m.is_dir() && !recurse {
             continue;
@@ -3333,11 +3333,11 @@ fn sh_delete(src: &str, is_dir: bool) -> bool {
     if !is_dir {
         return kura::fs::remove_file(&h).is_ok();
     }
-    for e in kura::fs::read_dir(&h).into_iter().flatten().flatten() {
+    for e in crate::shortname::read_dir(&h).into_iter().flatten().flatten() {
         let (Ok(name), Ok(m)) = (e.file_name().into_string(), e.metadata()) else { continue };
         sh_delete(&format!("{src}\\{name}"), m.is_dir());
     }
-    kura::fs::remove_dir(&h).is_ok()
+    crate::shortname::remove_dir(&h).is_ok()
 }
 /// SHFileOperation(&SHFILEOPSTRUCT): FO_MOVE 1, FO_COPY 2, FO_DELETE 3, FO_RENAME 4 of the
 /// double-NUL lists pFrom / pTo (FOF_MULTIDESTFILES 1: a destination per source; FOF_FILESONLY
@@ -3679,7 +3679,8 @@ fn ILFree(c: &mut Ctx) -> u32 {
 /// selected in it.
 struct Browse {
     lpfn: u32,
-    lparam: u32,
+    /// BROWSEINFO.lParam: the callback's lpData (an LPARAM)
+    lparam: crate::abi::Lparam,
     sel: String,
 }
 thread_local!(static BROWSE: std::cell::RefCell<Vec<Browse>> = const { std::cell::RefCell::new(Vec::new()) });
@@ -3693,7 +3694,8 @@ fn browse_selchanged(c: &mut Ctx, h: u32) {
     let Some((f, l, sel)) = browse(|b| (b.lpfn, b.lparam, b.sel.clone())) else { return };
     if f != 0 {
         let p = path_pidl(&sel);
-        c.call(f, &[h, 2, p, l]);
+        use crate::abi::Arg;
+        crate::abi::call(c.cpu, f, &[Arg::handle(h), Arg::dword(2), Arg::addr(p), l.into()]);
         mem::heap_free(p);
     }
 }
@@ -3708,12 +3710,13 @@ fn browse_dlgproc(c: &mut Ctx) -> u32 {
         // WM_INITDIALOG: BFFM_INITIALIZED, then BFFM_SELCHANGED for the first selection (as
         // Windows' dialog); OK comes after whatever the callback posted meanwhile
         0x110 => {
-            let (f, l) = browse(|b| (b.lpfn, b.lparam)).unwrap_or((0, 0));
+            let (f, l) = browse(|b| (b.lpfn, b.lparam)).unwrap_or((0, crate::abi::Lparam::ZERO));
             if f != 0 {
-                c.call(f, &[h, 1, 0, l]);
+                use crate::abi::Arg;
+                crate::abi::call(c.cpu, f, &[Arg::handle(h), Arg::dword(1), Arg::ZERO, l.into()]);
                 browse_selchanged(c, h);
             }
-            crate::user::post(h, BROWSE_OK, 0, 0);
+            crate::user::post(h, BROWSE_OK, crate::abi::Wparam::ZERO, crate::abi::Lparam::ZERO);
             1
         }
         // BFFM_SETSELECTIONA / W: a path (wParam TRUE) or an ID list; a folder that is not
@@ -3746,7 +3749,10 @@ fn browse_dlgproc(c: &mut Ctx) -> u32 {
 fn sh_browse_for_folder(c: &mut Ctx, wide: bool) -> u32 {
     let bi = c.a(0);
     let ps = mem::ps();
-    let (owner, root, name, lpfn, lparam) = (mem::rp(bi), mem::rp(bi + ps), mem::rp(bi + 2 * ps), mem::rp(bi + 5 * ps), mem::rp(bi + 6 * ps));
+    let (owner, root, name, lpfn) = (mem::rp(bi), mem::rp(bi + ps), mem::rp(bi + 2 * ps), mem::rp(bi + 5 * ps));
+    // (BROWSEINFO.lParam: an LPARAM, whole on x64)
+    let arch = crate::abi::Arch::current();
+    let lparam = crate::abi::Lparam::from_guest(crate::abi::read_slot(mem::ga(bi + 6 * ps), arch), arch);
     let sel = pidl_path(root).or_else(|| folder_path(0, false)).unwrap_or_default();
     BROWSE.with(|b| b.borrow_mut().push(Browse { lpfn, lparam, sel }));
     static PROC: std::sync::OnceLock<u32> = std::sync::OnceLock::new();
@@ -3754,8 +3760,9 @@ fn sh_browse_for_folder(c: &mut Ctx, wide: bool) -> u32 {
     let r = crate::user::hidden_dialog(c, owner, proc_, lparam);
     // (the push above: a dialog nested in this one pops its own)
     let Some(b) = BROWSE.with(|b| b.borrow_mut().pop()) else { return 0 };
-    eprintln!("sake: SHBrowseForFolder: {}", if r == 1 { b.sel.as_str() } else { "(cancelled)" });
-    if r != 1 {
+    let ok = r == crate::abi::LongPtr::dword(1);
+    eprintln!("sake: SHBrowseForFolder: {}", if ok { b.sel.as_str() } else { "(cancelled)" });
+    if !ok {
         return 0;
     }
     if name != 0 {

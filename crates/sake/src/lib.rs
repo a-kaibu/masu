@@ -50,6 +50,7 @@ mod host_stubs {
 #[cfg(test)]
 pub(crate) static ADEC_SERIAL: std::sync::Mutex<()> = std::sync::Mutex::new(());
 pub mod apc;
+pub mod abi;
 pub mod api;
 pub mod d3d9;
 pub mod d3d11;
@@ -926,16 +927,142 @@ pub fn fatal(cpu: &mut Cpu, msg: &str) -> ! {
 /// handled (as on Windows)
 pub static EXIT_CODE: AtomicU32 = AtomicU32::new(3);
 
+/// Whose a guest thread is: the process lasts while one of the program's runs.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Lives {
+    /// the program's (its first thread, CreateThread, _beginthread, a service's): the process
+    /// ends with the last of them, with its exit code
+    Program,
+    /// one sake runs for itself (a pool, a device, a timer, a decoder's): it keeps nothing alive
+    Helper,
+}
+
+/// The program's threads that run, and sake's helpers by tid (review 6852be1f: the process
+/// ended with its first thread whatever else ran, so a main thread that called ExitThread took
+/// the others with it; Windows ends a process with its last thread).
+pub(crate) mod lives {
+    use kome::locks::Lock as _;
+    use std::collections::BTreeSet;
+
+    /// The count of the program's threads that run or are being made, and the helpers' tids.
+    #[derive(Debug)]
+    pub(crate) struct Census {
+        program: u32,
+        helpers: BTreeSet<u32>,
+    }
+
+    impl Census {
+        /// A process's: its first thread counts from the start
+        pub(crate) const fn new() -> Census {
+            Census { program: 1, helpers: BTreeSet::new() }
+        }
+        /// A thread of `kind` is being made (before its host thread starts, so that the count
+        /// never reaches 0 between a creator and its new thread).
+        pub(crate) fn coming(&mut self, kind: super::Lives) {
+            if kind == super::Lives::Program {
+                self.program = self.program.saturating_add(1);
+            }
+        }
+        /// It could not be made after all.
+        pub(crate) fn not_coming(&mut self, kind: super::Lives) {
+            if kind == super::Lives::Program {
+                self.program = self.program.saturating_sub(1);
+            }
+        }
+        /// The new thread `tid` of `kind` runs.
+        pub(crate) fn started(&mut self, tid: u32, kind: super::Lives) {
+            if kind == super::Lives::Helper {
+                self.helpers.insert(tid);
+            }
+        }
+        /// Thread `tid` ends: whether it was the program's last (the process ends with it).
+        pub(crate) fn ends(&mut self, tid: u32) -> bool {
+            if self.helpers.remove(&tid) {
+                return false;
+            }
+            self.program = self.program.saturating_sub(1);
+            self.program == 0
+        }
+    }
+
+    static CENSUS: std::sync::Mutex<Census> = std::sync::Mutex::new(Census::new());
+
+    pub(crate) fn coming(kind: super::Lives) {
+        CENSUS.locked().coming(kind);
+    }
+    pub(crate) fn not_coming(kind: super::Lives) {
+        CENSUS.locked().not_coming(kind);
+    }
+    pub(crate) fn started(tid: u32, kind: super::Lives) {
+        CENSUS.locked().started(tid, kind);
+    }
+    pub(crate) fn ends(tid: u32) -> bool {
+        CENSUS.locked().ends(tid)
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+        use crate::Lives;
+        use proptest::prelude::*;
+
+        proptest! {
+            /// Against a model of the threads that run: a thread's end is the last exactly when
+            /// no program thread runs or is being made after it (helpers never count), whatever
+            /// the order of creations, failed creations and ends.
+            #[test]
+            fn the_last_program_thread_ends_the_process(ops in proptest::collection::vec((0u8..4, any::<bool>(), 0usize..8), 1..200)) {
+                let mut c = Census::new();
+                // (model: running threads (tid, program?), threads being made)
+                let mut running: Vec<(u32, bool)> = vec![(0x10, true)];
+                let mut coming: Vec<bool> = Vec::new();
+                let mut next = 0x20u32;
+                for (op, program, i) in ops {
+                    let kind = if program { Lives::Program } else { Lives::Helper };
+                    match op {
+                        0 => {
+                            c.coming(kind);
+                            coming.push(program);
+                        }
+                        1 if !coming.is_empty() => {
+                            let p = coming.remove(i % coming.len());
+                            c.started(next, if p { Lives::Program } else { Lives::Helper });
+                            running.push((next, p));
+                            next += 4;
+                        }
+                        2 if !coming.is_empty() => {
+                            let p = coming.remove(i % coming.len());
+                            c.not_coming(if p { Lives::Program } else { Lives::Helper });
+                        }
+                        3 if !running.is_empty() => {
+                            let (tid, was_program) = running.remove(i % running.len());
+                            let last = c.ends(tid);
+                            let left = running.iter().filter(|t| t.1).count() + coming.iter().filter(|&&p| p).count();
+                            prop_assert_eq!(last, was_program && left == 0, "tid {:#x}", tid);
+                            if last {
+                                return Ok(());
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+            }
+        }
+    }
+}
+
 /// Starts a guest thread at `start(param)`; returns its tid, 0 when it could not be made: no
 /// room in the guest address space for its TEB and stack, or no host thread (the browser
 /// refusing another Worker, emscripten's pthread pool empty). Those were `expect`s, an abort
-/// of the whole VM where Windows' CreateThread returns NULL (review A-13). `gated`: it waits
-/// for ResumeThread first.
-pub fn spawn_gated(start: u32, param: u32, stack: u32, obj: u32, gated: bool) -> u32 {
+/// of the whole VM where Windows' CreateThread returns NULL (review A-13). `gate`: the thread
+/// object it waits for ResumeThread on first (k32's GATE entry); `kind`: whether it keeps the
+/// process alive.
+pub fn spawn_gated(start: u32, param: u32, stack: u32, obj: u32, gate: Option<obj::Key>, kind: Lives) -> u32 {
     // (test hook: as when the host refuses another thread)
     if SPAWN_FAILS.load(Ordering::Relaxed) != 0 && SPAWN_FAILS.fetch_sub(1, Ordering::Relaxed) != 0 {
         return 0;
     }
+    lives::coming(kind);
     let (tx, rx) = std::sync::mpsc::channel();
     let made = std::thread::Builder::new()
         .stack_size(1 << 20)
@@ -943,13 +1070,15 @@ pub fn spawn_gated(start: u32, param: u32, stack: u32, obj: u32, gated: bool) ->
             // (the thread's own reference: the creator closing its handle doesn't end the
             // object while the thread runs; GetCurrentThread duplicates it, mono's GC does)
             let Some(t) = enter(stack, |_| obj::dup(obj)) else {
+                lives::not_coming(kind);
                 let _ = tx.send(0);
                 return;
             };
+            lives::started(t.tid, kind);
             let _ = tx.send(t.tid);
             crate::actctx::adopt(obj);
-            if gated {
-                k32::wait_gate_start(obj, start, param);
+            if let Some(k) = gate {
+                k32::wait_gate_start(k, start, param);
             }
             k32::check_terminate();
             thread_start(&t, start, param);
@@ -957,6 +1086,7 @@ pub fn spawn_gated(start: u32, param: u32, stack: u32, obj: u32, gated: bool) ->
         });
     if made.is_err() {
         // (the closure, never run, went with its sender)
+        lives::not_coming(kind);
         return 0;
     }
     rx.recv().unwrap_or(0)
@@ -967,7 +1097,7 @@ pub fn spawn_gated(start: u32, param: u32, stack: u32, obj: u32, gated: bool) ->
 /// holds its own).
 pub fn spawn_service(start: u32, param: u32) -> Option<u32> {
     let h = obj::new_thread_obj(0);
-    let tid = spawn_gated(start, param, 0x10000, h, false);
+    let tid = spawn_gated(start, param, 0x10000, h, None, Lives::Helper);
     obj::close(h);
     (tid != 0).then_some(tid)
 }
@@ -1268,7 +1398,13 @@ pub fn main(exe: &str, args: &[String]) -> ! {
         seh::top_frame(cur().teb);
     }
     dbg::process_start(cpu, base, entry);
-    pe::init_dlls(cpu);
+    // (a DLL the exe imports whose DllMain answers FALSE: the process does not start, it ends
+    // with STATUS_DLL_INIT_FAILED, as Windows' "unable to start correctly (0xc0000142)")
+    if let Err(pe::InitFailed(b)) = pe::init_dlls(cpu) {
+        eprintln!("sake: DllMain(PROCESS_ATTACH) of {} answered FALSE: the process cannot start (0xc0000142)", pe::with(b, |m| m.path.clone()).unwrap_or_default());
+        // SAFETY: libc::exit has no precondition (the process ends).
+        unsafe { libc::exit(0xc000_0142_u32.cast_signed()) }
+    }
     if x64 {
         start64(cpu, entry, peb);
     }

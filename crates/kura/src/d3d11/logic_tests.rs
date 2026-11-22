@@ -1,5 +1,6 @@
 //! Which targets get logic ops, and a draw's primitives as draws of their own.
 use super::*;
+use crate::d3d11::PageTopo;
 use dxwgsl::logic::{Logic, Mark, Op, Sign, Store};
 
 /// targets 0..2 of R8G8B8A8_UINT, R32_UINT, R8G8B8A8_UNORM; blend state words with logic ops
@@ -115,17 +116,17 @@ fn copies_are_by_slot() {
 #[test]
 fn primitives_of_each_topology() {
     let p = |first, count, odd| Prim { first, count, odd };
-    assert_eq!(primitives(0, 3, &[]), vec![p(0, 1, false), p(1, 1, false), p(2, 1, false)]);
-    assert_eq!(primitives(1, 5, &[]), vec![p(0, 2, false), p(2, 2, false)]);
-    assert_eq!(primitives(2, 3, &[]), vec![p(0, 2, false), p(1, 2, false)]);
-    assert_eq!(primitives(3, 7, &[]), vec![p(0, 3, false), p(3, 3, false)]);
-    assert_eq!(primitives(4, 5, &[]), vec![p(0, 3, false), p(1, 3, true), p(2, 3, false)]);
+    assert_eq!(primitives(PageTopo::Points, 3, &[]), vec![p(0, 1, false), p(1, 1, false), p(2, 1, false)]);
+    assert_eq!(primitives(PageTopo::Lines, 5, &[]), vec![p(0, 2, false), p(2, 2, false)]);
+    assert_eq!(primitives(PageTopo::LineStrip, 3, &[]), vec![p(0, 2, false), p(1, 2, false)]);
+    assert_eq!(primitives(PageTopo::Triangles, 7, &[]), vec![p(0, 3, false), p(3, 3, false)]);
+    assert_eq!(primitives(PageTopo::TriangleStrip, 5, &[]), vec![p(0, 3, false), p(1, 3, true), p(2, 3, false)]);
     // (a restart at 2: triangles 3 4 5 and 4 5 6 after it, the first even again)
     let cut = [false, false, true, false, false, false, false];
-    assert_eq!(primitives(4, 7, &cut), vec![p(3, 3, false), p(4, 3, true)]);
+    assert_eq!(primitives(PageTopo::TriangleStrip, 7, &cut), vec![p(3, 3, false), p(4, 3, true)]);
     let cut = [false, false, false, true, false, false, false];
-    assert_eq!(primitives(4, 7, &cut), vec![p(0, 3, false), p(4, 3, false)]);
-    assert!(primitives(4, 2, &[]).is_empty());
+    assert_eq!(primitives(PageTopo::TriangleStrip, 7, &cut), vec![p(0, 3, false), p(4, 3, false)]);
+    assert!(primitives(PageTopo::TriangleStrip, 2, &[]).is_empty());
 }
 
 const INTS: [u32; 9] = [f::P_RGBA8UI, f::P_RG8UI, f::P_R8UI, f::P_RGBA16UI, f::P_RG16UI, f::P_RGB10A2UI, f::P_RGBA8SI, f::P_RGBA16UI, f::P_RGBA16SI];
@@ -196,4 +197,39 @@ fn min_max_refuse_dual_source_factors() {
             }
         }
     }
+}
+
+/// a multisampled SNORM target whose blend reads it is a stash under a pixel-rate shader (the
+/// mark at its own location, every stash's), drawn directly under one of sample rate; a blend
+/// that reads no target is the shader's store either way
+#[test]
+fn multisampled_snorm_blends_in_the_resolve_pass() {
+    use dxwgsl::logic::Mark;
+    let reads = blending(true, [5, 6, 1, 2, 7, 3]);
+    let (ops, _) = targets(&reads, &[f::P_RGBA8SI], &[31], &[true], false);
+    assert!(matches!(ops[0].store, Store::SnormStash { mark: Mark::Slot(0), .. }), "{ops:?}");
+    assert!(ops[0].stashed() && ops[0].reads_copy());
+    let (ops, _) = targets(&reads, &[f::P_RGBA8SI], &[31], &[true], true);
+    assert!(matches!(ops[0].store, Store::Snorm(Some(_))), "{ops:?}");
+    let (ops, _) = targets(&blending(true, [5, 1, 1, 2, 1, 1]), &[f::P_RGBA8SI], &[31], &[true], false);
+    assert!(matches!(ops[0].store, Store::Snorm(Some(_))), "{ops:?}");
+    // (an integer stash beside it: the SNORM stash's location the mark's for both)
+    let mut b = blend(true, [(0, 0), (1, 6), (0, 0)]);
+    b[2..10].copy_from_slice(&[1, 5, 6, 1, 2, 7, 3, 0xf]);
+    let (ops, _) = targets(&b, &[f::P_RGBA8SI, f::P_RGBA8UI], &[31, 30], &[true, true], false);
+    assert_eq!(ops.iter().map(|l| l.mark()).collect::<Vec<_>>(), vec![Some(Mark::Slot(0)), Some(Mark::Slot(0))]);
+}
+
+/// a multisampled 8-bit SNORM texture is its SINT twin on the page where the page multisamples
+/// it (2D, one level and layer, no UAV), its own format otherwise
+#[test]
+fn multisampled_snorm_textures_are_twins() {
+    assert_eq!(snorm_ms_page(31, 2, 1, 1, 4, 0x20), Some(f::P_RGBA8SI));
+    assert_eq!(snorm_ms_page(51, 2, 1, 1, 8, 0x20), Some(f::P_RG8SI));
+    assert_eq!(snorm_ms_page(63, 2, 1, 1, 2, 0x20), Some(f::P_R8SI));
+    assert_eq!(snorm_ms_page(31, 2, 1, 1, 1, 0x20), None);
+    assert_eq!(snorm_ms_page(31, 2, 2, 1, 4, 0x20), None);
+    assert_eq!(snorm_ms_page(31, 2, 1, 2, 4, 0x20), None);
+    assert_eq!(snorm_ms_page(31, 2, 1, 1, 4, 0xa0), None);
+    assert_eq!(snorm_ms_page(28, 2, 1, 1, 4, 0x20), None);
 }

@@ -410,6 +410,8 @@ fn show(c: &[u32]) -> String {
             GEN_MIPS => ("mips", 2),
             GEN_MIPS_POINT => ("point mips", 2),
             LOGIC_RESOLVE => ("logic resolve", 15),
+            SNORM_RESOLVE => ("snorm resolve", 15),
+            RESOLVE_SNORM => ("resolve snorm", 3),
             RESOLVE => ("resolve", 6),
             DRAW2 => {
                 let mut q = i + 2 + 6 + 5 + 4 + 1;

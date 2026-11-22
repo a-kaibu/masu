@@ -7,7 +7,7 @@ advapi32:IsTextUnicode	fail	6	82
 advapi32:LockServiceDatabase	crash	0	0
 advapi32:QueryServiceConfig2	fail	2	60
 advapi32:RegCreateKeyEx	ok	0	21
-advapi32:RegEnumKey	ok	0	25
+advapi32:RegEnumKey	fail	16	25
 advapi32:RegEnumValueW	ok	0	47
 advapi32:RegOpenKeyExW	ok	0	5
 advapi32:RegQueryInfoKey	ok	0	66
@@ -266,7 +266,7 @@ ntdll:NtAdjustPrivilegesToken	ok	0	1
 ntdll:NtAllocateVirtualMemory	ok	0	212
 ntdll:NtApphelpCacheControl	ok	0	0
 ntdll:NtCompareTokens	ok	0	8
-ntdll:NtContinue	ok	0	17
+ntdll:NtContinue	fail	1	17
 ntdll:NtCreateFile	fail	1	2
 ntdll:NtCreateKey	fail	4	34
 ntdll:NtCreateProfile	ok	0	57

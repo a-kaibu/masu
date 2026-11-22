@@ -354,9 +354,18 @@ fn errno_for(e: u32) -> u32 {
     match e {
         2 | 3 | 15 | 123 => ENOENT,
         80 | 183 => EEXIST,
-        87 => EINVAL,
+        // (ERROR_NOACCESS: a buffer that is not memory; the UCRT's _dosmaperr has no entry
+        // for it and gives EINVAL; winref iofail)
+        87 | 998 => EINVAL,
         _ => EACCES,
     }
+}
+
+/// A read or write of a file that failed: -1 with its Windows error and errno.
+fn io_failed(e: crate::files::IoFail) -> u32 {
+    crate::k32::last_error(e.code());
+    set_errno(errno_for(e.code()));
+    u32::MAX
 }
 
 fn path_arg(p: u32, wide: bool) -> String {
@@ -441,7 +450,7 @@ fn _read(c: &mut Ctx) -> u32 {
         return text_read(fd, d, buf, n.min(i32::MAX as u32));
     }
     match get(fd).map(|d| d.kind) {
-        Some(Kind::File(f)) => f.read_into(buf, n.min(i32::MAX as u32)),
+        Some(Kind::File(f)) => f.read_into(buf, n.min(i32::MAX as u32)).unwrap_or_else(io_failed),
         Some(Kind::Std(0)) => 0,
         // (every writer closed: the end of the file, as the UCRT reads ERROR_BROKEN_PIPE)
         Some(Kind::Pipe(p)) => match crate::pipe::crt_read(p, buf, n.min(i32::MAX as u32)) {
@@ -570,10 +579,11 @@ fn _write(c: &mut Ctx) -> u32 {
             crate::k32::echo_write(&f.path, buf, n);
             if d.text {
                 // (the count written is the caller's, before LF became CR LF)
-                let v = text_out(&mem::bytes(buf, n));
-                return if f.write_bytes(&v) == kome::num::u32_of(v.len()) { n } else { u32::MAX };
+                let Some(b) = mem::try_bytes(buf, n) else { return io_failed(crate::files::IoFail::NoAccess) };
+                let v = text_out(&b);
+                return f.write_bytes(&v).map_or_else(io_failed, |_| n);
             }
-            f.write_from(buf, n)
+            f.write_from(buf, n).unwrap_or_else(io_failed)
         }
         // (the reader closed: ERROR_NO_DATA, which the UCRT gives as EPIPE)
         Kind::Pipe(p) => match if d.text { crate::pipe::crt_write_vec(p, &text_out(&mem::bytes(buf, n))).map(|_| n) } else { crate::pipe::crt_write(p, buf, n) } {

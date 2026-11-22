@@ -354,7 +354,10 @@ pub struct Shader {
     /// page shader and bindings, per pixel shader for vertex shaders (key 0 otherwise)
     /// by the pixel shader a vertex shader feeds (see shader_for) and the samplers addressing
     /// as WebGPU's don't (dxwgsl::addr)
-    pub wgsl: HashMap<(u32, Vec<dxwgsl::addr::Addr>, Vec<dxwgsl::logic::Logic>), Option<(u32, Vec<(u32, dxwgsl::Binding)>)>>,
+    /// translations by variant: the pixel shader's setup samples (a vertex shader's pixel
+    /// shader, its point sprite bit), the samplers' addressing, the targets' logic, the SRVs on
+    /// SNORM twins (snorm_ms_srvs)
+    pub wgsl: HashMap<(u32, Vec<dxwgsl::addr::Addr>, Vec<dxwgsl::logic::Logic>, Vec<(u32, u32)>), Option<(u32, Vec<(u32, dxwgsl::Binding)>)>>,
     /// CreateGeometryShaderWithStreamOutput's (`code` a geometry or a vertex shader's)
     pub so: Option<expand::SoDesc>,
 }
@@ -1425,9 +1428,15 @@ fn new_backbuffer(d: &mut D11, w: u32, h: u32, fmt: u32, samples: (u32, u32)) ->
 /// can, see render::d3d create_texture2).
 #[allow(clippy::too_many_arguments)]
 fn new_texture(d: &mut D11, dim: u32, w: u32, h: u32, layers: u32, mips: u32, fmt: u32, usage: u32, bind: u32, cube: bool, samples: u32) -> u32 {
-    let page = format::page(fmt, bind).unwrap_or(format::P_BGRA8);
     let max = w.max(h).max(1).bit_width();
     let mips = if mips == 0 { max } else { mips.min(max) };
+    // (a multisampled 8-bit SNORM texture the page multisamples: its SINT twin, 4 samples, for
+    // good: WebGPU neither draws to nor multisamples SNORM, and a multisampled texture is not
+    // copied through a buffer; logic::snorm_ms_page)
+    let page = match logic::snorm_ms_page(fmt, dim, layers, mips, samples, bind) {
+        Some(twin) => twin,
+        None => format::page(fmt, bind).unwrap_or(format::P_BGRA8),
+    };
     let gpu = page_id();
     let layers = layers.max(1);
     // (bit 8: bound for unordered access, a storage texture on the page; bit 9: multisampled;
@@ -3768,8 +3777,20 @@ unsafe fn clear_target(d: &mut D11, v: u32, color: [u32; 4]) {
     // (an 8-bit SNORM view, which the page clears no pass of: its texels, as the runtime
     // converts the color, clear.rs)
     if matches!(d.objs.get(&v).map(|o| &o.data), Some(Data::View(View { fmt, .. })) if logic::snorm_twin(*fmt).is_some()) {
+        let c = color.map(f32::from_bits);
+        // (a multisampled one is its SINT twin on the page, logic::snorm_ms_page: a clear pass
+        // of the bytes as integers; the page writes no texels of it)
+        if let (Some((tex, _, _, true, _, _, page)), Some(Data::View(View { fmt, .. }))) = (target_texture(d, v), d.objs.get(&v).map(|o| &o.data))
+            && logic::snorm_twin(*fmt).is_some_and(|t| t.0 == page)
+        {
+            let bytes = clear::texel(*fmt, clear::Values::Float(c)).unwrap_or_default();
+            let ch: [u32; 4] = std::array::from_fn(|i| f32::from(bytes.get(i).copied().unwrap_or(0).cast_signed()).to_bits());
+            gpu::record(|q| q.cmd(&[gpu::CLEAR_VIEW, tex, 0, 0, 1, ch[0], ch[1], ch[2], ch[3], 0, 0]));
+            d.targets = None;
+            return;
+        }
         // SAFETY: clear_view_texels' own contract: a view of this device
-        unsafe { clear_view_texels(d, v, clear::Values::Float(color.map(f32::from_bits)), &[]) };
+        unsafe { clear_view_texels(d, v, clear::Values::Float(c), &[]) };
         return;
     }
     if let Some((tex, level, layer)) = view_target(d, v) {
@@ -3867,6 +3888,18 @@ unsafe fn resolve(d: &mut D11, di: u32, dsub: u32, si: u32, ssub: u32, fmt: u32)
         && format::copy_compatible(a.fmt, b.fmt)
         && format::copy_compatible(fmt, b.fmt);
     if !ok {
+        return;
+    }
+    // (a multisampled SNORM texture, its SINT twin on the page (logic::snorm_ms_page): resolved
+    // into a SINT texture as WARP resolves, its bits copied into the level)
+    if let Some((page, _)) = logic::snorm_twin(fmt).filter(|t| t.0 == b.page) {
+        let (w, h, ag, bg) = (b.w, b.h, a.gpu, b.gpu);
+        let twin = logic::resolve_twin(d, w, h, page);
+        gpu::record(|q| {
+            q.cmd(&[gpu::RESOLVE_SNORM, twin, bg]);
+            q.cmd(&[gpu::COPY, twin, 0, 0, 0, w, h, ag, dl | dly << 16, 0, 0, w, h, 2]);
+        });
+        d.targets = None;
         return;
     }
     let cmd = [gpu::RESOLVE, a.gpu, dl, dly, b.gpu, ssub];
@@ -4079,7 +4112,25 @@ unsafe fn source_bytes(d: &mut D11, id: u32, sub: u32, b: [u32; 6]) -> Option<u3
 /// those with a point mip filter: the shader rounds explicit levels)
 /// `setup`: a pixel shader drawn from a setup store (expand.rs), over targets of that many
 /// samples a pixel.
-fn shader_for(d: &mut D11, sh: u32, ps: u32, sprite: Option<f32>, samplers: &[u32], logic: &[dxwgsl::logic::Logic], setup: Option<u32>) -> Option<(u32, Vec<(u32, dxwgsl::Binding)>)> {
+/// The SRVs of stage `stage` (0 VS, 1 PS, ...) that are views of multisampled 8-bit SNORM
+/// textures on their SINT twins (logic::snorm_ms_page): (slot, the format's channels), which
+/// the shader loads as i32 bytes (dxwgsl::translate_views).
+fn snorm_ms_srvs(d: &D11, st: &State, stage: usize) -> Vec<(u32, u32)> {
+    let Some(srvs) = st.srvs.get(stage) else { return Vec::new() };
+    srvs.iter()
+        .enumerate()
+        .filter(|&(_, &v)| v != 0)
+        .filter_map(|(n, &v)| {
+            let Some(Data::View(view)) = d.objs.get(&v).map(|o| &o.data) else { return None };
+            let Some(Data::Texture(t)) = d.objs.get(&view.res).map(|o| &o.data) else { return None };
+            let (page, bits) = logic::snorm_twin(view.fmt)?;
+            (t.samples.0 > 1 && t.page == page).then(|| (lo32(n), lo32(bits.iter().filter(|&&b| b != 0).count())))
+        })
+        .collect()
+}
+
+#[allow(clippy::too_many_arguments)]
+fn shader_for(d: &mut D11, sh: u32, ps: u32, sprite: Option<f32>, samplers: &[u32], logic: &[dxwgsl::logic::Logic], setup: Option<u32>, views: &[(u32, u32)]) -> Option<(u32, Vec<(u32, dxwgsl::Binding)>)> {
     let mut addr = Vec::new();
     if matches!(d.objs.get(&sh).map(|o| &o.data), Some(Data::Shader(s)) if s.pixel) {
         for (n, &id) in samplers.iter().enumerate() {
@@ -4096,7 +4147,7 @@ fn shader_for(d: &mut D11, sh: u32, ps: u32, sprite: Option<f32>, samplers: &[u3
     }
     // (point sprite variants of a vertex shader: the pixel shader's id with the top bit set)
     let Some(Data::Shader(s)) = d.objs.get(&sh).map(|o| &o.data) else { return None };
-    let key = (if s.pixel { setup.unwrap_or(0) } else if sprite.is_some() { ps | 0x8000_0000 } else { ps }, addr, if s.pixel { logic.to_vec() } else { Vec::new() });
+    let key = (if s.pixel { setup.unwrap_or(0) } else if sprite.is_some() { ps | 0x8000_0000 } else { ps }, addr, if s.pixel { logic.to_vec() } else { Vec::new() }, views.to_vec());
     if let Some(r) = s.wgsl.get(&key) {
         return r.clone();
     }
@@ -4107,11 +4158,12 @@ fn shader_for(d: &mut D11, sh: u32, ps: u32, sprite: Option<f32>, samplers: &[u3
     };
     let trace = d.trace;
     let Some(Data::Shader(s)) = d.objs.get_mut(&sh).map(|o| &mut o.data) else { return None };
-    let w = match sprite {
-        Some(max) if !s.pixel => dxwgsl::translate_point_sprite(&s.code, ps_code.as_deref(), max),
-        _ if s.pixel && let Some(samples) = setup => dxwgsl::translate_setup(&s.code, &key.1, &key.2, samples),
-        _ if s.pixel && !key.2.is_empty() => dxwgsl::translate_logic(&s.code, &key.1, &key.2),
-        _ => dxwgsl::translate_addr(&s.code, s.pixel, if s.pixel { None } else { ps_code.as_deref() }, &key.1),
+    // (a vertex shader: the pixel shader it feeds, a point sprite's size; a pixel shader: its
+    // targets' logic and setup samples)
+    let w = if s.pixel {
+        dxwgsl::translate_views(&s.code, true, None, None, &key.1, &key.2, setup, &key.3)
+    } else {
+        dxwgsl::translate_views(&s.code, false, ps_code.as_deref(), sprite, &key.1, &[], None, &key.3)
     };
     let r = match w {
         Ok(w) => {
@@ -4344,6 +4396,107 @@ impl Fill {
     }
 }
 
+/// The primitives the page's render pipeline assembles (CREATE_PIPELINE2's and DRAW2's code)
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum PageTopo {
+    Points,
+    Lines,
+    LineStrip,
+    Triangles,
+    TriangleStrip,
+}
+
+impl PageTopo {
+    pub(crate) fn code(self) -> u32 {
+        match self {
+            PageTopo::Points => 0,
+            PageTopo::Lines => 1,
+            PageTopo::LineStrip => 2,
+            PageTopo::Triangles => 3,
+            PageTopo::TriangleStrip => 4,
+        }
+    }
+
+    pub(crate) fn of_code(c: u32) -> Option<PageTopo> {
+        [PageTopo::Points, PageTopo::Lines, PageTopo::LineStrip, PageTopo::Triangles, PageTopo::TriangleStrip].into_iter().find(|t| t.code() == c)
+    }
+
+    /// D3D11_PRIMITIVE_TOPOLOGY's list and strip topologies (adjacency and patch lists are
+    /// none of them: expand.rs takes those)
+    fn of_d3d(t: u32) -> Option<PageTopo> {
+        t.checked_sub(1).and_then(PageTopo::of_code)
+    }
+
+    pub(crate) fn strip(self) -> bool {
+        match self {
+            PageTopo::LineStrip | PageTopo::TriangleStrip => true,
+            PageTopo::Points | PageTopo::Lines | PageTopo::Triangles => false,
+        }
+    }
+
+    fn triangles(self) -> bool {
+        match self {
+            PageTopo::Triangles | PageTopo::TriangleStrip => true,
+            PageTopo::Points | PageTopo::Lines | PageTopo::LineStrip => false,
+        }
+    }
+}
+
+/// The indices a draw is drawn with
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum Indices {
+    /// the draw's own: the bound index buffer's, or the vertex numbers of a draw without one
+    Draw,
+    /// a list made for it, from 0 (a wireframe's edges, an adjacency topology's corners)
+    Made(Vec<u32>),
+}
+
+/// How a draw goes to the page: what its indices are and what they make, decided once (review
+/// b5dacf4 3.1: an adjacency list's own indices were taken for a wireframe's edges, as lines,
+/// where a logic op draws each primitive by itself)
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct DrawPlan {
+    pub(crate) topo: PageTopo,
+    pub(crate) fill: Fill,
+    pub(crate) indices: Indices,
+}
+
+/// DrawPlan::of's answer
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum Planned {
+    Ready(DrawPlan),
+    /// wireframe triangles of the draw's own indices: their edges, as lines (`strip`: of a
+    /// triangle strip), read from the index buffer
+    EdgesOfTheDraw { strip: bool },
+}
+
+impl DrawPlan {
+    /// The plan of a draw assembling `assembled` (None: no list or strip topology), with an
+    /// adjacency topology's corners (`adjacent`: their list, and whether they are lines), at
+    /// `fill`: a wireframe of triangles is their edges as lines (FillMode WIREFRAME, #64; a
+    /// geometry shader's store's too, its vertices a list from 0: review e18bf44), point
+    /// sprites always solid. None: nothing to draw (no topology, or an adjacency topology with
+    /// no primitive).
+    pub(crate) fn of(assembled: Option<PageTopo>, adjacent: Option<(Vec<u32>, bool)>, fill: Fill, sprite: bool, store: bool, count: u32) -> Option<Planned> {
+        let (topo, made) = match adjacent {
+            // (no primitive whole: nothing reaches the rasterizer)
+            Some((list, _)) if list.is_empty() => return None,
+            Some((list, true)) => (PageTopo::Lines, Some(list)),
+            Some((list, false)) => (PageTopo::Triangles, Some(list)),
+            None => (assembled?, None),
+        };
+        let wired = fill == Fill::Wireframe && topo.triangles() && !sprite;
+        let lines = |idx: &[u32], strip: bool| DrawPlan { topo: PageTopo::Lines, fill: Fill::Wireframe, indices: Indices::Made(triangle_edges(idx, strip, None)) };
+        Some(match (made, wired) {
+            (Some(list), true) => Planned::Ready(lines(&list, false)),
+            (Some(list), false) => Planned::Ready(DrawPlan { topo, fill: Fill::Solid, indices: Indices::Made(list) }),
+            (None, true) if store => Planned::Ready(lines(&(0..count).collect::<Vec<u32>>(), topo == PageTopo::TriangleStrip)),
+            (None, true) => Planned::EdgesOfTheDraw { strip: topo == PageTopo::TriangleStrip },
+            (None, false) => Planned::Ready(DrawPlan { topo, fill: Fill::Solid, indices: Indices::Draw }),
+        })
+    }
+}
+
 /// A render pipeline as the page makes it: CREATE_PIPELINE2's description, and the fill mode
 /// it was made for (a solid draw's pipeline never stands for a wireframe one: review e18bf44).
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
@@ -4428,7 +4581,10 @@ unsafe fn draw_with(d: &mut D11, st: &State, indexed: bool, count: u32, instance
     let (count, instances, start, first_instance) = if sprite.is_some() { (6, count, 0, start) } else { (count, instances, start, first_instance) };
     let shaders = match store {
         Some(sd) => Some(sd.vs.clone()),
-        None => shader_for(d, st.vs, st.ps, sprite, &[], &[], None),
+        None => {
+            let views = snorm_ms_srvs(d, st, 0);
+            shader_for(d, st.vs, st.ps, sprite, &[], &[], None, &views)
+        }
     };
     let Some((vs, vb)) = shaders else { return };
     if trace2() {
@@ -4483,7 +4639,8 @@ unsafe fn draw_with(d: &mut D11, st: &State, indexed: bool, count: u32, instance
     // (a setup store's draw: the pixel shader evaluates its inputs from the store's planes,
     // at the samples of its targets)
     let setup = store.and_then(|sd| sd.setup).map(|_| if multisampled.iter().any(|&m| m) || target_texture(d, st.dsv).is_some_and(|t| t.3 && crate::render::d3d::page_multisamples(t.6)) { 4 } else { 1 });
-    let ps = if st.ps != 0 { shader_for(d, st.ps, 0, None, &st.samplers[1], &logic_ops, setup) } else { None };
+    let ps_views = snorm_ms_srvs(d, st, 1);
+    let ps = if st.ps != 0 { shader_for(d, st.ps, 0, None, &st.samplers[1], &logic_ops, setup, &ps_views) } else { None };
     // SNORM targets: drawn as their SINT twins, the target's bits copied in before and back after
     let twins: Vec<logic::Twin> = logic_ops
         .iter()
@@ -4558,52 +4715,62 @@ unsafe fn draw_with(d: &mut D11, st: &State, indexed: bool, count: u32, instance
     }
     let ds = state_desc(d, st.depth).cloned();
     let rs = state_desc(d, st.raster).cloned();
-    let topo = match st.topology {
-        _ if sprite.is_some() => 3,
-        _ if store.is_some() => store.map_or(3, |sd| sd.topo),
-        1 => 0,
-        2 => 1,
-        3 => 2,
-        4 => 3,
-        5 => 4,
-        _ => 3,
-    };
     let r = rs.unwrap_or_else(|| vec![3, 3, 0, 0, 0, 0, 1, 0, 0, 0]);
     // an adjacency topology without a geometry shader: the primitives' own corners, a list of
     // its own indices (winref d3d11gs "triangle list adjacency of 6": the triangle of vertices
     // 0 2 4, culled)
     let adjacent = if sprite.is_none() && store.is_none() { expand::adjacency_list(d, st, indexed, count, start) } else { None };
-    let topo = match &adjacent {
-        Some((_, true)) => 1,
-        Some((_, false)) => 3,
-        None => topo,
+    let assembled = match (sprite, store) {
+        (Some(_), _) => Some(PageTopo::Triangles),
+        (None, Some(sd)) => PageTopo::of_code(sd.topo),
+        (None, None) => PageTopo::of_d3d(st.topology),
     };
-    // FillMode WIREFRAME (2) of triangles: their edges as a line list of its own indices (#64),
-    // a geometry shader's output's too (its store's vertices: a list, review e18bf44)
     let fill = Fill::of(r.first().copied().unwrap_or(3));
-    let wired = fill == Fill::Wireframe && matches!(topo, 3 | 4) && sprite.is_none();
-    // (the draw's own indices: the edges, or the adjacency topology's list)
-    let wire = match adjacent {
-        Some((list, _)) if wired => Some(triangle_edges(&list, false, None)),
-        Some((list, _)) => Some(list),
-        None if wired && store.is_some() => Some(triangle_edges(&(0..count).collect::<Vec<u32>>(), topo == 4, None)),
-        None if wired => {
+    let plan = match DrawPlan::of(assembled, adjacent, fill, sprite.is_some(), store.is_some(), count) {
+        Some(Planned::Ready(p)) => p,
+        Some(Planned::EdgesOfTheDraw { strip }) => {
             if indexed {
                 expand::pull(d, st.ib.0);
             }
             // SAFETY: draw_with's own contract (the index buffer's guest memory is mapped)
-            unsafe { wire_edges(d, st, indexed, count, start, topo == 4) }
+            match unsafe { wire_edges(d, st, indexed, count, start, strip) } {
+                Some(e) => DrawPlan { topo: PageTopo::Lines, fill: Fill::Wireframe, indices: Indices::Made(e) },
+                // (wireframe triangles whose edges could not be read (an index buffer too
+                // short): drawn as nothing, never as filled triangles)
+                None => return,
+            }
         }
-        None => None,
+        None => return,
     };
-    // (wireframe triangles whose edges could not be read (an index buffer too short): drawn
-    // as nothing, never as filled triangles)
-    if wired && wire.is_none() {
-        return;
-    }
-    let fill = if wired { Fill::Wireframe } else { Fill::Solid };
-    let topo = if wired { 1 } else { topo };
-    let strip = if wire.is_none() && indexed && matches!(topo, 2 | 4) { if st.ib.1 == 42 { 2 } else { 1 } } else { 0 };
+    let fill = plan.fill;
+    let topo = plan.topo.code();
+    let wire = match &plan.indices {
+        Indices::Made(v) => Some(v),
+        Indices::Draw => None,
+    };
+    let strip = if wire.is_none() && indexed && plan.topo.strip() { if st.ib.1 == 42 { 2 } else { 1 } } else { 0 };
+    // (the copies of the targets with logic ops that read them: the pixel shader's LogicDst)
+    let copies: Vec<logic::Copy> = logic_ops.iter().filter(|l| l.reads_copy()).filter_map(|l| logic::copy_of(d, st.rtvs.get(us(l.target)).copied().unwrap_or(0), l, &twins)).collect();
+    // (with them, each primitive is a draw of its own: a draw with none draws nothing)
+    let prims = if copies.is_empty() {
+        Vec::new()
+    } else {
+        let cuts = if strip != 0 {
+            // SAFETY: draw_with's own contract (the bound index buffer's guest memory is mapped)
+            unsafe { logic::cuts(d, st, start, count) }
+        } else {
+            Vec::new()
+        };
+        let drawn = match &plan.indices {
+            Indices::Made(v) => lo32(v.len()),
+            Indices::Draw => count,
+        };
+        let prims = logic::primitives(plan.topo, drawn, &cuts);
+        if prims.is_empty() {
+            return;
+        }
+        prims
+    };
     let mut key = vec![vs, ps.as_ref().map_or(0, |p| p.0), topo, strip];
     // rasterizer: cull, front ccw, depth bias, slope, clamp
     // (front ccw in bit 0, DepthClipEnable off in bit 1)
@@ -4634,10 +4801,10 @@ unsafe fn draw_with(d: &mut D11, st: &State, indexed: bool, count: u32, instance
         v
     });
     // (a stash's pass (logic.rs): the stash written whole where the target is, then the mark)
-    let stashed: Vec<&dxwgsl::logic::Logic> = logic_ops.iter().filter(|l| matches!(l.store, dxwgsl::logic::Store::Stash { .. })).collect();
+    let stashed: Vec<&dxwgsl::logic::Logic> = logic_ops.iter().filter(|l| l.stashed()).collect();
     let plain = |f: u32| [f, 0, blend_factor(2, false).code(), blend_factor(1, false).code(), 1, blend_factor(2, true).code(), blend_factor(1, true).code(), 1, 0xf];
     // (a mark of its own after the targets: logic::stash_of)
-    let mark_slot = stashed.iter().any(|l| matches!(l.store, dxwgsl::logic::Store::Stash { mark: dxwgsl::logic::Mark::Slot(at), .. } if us(at) >= formats.len()));
+    let mark_slot = stashed.iter().any(|l| matches!(l.mark(), Some(dxwgsl::logic::Mark::Slot(at)) if us(at) >= formats.len()));
     key.push(lo32(formats.len()).saturating_add(u32::from(mark_slot)));
     let mut masks = Vec::new();
     for (i, f) in formats.iter().enumerate() {
@@ -4647,10 +4814,22 @@ unsafe fn draw_with(d: &mut D11, st: &State, indexed: bool, count: u32, instance
         let mask = if logic_kept.contains(&lo32(i)) { 0 } else { t[7] & 0xf };
         masks.push(mask);
         if let Some(l) = stashed.iter().find(|l| l.target == lo32(i)) {
-            // (a stash at the mark's location: the mark there)
-            key.extend_from_slice(&plain(if l.buffered() { format::P_R8UI } else { logic::uint_page(l.stash_bits()).unwrap_or(*f) }));
-        } else if twins.iter().any(|t| t.target == lo32(i)) {
-            // (an SNORM target's twin: the shader blends, the page writes its bytes)
+            // (a stash at the mark's location: the mark there; an SNORM stash elsewhere: its
+            // target, written by the resolve pass alone)
+            match l.store {
+                dxwgsl::logic::Store::SnormStash { mark, .. } if mark == dxwgsl::logic::Mark::Slot(lo32(i)) => key.extend_from_slice(&plain(format::P_R8UI)),
+                dxwgsl::logic::Store::SnormStash { .. } => {
+                    let mut p = plain(*f);
+                    p[8] = 0;
+                    key.extend_from_slice(&p);
+                }
+                dxwgsl::logic::Store::Stash { .. } | dxwgsl::logic::Store::Plain | dxwgsl::logic::Store::Direct(_) | dxwgsl::logic::Store::Snorm(_) => {
+                    key.extend_from_slice(&plain(if l.buffered() { format::P_R8UI } else { logic::uint_page(l.stash_bits()).unwrap_or(*f) }));
+                }
+            }
+        } else if logic_ops.iter().any(|l| l.target == lo32(i) && matches!(l.store, dxwgsl::logic::Store::Snorm(_))) {
+            // (an SNORM target's twin, or the multisampled target that is one: the shader
+            // blends, the page writes its bytes)
             let mut p = plain(*f);
             p[8] = mask;
             key.extend_from_slice(&p);
@@ -4711,11 +4890,10 @@ unsafe fn draw_with(d: &mut D11, st: &State, indexed: bool, count: u32, instance
     if sprite.is_some() {
         over.push(sprite_entry(d, st));
     }
-    // (the copies of the targets with logic ops that read them: the pixel shader's LogicDst)
-    let copies: Vec<logic::Copy> = logic_ops.iter().filter(|l| l.reads_copy()).filter_map(|l| logic::copy_of(d, st.rtvs.get(us(l.target)).copied().unwrap_or(0), l, &twins)).collect();
     // (an SNORM target's blend constant: the blend state's BlendFactor)
     let constant = logic_ops.iter().any(|l| matches!(l.store, dxwgsl::logic::Store::Snorm(Some(b)) if b.reads_constant()));
-    if constant {
+    // (an SNORM stash's: its resolve pass reads it)
+    if constant || logic_ops.iter().any(|l| matches!(l.store, dxwgsl::logic::Store::SnormStash { .. })) {
         ps_constant(d, st);
     }
     // (a stash's copy is the resolve's, not the shader's)
@@ -4726,8 +4904,9 @@ unsafe fn draw_with(d: &mut D11, st: &State, indexed: bool, count: u32, instance
     if let Some(e) = store.and_then(|sd| sd.setup) {
         ps_over.push(e);
     }
-    let stash = logic::stash_of(d, &st.rtvs, &colors, [dt, dl, dly], &stashed, &masks, &copies);
-    ps_over.extend(stash.as_ref().and_then(|s| s.src));
+    let constant_buf = d.blend_constant.0;
+    let stash = logic::stash_of(d, &st.rtvs, &colors, [dt, dl, dly], &stashed, &masks, &copies, constant_buf);
+    ps_over.extend(stash.as_ref().map_or_default(|s| s.src.clone()));
     for (stage, binds) in [(0usize, &vb), (1usize, &ps.as_ref().map_or_default(|p| p.1.clone()))] {
         let entries = bind_entries(d, st, stage, binds, if stage == 0 { &over } else { &ps_over }, &mut cbs_read);
         w.push(lo32(entries.len()));
@@ -4807,15 +4986,9 @@ unsafe fn draw_with(d: &mut D11, st: &State, indexed: bool, count: u32, instance
             }
         });
     } else {
-        let topo = if wire.is_some() { 1 } else { topo };
-        let cuts = if strip != 0 {
-            // SAFETY: draw_with's own contract (the bound index buffer's guest memory is mapped)
-            unsafe { logic::cuts(d, st, start, count) }
-        } else {
-            Vec::new()
-        };
-        let flip = pipeline_of(d, PipelineKey { fill, desc: flipped });
-        logic::split(&w, &copies, stash.as_ref(), &twins, topo, &cuts, flip);
+        // (the flipped pipeline only for a strip's odd triangles)
+        let flip = if prims.iter().any(|p| p.odd) { pipeline_of(d, PipelineKey { fill, desc: flipped }) } else { 0 };
+        logic::split(&w, &copies, stash.as_ref(), &twins, &prims, flip);
         if stash.is_some() {
             // (the page's targets are the stash's now)
             d.targets = None;
@@ -5096,16 +5269,16 @@ fn ps_constant(d: &mut D11, st: &State) {
 }
 
 /// A compute shader's page shader and bindings for UAVs of these page formats (slot, format).
-fn compute_shader_for(d: &mut D11, cs: u32, fmts: &[(u32, u32)]) -> Option<(u32, Vec<(u32, dxwgsl::Binding)>)> {
+fn compute_shader_for(d: &mut D11, cs: u32, fmts: &[(u32, u32)], views: &[(u32, u32)]) -> Option<(u32, Vec<(u32, dxwgsl::Binding)>)> {
     let trace = d.trace;
     let Some(Data::Shader(s)) = d.objs.get_mut(&cs).map(|o| &mut o.data) else { return None };
     let key = fmts.iter().fold(0x811c_9dc5u32, |h, &(n, f)| (h ^ (n << 8 | f)).wrapping_mul(0x0100_0193));
-    let key = (key, Vec::new(), Vec::new());
+    let key = (key, Vec::new(), Vec::new(), views.to_vec());
     if let Some(r) = s.wgsl.get(&key) {
         return r.clone();
     }
     let names: Vec<(u32, &str)> = fmts.iter().map(|&(n, f)| (n, crate::render::d3d::TEX_FORMATS.get(us(f)).map_or("rgba8unorm", |t| t.name()))).collect();
-    let r = match dxwgsl::translate_compute(&s.code, &names) {
+    let r = match dxwgsl::translate_compute_views(&s.code, &names, views) {
         Ok(w) => {
             let id = page_id();
             gpu::record(|q| {
@@ -5166,7 +5339,8 @@ unsafe fn dispatch(d: &mut D11, st: &State, x: u32, y: u32, z: u32) {
             fmts.push((n, page));
         }
     }
-    let Some((sh, binds)) = compute_shader_for(d, cs, &fmts) else { return };
+    let views = snorm_ms_srvs(d, st, 5);
+    let Some((sh, binds)) = compute_shader_for(d, cs, &fmts, &views) else { return };
     let mut w = vec![gpu::DISPATCH, sh, x, y, z, lo32(binds.len())];
     for (bi, kind) in &binds {
         let e = match kind {

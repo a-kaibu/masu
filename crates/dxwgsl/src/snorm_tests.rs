@@ -31,12 +31,14 @@ fn factors_are_d3d11s() {
     let values = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 14, 15, 16, 17, 18, 19];
     for (f, v) in FACTORS.iter().zip(values) {
         assert_eq!(Factor::of(v), Some(*f));
+        assert_eq!(f.word(), v);
     }
     for v in [0, 12, 13, 20, u32::MAX] {
         assert_eq!(Factor::of(v), None);
     }
     for (i, o) in OPS.iter().enumerate() {
         assert_eq!(BlendOp::of(u32::try_from(i).unwrap() + 1), Some(*o));
+        assert_eq!(o.word(), u32::try_from(i).unwrap() + 1);
     }
     assert_eq!(BlendOp::of(0), None);
     assert_eq!(BlendOp::of(6), None);
@@ -109,6 +111,22 @@ proptest! {
         prop_assert_eq!(blend(&copy, s, s1, d0, k), s.map(store));
     }
 
+    /// every SNORM stash's resolve pass parses and validates
+    #[test]
+    fn resolve_wgsl_validates(sc in 0usize..17, dc in 0usize..17, oc in 0usize..5, sa in 0usize..17, da in 0usize..17, oa in 0usize..5, channel in 0u32..4, bit in 0u32..32) {
+        let b = Blend { color: Equation { src: FACTORS[sc], dst: FACTORS[dc], op: OPS[oc] }, alpha: Equation { src: FACTORS[sa], dst: FACTORS[da], op: OPS[oa] } };
+        let src = resolve_wgsl(&b, channel, bit);
+        let m = naga::front::wgsl::parse_str(&src).unwrap_or_else(|e| panic!("{b:?}: {}\n{src}", e.emit_to_string(&src)));
+        naga::valid::Validator::new(naga::valid::ValidationFlags::all(), naga::valid::Capabilities::all()).validate(&m).unwrap_or_else(|e| panic!("{b:?}: {e:?}\n{src}"));
+    }
+
+    /// a resolve of samples all one byte is that byte
+    #[test]
+    fn resolve_of_equal_samples(b in any::<i8>(), n in 1usize..9) {
+        let b = b.max(-127);
+        prop_assert_eq!(resolve(&vec![b; n]), b);
+    }
+
     /// every blend's WGSL parses and validates
     #[test]
     fn blend_wgsl_validates(sc in 0usize..17, dc in 0usize..17, oc in 0usize..5, sa in 0usize..17, da in 0usize..17, oa in 0usize..5) {
@@ -118,6 +136,14 @@ proptest! {
         let m = naga::front::wgsl::parse_str(&src).unwrap_or_else(|e| panic!("{b:?}: {}\n{src}", e.emit_to_string(&src)));
         naga::valid::Validator::new(naga::valid::ValidationFlags::all(), naga::valid::Capabilities::all()).validate(&m).unwrap_or_else(|e| panic!("{b:?}: {e:?}\n{src}"));
     }
+}
+
+/// the multisampled resolve's pass parses and validates
+#[test]
+fn ms_resolve_wgsl_validates() {
+    let src = ms_resolve_wgsl();
+    let m = naga::front::wgsl::parse_str(&src).unwrap_or_else(|e| panic!("{}\n{src}", e.emit_to_string(&src)));
+    naga::valid::Validator::new(naga::valid::ValidationFlags::all(), naga::valid::Capabilities::all()).validate(&m).unwrap_or_else(|e| panic!("{e:?}\n{src}"));
 }
 
 /// One row of winref d3d11snorm's golden output.
@@ -167,6 +193,20 @@ fn warp_answers() {
                             assert_eq!(store(v), got, "{name}: {f} {v:e} ({:08x})", v.to_bits());
                             checked += 1;
                         }
+                    }
+                }
+                // the resolve of 4 samples a pixel each its own bytes (ps_samples): pixel p's
+                // sample k of channel c is ((p * 4 + k) * K[c] + seed) % 255 - 127
+                ["seed", seed, words @ ..] => {
+                    let seed: u32 = seed.trim_end_matches(':').parse().unwrap();
+                    let ks = [37u32, 53, 71, 97];
+                    for (p, w) in (0u32..).zip(words) {
+                        let want: [i8; 4] = std::array::from_fn(|c| {
+                            let samples: Vec<i8> = (0..4u32).map(|k| i8::try_from(i32::try_from(((p * 4 + k) * ks[c] + seed) % 255).unwrap() - 127).unwrap()).collect();
+                            resolve(&samples)
+                        });
+                        assert_eq!(word(want), hex(w), "{name}: seed {seed} pixel {p}");
+                        checked += 1;
                     }
                 }
                 ["blend", "set", _, "src", r @ ..] => {

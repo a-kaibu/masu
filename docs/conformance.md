@@ -116,7 +116,11 @@ ReactOS as much as Windows, so sake is held only to what Windows itself passes.
 - `tests/winetest/run.py --suite rostests --native` runs them on Windows (CI job
   `rostests-windows`, windows-2025) and compares with `tests/rostests/windows-<arch>.tsv`:
   Windows' answers must stay the recorded ones. Each test runs in its own hard-linked copy of
-  the bin directory, from there, as ReactOS runs them.
+  the bin directory, from there, as ReactOS runs them. CI passes `--repeat 3`: a test is
+  recorded by its worst run (one Windows passes only sometimes, such as i386
+  advapi32:RegEnumKey or x64 user32:EmptyClipboard, is recorded failing and so not run on
+  sake) and judged by its best (one bad run of it on the runner is no regression); the runs
+  that differ are printed as `unstable`.
 - `tests/winetest/run.py --suite rostests` runs on sake only the tests `windows-<arch>.tsv`
   records as ok; a test the programs list that the file lacks fails the run (not measured on
   Windows). The results on sake are in `tests/rostests/expected-<arch>.tsv`, compared as
