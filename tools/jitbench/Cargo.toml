@@ -1,0 +1,29 @@
+[package]
+name = "jitbench"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "koji's JIT measured in V8: the translator itself built to wasm (as kura is), its modules loaded by node as vnjit.js loads them, fixed x86 programs run to their end (see README.md)"
+
+# (its own workspace: a wasm32 build of koji alone)
+[workspace]
+
+[lib]
+crate-type = ["cdylib"]
+path = "src/lib.rs"
+
+[dependencies]
+koji = { path = "../../crates/koji" }
+iced-x86 = { version = "=1.21.0", default-features = false, features = ["no_std", "decoder", "instr_info", "encoder", "code_asm", "block_encoder"] }
+
+[profile.release]
+opt-level = 3
+debug = false
+panic = "abort"
+lto = true
+codegen-units = 1
+
+[lints.rust]
+# (Rust 1.99: `&x as *const T` / `&mut x as *mut T` makes a reference first, with its aliasing
+# rules: write `&raw const x` / `&raw mut x`, or Box::as_ptr)
+raw_borrows_via_references = "warn"

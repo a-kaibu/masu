@@ -940,6 +940,49 @@ fn ssecvt_end(i: usize) -> Result<Vec<Instruction>, IcedError> {
 
 fn fixed() -> Result<Vec<(&'static str, Vec<Instruction>)>, IcedError> {
     let mut v = Vec::new();
+    // A fault between two flag writers (the second makes the first's flags dead to the code
+    // after it, not to the fault: the exception handler reads EFLAGS from CONTEXT). The fault
+    // exit's state must be the interpreter's, flags too ("exit" programs: see run_case).
+    let mut a = CodeAssembler::new(32)?;
+    a.xor(eax, eax)?;
+    a.mov(ecx, dword_ptr(0))?;
+    a.xor(edx, edx)?;
+    a.jmp(END as u64)?;
+    v.push(("exit fault between flag writers", a.take_instructions()));
+    // the same past a block boundary: the flags of the first block's ADD are dead in the loop
+    // that follows (it writes them before reading), and the loop faults on its 2nd iteration with
+    // the flags of the 1st iteration's SUB, dead at the loop's head (its ADD writes them)
+    let mut a = CodeAssembler::new(32)?;
+    let mut top = a.create_label();
+    a.mov(esi, DATA + DATA_LEN - 8)?;
+    a.add(eax, 7)?;
+    a.set_label(&mut top)?;
+    a.mov(ecx, dword_ptr(esi))?;
+    a.add(esi, 0x7fff_f000)?;
+    a.sub(edx, 1)?;
+    a.jmp(top)?;
+    v.push(("exit fault in a loop", a.take_instructions()));
+    // Rotates whose flags are live (an exception, PUSHFD): their CF and OF go into the exact
+    // EFLAGS with the other flags kept (koji Gen::rotate_flags), by immediates and by CL (0 mod
+    // 32 keeps them all), 8, 16 and 32 bits
+    let mut a = CodeAssembler::new(32)?;
+    for (k, imm) in [(0u32, 1u32), (1, 7), (2, 31), (3, 0)].into_iter() {
+        a.cmp(eax, ecx)?;
+        match k {
+            0 => a.rol(edx, imm)?,
+            1 => a.ror(dx, imm)?,
+            2 => a.rol(dl, imm)?,
+            _ => a.ror(edx, cl)?,
+        }
+        a.pushfd()?;
+        a.pop(dword_ptr(ebx + 0x400 + 4 * k as i32))?;
+        a.add(ecx, 0x1357_9bdf)?;
+        a.rol(esi, cl)?;
+        a.pushfd()?;
+        a.pop(dword_ptr(ebx + 0x440 + 4 * k as i32))?;
+    }
+    a.jmp(END as u64)?;
+    v.push(("rotate flags", a.take_instructions()));
     // x87 pushes in a loop (the stack grows across the back edge), popped after it
     let mut a = CodeAssembler::new(32)?;
     let mut top = a.create_label();
@@ -1425,6 +1468,16 @@ struct Jit {
     known: std::collections::HashSet<u32>,
 }
 
+/// Translations loaded in this process (main's check that the JIT ran at all)
+static LOADED: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+/// What [`Jit::translate`] came to
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Made {
+    Loaded,
+    Left,
+}
+
 fn hash_insert(base: usize, a: u32, v: u32) -> Result<(), String> {
     let mut h = koji::jit::dispatch::slot(a, HASH_N - 1);
     for probe in 0.. {
@@ -1457,6 +1510,10 @@ impl Jit {
         linker.define(&store, "env", "memory", memory.clone()).unwrap();
         let table = Table::new(&mut store, TableType::new(RefType::FUNCREF, 0, None), Ref::Func(None)).unwrap();
         linker.define(&store, "env", "table", table).unwrap();
+        // (the page marks every module imports, jit::PAGES: the checks are off here, jit::PAGE_CHECK,
+        // so no module reads them)
+        let pages = Global::new(&mut store, GlobalType::new(ValType::I32, Mutability::Const), Val::I32(0)).unwrap();
+        linker.define(&store, "env", "pages", pages).unwrap();
         linker
             .func_wrap("env", "step", move |cpu: i32| -> i32 {
                 let m = base as *mut u8;
@@ -1549,8 +1606,11 @@ impl Jit {
         self.known.clear();
     }
 
-    /// Translates at `eip` (a function in function mode, mostly), into the hash table.
-    fn translate(&mut self, base: usize, eip: u32) -> Result<(), String> {
+    /// Translates at `eip` (a function in function mode, mostly), into the hash table: Made::Left
+    /// where it stays the interpreter's (koji refused it, the hash table is full); Err where the
+    /// module does not load, which fails the test (an import the test did not define once made
+    /// every translation fail to load, and the runs compared the interpreter with itself).
+    fn translate(&mut self, base: usize, eip: u32) -> Result<Made, String> {
         self.known.insert(eip);
         let mut m = koji::jit::wasm::Module::default();
         let accept = |a: u32| a != END;
@@ -1561,8 +1621,10 @@ impl Jit {
         } else {
             koji::jit::FN.store(self.mode.fns, Relaxed);
             koji::jit::translate_region(&mut m, &mut Mem(base as *mut u8), &[eip], self.mode.blocks, accept)
-        }
-        .ok_or("refused")?;
+        };
+        let Some(region) = region else {
+            return Ok(Made::Left);
+        };
         if std::env::var("JLAYOUT").is_ok() {
             eprintln!("{eip:#x} fns {fns}\n{}", region.layout);
         }
@@ -1584,9 +1646,12 @@ impl Jit {
         for (i, &(a, k)) in region.starts.iter().enumerate() {
             self.known.insert(a);
             let v = if fns { idx | (i as u32) << koji::jit::ENTRY_SHIFT | koji::jit::FN_TAG } else { idx | k << koji::jit::ENTRY_SHIFT };
-            hash_insert(base, a, v)?;
+            if hash_insert(base, a, v).is_err() {
+                return Ok(Made::Left);
+            }
         }
-        Ok(())
+        LOADED.fetch_add(1, Relaxed);
+        Ok(Made::Loaded)
     }
 
     /// Runs from cpu.eip until END: the dispatcher, translations of what it misses, the
@@ -1635,7 +1700,7 @@ impl Jit {
             match r {
                 0 => {}
                 1 if c.eip == END => return Ok(()),
-                1 if !self.known.contains(&c.eip) && self.translate(base, c.eip).is_ok() => {}
+                1 if !self.known.contains(&c.eip) && self.translate(base, c.eip)? == Made::Loaded => {}
                 1 => {
                     // (as kura: the interpreter up to the next branch)
                     let mut c = c;
@@ -1819,7 +1884,9 @@ fn run_case(engine: &Engine, dispatch: &Module, memory: &SharedMemory, base: usi
             let mut dec = iced_x86::Decoder::with_ip(32, &oc, CODE as u64, iced_x86::DecoderOptions::NONE);
             let ips: Vec<u32> = (&mut dec).into_iter().map(|i| i.ip() as u32).collect();
             for &ip in ips.iter().rev() {
-                let _ = jit.translate(base, ip);
+                if let Err(e) = jit.translate(base, ip) {
+                    return (vec![format!("translation: {e}")], code);
+                }
             }
             setup();
         }
@@ -1828,7 +1895,9 @@ fn run_case(engine: &Engine, dispatch: &Module, memory: &SharedMemory, base: usi
         let mut dec = iced_x86::Decoder::with_ip(32, &code, CODE as u64, iced_x86::DecoderOptions::NONE);
         let ips: Vec<u32> = (&mut dec).into_iter().map(|i| i.ip() as u32).collect();
         for &ip in ips.iter().rev() {
-            let _ = jit.translate(base, ip);
+            if let Err(e) = jit.translate(base, ip) {
+                return (vec![format!("translation: {e}")], code);
+            }
         }
     }
     let got = jit.run(base);
@@ -1842,8 +1911,15 @@ fn run_case(engine: &Engine, dispatch: &Module, memory: &SharedMemory, base: usi
         want_cpu.mxcsr &= !0x3f;
         got_cpu.mxcsr &= !0x3f;
     }
-    if want.is_err() && got.is_err() {
-        return (diffs, code); // (both stopped: where may differ)
+    // Both stopped at an exception: the same exception at the same place, with the same state
+    // (flags too: masu's SEH gives them to the guest's handler). Other stops (no end, a trap
+    // of the fuel) are not compared.
+    let fault = |r: &Result<(), String>| r.as_ref().err().is_some_and(|e| e.starts_with("interpreter exit Fault"));
+    if want.is_err() && got.is_err() && !(fault(&want) && fault(&got)) {
+        return (diffs, code);
+    }
+    if fault(&want) && fault(&got) && want != got {
+        diffs.push(format!("exceptions: interp {want:?} jit {got:?}"));
     }
     if want.is_ok() != got.is_ok() {
         diffs.push(format!("runs: interp {want:?} jit {got:?}"));
@@ -1856,7 +1932,7 @@ fn run_case(engine: &Engine, dispatch: &Module, memory: &SharedMemory, base: usi
     }
     if want_data != got_data {
         let i = want_data.iter().zip(&got_data).position(|(a, b)| a != b).unwrap();
-        diffs.push(format!("data differs at +{i:#x}"));
+        diffs.push(format!("data differs at +{i:#x}: want {:02x?} got {:02x?}", &want_data[i..(i + 16).min(want_data.len())], &got_data[i..(i + 16).min(got_data.len())]));
     }
     if want_stack != got_stack {
         diffs.push("stack differs".into());
@@ -1989,6 +2065,22 @@ fn main() {
                 }
             }
         }
+    }
+    // (translations refused by the exit contract: koji's may_leave_before missed an
+    // instruction that leaves; correct, but the interpreter runs that code)
+    let refused = koji::jit::EXIT_REFUSED.load(Relaxed);
+    println!("exit contract: {} translations made again", koji::jit::EXIT_AGAIN.load(Relaxed));
+    if refused > 0 {
+        fails += 1;
+        println!("exit contract: {refused} translations refused");
+    }
+    // (none loaded: the runs compared the interpreter with itself, as when every module failed
+    // to load for an import the test did not define)
+    let loaded = LOADED.load(Relaxed);
+    println!("{loaded} translations loaded");
+    if loaded == 0 && count > 0 {
+        fails += 1;
+        println!("no translation loaded");
     }
     println!("{count} tests, {fails} failed");
     if fails > 0 {

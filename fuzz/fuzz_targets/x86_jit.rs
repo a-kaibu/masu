@@ -49,8 +49,8 @@ struct Host {
     read_flags: bool,
 }
 
-/// `status`: compare the status flags too (not at an exception: the JIT keeps them only where
-/// later code reads them, which an exception handler is not).
+/// `status`: compare the status flags too (where the JIT stopped for the host, an exception
+/// among them, they are exact: jit::ExitAt; where it jumped on, only those code there reads).
 /// The JIT ran without the MXCSR flag checks (koji::jit::MX_EXACT off): the flags may be
 /// missing, nothing else.
 static FAST: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
@@ -178,6 +178,10 @@ fuzz_target!(|data: &[u8]| {
     let mut linker = Linker::new(engine);
     linker.define(&store, "env", "memory", mem.clone()).unwrap();
     linker.define(&store, "env", "table", table).unwrap();
+    // (the page marks every module imports, jit::PAGES: the checks are off here, jit::PAGE_CHECK,
+    // so no module reads them)
+    let pages = Global::new(&mut store, GlobalType::new(ValType::I32, Mutability::Const), Val::I32(0)).unwrap();
+    linker.define(&store, "env", "pages", pages).unwrap();
     linker
         .func_wrap("env", "step", |mut c: Caller<'_, Host>, at: u32| -> i32 {
             let mem = c.data().mem.clone();
@@ -278,9 +282,13 @@ fuzz_target!(|data: &[u8]| {
     let start = cpu.clone();
     let mut first: Option<(Cpu, Vec<u8>)> = None;
     for _ in 0..STEPS {
-        if cpu.eip == got.eip && same(&cpu, &got, false) && window.0 == got_mem {
-            if jit_exit.is_some() || converge(&cpu, &window.0, &got, &got_mem, same) {
-                return;
+        // (where the JIT stopped for the host, an exception among them, the status flags are
+        // exact: koji's exit contract, jit::ExitAt)
+        if cpu.eip == got.eip && window.0 == got_mem {
+            match jit_exit {
+                Some(_) if same(&cpu, &got, true) => return,
+                None if same(&cpu, &got, false) && converge(&cpu, &window.0, &got, &got_mem, same) => return,
+                _ => {}
             }
         }
         if cpu.eip == got.eip && first.is_none() {
@@ -296,7 +304,7 @@ fuzz_target!(|data: &[u8]| {
             Exit::Continue => {}
             Exit::Fault(_) => return,
             e => {
-                if Some(e) == jit_exit && same(&cpu, &got, false) && window.0 == got_mem {
+                if Some(e) == jit_exit && same(&cpu, &got, true) && window.0 == got_mem {
                     return;
                 }
                 // (an exit the JIT did not reach: it stopped before, compare where it did)

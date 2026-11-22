@@ -7,21 +7,21 @@ use kome::locks::Lock as _;
 use super::*;
 use crate::d3d9::trace_tests::{alloc, client_rect, free, CALLS, SERIAL};
 
-fn mem(n: u32) -> u32 {
+pub(super) fn mem(n: u32) -> u32 {
     unsafe { alloc(4 * n) as u32 }
 }
-fn put(p: u32, v: &[u32]) {
+pub(super) fn put(p: u32, v: &[u32]) {
     for (i, &x) in v.iter().enumerate() {
         unsafe { *((p + 4 * i as u32) as *mut u32) = x };
     }
 }
-fn rd1(p: u32) -> u32 {
+pub(super) fn rd1(p: u32) -> u32 {
     unsafe { *(p as *const u32) }
 }
-fn call1(id: u32, args: &[u32]) -> u32 {
+pub(super) fn call1(id: u32, args: &[u32]) -> u32 {
     unsafe { call(id, args.as_ptr(), &CALLS) }
 }
-fn m(iface: u32, m: u32) -> u32 {
+pub(super) fn m(iface: u32, m: u32) -> u32 {
     iface << 8 | m
 }
 fn iface_of(a: u32) -> u32 {
@@ -109,7 +109,7 @@ impl Ctx {
     }
 }
 
-fn setup() -> std::sync::MutexGuard<'static, ()> {
+pub(super) fn setup() -> std::sync::MutexGuard<'static, ()> {
     let g = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
     // (a fresh device as in a process of its own: what other tests left on the one device —
     // objects still bound, references — would count in these tests' reference counts)
@@ -300,7 +300,7 @@ fn deferred_update_sizes() {
     let bx2 = mem(6);
     put(bx2, &[56, 0, 0, 1000, 1, 1]);
     call1(m(IF_CONTEXT, 48), &[def, buf, 0, bx2, src, 0, 0]);
-    assert_eq!(recorded(def), (2, 24 + 16 + 24 + 8));
+    assert_eq!(recorded(def), (2, 16 + 8));
     // the source changes after recording: the list has its own copy
     put(src, &[0xffff_ffff; 16]);
     let list = c.finish(def, 0);
@@ -326,7 +326,7 @@ fn deferred_update_sizes() {
     // ... and one that fits: 63 rows of 256 + one row of 64 texels of 4 bytes
     let big = unsafe { alloc(63 * 256 + 256) } as u32;
     call1(m(IF_CONTEXT, 48), &[def, tex, 0, tb, big, 256, 0]);
-    assert_eq!(recorded(def), (1, 24 + 63 * 256 + 256));
+    assert_eq!(recorded(def), (1, 63 * 256 + 256));
     let list = c.finish(def, 0);
     c.execute(c.imm, list, 0);
     assert_eq!(release(list), 0);
@@ -414,8 +414,8 @@ fn newer_interfaces() {
     release(c.dev);
 }
 
-/// Wine's test_private_data on one device per process: "two" devices (the same one) with the
-/// one stored in the other's private data, a texture holding it too; everything goes at the end.
+/// Wine's test_private_data: two devices (each D3D11CreateDevice makes its own) with the one
+/// stored in the other's private data, a texture holding it too; everything goes at the end.
 #[test]
 fn device_in_its_own_private_data() {
     let _g = setup();
@@ -472,11 +472,13 @@ fn device_in_its_own_private_data() {
     }
     assert_eq!(refs(test_object), base + 2);
     release(surface);
-    // (the texture's own reference of the device and the one its private data held)
+    // (the one the texture's private data held; the texture held its own device, not this one)
     assert_eq!(release(tex), 0);
+    assert_eq!(refs(test_object), base + 1);
+    // the device goes, and the reference its private data held with it (Wine's
+    // test_private_data: both Release to 0)
+    assert_eq!(release(c.dev), 0);
     assert_eq!(refs(test_object), base);
-    // the device's two references and the one it holds of itself: after the second, gone
-    assert_eq!(release(c.dev), 2);
     assert_eq!(release(test_object), 0);
     // a device made again starts with nothing left
     let c2 = Ctx::new();
@@ -737,8 +739,8 @@ fn call_short(id: u32, args: &[u32]) -> u32 {
 
 /// The host's allocator giving nothing (the review: Map, a deferred Map and a deferred list's
 /// replay wrote to address 0): Map fails with E_OUTOFMEMORY and clears pData, a deferred Map
-/// too, a list replayed while it gives nothing drops the update, and every one works again
-/// once it gives memory. Any size that fails, any order: a model of the resource's contents.
+/// too, and every one works again once it gives memory; a list replayed while it gives nothing
+/// still applies its update (its ContextOp owns the bytes: nothing of the guest's is taken). Any size that fails, any order: a model of the resource's contents.
 #[test]
 fn allocator_gives_nothing() {
     use proptest::prelude::*;
@@ -785,12 +787,10 @@ fn allocator_gives_nothing() {
                 let v: Vec<u32> = (0..16).map(|i| k * 100 + i).collect();
                 put(rd1(out), &v);
                 call1(m(IF_CONTEXT, 15), &[def, dynamic, 0]);
-                if k % 3 != 0 {
-                    **model = v;
-                }
+                **model = v;
             }
             let list = c.finish(def, 0);
-            // replayed while the allocator gives nothing: the update's copy is not made
+            // replayed while the allocator gives nothing (k % 3 == 0): the same
             SHORT_FROM.store(if k % 3 == 0 { 16 } else { u32::MAX }, std::sync::atomic::Ordering::Relaxed);
             unsafe { call(m(IF_CONTEXT, 58), [c.imm, list, 1].as_ptr(), &SHORT) };
             SHORT_FROM.store(u32::MAX, std::sync::atomic::Ordering::Relaxed);

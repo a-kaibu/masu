@@ -71,6 +71,10 @@ pub fn run(engine: &Engine, dispatch: &Module, memory: &SharedMemory, base: usiz
         });
         table.set(&mut store, 0, Ref::Func(Some(block))).unwrap();
         linker.define(&store, "env", "table", table).unwrap();
+        // (the page marks every module imports, jit::PAGES: the checks are off here, jit::PAGE_CHECK,
+        // so no module reads them)
+        let pages = Global::new(&mut store, GlobalType::new(ValType::I32, Mutability::Const), Val::I32(0)).unwrap();
+        linker.define(&store, "env", "pages", pages).unwrap();
         let inst = match linker.instantiate(&mut store, dispatch) {
             Ok(i) => i,
             Err(e) => {

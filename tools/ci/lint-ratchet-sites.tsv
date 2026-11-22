@@ -105,8 +105,8 @@ crates/kura/src/d3d11/d3d10.rs	unsafe_op_in_unsafe_fn	wrp(args[1], 0, f);
 crates/kura/src/d3d11/d3d10.rs	unsafe_op_in_unsafe_fn	wrp(out, 0, rdp(at(&mut m11), 0));
 crates/kura/src/d3d11/d3d10.rs	unsafe_op_in_unsafe_fn	wrp(out, 0, rdp(at(&mut m11), 0));
 crates/kura/src/d3d11/d3d10.rs	unsafe_op_in_unsafe_fn	wrp(out, i, a);
-crates/kura/src/d3d11/deferred.rs	masu-from_raw_parts	blobs.push((i, Box::from(std::slice::from_raw_parts(gc::<u8>(a(i)), us(size)))));
-crates/kura/src/d3d11/deferred.rs	masu-from_raw_parts	let blobs: Vec<(usize, Box<[u8]>)> = vec![(4, Box::from(std::slice::from_raw_parts(gc::<u8>(mem), us(size))))];
+crates/kura/src/d3d11/op.rs	masu-from_raw_parts	unsafe { std::slice::from_raw_parts(gc::<u8>(at), us(lo32(n))) }
+crates/kura/src/d3d11/deferred.rs	masu-from_raw_parts	let data = unsafe { std::slice::from_raw_parts(gc::<u8>(mem), us(size)) };
 crates/kura/src/d3d11/deferred.rs	unsafe_op_in_unsafe_fn	114 => finish(d, this, a(1), a(2)),
 crates/kura/src/d3d11/deferred.rs	unsafe_op_in_unsafe_fn	14 => map(d, this, a(1), a(2), a(3), a(5)),
 crates/kura/src/d3d11/deferred.rs	unsafe_op_in_unsafe_fn	4..=6 => private_data(d, m, this, a),
@@ -261,8 +261,8 @@ crates/kura/src/d3d11/mod.rs	unsafe_op_in_unsafe_fn	59 => device_call(d, 9, this
 crates/kura/src/d3d11/mod.rs	unsafe_op_in_unsafe_fn	6 => parent(d, d.adapter, a(1), a(2)),
 crates/kura/src/d3d11/mod.rs	unsafe_op_in_unsafe_fn	6 => parent(d, d.factory, a(1), a(2)),
 crates/kura/src/d3d11/mod.rs	unsafe_op_in_unsafe_fn	6 => parent(d, d.factory, a(1), a(2)),
-crates/kura/src/d3d11/mod.rs	unsafe_op_in_unsafe_fn	6 | 7 => parent(d, d.made_by.get(&this).copied().unwrap_or(d.device), a(1), a(2)),
-crates/kura/src/d3d11/mod.rs	unsafe_op_in_unsafe_fn	6 | 7 => parent(d, d.made_by.get(&this).copied().unwrap_or(d.device), a(1), a(2)),
+crates/kura/src/d3d11/mod.rs	unsafe_op_in_unsafe_fn	6 | 7 => parent(d, d.objs.get(&this).map_or(0, |o| o.dev), a(1), a(2)),
+crates/kura/src/d3d11/mod.rs	unsafe_op_in_unsafe_fn	6 | 7 => parent(d, d.objs.get(&this).map_or(0, |o| o.dev), a(1), a(2)),
 crates/kura/src/d3d11/mod.rs	unsafe_op_in_unsafe_fn	60 => device_call(d, 24, this, a),
 crates/kura/src/d3d11/mod.rs	unsafe_op_in_unsafe_fn	7 => parent(d, device, a(1), a(2)),
 crates/kura/src/d3d11/mod.rs	unsafe_op_in_unsafe_fn	72 | 77 => get_slots(d, &st.cbs[usize::from(m == 77)], a(1), a(2), a(3)),
@@ -639,7 +639,7 @@ crates/kura/src/d3d11/mod.rs	unsafe_op_in_unsafe_fn	wrp(a(7), 0, 0);
 crates/kura/src/d3d11/mod.rs	unsafe_op_in_unsafe_fn	wrp(a(7), 0, o);
 crates/kura/src/d3d11/mod.rs	unsafe_op_in_unsafe_fn	wrp(a(9), 0, 0);
 crates/kura/src/d3d11/mod.rs	unsafe_op_in_unsafe_fn	wrp(a(9), 0, o);
-crates/kura/src/d3d11/mod.rs	unsafe_op_in_unsafe_fn	wrp(ctx_out, 0, d.addr_of(d.context));
+crates/kura/src/d3d11/mod.rs	unsafe_op_in_unsafe_fn	wrp(ctx_out, 0, d.addr_of(ctx));
 crates/kura/src/d3d11/mod.rs	unsafe_op_in_unsafe_fn	wrp(dev_out, 0, d.addr_of(dev));
 crates/kura/src/d3d11/mod.rs	unsafe_op_in_unsafe_fn	wrp(dev_out, 0, f);
 crates/kura/src/d3d11/mod.rs	unsafe_op_in_unsafe_fn	wrp(o, 0, 0);

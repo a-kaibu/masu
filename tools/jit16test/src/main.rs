@@ -389,6 +389,10 @@ impl Jit {
         linker.define(&store, "env", "memory", memory.clone()).unwrap();
         let table = Table::new(&mut store, TableType::new(RefType::FUNCREF, 0, None), Ref::Func(None)).unwrap();
         linker.define(&store, "env", "table", table).unwrap();
+        // (the page marks every module imports, jit::PAGES: the checks are off here, jit::PAGE_CHECK,
+        // so no module reads them)
+        let pages = Global::new(&mut store, GlobalType::new(ValType::I32, Mutability::Const), Val::I32(0)).unwrap();
+        linker.define(&store, "env", "pages", pages).unwrap();
         linker
             .func_wrap("env", "step", move |cpu: i32| -> i32 {
                 let m = base as *mut u8;
