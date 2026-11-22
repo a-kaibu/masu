@@ -209,6 +209,45 @@ fn warp_answers() {
                         checked += 1;
                     }
                 }
+                // the MIN / MAX table: CreateBlendState's answer for each factor pair (the other
+                // equation one zero add)
+                [op @ ("min" | "max"), side @ ("color" | "alpha"), src, row] if src.ends_with(':') => {
+                    let op = OPS[OP_NAMES.iter().position(|o| o == op).unwrap()];
+                    let alpha = *side == "alpha";
+                    let names: &[&str] = if alpha { &ALPHA_NAMES } else { &COLOR_NAMES };
+                    let at = |n: &str| FACTORS[COLOR_NAMES.iter().position(|c| *c == n).unwrap()];
+                    let sf = at(src.trim_end_matches(':'));
+                    assert_eq!(row.len(), names.len(), "{name}: {line}");
+                    for (n, answer) in names.iter().zip(row.chars()) {
+                        let e = Equation { src: sf, dst: at(n), op };
+                        let plain = Equation { src: Factor::One, dst: Factor::Zero, op: BlendOp::Add };
+                        let b = if alpha { Blend { color: plain, alpha: e } } else { Blend { color: e, alpha: plain } };
+                        assert_eq!(b.takes(), answer == 'o', "{name}: {op:?} {side} {sf:?} {n}");
+                        checked += 1;
+                    }
+                }
+                // NaN and infinite sources (bits) blended over 3081c040 with the probe's nine
+                // blends (D3D11_BLEND and D3D11_BLEND_OP values, alpha the color's alpha twin)
+                [s0, s1, s2, s3, "/", t0, t1, t2, t3, words @ ..] if t3.ends_with(':') => {
+                    let s = [s0, s1, s2, s3].map(|w| f32::from_bits(hex(w)));
+                    let s1 = [t0, t1, t2, t3.trim_end_matches(':')].map(|w| f32::from_bits(hex(w)));
+                    let blends = [[2, 1, 1], [2, 2, 1], [5, 6, 1], [9, 1, 1], [16, 1, 1], [1, 18, 1], [2, 2, 2], [2, 1, 4], [2, 1, 5]];
+                    let alpha_of = |f: u32| match f {
+                        3 => 5,
+                        4 => 6,
+                        9 => 7,
+                        10 => 8,
+                        16 => 18,
+                        17 => 19,
+                        f => f,
+                    };
+                    assert_eq!(words.len(), blends.len(), "{name}: {line}");
+                    for ([a, b, o], w) in blends.into_iter().zip(words) {
+                        let bl = Blend::of([a, b, o, alpha_of(a), alpha_of(b), o]).unwrap();
+                        assert_eq!(word(blend(&bl, s, s1, bytes(0x3081_c040), k)), hex(w), "{name}: {s:?} {s1:?} {a} {b} {o}");
+                        checked += 1;
+                    }
+                }
                 ["blend", "set", _, "src", r @ ..] => {
                     let f = |i: usize| r[i].parse::<f32>().unwrap();
                     set = Some(([f(0), f(1), f(2), f(3)], [f(5), f(6), f(7), f(8)], hex(r[10])));
