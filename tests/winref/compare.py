@@ -17,6 +17,12 @@ the sibling quarantine.json (SHA-256 per line, images hashed whole): fixed lines
 or changed ones fail. --quarantine-observed FILE writes candidate hashes for review;
 it does not approve them or change the comparison's exit status.
 Exits 1 on any other difference, a probe missing on the sake side or a different exit code.
+
+The sake side must say what it meant to run: run.sh and run-browser.mjs write <sake dir>/.plan/
+<runner id> (a "# ..." line naming the runner, its filter and shard, then one probe per line;
+plan.py) before they run anything. A planned probe without its result fails, as does a sake
+dir without any plan, a run whose plans list no probe at all, and a --require-plan ID whose
+plan is not there (a lost shard). Windows' probes no plan selected are counted as not selected.
 """
 import difflib
 import hashlib
@@ -27,6 +33,8 @@ import re
 import struct
 import sys
 import zlib
+
+import plan
 
 
 def parse(path):
@@ -167,6 +175,11 @@ def quarantine_baselines(path):
 def main():
     args = sys.argv[1:]
     opt = {}
+    required = []
+    while "--require-plan" in args:
+        k = args.index("--require-plan")
+        required.append(args[k + 1])
+        del args[k:k + 2]
     for o in ("--known", "--quarantine", "--quarantine-observed", "--png", "--report"):
         if o in args:
             k = args.index(o)
@@ -196,17 +209,22 @@ def main():
     quarantine = read_quarantine(opt["--quarantine"]) if "--quarantine" in opt else []
     baselines = quarantine_baselines(opt["--quarantine"]) if "--quarantine" in opt else {}
     observed = {}
-    report, failed, totals = [], [], {"ok": 0, "known": 0, "fail": 0, "skip": 0, "stale": 0, "new": 0}
-    for probe in sorted(set(os.listdir(got)) - set(os.listdir(ref))):
-        if os.path.isdir(os.path.join(got, probe)):
-            totals["new"] += 1
-            report.append(f"- {probe}: new, no Windows answer yet")
-    for probe in sorted(os.listdir(ref)):
+    report, failed, totals = [], [], {"ok": 0, "known": 0, "fail": 0, "skip": 0, "stale": 0, "new": 0, "not selected": 0}
+    plans = plan.read(got)
+    planned = set().union(*plans.values()) if plans else set()
+    plan_errors = plan.problems(plans, required, got)
+    for e in plan_errors:
+        report.append(f"- **{e}**")
+    for probe in sorted(set(plan.probes(got)) - set(plan.probes(ref))):
+        totals["new"] += 1
+        report.append(f"- {probe}: new, no Windows answer yet")
+    for probe in sorted(plan.probes(ref)):
         rdir = os.path.join(ref, probe)
-        if not os.path.isdir(rdir):
+        if probe not in planned:
+            totals["not selected"] += 1
             continue
         if not os.path.isdir(os.path.join(got, probe)):
-            continue  # (not run: a filtered run.sh)
+            continue  # (a plan error: planned, no result)
         wl, wi = parse(os.path.join(rdir, "stdout.txt"))
         gl, gi = parse(os.path.join(got, probe, "stdout.txt"))
         if wl and wl[0].startswith("skip"):
@@ -263,7 +281,8 @@ def main():
             report.extend("      " + d[:300] for d in shown[:40])
             if len(shown) > 40:
                 report.append(f"      ... {len(shown) - 40} more")
-    summary = f"winref: {totals['ok']} ok, {totals['known']} with known differences, {totals['fail']} differ, {totals['skip']} skipped, {totals['stale']} stale, {totals['new']} new"
+    summary = (f"winref: {totals['ok']} ok, {totals['known']} with known differences, {totals['fail']} differ, {totals['skip']} skipped, {totals['stale']} stale, {totals['new']} new, "
+               f"{totals['not selected']} not selected, {len(plan_errors)} plan errors")
     text = summary + "\n\n" + "\n".join(report) + "\n"
     print(text)
     if "--report" in opt:
@@ -276,7 +295,7 @@ def main():
     pending = {p: observed[p] for p in failed if p in observed}
     if pending:
         print("quarantine candidates (review before adding to quarantine.json): " + json.dumps(pending, sort_keys=True, separators=(",", ":")))
-    sys.exit(1 if failed else 0)
+    sys.exit(1 if failed or plan_errors else 0)
 
 
 if __name__ == "__main__":

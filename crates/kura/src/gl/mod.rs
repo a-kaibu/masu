@@ -2315,9 +2315,9 @@ unsafe extern "C" fn glReadPixels(x: i32, y: i32, w: i32, h: i32, format: u32, t
         let (x0, y0) = (x.max(0).cast_unsigned(), y.max(0).cast_unsigned());
         let (rw, rh) = ((w.cast_unsigned()).min(sw.saturating_sub(x0)), (h.cast_unsigned()).min(sh.saturating_sub(y0)));
         let buf = vec![0u8; (w * h * 4) as usize];
-        let req = page_id();
+        let req = gpu::Readback::new();
         let p = lo32(buf.as_ptr().expose_provenance());
-        gpu::record(|q| q.cmd(&[gpu::READBACK, req, src, sl, x0, y0, rw, rh, p, w.cast_unsigned() * 4]));
+        gpu::record(|q| q.cmd(&[gpu::READBACK, req.word(), src, sl, x0, y0, rw, rh, p, w.cast_unsigned() * 4]));
         Some((req, buf, c.pack))
     });
     let Some((req, buf, pack)) = req else { return };

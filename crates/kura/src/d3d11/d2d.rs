@@ -483,7 +483,7 @@ mod tests {
             unsafe { std::ptr::write_bytes(rb_at, 0, 12 * 12 * 4) };
             let req = 0x5300_0000 | (lo32(seed) & 0xffff);
             gpu::record(|q| q.cmd(&[gpu::READBACK, req, id, 0, 0, 0, 12, 12, lo32(rb_at.expose_provenance()), 48]));
-            proptest::prop_assert!(gpu::wait_readback(req));
+            proptest::prop_assert!(gpu::wait_readback(gpu::Readback::of_word(req)));
             let rb = unsafe { std::slice::from_raw_parts(rb_at, 12 * 12 * 4) };
             bitmap_free(id);
             gpu::set_pump(None);

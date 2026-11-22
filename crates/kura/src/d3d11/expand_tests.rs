@@ -236,6 +236,29 @@ fn geometry_shader_stream_output_on_the_page() {
     let s = u64s(&wait(ctx, stats, 88));
     // (the input assembler's: 6 strip vertices, 4 triangles, the geometry shader run on each)
     assert_eq!((s[0], s[1], s[2], s[3]), (6, 4, 6, 4));
+    // (a readback the page gives up leaves the page's bytes the newest: asked again next time,
+    // review of 6852be1; one that comes makes the guest's the newest)
+    let newest = || {
+        let g = D11S.lock().unwrap_or_else(|e| e.into_inner());
+        let d = g.as_ref().expect("device");
+        match d.objs.get(&d.id_of(so)).map(|o| &o.data) {
+            Some(Data::Buffer(b)) => b.newest,
+            _ => panic!("no buffer"),
+        }
+    };
+    assert_eq!(newest(), Newest::Page);
+    let pull_now = || {
+        let mut g = D11S.lock().unwrap_or_else(|e| e.into_inner());
+        let d = g.as_mut().expect("device");
+        let id = d.id_of(so);
+        super::super::expand::pull(d, id);
+    };
+    crate::d3d9::gpu::GIVE_UP.with(|c| c.set(true));
+    pull_now();
+    crate::d3d9::gpu::GIVE_UP.with(|c| c.set(false));
+    assert_eq!(newest(), Newest::Page, "a failed readback lost where the newest bytes are");
+    pull_now();
+    assert_eq!(newest(), Newest::Guest);
     // read back: a staging copy mapped
     put(desc, &[12 * 16, 3, 0, 0x20000, 0, 0]);
     assert_eq!(dc(dev, 3, &[desc, 0, o]), 0);

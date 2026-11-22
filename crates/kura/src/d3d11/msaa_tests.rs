@@ -86,7 +86,7 @@ fn msaa() {
         req += 1;
         unsafe { std::ptr::write_bytes(rb as *mut u8, 0xcd, (w * h * bpp) as usize) };
         gpu::record(|b| b.cmd(&[gpu::READBACK, req, gpu_of(t), 0, 0, 0, w, h, rb, w * bpp]));
-        assert!(gpu::wait_readback(req));
+        assert!(gpu::wait_readback(gpu::Readback::of_word(req)));
         (0..w * h * bpp).map(|i| unsafe { *((rb + i) as *const u8) }).collect()
     };
     let color = mem(4);

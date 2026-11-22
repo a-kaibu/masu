@@ -66,7 +66,7 @@ fn format_copies() {
         gpu::pump();
         req += 1;
         gpu::record(|b| b.cmd(&[gpu::READBACK, req, gpu_of(t), 0, 0, 0, 4, 4, rb, 16]));
-        assert!(gpu::wait_readback(req));
+        assert!(gpu::wait_readback(gpu::Readback::of_word(req)));
         (0..16).map(|i| rd1(rb + 4 * i)).collect()
     };
     // (source, destination, whether the bits arrive): R8G8B8A8 UNORM / UINT / SRGB / SNORM /
@@ -148,7 +148,7 @@ fn copies_anywhere() {
             req.set(req.get() + 1);
             let r = req.get();
             gpu::record(|b| b.cmd(&[gpu::READBACK, r, gpu_of(dst), 0, 0, 0, 4, 4, rb, 16]));
-            prop_assert!(gpu::wait_readback(r));
+            prop_assert!(gpu::wait_readback(gpu::Readback::of_word(r)));
             let got: Vec<u32> = (0..16).map(|i| rd1(rb + 4 * i)).collect();
             let (w, h) = (x1.saturating_sub(x0), y1.saturating_sub(y0));
             let fit = |a: u32, n: u32| (a as u64) + (n as u64) <= 4;

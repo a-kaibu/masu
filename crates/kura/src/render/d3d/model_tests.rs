@@ -1242,7 +1242,7 @@ fn a_lost_device_ends_readbacks() {
     d.readbacks.insert(7, Readback { req, buf: 0, data: Vec::new(), bpr: 0, row: 0, h: 0, dst: 0, pitch: 0, halved: false });
     let _ = d.lose();
     assert!(d.readbacks.is_empty());
-    assert!(crate::d3d9::gpu::readback_is_done(req));
+    assert!(crate::d3d9::gpu::readback_is_done(crate::d3d9::gpu::Readback::of_word(req)));
     // (said once: a late answer for the token finds nothing)
     d.mapped(7, false);
     assert!(d.readbacks.is_empty());

@@ -46,6 +46,15 @@ const GOOD_NTCRT: &str = concat!(
     "}\n",
 );
 
+/// what rebuild::RUN_PLAN wants, each file saying its part
+const GOOD_RUN_PLAN: Files = &[
+    ("tests/winref/run.sh", "{ echo \"# run.sh\"; } > \"$OUT/.plan/$runner\"\n"),
+    ("tests/winref/run-browser.mjs", "writeFileSync(join(outDir, \".plan\", runner), text);\n"),
+    ("tests/winref/compare.py", "plan_errors = plan.problems(plans, required, got)\nsys.exit(1 if failed or plan_errors else 0)\n"),
+    ("tests/winetest/run.py", "all_jobs, unplanned = plan(listed, sel, expected, explicit)\nif unplanned:\n    return 1\n"),
+    (".github/workflows/winref.yml", "run: compare.py --require-plan node --require-plan browser-0of4\n"),
+];
+
 fn fixture(r: Rule) -> Fixture {
     match r {
         Rule::MemoryPointer => Fixture {
@@ -565,6 +574,14 @@ fn fixture(r: Rule) -> Fixture {
             bad: &[("crates/hlslc/src/lower.rs", "// pc_slot(list, n) Lane::mask(n) << at\nfn sig() { let reg = 0; let mask = Lane::mask(n); }\n")],
             good: &[("crates/hlslc/src/lower.rs", "fn sig() { let packed = pc_slot(list, n); let mask = Lane::mask(n) << at; }\n")],
             mutate: ("crates/hlslc/src/lower.rs", |t| Some(t.replace("pc_slot(list, n)", "None::<(u32, u8)>"))),
+        },
+        Rule::RunPlan => Fixture {
+            bad: &[
+                ("tests/winref/compare.py", "        if not os.path.isdir(os.path.join(got, probe)):\n            continue  # (not run: a filtered run.sh)\n    sys.exit(1 if failed else 0)\n"),
+                ("tests/winetest/run.py", "        if not os.path.exists(exe):\n            print(f\"missing {exe}\", file=sys.stderr)\n            continue\n"),
+            ],
+            good: GOOD_RUN_PLAN,
+            mutate: ("tests/winref/compare.py", |t| Some(t.replace("sys.exit(1 if failed or plan_errors else 0)", "sys.exit(1 if failed else 0)"))),
         },
         Rule::WarpSetup => Fixture {
             bad: &[
