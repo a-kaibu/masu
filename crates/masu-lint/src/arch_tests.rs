@@ -618,6 +618,17 @@ fn fixture(r: Rule) -> Fixture {
             ],
             mutate: ("crates/sake/src/pe.rs", |t| Some(t.replace("ABANDONED.locked().push(base)", "drop(base)"))),
         },
+        Rule::DrawPlan => Fixture {
+            bad: &[
+                ("crates/kura/src/d3d11/mod.rs", "fn draw_with() {\n    let topo = match st.topology { 1 => 0, _ => 3 };\n    let topo = if wire.is_some() { 1 } else { topo };\n}\n// DrawPlan::of(assembled, adjacent, fill, sprite.is_some(), store.is_some(), count) logic::primitives(plan.topo, drawn, &cuts)\n"),
+                ("crates/kura/src/d3d11/logic.rs", "pub fn primitives(topo: u32, n: u32, cuts: &[u32]) -> Vec<Prim> { Vec::new() }\n"),
+            ],
+            good: &[
+                ("crates/kura/src/d3d11/mod.rs", "fn draw_with() {\n    let plan = match DrawPlan::of(assembled, adjacent, fill, sprite.is_some(), store.is_some(), count) { _ => return };\n    let prims = logic::primitives(plan.topo, drawn, &cuts);\n}\n#[cfg(test)]\nmod t { fn f() { let topo = match st.topology { _ => 3 }; } }\n"),
+                ("crates/kura/src/d3d11/logic.rs", "pub fn primitives(topo: super::PageTopo, n: u32, cuts: &[u32]) -> Vec<Prim> { match topo { PageTopo::Points => Vec::new() } }\n"),
+            ],
+            mutate: ("crates/kura/src/d3d11/mod.rs", |t| Some(t.replace("logic::primitives(plan.topo, drawn, &cuts)", "logic::primitives(PageTopo::Lines, count, &cuts)"))),
+        },
         Rule::FullPathOneRule => Fixture {
             bad: &[("crates/sake/src/files.rs", "pub fn full_path(p: &str) -> String {\n    // crate::fullpath::process_env_full(&w, 0xfffe)\n    full_path_trim(p, true)\n}\n")],
             good: &[("crates/sake/src/files.rs", "pub fn full_path(p: &str) -> String { match FullMode::of(p) { FullMode::Win32 => win32_full(p), FullMode::Literal => full_path_trim(p, true) } }\nfn win32_full(p: &str) -> String { let t = crate::fullpath::process_env_full(&w, 0xfffe).text(); }\n")],

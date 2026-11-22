@@ -122,7 +122,7 @@ pub struct Prim {
 /// The primitives of a draw of `count` vertices of page topology `topo` (0 points, 1 lines, 2
 /// line strip, 3 triangles, 4 triangle strip); `cut[k]`: vertex k is a strip's restart index
 /// (an indexed strip; a primitive with one is none, and the triangle after it is even again).
-pub fn primitives(topo: u32, count: u32, cut: &[bool]) -> Vec<Prim> {
+pub fn primitives(topo: super::PageTopo, count: u32, cut: &[bool]) -> Vec<Prim> {
     let cut_at = |k: u32| cut.get(usize::try_from(k).unwrap_or(usize::MAX)).copied().unwrap_or(false);
     let list = |n: u32| (0..count.checked_div(n).unwrap_or(0)).map(|i| Prim { first: i.saturating_mul(n), count: n, odd: false }).collect();
     let strip = |n: u32| {
@@ -142,11 +142,11 @@ pub fn primitives(topo: u32, count: u32, cut: &[bool]) -> Vec<Prim> {
         out
     };
     match topo {
-        0 => list(1),
-        1 => list(2),
-        2 => strip(2),
-        4 => strip(3),
-        _ => list(3),
+        super::PageTopo::Points => list(1),
+        super::PageTopo::Lines => list(2),
+        super::PageTopo::LineStrip => strip(2),
+        super::PageTopo::TriangleStrip => strip(3),
+        super::PageTopo::Triangles => list(3),
     }
 }
 
@@ -315,14 +315,13 @@ pub unsafe fn cuts(d: &mut D11, st: &State, start: u32, count: u32) -> Vec<bool>
 /// instance, the hash) as one draw per instance and primitive (`topo`, `cuts` as for
 /// [`primitives`]), each after `copies` (and, with a stash, the mark's clear and the stash's
 /// targets before it, the resolves after it); a strip's odd triangle with pipeline `flipped`.
-pub fn split(w: &[u32], copies: &[Copy], stash: Option<&Stash>, topo: u32, cuts: &[bool], flipped: u32) {
+pub fn split(w: &[u32], copies: &[Copy], stash: Option<&Stash>, prims: &[Prim], flipped: u32) {
     let n = w.len();
     let Some(tail) = w.get(n.saturating_sub(7)..) else { return };
-    let [_, count, instances, start, _, first_instance, _] = <[u32; 7]>::try_from(tail).unwrap_or([0; 7]);
-    let prims = primitives(topo, count, cuts);
+    let [_, _, instances, start, _, first_instance, _] = <[u32; 7]>::try_from(tail).unwrap_or([0; 7]);
     gpu::record(|q| {
         for k in 0..instances {
-            for p in &prims {
+            for p in prims {
                 for c in copies {
                     q.cmd(&c.cmd);
                 }

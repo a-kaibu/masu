@@ -76,10 +76,11 @@ pub enum Rule {
     FullPathOneRule,
     ShortNameTable,
     MissingImportFails,
+    DrawPlan,
 }
 
 impl Rule {
-    pub const ALL: [Rule; 59] = [
+    pub const ALL: [Rule; 60] = [
         Rule::BuildOutput,
         Rule::HresultCopy,
         Rule::KomeCopy,
@@ -139,6 +140,7 @@ impl Rule {
         Rule::FullPathOneRule,
         Rule::ShortNameTable,
         Rule::MissingImportFails,
+        Rule::DrawPlan,
     ];
 
     /// the name a site list and a message use
@@ -202,6 +204,7 @@ impl Rule {
             Rule::FullPathOneRule => "full-path-one-rule",
             Rule::ShortNameTable => "short-name-table",
             Rule::MissingImportFails => "missing-import-fails",
+            Rule::DrawPlan => "draw-plan",
             Rule::RunPlan => "run-plan",
         }
     }
@@ -266,6 +269,7 @@ impl Rule {
             Rule::FullPathOneRule => "every file operation opens the full path GetFullPathName names (review b5dacf4 2.2: CreateFile opened `D:save.dat` as D:\\save.dat while GetFullPathName answered from the `=D:` variable): files::full_path makes a Win32 name full with fullpath's RtlGetFullPathName_Ustr (regress::FULL_PATH)",
             Rule::ShortNameTable => "an 8.3 name is given when its long name is made and kept in its folder's table until the name is removed or renamed, as NTFS keeps it (review b5dacf4 2.3: the short names were made again from every listing, so deleting one file changed another's, and a reload gave new ones): kura::fs tells the one watcher each name made and removed, sake watches from its first guest path, shortname reads the kept table, and sake lists and removes folders only through shortname::read_dir / remove_dir (the table is no guest entry) (regress::SHORT_NAMES)",
             Rule::MissingImportFails => "a DLL LoadLibrary loads whose import names a DLL file that is not there (or a function its DLL file lacks) fails the LoadLibrary with ERROR_MOD_NOT_FOUND (ERROR_PROC_NOT_FOUND), the images that load mapped unmapped with no DllMain run, as Windows' loader does (review b5dacf4 2.1, winref dllsearch: the import was bound to a trap and the DLL loaded, crashing when called); only the process's own imports keep binding traps (OnMissing::Traps): resolve_import_with notes the failure, load_library_searching abandons the load, LoadLibrary answers its error (regress::MISSING_IMPORT)",
+            Rule::DrawPlan => "a D3D11 draw's topology, fill and indices on the page come from one typed plan (d3d11::DrawPlan::of: PageTopo, Indices::Draw or Made), and the logic-op split takes that plan's PageTopo with the indices it draws (review b5dacf4 3.1: an adjacency list made for the draw was split as the line list of a wireframe's edges, and topology numbers were matched by hand in three places): draw_with builds the plan, logic::primitives takes a PageTopo (regress::DRAW_PLAN)",
             Rule::RunPlan => "a test run that ran nothing, or less than it meant to, fails (review 6852be1f: compare.py passed with Windows' answers and an empty sake directory, winetest/run.py passed when the selected test program was missing): run.sh and run-browser.mjs write <out>/.plan/<runner> before running, compare.py fails on no plan, an empty plan, a planned probe without a result and a missing --require-plan, run.py plans every test before sharding and fails on a missing program or an expected test no longer listed (rebuild::RUN_PLAN / RUN_PLAN_NOT)",
             Rule::HandStd => "what the standard library names since Rust 1.98..1.100 is not written by hand (2026-11-21: 10 toggles, 3 trim_prefix, 136 map_or_default, 13 ok_or, 19 Vec::from_fn replaced): x.toggle(), s.trim_prefix(p), o.map_or_default(f), c.ok_or(e), Vec::from_fn(v.len(), f)",
         }
@@ -331,6 +335,7 @@ impl Rule {
             Rule::FullPathOneRule => regress::full_path_one_rule(tree),
             Rule::ShortNameTable => regress::short_name_table(tree),
             Rule::MissingImportFails => regress::missing_import(tree),
+            Rule::DrawPlan => regress::draw_plan(tree),
             Rule::RunPlan => rebuild::needles(tree, &rebuild::RUN_PLAN, &rebuild::RUN_PLAN_NOT),
         };
         hits.into_iter().map(|(file, line, what)| Finding { rule: self, file, line, what }).collect()

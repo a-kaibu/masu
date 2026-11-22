@@ -1,5 +1,6 @@
 //! Which targets get logic ops, and a draw's primitives as draws of their own.
 use super::*;
+use crate::d3d11::PageTopo;
 use dxwgsl::logic::{Logic, Mark, Op, Sign, Store};
 
 /// targets 0..2 of R8G8B8A8_UINT, R32_UINT, R8G8B8A8_UNORM; blend state words with logic ops
@@ -87,17 +88,17 @@ fn copies_are_by_slot() {
 #[test]
 fn primitives_of_each_topology() {
     let p = |first, count, odd| Prim { first, count, odd };
-    assert_eq!(primitives(0, 3, &[]), vec![p(0, 1, false), p(1, 1, false), p(2, 1, false)]);
-    assert_eq!(primitives(1, 5, &[]), vec![p(0, 2, false), p(2, 2, false)]);
-    assert_eq!(primitives(2, 3, &[]), vec![p(0, 2, false), p(1, 2, false)]);
-    assert_eq!(primitives(3, 7, &[]), vec![p(0, 3, false), p(3, 3, false)]);
-    assert_eq!(primitives(4, 5, &[]), vec![p(0, 3, false), p(1, 3, true), p(2, 3, false)]);
+    assert_eq!(primitives(PageTopo::Points, 3, &[]), vec![p(0, 1, false), p(1, 1, false), p(2, 1, false)]);
+    assert_eq!(primitives(PageTopo::Lines, 5, &[]), vec![p(0, 2, false), p(2, 2, false)]);
+    assert_eq!(primitives(PageTopo::LineStrip, 3, &[]), vec![p(0, 2, false), p(1, 2, false)]);
+    assert_eq!(primitives(PageTopo::Triangles, 7, &[]), vec![p(0, 3, false), p(3, 3, false)]);
+    assert_eq!(primitives(PageTopo::TriangleStrip, 5, &[]), vec![p(0, 3, false), p(1, 3, true), p(2, 3, false)]);
     // (a restart at 2: triangles 3 4 5 and 4 5 6 after it, the first even again)
     let cut = [false, false, true, false, false, false, false];
-    assert_eq!(primitives(4, 7, &cut), vec![p(3, 3, false), p(4, 3, true)]);
+    assert_eq!(primitives(PageTopo::TriangleStrip, 7, &cut), vec![p(3, 3, false), p(4, 3, true)]);
     let cut = [false, false, false, true, false, false, false];
-    assert_eq!(primitives(4, 7, &cut), vec![p(0, 3, false), p(4, 3, false)]);
-    assert!(primitives(4, 2, &[]).is_empty());
+    assert_eq!(primitives(PageTopo::TriangleStrip, 7, &cut), vec![p(0, 3, false), p(4, 3, false)]);
+    assert!(primitives(PageTopo::TriangleStrip, 2, &[]).is_empty());
 }
 
 const INTS: [u32; 9] = [f::P_RGBA8UI, f::P_RG8UI, f::P_R8UI, f::P_RGBA16UI, f::P_RG16UI, f::P_RGB10A2UI, f::P_RGBA8SI, f::P_RGBA16UI, f::P_RGBA16SI];

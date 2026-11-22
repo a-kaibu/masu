@@ -815,6 +815,28 @@ pub(super) fn missing_import(tree: &Tree) -> Hits {
     says(tree, &MISSING_IMPORT, &MISSING_IMPORT_NOT, "a missing import of a DLL LoadLibrary loads does not fail the load", "LoadLibrary answers ERROR_MOD_NOT_FOUND whatever failed")
 }
 
+// --- draw-plan -------------------------------------------------------------------------------
+
+/// A D3D11 draw's page topology, fill and indices are one typed plan, the logic-op split takes
+/// its topology and the count of the indices it draws (review b5dacf4 3.1): (file, what its code
+/// outside the tests says).
+pub const DRAW_PLAN: [(&str, &str); 3] = [
+    ("crates/kura/src/d3d11/mod.rs", "DrawPlan::of(assembled, adjacent, fill, sprite.is_some(), store.is_some(), count)"),
+    ("crates/kura/src/d3d11/mod.rs", "logic::primitives(plan.topo, drawn, &cuts)"),
+    ("crates/kura/src/d3d11/logic.rs", "pub fn primitives(topo: super::PageTopo"),
+];
+
+/// What the draw must not say: page topology numbers matched or chosen by hand.
+pub const DRAW_PLAN_NOT: [(&str, &str); 3] = [
+    ("crates/kura/src/d3d11/mod.rs", "let topo = match st.topology {"),
+    ("crates/kura/src/d3d11/mod.rs", "let topo = if wired { 1 } else { topo };"),
+    ("crates/kura/src/d3d11/mod.rs", "let topo = if wire.is_some() { 1 } else { topo };"),
+];
+
+pub(super) fn draw_plan(tree: &Tree) -> Hits {
+    says(tree, &DRAW_PLAN, &DRAW_PLAN_NOT, "a D3D11 draw's topology or indices chosen outside DrawPlan", "page topology numbers chosen by hand, not by DrawPlan")
+}
+
 // --- full-path-one-rule ----------------------------------------------------------------------
 
 /// Every file operation opens the full path GetFullPathName gives (review b5dacf4 2.2: `D:x`
