@@ -15,6 +15,7 @@ pub use foresee as predict;
 pub mod trace;
 #[cfg(test)]
 mod replay;
+mod over;
 mod saves;
 mod shared;
 mod undo;
@@ -33,6 +34,9 @@ enum Content {
     /// From the store; `None` chunks are all zero.
     Lower { size: u64, chunks: Arc<Vec<Option<Hash>>>, starts: Arc<Vec<u64>> },
     Upper(crate::pages::Pages),
+    /// From the store, written to: the pages written over the store's bytes, its length, how
+    /// far the store's still show (vfs/over.rs)
+    Over(Box<over::Over>),
 }
 
 /// Where a store file's chunks lie (cut by content: masu's cdc.rs): where each starts, and the
@@ -179,6 +183,7 @@ pub unsafe extern "C" fn vnhost_vfs_export(roots: *const c_char, len: *mut size_
     let roots: Vec<String> = roots.split(':').filter(|r| !r.is_empty()).map(clean).collect();
     // (under the lock only what is saved is taken: the files' pages, shared, not copied; their
     // bytes are written out after the lock is let go, the guest's threads going on meanwhile)
+    let t = std::time::Instant::now();
     let saved = {
         let mut g = FS.lock().unwrap_or_else(|e| e.into_inner());
         let Some(fs) = g.as_mut() else {
@@ -188,6 +193,7 @@ pub unsafe extern "C" fn vnhost_vfs_export(roots: *const c_char, len: *mut size_
         let _shared = shared::Guard::enter(fs);
         fs.saved(&roots)
     };
+    let taken = t.elapsed();
     let size = Fs::saved_size(&saved);
     let p = libc::malloc(size.max(1)) as *mut u8;
     *len = 0;
@@ -197,6 +203,10 @@ pub unsafe extern "C" fn vnhost_vfs_export(roots: *const c_char, len: *mut size_
     let mut out = Sink { p, at: 0, cap: size };
     Fs::write_saved(&saved, &mut out);
     *len = out.at;
+    // (what a save costs: MASU_TRACE_VFS)
+    if trace() {
+        eprintln!("vfs: save of {} records, {} bytes: {taken:?} under the lock, {:?} written out", saved.len(), out.at, t.elapsed().saturating_sub(taken));
+    }
     p
 }
 
@@ -742,6 +752,7 @@ impl Fs {
         match self.node(ino).map(|n| &n.data) {
             Some(Data::File(Content::Lower { size, .. })) => *size,
             Some(Data::File(Content::Upper(v))) => v.len(),
+            Some(Data::File(Content::Over(o))) => o.len(),
             _ => 0,
         }
     }
@@ -1843,32 +1854,62 @@ fn block_end(l: &Layout, at: u64) -> u64 {
     (cstart + ((at - cstart) / block() + 1) * block()).min(cstart + clen)
 }
 
-/// What a read of `ino` at `off` finds under the FS lock: the bytes of a file in memory
-/// (copied into `buf`: Err(count)), or a store file's layout and chunks.
-fn lookup(fs: &Fs, ino: Ino, buf: &mut [u8], off: u64) -> Result<Result<(Layout, Arc<Vec<Option<Hash>>>), usize>, c_int> {
+/// What a read finds under the FS lock.
+enum Got {
+    /// a file in memory: this many bytes copied into the buffer
+    Mem(usize),
+    /// a store file: its layout and chunks, read past the lock
+    Store(Layout, Arc<Vec<Option<Hash>>>),
+    /// a store file written to: this many bytes, what memory holds of them copied, the pieces
+    /// of the buffer (from, to) to be read from the store's file (its layout and chunks)
+    Over(usize, Layout, Arc<Vec<Option<Hash>>>, Vec<(usize, usize)>),
+}
+
+/// What a read of `ino` at `off` finds under the FS lock (`Got`).
+fn lookup(fs: &Fs, ino: Ino, buf: &mut [u8], off: u64) -> Result<Got, c_int> {
     match fs.node(ino).map(|n| &n.data) {
         Some(Data::File(Content::Upper(v))) => {
             // (an offset past what a usize holds is past the end: not its low 32 bits)
-            Ok(Err(v.read(off, buf)))
+            Ok(Got::Mem(v.read(off, buf)))
         }
-        Some(Data::File(Content::Lower { size, chunks, starts })) => Ok(Ok((Layout { size: *size, starts: starts.clone() }, chunks.clone()))),
+        Some(Data::File(Content::Lower { size, chunks, starts })) => Ok(Got::Store(Layout { size: *size, starts: starts.clone() }, chunks.clone())),
+        Some(Data::File(Content::Over(o))) => {
+            let (n, gaps) = o.read(off, buf);
+            let s = o.store();
+            Ok(Got::Over(n, Layout { size: s.size, starts: s.starts.clone() }, s.chunks.clone(), gaps))
+        }
         Some(Data::Dir(_)) => Err(libc::EISDIR),
-        _ => Err(libc::EBADF),
+        Some(Data::Link(_)) | None => Err(libc::EBADF),
     }
 }
 
 /// Reads file content at `off` (the lock is not held while chunks are fetched).
 fn read_at(ino: Ino, buf: &mut [u8], off: u64) -> Result<usize, c_int> {
-    let lower = look(|fs| lookup(fs, ino, buf, off))?;
-    read_lower(ino, buf, off, lower)
+    let got = look(|fs| lookup(fs, ino, buf, off))?;
+    read_lower(ino, buf, off, got)
 }
 
-/// read_at past the FS lock (`lower`: what `lookup` found).
-fn read_lower(ino: Ino, buf: &mut [u8], off: u64, lower: Result<(Layout, Arc<Vec<Option<Hash>>>), usize>) -> Result<usize, c_int> {
-    let (layout, chunks) = match lower {
-        Err(n) => return Ok(n),
-        Ok(l) => l,
-    };
+/// read_at past the FS lock (`got`: what `lookup` found).
+fn read_lower(ino: Ino, buf: &mut [u8], off: u64, got: Got) -> Result<usize, c_int> {
+    match got {
+        Got::Mem(n) => Ok(n),
+        Got::Store(layout, chunks) => read_store(ino, buf, off, layout, chunks),
+        Got::Over(n, layout, chunks, gaps) => {
+            for (a, b) in gaps {
+                let at = off.saturating_add(u64::try_from(a).unwrap_or(u64::MAX));
+                let piece = buf.get_mut(a..b).ok_or(libc::EIO)?;
+                // (the store's bytes below the base: all there, the base is at most its size)
+                if read_store(ino, piece, at, layout.clone(), chunks.clone())? != piece.len() {
+                    return Err(libc::EIO);
+                }
+            }
+            Ok(n)
+        }
+    }
+}
+
+/// The store file's bytes at `off` (layout and chunks), fetched past the FS lock.
+fn read_store(ino: Ino, buf: &mut [u8], off: u64, layout: Layout, chunks: Arc<Vec<Option<Hash>>>) -> Result<usize, c_int> {
     let size = layout.size;
     // (a read of nothing: else end - 1 below wraps, and every chunk of the file is fetched ahead)
     if off >= size || buf.is_empty() {
@@ -1954,46 +1995,46 @@ fn read_lower(ino: Ino, buf: &mut [u8], off: u64, lower: Result<(Layout, Arc<Vec
     Ok((end - off) as usize)
 }
 
-/// Files this big and more, copied from the store into memory to be written, are noted
-/// (stderr): a game that writes into a big archive holds all of it.
-const COPY_UP_NOTE: u64 = 16 << 20;
+/// Makes a store file one written to (vfs/over.rs) before it is written or its size changes:
+/// nothing of it is copied, its bytes stay the store's until pages of it are written.
+fn over_store(fs: &mut Fs, ino: Ino) -> Result<(), c_int> {
+    let Some(Data::File(Content::Lower { size, chunks, starts })) = fs.node(ino).map(|n| &n.data) else { return Ok(()) };
+    let store = over::Store { size: *size, chunks: chunks.clone(), starts: starts.clone() };
+    let o = over::Over::new(store).map_err(|crate::pages::TooLong| libc::ENOSPC)?;
+    if let Some(Data::File(c)) = fs.data_mut(ino) {
+        *c = Content::Over(Box::new(o));
+    }
+    Ok(())
+}
 
-/// Turns a file from the store into one in memory, before it is written: its first `keep`
-/// bytes (the rest is cut, as set_size does: truncating is not a copy of the whole).
-fn copy_up(ino: Ino, keep: u64) -> Result<(), c_int> {
-    let size = look(|fs| match fs.node(ino).map(|n| &n.data) {
-        Some(Data::File(Content::Lower { size, .. })) => Some(*size),
-        _ => None,
-    });
-    let Some(size) = size else { return Ok(()) };
-    let size = size.min(keep);
-    if size >= COPY_UP_NOTE {
-        eprintln!("kura: a write copies {} MiB of a file from the store into memory (inode {ino})", size >> 20);
-    }
-    upper_end(size, 0, UPPER_MAX)?;
-    let mut v = crate::pages::Pages::new();
-    if !v.room(size) {
-        return Err(libc::ENOSPC);
-    }
-    // a page at a time: a big file never needs one block of its whole size (#234)
-    let mut buf = vec![0; crate::pages::PAGE.min(size as usize)];
-    let mut at = 0u64;
-    while at < size {
-        let k = buf.len().min((size - at) as usize);
-        let n = read_at(ino, &mut buf[..k], at)?;
-        if n == 0 {
-            break;
+/// What a write did.
+enum Written {
+    /// wrote this many bytes
+    Done(usize),
+    /// went into pages of a store file it covers in part: their store bytes are to be fetched
+    /// first (the store file's layout and chunks)
+    Fill(Layout, Arc<Vec<Option<Hash>>>, Vec<over::Fill>),
+}
+
+/// The store's bytes fetched for a write (what they are, the chunks they were fetched from).
+type Fetched = (Arc<Vec<Option<Hash>>>, Vec<(over::Fill, Vec<u8>)>);
+
+/// How many times a write fetches the store's bytes under it before it gives up (one is
+/// enough unless the file changes meanwhile).
+const FILL_TRIES: usize = 4;
+
+/// Fetches the store's bytes `fills` asks for, past the FS lock.
+fn fetch_fills(ino: Ino, layout: Layout, chunks: Arc<Vec<Option<Hash>>>, fills: Vec<over::Fill>) -> Result<Fetched, c_int> {
+    let mut out = Vec::with_capacity(fills.len());
+    for f in fills {
+        let n = usize::try_from(f.end.saturating_sub(f.start)).ok().ok_or(libc::EFBIG)?;
+        let mut b = vec![0u8; n];
+        if read_store(ino, &mut b, f.start, layout.clone(), chunks.clone())? != n {
+            return Err(libc::EIO);
         }
-        v.write(at, &buf[..n]).map_err(|crate::pages::TooLong| libc::ENOSPC)?;
-        at += n as u64;
+        out.push((f, b));
     }
-    v.set_len(size).map_err(|crate::pages::TooLong| libc::ENOSPC)?;
-    change(|fs| {
-        if let Some(Data::File(c @ Content::Lower { .. })) = fs.data_mut(ino) {
-            *c = Content::Upper(v);
-        }
-        Ok(())
-    })
+    Ok((chunks, out))
 }
 
 /// The most bytes a file in memory holds: what a Vec can (isize::MAX: 2 GiB less one on wasm32).
@@ -2007,16 +2048,78 @@ fn upper_end(off: u64, len: usize, max: usize) -> Result<usize, c_int> {
 }
 
 fn write_at(ino: Ino, data: &[u8], off: u64) -> Result<usize, c_int> {
-    copy_up(ino, u64::MAX)?;
-    change(|fs| fs.write_upper(ino, data, off))
+    let mut fetched: Option<Fetched> = None;
+    for _ in 0..FILL_TRIES {
+        let wrote = change(|fs| {
+            over_store(fs, ino)?;
+            if let Some(f) = fetched.take() {
+                fs.fill_over(ino, f)?;
+            }
+            fs.write_file(ino, data, off)
+        })?;
+        match wrote {
+            Written::Done(n) => return Ok(n),
+            Written::Fill(layout, chunks, fills) => fetched = Some(fetch_fills(ino, layout, chunks, fills)?),
+        }
+    }
+    Err(libc::EIO)
 }
 
 fn set_size(ino: Ino, size: u64) -> Result<(), c_int> {
-    copy_up(ino, size)?;
-    change(|fs| fs.set_upper_size(ino, size))
+    change(|fs| {
+        over_store(fs, ino)?;
+        fs.set_upper_size(ino, size)
+    })
 }
 
 impl Fs {
+    /// write_at to a file in memory or a store file written to
+    fn write_file(&mut self, ino: Ino, data: &[u8], off: u64) -> Result<Written, c_int> {
+        match self.node(ino).map(|n| &n.data) {
+            Some(Data::File(Content::Over(_))) => self.write_over(ino, data, off),
+            Some(Data::File(Content::Upper(_) | Content::Lower { .. }) | Data::Dir(_) | Data::Link(_)) | None => self.write_upper(ino, data, off).map(Written::Done),
+        }
+    }
+
+    /// write_at to a store file written to: Fill when pages it covers in part need the store's
+    /// bytes under them first.
+    fn write_over(&mut self, ino: Ino, data: &[u8], off: u64) -> Result<Written, c_int> {
+        let end = upper_end(off, data.len(), UPPER_MAX)?;
+        let wide = u64::try_from(end).unwrap_or(u64::MAX);
+        let Some(Data::File(Content::Over(o))) = self.upper_mut(ino, off, wide) else { return Err(libc::EBADF) };
+        if data.is_empty() {
+            return Ok(Written::Done(0));
+        }
+        let old = usize::try_from(o.len()).unwrap_or(usize::MAX);
+        match o.write(off, data) {
+            Ok(()) => {}
+            Err(over::Unwritten::TooLong) => return Err(libc::ENOSPC),
+            Err(over::Unwritten::Fill(f)) => {
+                let s = o.store();
+                return Ok(Written::Fill(Layout { size: s.size, starts: s.starts.clone() }, s.chunks.clone(), f));
+            }
+        }
+        self.dirt.bytes(ino, old.min(end.saturating_sub(data.len())), end);
+        if let Some(n) = self.meta_mut(ino) {
+            n.mtime = now();
+        }
+        Ok(Written::Done(data.len()))
+    }
+
+    /// Puts in the store's bytes a write fetched, if the file is still over those chunks.
+    fn fill_over(&mut self, ino: Ino, (chunks, fills): Fetched) -> Result<(), c_int> {
+        for (f, b) in fills {
+            let (Ok(lo), Ok(hi)) = (usize::try_from(f.start), usize::try_from(f.end)) else { return Err(libc::EFBIG) };
+            match self.upper_mut(ino, f.start, f.end) {
+                Some(Data::File(Content::Over(o))) if Arc::ptr_eq(&o.store().chunks, &chunks) => o.fill(f, &b).map_err(|crate::pages::TooLong| libc::ENOSPC)?,
+                _ => return Ok(()),
+            }
+            // (the others hold these bytes too: the page holds them now, not the store)
+            self.dirt.bytes(ino, lo, hi);
+        }
+        Ok(())
+    }
+
     /// write_at to a file in memory
     fn write_upper(&mut self, ino: Ino, data: &[u8], off: u64) -> Result<usize, c_int> {
         let end = upper_end(off, data.len(), UPPER_MAX)?;
@@ -2045,6 +2148,17 @@ impl Fs {
                 v.set_len(size as u64).map_err(|crate::pages::TooLong| libc::ENOSPC)?;
                 // (cut then grown again before the others look: the zeros between are new)
                 self.dirt.bytes(ino, old.min(size), old.max(size));
+                Ok(())
+            }
+            Some(Data::File(Content::Over(o))) => {
+                let old = usize::try_from(o.len()).unwrap_or(usize::MAX);
+                o.set_len(cut).map_err(|crate::pages::TooLong| libc::ENOSPC)?;
+                let gone = o.store_gone();
+                self.dirt.bytes(ino, old.min(size), old.max(size));
+                // (cut to nothing: no more of the store's file, a file in memory again)
+                if gone && let Some(Data::File(c)) = self.data_mut(ino) && let Content::Over(o) = std::mem::replace(c, Content::Upper(crate::pages::Pages::new())) {
+                    *c = Content::Upper(o.into_pages());
+                }
                 Ok(())
             }
             Some(Data::Dir(_)) => Err(libc::EISDIR),
@@ -2686,6 +2800,86 @@ pub(crate) mod tests {
         }
     }
 
+    /// A byte written into a 3 MiB store file fetches and holds the page it is in, not the file
+    /// (copy_up fetched and held all of it, and the saves kept all of it); cut and made long
+    /// again it reads zeros past the cut; its save is that page and the store file's name, put
+    /// back it reads the same. The cost of the save is printed (cargo test -- --nocapture).
+    #[test]
+    fn a_byte_into_a_big_store_file_saves_a_page() {
+        let _g = TEST_FS.lock().unwrap_or_else(|e| e.into_inner());
+        let page = crate::pages::PAGE64;
+        let size = 3 * page + 77;
+        let data: Vec<u8> = (0..size).map(|i| (i % 251) as u8 | 1).collect();
+        let unit = 64 << 10;
+        let mut chunks = HashMap::new();
+        let mut names = Vec::new();
+        for (k, c) in data.chunks(unit).enumerate() {
+            let h = format!("{:032x}", 0xc0de_0000u64 + k as u64);
+            chunks.insert(format!("chunks/{}/{h}", &h[..2]), c.to_vec());
+            names.push(format!("{h}:{}", c.len()));
+        }
+        let tsv = format!("{}\nf\t644\t0\tbig.pak\t{size}\t{}\n", crate::tree_list::Header { avg: 64 }, names.join(","));
+        let fresh = || {
+            let mut fs = Fs { next_handle: 1, ..Default::default() };
+            let root = fs.add(Data::Dir(BTreeMap::new()), 0o755, 0);
+            fs.load_tree(root, &tsv);
+            fs.mounts.push(("/".into(), root));
+            fs.base = fs.entries();
+            let ino = fs.walk(root, "big.pak").unwrap();
+            (fs, ino)
+        };
+        let (fs, ino) = fresh();
+        *FS.locked() = Some(fs);
+        *STORE.locked() = Some((chunks.clone(), Vec::new()));
+        let fetched = || {
+            let mut g = AHEAD.lock().unwrap_or_else(|e| e.into_inner());
+            while g.as_ref().is_some_and(|a| !a.busy.is_empty()) {
+                g = AHEAD_DONE.wait(g).unwrap_or_else(|e| e.into_inner());
+            }
+            drop(g);
+            let got: std::collections::HashSet<String> = std::mem::take(&mut STORE.locked().as_mut().unwrap().1).into_iter().map(|n| n.split('#').next().unwrap().to_string()).collect();
+            got
+        };
+        fetched();
+        let mut m = data.clone();
+        assert_eq!(write_at(ino, b"x", page + 5), Ok(1));
+        m[usize::try_from(page).unwrap() + 5] = b'x';
+        let got = fetched();
+        let held = look(|fs| match fs.node(ino).map(|n| &n.data) {
+            Some(Data::File(Content::Over(o))) => o.held(),
+            _ => usize::MAX,
+        });
+        assert!(held <= crate::pages::PAGE, "held {held} for a byte");
+        // (the page's 16 chunks, and the few read ahead after them: never the file's 49)
+        assert!(got.len() <= 16 + 8, "fetched {} chunks for a byte", got.len());
+        set_size(ino, 2 * page + 10).unwrap();
+        set_size(ino, 3 * page).unwrap();
+        m.truncate(usize::try_from(2 * page + 10).unwrap());
+        m.resize(usize::try_from(3 * page).unwrap(), 0);
+        let read_all = |ino| {
+            let mut b = vec![0xaa; m.len() + 9];
+            let n = read_at(ino, &mut b, 0).unwrap();
+            b.truncate(n);
+            b
+        };
+        assert!(read_all(ino) == m, "the file reads otherwise");
+        let t = std::time::Instant::now();
+        let saved = look(|fs| fs.saved(&["/".to_owned()]));
+        let taken = t.elapsed();
+        let mut blob = Vec::new();
+        Fs::write_saved(&saved, &mut blob);
+        let written = t.elapsed().saturating_sub(taken);
+        eprintln!("save cost: a byte into a {size}-byte store file, cut and grown: {} bytes saved (copy_up: {size}), {} held, {taken:?} under the lock, {written:?} written out", blob.len(), held);
+        assert!(blob.len() < crate::pages::PAGE + 4096, "saved {} bytes", blob.len());
+        let (mut back, ino) = fresh();
+        for r in saves::parse_records(&blob) {
+            back.put_back(r);
+        }
+        *FS.locked() = Some(back);
+        assert!(read_all(ino) == m, "the file put back reads otherwise");
+        *FS.locked() = None;
+    }
+
     /// Store files (chunks of 64 bytes, some all zero, the last short; every other file in
     /// chunks of 1 to 150 bytes, as cut by content), then random writes,
     /// truncations and reads against a model of each file's bytes. A truncation to 0 of a file
@@ -2759,12 +2953,9 @@ pub(crate) mod tests {
             fetched();
             set_size(ino, n).unwrap();
             let got: std::collections::HashSet<String> = fetched().into_iter().map(|n| n.split('#').next().unwrap().to_string()).collect();
-            // (and the chunk after them, fetched ahead as after any read; odd files' chunks
-            // are 1 byte or more)
-            let unit = if f % 2 == 1 { 1 } else { 64 };
-            let need = (n.min(models[f].len() as u64)).div_ceil(unit) as usize;
-            let need = if need == 0 { 0 } else { need + 1 };
-            assert!(got.len() <= need, "f{f} cut to {n}: fetched {} chunks, needs {need}", got.len());
+            // (a cut copies nothing from the store: the store's bytes below it stay where they
+            // are, review of 6852be1 stage 5; copy_up fetched every chunk before the cut)
+            assert!(got.is_empty(), "f{f} cut to {n}: fetched {got:?}");
             models[f].resize(n as usize, 0);
         }
         for _ in 0..2000 {
@@ -3948,6 +4139,11 @@ mod proptests {
                 Data::Link(t) => format!("link {t}"),
                 Data::File(Content::Lower { size, chunks, .. }) => format!("store {size} {chunks:?}"),
                 Data::File(Content::Upper(v)) => format!("memory {:?}", v.to_vec()),
+                Data::File(Content::Over(o)) => {
+                    let mut shape = Vec::new();
+                    o.put_shape(&mut |b| shape.extend_from_slice(b));
+                    format!("over {} {:?} {:?} {shape:?}", o.store().size, o.store().chunks, o)
+                }
             };
             out.insert(p.to_owned(), format!("{what} mode {:o} mtime {}", n.mode, n.mtime));
         });
@@ -3976,6 +4172,12 @@ mod proptests {
                             release(h).unwrap();
                         }
                     }
+                    SaveOp::Cut(p, n) => {
+                        if let At::Ours(Ok(h)) = open_handle(p, libc::O_WRONLY, 0) {
+                            let _ = h_set_len(h, *n);
+                            release(h).unwrap();
+                        }
+                    }
                 }
             }
             let (left, blob) = look(|fs| {
@@ -4001,6 +4203,8 @@ mod proptests {
         Unlink(String),
         Rename(String, String),
         Write(String, Vec<u8>),
+        /// the file's length set (SetEndOfFile)
+        Cut(String, u64),
     }
 
     fn save_op() -> impl Strategy<Value = SaveOp> {
@@ -4011,6 +4215,7 @@ mod proptests {
             2 => path().prop_map(SaveOp::Unlink),
             3 => (path(), path()).prop_map(|(a, b)| SaveOp::Rename(a, b)),
             1 => (path(), prop::collection::vec(any::<u8>(), 0..6)).prop_map(|(p, d)| SaveOp::Write(p, d)),
+            1 => (path(), 0u64..12).prop_map(|(p, n)| SaveOp::Cut(p, n)),
         ]
     }
 
@@ -4030,11 +4235,21 @@ mod proptests {
         fs.put_file("/b/c/save.dat", b"saved".to_vec(), 9);
         let save = fs.walk(root, "b/c/save.dat").unwrap();
         if let Some(n) = fs.meta_mut(save) { n.mode = 0o600; }
+        // (a store file cut to 1 byte and written past it: the store's file, the page written)
+        let y = fs.walk(root, "a/y").unwrap();
+        over_store(&mut fs, y).unwrap();
+        fs.set_upper_size(y, 1).unwrap();
+        if let Some(Data::File(Content::Over(o))) = fs.data_mut(y) {
+            for f in o.fills(5, 1) {
+                o.fill(f, &[0]).unwrap();
+            }
+            o.write(5, b"w").unwrap();
+        }
         let mut blob = Vec::new();
         fs.export("/", &mut blob);
         let mut got = String::new();
         for r in saves::parse_records(&blob) {
-            let kind = match &r { saves::Record::File { .. } => "file", saves::Record::Gone { .. } => "gone", saves::Record::Put { .. } => "put", saves::Record::Mode { .. } => "mode" };
+            let kind = match &r { saves::Record::File { .. } => "file", saves::Record::Gone { .. } => "gone", saves::Record::Put { .. } => "put", saves::Record::Mode { .. } => "mode", saves::Record::Over { .. } => "over" };
             got += &format!("{kind} {}\n", r.path());
         }
         let hex: String = blob.iter().map(|b| format!("{b:02x}")).collect();

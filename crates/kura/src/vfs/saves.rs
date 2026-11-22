@@ -27,6 +27,10 @@ enum Tag {
     Put,
     /// a file in memory's mode: body the mode (u32)
     Mode,
+    /// a store file written to (vfs/over.rs): body the store's file as an [`Entry`] (u32
+    /// length, the entry: the file's mode and time), then the pages written over it
+    /// (`Over::put_shape`)
+    Over,
 }
 
 impl Tag {
@@ -35,6 +39,7 @@ impl Tag {
             Tag::Gone => 1,
             Tag::Put => 2,
             Tag::Mode => 3,
+            Tag::Over => 4,
         }
     }
     fn of(w: u32) -> Option<Tag> {
@@ -42,6 +47,7 @@ impl Tag {
             1 => Some(Tag::Gone),
             2 => Some(Tag::Put),
             3 => Some(Tag::Mode),
+            4 => Some(Tag::Over),
             _ => None,
         }
     }
@@ -89,7 +95,7 @@ impl Entry {
             Data::Dir(_) => Kind::Dir,
             Data::Link(t) => Kind::Link(t.clone()),
             Data::File(Content::Lower { size, chunks, starts }) => Kind::Lower { size: *size, chunks: chunks.clone(), starts: starts.clone() },
-            Data::File(Content::Upper(_)) => return None,
+            Data::File(Content::Upper(_) | Content::Over(_)) => return None,
         };
         Some(Entry { kind, mode: n.mode, mtime: n.mtime })
     }
@@ -178,13 +184,14 @@ pub(super) enum Record {
     Gone { path: String, was: Entry },
     Put { path: String, entry: Entry },
     Mode { path: String, mode: u32 },
+    Over { path: String, mode: u32, mtime: i64, over: Box<over::Over> },
 }
 
 impl Record {
     #[cfg(test)]
     pub(super) fn path(&self) -> &str {
         match self {
-            Record::File { path, .. } | Record::Gone { path, .. } | Record::Put { path, .. } | Record::Mode { path, .. } => path,
+            Record::File { path, .. } | Record::Gone { path, .. } | Record::Put { path, .. } | Record::Mode { path, .. } | Record::Over { path, .. } => path,
         }
     }
 }
@@ -232,6 +239,16 @@ fn record(b: &[u8]) -> Option<(Record, &[u8])> {
         Tag::Gone => Record::Gone { path, was: Entry::get(body)? },
         Tag::Put => Record::Put { path, entry: Entry::get(body)? },
         Tag::Mode => Record::Mode { path, mode: u32::from_le_bytes(*body.first_chunk::<4>().filter(|_| body.len() == 4)?) },
+        Tag::Over => {
+            let (n, body) = take_u32(body)?;
+            let (entry, shape) = body.split_at_checked(n)?;
+            let Entry { kind: Kind::Lower { size, chunks, starts }, mode, mtime } = Entry::get(entry)? else { return None };
+            let (over, rest) = over::Over::get_shape(over::Store { size, chunks, starts }, shape)?;
+            if !rest.is_empty() {
+                return None;
+            }
+            Record::Over { path, mode, mtime, over: Box::new(over) }
+        }
     };
     Some((r, b))
 }
@@ -244,6 +261,8 @@ enum Out {
     Gone(Entry),
     Put(Entry),
     Mode(u32),
+    /// a store file written to, its mode and time
+    Over { mode: u32, mtime: i64, over: Box<over::Over> },
 }
 
 /// A record and its name, in the order they are put back: names gone first (deepest first: a
@@ -261,7 +280,7 @@ impl Saved {
             Out::Gone(_) => (0, std::cmp::Reverse(path.clone()), String::new()),
             Out::Put(Entry { kind: Kind::Dir, .. }) => (1, std::cmp::Reverse(String::new()), path.clone()),
             Out::Put(_) => (2, std::cmp::Reverse(String::new()), path.clone()),
-            Out::File { .. } => (3, std::cmp::Reverse(String::new()), path.clone()),
+            Out::File { .. } | Out::Over { .. } => (3, std::cmp::Reverse(String::new()), path.clone()),
             Out::Mode(_) => (4, std::cmp::Reverse(String::new()), path.clone()),
         };
         Saved { rank, path, what }
@@ -273,9 +292,17 @@ impl Saved {
             Out::Gone(e) => e.put(&mut out),
             Out::Put(e) => e.put(&mut out),
             Out::Mode(m) => out.extend(m.to_le_bytes()),
-            Out::File { .. } => {}
+            Out::File { .. } | Out::Over { .. } => {}
         }
         out
+    }
+
+    /// An Over record's store entry (its body starts with it).
+    fn store_entry(mode: u32, mtime: i64, over: &over::Over) -> Vec<u8> {
+        let s = over.store();
+        let mut e = Vec::new();
+        Entry { kind: Kind::Lower { size: s.size, chunks: s.chunks.clone(), starts: s.starts.clone() }, mode, mtime }.put(&mut e);
+        e
     }
 
     /// The record's bytes.
@@ -283,6 +310,7 @@ impl Saved {
         match &self.what {
             Out::File { data, .. } => self.path.len().saturating_add(16).saturating_add(usize::try_from(data.len()).unwrap_or(usize::MAX)),
             Out::Gone(_) | Out::Put(_) | Out::Mode(_) => self.path.len().saturating_add(12).saturating_add(self.body().len()),
+            Out::Over { mode, mtime, over } => self.path.len().saturating_add(16).saturating_add(Saved::store_entry(*mode, *mtime, over).len()).saturating_add(over.shape_len()),
         }
     }
 
@@ -290,6 +318,7 @@ impl Saved {
     pub(super) fn len(&self) -> u64 {
         match &self.what {
             Out::File { data, .. } => data.len(),
+            Out::Over { over, .. } => over.len(),
             Out::Gone(_) | Out::Put(_) | Out::Mode(_) => 0,
         }
     }
@@ -307,6 +336,19 @@ impl Saved {
                 out.put(&mtime.to_le_bytes());
                 out.put(&u32::try_from(data.len()).unwrap_or(u32::MAX).to_le_bytes());
                 data.for_each(|b| out.put(b));
+                return;
+            }
+            Out::Over { mode, mtime, over } => {
+                // (the pages written straight out of the file's pages: no copy of them first)
+                let entry = Saved::store_entry(*mode, *mtime, over);
+                let body = entry.len().saturating_add(4).saturating_add(over.shape_len());
+                out.put(&Tag::Over.word().to_le_bytes());
+                out.put(&n);
+                out.put(self.path.as_bytes());
+                out.put(&u32::try_from(body).unwrap_or(u32::MAX).to_le_bytes());
+                out.put(&u32::try_from(entry.len()).unwrap_or(u32::MAX).to_le_bytes());
+                out.put(&entry);
+                over.put_shape(&mut |b| out.put(b));
                 return;
             }
             Out::Gone(_) => Tag::Gone,
@@ -380,6 +422,12 @@ impl Fs {
                         f
                     }
                     None => {
+                        if let Data::File(Content::Over(o)) = &n.data {
+                            // (the pages written and the store file under them: never all its bytes)
+                            here.push(Saved::new(p.to_owned(), Out::Over { mode: n.mode, mtime: n.mtime, over: o.clone() }));
+                            now.insert(p.to_owned(), Family::File);
+                            return;
+                        }
                         let Data::File(Content::Upper(data)) = &n.data else { return };
                         here.push(Saved::new(p.to_owned(), Out::File { mtime: n.mtime, data: data.clone() }));
                         // (put_file keeps the mode of the file it writes into, else gives FILE_MODE)
@@ -427,6 +475,7 @@ impl Fs {
             Record::File { path, data, mtime } => self.put_file(&path, data, mtime),
             Record::Gone { path, was } => self.put_gone(&path, &was),
             Record::Put { path, entry } => self.put_entry(&path, entry),
+            Record::Over { path, mode, mtime, over } => self.put_data(&path, Data::File(Content::Over(over)), mode, mtime),
             Record::Mode { path, mode } => {
                 if let Some(ino) = self.split_mount(&path).and_then(|(at, rel)| self.walk(at, rel)) && let Some(n) = self.meta_mut(ino) {
                     n.mode = mode;
@@ -459,7 +508,7 @@ impl Fs {
             (Data::Link(t), Kind::Link(w)) => t == w,
             (Data::Dir(_), Kind::Lower { .. } | Kind::Link(_))
             | (Data::File(_), Kind::Dir | Kind::Link(_))
-            | (Data::File(Content::Upper(_)), Kind::Lower { .. })
+            | (Data::File(Content::Upper(_) | Content::Over(_)), Kind::Lower { .. })
             | (Data::Link(_), Kind::Dir | Kind::Lower { .. }) => false,
         };
         if !same {
@@ -480,6 +529,16 @@ impl Fs {
     /// Makes `path` the entry (its directories made where missing); a directory there stays one
     /// (its mode and time set), a file there is replaced, anything else there stays.
     fn put_entry(&mut self, path: &str, e: Entry) {
+        let data = match e.kind {
+            Kind::Dir => Data::Dir(BTreeMap::new()),
+            Kind::Lower { size, chunks, starts } => Data::File(Content::Lower { size, chunks, starts }),
+            Kind::Link(t) => Data::Link(t),
+        };
+        self.put_data(path, data, e.mode, e.mtime)
+    }
+
+    /// put_entry of what a node holds, its mode and time.
+    fn put_data(&mut self, path: &str, data: Data, mode: u32, mtime: i64) {
         let Some((dir, name)) = path.rsplit_once('/') else { return };
         let Some((at, rel)) = self.split_mount(if dir.is_empty() { "/" } else { dir }) else { return };
         let parent = self.mkdir_p(at, rel);
@@ -489,28 +548,23 @@ impl Fs {
         };
         // (the root of "/" has no name in a directory)
         let old = if path == "/" { self.mount_at("/") } else { old };
-        let data = match e.kind {
-            Kind::Dir => Data::Dir(BTreeMap::new()),
-            Kind::Lower { size, chunks, starts } => Data::File(Content::Lower { size, chunks, starts }),
-            Kind::Link(t) => Data::Link(t),
-        };
         let dir = matches!(data, Data::Dir(_));
         match old.map(|i| (i, self.node(i).map(|n| matches!(n.data, Data::Dir(_))), dir)) {
             Some((i, Some(true), true)) => {
                 if let Some(n) = self.meta_mut(i) {
-                    (n.mode, n.mtime) = (e.mode, e.mtime);
+                    (n.mode, n.mtime) = (mode, mtime);
                 }
             }
             Some((i, Some(false), false)) => {
                 if let Some(n) = self.node_mut(i) {
-                    (n.data, n.mode, n.mtime) = (data, e.mode, e.mtime);
+                    (n.data, n.mode, n.mtime) = (data, mode, mtime);
                 }
             }
             // (a directory where a file goes, or the other way: the gone record before it took
             // away the store's; one still there is a name the game made since)
             Some((_, Some(true), false) | (_, Some(false), true) | (_, None, true | false)) => {}
             None => {
-                let i = self.add(data, e.mode, e.mtime);
+                let i = self.add(data, mode, mtime);
                 if let Some(Data::Dir(ch)) = self.data_mut(parent) {
                     ch.insert(name.to_owned(), i);
                 }

@@ -130,8 +130,12 @@ impl Fs {
     }
     /// Before bytes `off..end` of file in memory `ino` change, or its length.
     pub(super) fn keep_bytes(&mut self, ino: Ino, off: u64, end: u64) {
-        if let Some(u) = &mut self.undo && let Some(Some(Node { data: Data::File(Content::Upper(v)), .. })) = self.nodes.get(us(ino)) {
-            u.edit(ino, v, off, end);
+        let Some(u) = &mut self.undo else { return };
+        match self.nodes.get(us(ino)) {
+            Some(Some(Node { data: Data::File(Content::Upper(v)), .. })) => u.edit(ino, v, off, end),
+            // (a store file written to: kept whole, its pages shared with it, not copied)
+            Some(Some(n @ Node { data: Data::File(Content::Over(_)), .. })) => u.whole(ino, || Some(n.clone())),
+            Some(Some(Node { data: Data::File(Content::Lower { .. }) | Data::Dir(_) | Data::Link(_), .. }) | None) | None => {}
         }
     }
     /// Before the free slots change.

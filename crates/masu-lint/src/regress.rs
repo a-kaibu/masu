@@ -339,7 +339,7 @@ pub(super) fn snorm_targets(tree: &Tree) -> Hits {
 
 /// What the review of kura at 6852be1 found wrong, fixed (2026-11-22), each by its spelling in
 /// the code (comments left out): (file, text it must hold, what is wrong without it).
-pub(super) const REVIEW_6852BE1_HAS: [(&str, &str, &str); 39] = [
+pub(super) const REVIEW_6852BE1_HAS: [(&str, &str, &str); 43] = [
     ("crates/kura/src/d3d11/hazards.rs", "out.extend(st.so.iter()", "stream output targets are not outputs: a vertex buffer of one stays bound (D3D11 unbinds it)"),
     ("crates/kura/src/d3d11/hazards.rs", "for vb in st.vbs.iter_mut()", "the vertex buffers checked are not all 32 slots"),
     ("crates/kura/src/d3d11/op.rs", "if let Uavs::Set { start, views, counts } = uavs {", "OMSetRenderTargetsAndUnorderedAccessViews with KEEP render targets does not resolve its new UAVs"),
@@ -357,6 +357,10 @@ pub(super) const REVIEW_6852BE1_HAS: [(&str, &str, &str); 39] = [
     ("crates/kura/src/snap.rs", "fn wait_resume(", "a stop the page gave up on waits for RESUME for ever"),
     ("web/src/savestate.ts", "word(CANCEL)", "the page does not cancel a stop request it gave up on"),
     ("crates/kura/src/vfs/saves.rs", "Out::Gone(was.clone())", "a store file deleted or renamed is not in the saves (it comes back at the next start)"),
+    ("crates/kura/src/vfs.rs", "Over(Box<over::Over>),", "a store file written to is copied into memory whole (copy_up) instead of keeping the pages written over the store's bytes"),
+    ("crates/kura/src/vfs/over.rs", "self.base = self.base.min(n);", "a store file cut and made long again shows the store's bytes past the cut again"),
+    ("crates/kura/src/vfs/saves.rs", "Out::Over { mode: n.mode, mtime: n.mtime, over: o.clone() }", "a store file written to is left out of the saves, or saved whole"),
+    ("crates/kura/src/vfs/shared.rs", "const I_OVER: u8 = 4;", "the other processes are sent a store file written to whole on every write"),
     ("crates/kura/src/vfs.rs", "fs.base = fs.entries();", "the saves are not told against the namespace the store gave"),
     ("web/src/file-records.ts", "(first & TAG) >>> 0 === TAG", "the page does not read kura's tagged records (gone names, directories, store files)"),
     ("crates/koji/src/jit/mod.rs", "global_get(PAGES).add().load8u(0)", "translated code reads the page marks at an address of the run that made it (a saved translation could not run with the checks on)"),
@@ -382,10 +386,11 @@ pub(super) const REVIEW_6852BE1_HAS: [(&str, &str, &str); 39] = [
 ];
 
 /// (file, text it must not hold, what is wrong with it)
-pub(super) const REVIEW_6852BE1_NOT: [(&str, &str, &str); 17] = [
+pub(super) const REVIEW_6852BE1_NOT: [(&str, &str, &str); 18] = [
     ("crates/kura/src/d3d11/hazards.rs", "0..16", "a fixed slot count: the slots past it are not checked"),
     ("crates/kura/src/d3d11/hazards.rs", "0..128", "a fixed slot count: the slots past it are not checked"),
     ("crates/kura/src/jit.rs", "SHARED_BYTES", "a byte count of the shared cache apart from what the map holds"),
+    ("crates/kura/src/vfs.rs", "fn copy_up(", "a store file copied from the store into memory whole before it is written"),
     ("host/vnjit.js", "1 << 20", "a table limit of its own, not the loader's (VNJIT.slots)"),
     ("crates/kura/src/vfs.rs", "fn with<R>(", "an operation whose result does not say that its change was not published"),
     ("crates/kura/src/snap.rs", "wait_cmd(CMD_RESUME)", "a wait for RESUME the page cannot cancel"),

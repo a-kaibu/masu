@@ -15,6 +15,7 @@
 //! length, the snapshot (`Fs::shared_snapshot`), then entries: length, items.
 #![cfg_attr(not(any(target_arch = "wasm32", test)), allow(dead_code))]
 use super::*;
+use std::collections::BTreeSet;
 
 fn u32put(out: &mut Vec<u8>, n: u32) { out.extend(n.to_le_bytes()); }
 fn bytes(out: &mut Vec<u8>, b: &[u8]) { u32put(out, b.len() as u32); out.extend(b); }
@@ -29,17 +30,28 @@ impl<'a> Read<'a> {
 
 fn put_node(out: &mut Vec<u8>, node: Option<&Node>) {
     let Some(n) = node else { u32put(out, 0); return };
-    let tag = match &n.data { Data::Dir(_) => 1, Data::Link(_) => 2, Data::File(Content::Upper(_)) => 3, Data::File(Content::Lower { .. }) => 4 };
+    let tag = match &n.data { Data::Dir(_) => 1, Data::Link(_) => 2, Data::File(Content::Upper(_)) => 3, Data::File(Content::Lower { .. }) => 4, Data::File(Content::Over(_)) => 5 };
     u32put(out, tag); u32put(out, n.mode); out.extend(n.mtime.to_le_bytes()); u32put(out, n.nlink); u32put(out, n.open_refs);
     match &n.data {
         Data::Dir(children) => { u32put(out, children.len() as u32); for (name, ino) in children { bytes(out, name.as_bytes()); u32put(out, *ino); } }
         Data::Link(path) => bytes(out, path.as_bytes()),
         Data::File(Content::Upper(data)) => { u32put(out, data.len() as u32); data.for_each(|b| out.extend(b)); }
-        Data::File(Content::Lower { size, chunks, starts }) => {
-            out.extend(size.to_le_bytes()); u32put(out, chunks.len() as u32);
-            for (i, hash) in chunks.iter().enumerate() { out.push(hash.is_some() as u8); if let Some(h) = hash { out.extend(h); } out.extend(starts[i + 1].to_le_bytes()); }
-        }
+        Data::File(Content::Lower { size, chunks, starts }) => put_store(out, *size, chunks, starts),
+        Data::File(Content::Over(o)) => { let s = o.store(); put_store(out, s.size, &s.chunks, &s.starts); o.put_shape(&mut |b| out.extend(b)); }
     }
+}
+fn put_store(out: &mut Vec<u8>, size: u64, chunks: &[Option<Hash>], starts: &[u64]) {
+    out.extend(size.to_le_bytes()); u32put(out, chunks.len() as u32);
+    for (hash, end) in chunks.iter().zip(starts.iter().skip(1)) { out.push(hash.is_some() as u8); if let Some(h) = hash { out.extend(h); } out.extend(end.to_le_bytes()); }
+}
+/// A store file as `put_store` wrote it.
+fn get_store(r: &mut Read) -> Option<over::Store> {
+    let size = r.u64()?; let n = r.u32()? as usize;
+    if n > r.0.len() / 9 { return None; }
+    let mut chunks = Vec::with_capacity(n); let mut starts = vec![0];
+    for _ in 0..n { let hash = match r.take(1)?[0] { 0 => None, 1 => Some(r.take(16)?.try_into().ok()?), _ => return None }; chunks.push(hash); let end = r.u64()?; if end <= *starts.last()? { return None; } starts.push(end); }
+    if *starts.last()? != size { return None; }
+    Some(over::Store { size, chunks: Arc::new(chunks), starts: Arc::new(starts) })
 }
 /// A node as `put_node` wrote it: Some(None) for a free slot, None if the bytes are not one.
 fn get_node(r: &mut Read) -> Option<Option<Node>> {
@@ -50,14 +62,8 @@ fn get_node(r: &mut Read) -> Option<Option<Node>> {
         1 => { let n = r.u32()?; if n as usize > r.0.len() / 8 { return None; } let mut children = BTreeMap::new(); for _ in 0..n { children.insert(r.string()?, r.u32()?); } Data::Dir(children) }
         2 => Data::Link(r.string()?),
         3 => { let n = r.u32()? as usize; Data::File(Content::Upper(crate::pages::Pages::from_slice(r.take(n)?))) }
-        4 => {
-            let size = r.u64()?; let n = r.u32()? as usize;
-            if n > r.0.len() / 9 { return None; }
-            let mut chunks = Vec::with_capacity(n); let mut starts = vec![0];
-            for _ in 0..n { let hash = match r.take(1)?[0] { 0 => None, 1 => Some(r.take(16)?.try_into().ok()?), _ => return None }; chunks.push(hash); let end = r.u64()?; if end <= *starts.last()? { return None; } starts.push(end); }
-            if *starts.last()? != size { return None; }
-            Data::File(Content::Lower { size, chunks: Arc::new(chunks), starts: Arc::new(starts) })
-        }
+        4 => { let s = get_store(r)?; Data::File(Content::Lower { size: s.size, chunks: s.chunks, starts: s.starts }) }
+        5 => { let s = get_store(r)?; let (o, rest) = over::Over::get_shape(s, r.0)?; r.0 = rest; Data::File(Content::Over(Box::new(o))) }
         _ => return None,
     };
     Some(Some(Node { data, mode, mtime, nlink, open_refs }))
@@ -201,13 +207,16 @@ enum Item {
     /// all of it (or the slot free)
     Node(Ino, Option<Node>),
     /// a file in memory's counts, size, and the bytes that changed
-    Upper { ino: Ino, mode: u32, mtime: i64, nlink: u32, open_refs: u32, size: u64, ranges: Vec<(u64, Vec<u8>)> },
+    Upper { ino: Ino, mode: u32, mtime: i64, nlink: u32, open_refs: u32, size: u64, ranges: Vec<(u64, Vec<u8>)>, over: Option<(u64, BTreeSet<u64>)> },
     /// the count of open handles
     Refs(Ino, u32),
 }
 const I_NODE: u8 = 1;
 const I_UPPER: u8 = 2;
 const I_REFS: u8 = 3;
+/// a store file written to: as I_UPPER, then how far the store's bytes show and the pages
+/// holding their own (vfs/over.rs)
+const I_OVER: u8 = 4;
 
 /// The journal grows to at least this before a new snapshot replaces it.
 #[cfg(not(test))]
@@ -270,8 +279,9 @@ impl Fs {
             count += 1;
             match (node, mark.level) {
                 (Some(n), Level::Refs) => { out.push(I_REFS); u32put(&mut out, ino); u32put(&mut out, n.open_refs); }
-                (Some(n @ Node { data: Data::File(Content::Upper(v)), .. }), Level::Meta) => {
-                    out.push(I_UPPER); u32put(&mut out, ino);
+                (Some(n @ Node { data: Data::File(c @ (Content::Upper(_) | Content::Over(_))), .. }), Level::Meta) => {
+                    let (v, over) = match c { Content::Over(o) => (o.pages(), Some(o)), Content::Upper(v) => (v, None), Content::Lower { .. } => { out.push(I_NODE); u32put(&mut out, ino); put_node(&mut out, Some(n)); continue } };
+                    out.push(if over.is_some() { I_OVER } else { I_UPPER }); u32put(&mut out, ino);
                     u32put(&mut out, n.mode); out.extend(n.mtime.to_le_bytes()); u32put(&mut out, n.nlink); u32put(&mut out, n.open_refs);
                     out.extend(v.len().to_le_bytes());
                     let len = v.len() as usize;
@@ -280,6 +290,10 @@ impl Fs {
                     for (a, b) in ranges {
                         out.extend((a as u64).to_le_bytes()); u32put(&mut out, (b - a) as u32);
                         let at = out.len(); out.resize(at + (b - a), 0); v.read(a as u64, &mut out[at..]);
+                    }
+                    if let Some(o) = over {
+                        out.extend(o.base().to_le_bytes()); u32put(&mut out, u32::try_from(o.own().len()).unwrap_or(u32::MAX));
+                        for i in o.own() { out.extend(i.to_le_bytes()); }
                     }
                 }
                 (n, _) => { out.push(I_NODE); u32put(&mut out, ino); put_node(&mut out, n); }
@@ -302,7 +316,7 @@ impl Fs {
             items.push(match kind {
                 I_NODE => Item::Node(ino, get_node(&mut r)?),
                 I_REFS => Item::Refs(ino, r.u32()?),
-                I_UPPER => {
+                I_UPPER | I_OVER => {
                     let (mode, mtime, nlink, open_refs, size) = (r.u32()?, r.u64()? as i64, r.u32()?, r.u32()?, r.u64()?);
                     let k = r.u32()? as usize;
                     if k > r.0.len() / 12 { return None; }
@@ -312,7 +326,13 @@ impl Fs {
                         if at.checked_add(b.len() as u64)? > size { return None; }
                         ranges.push((at, b));
                     }
-                    Item::Upper { ino, mode, mtime, nlink, open_refs, size, ranges }
+                    let over = if kind == I_OVER {
+                        let base = r.u64()?; let k = usize::try_from(r.u32()?).ok()?;
+                        if k > r.0.len() / 8 { return None; }
+                        let mut own = BTreeSet::new(); for _ in 0..k { own.insert(r.u64()?); }
+                        Some((base, own))
+                    } else { None };
+                    Item::Upper { ino, mode, mtime, nlink, open_refs, size, ranges, over }
                 }
                 _ => return None,
             });
@@ -324,8 +344,8 @@ impl Fs {
             match it {
                 Item::Node(ino, n) => { after.insert(*ino, n.is_some()); }
                 Item::Refs(ino, _) => if !matches!(self.node(*ino), Some(_)) && after.get(ino) != Some(&true) { return None; },
-                Item::Upper { ino, size, .. } => {
-                    let upper = matches!(self.node(*ino), Some(Node { data: Data::File(Content::Upper(_)), .. }));
+                Item::Upper { ino, size, over, .. } => {
+                    let upper = match (self.node(*ino), over) { (Some(Node { data: Data::File(Content::Upper(_)), .. }), None) | (Some(Node { data: Data::File(Content::Over(_)), .. }), Some(_)) => true, _ => false };
                     if !upper || after.contains_key(ino) || usize::try_from(*size).is_err() { return None; }
                 }
             }
@@ -345,10 +365,16 @@ impl Fs {
                     self.nodes[i] = n;
                 }
                 Item::Refs(ino, refs) => if let Some(Some(n)) = self.nodes.get_mut(ino as usize) { n.open_refs = refs },
-                Item::Upper { ino, mode, mtime, nlink, open_refs, size, ranges } => {
+                Item::Upper { ino, mode, mtime, nlink, open_refs, size, ranges, over } => {
                     let Some(Some(n)) = self.nodes.get_mut(ino as usize) else { continue };
                     (n.mode, n.mtime, n.nlink, n.open_refs) = (mode, mtime, nlink, open_refs);
-                    if let Data::File(Content::Upper(v)) = &mut n.data {
+                    let v = match (&mut n.data, over) {
+                        (Data::File(Content::Upper(v)), None) => Some(v),
+                        // (its length, base and own pages as the other process has them; then the bytes)
+                        (Data::File(Content::Over(o)), Some((base, own))) => if o.reshape(size, base, own).is_ok() { Some(o.pages_mut()) } else { None },
+                        _ => None,
+                    };
+                    if let Some(v) = v {
                         // (another process's file: one this one cannot hold stays as it was)
                         if v.set_len(size).is_ok() {
                             for (at, b) in ranges {

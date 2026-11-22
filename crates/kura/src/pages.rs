@@ -12,7 +12,7 @@ use std::sync::Arc;
 /// Bytes per page.
 pub const PAGE: usize = 1 << 20;
 /// PAGE as a file offset
-const PAGE64: u64 = 1 << 20;
+pub const PAGE64: u64 = 1 << 20;
 const _: () = assert!(PAGE64.count_ones() == 1 && PAGE64.trailing_zeros() == PAGE.trailing_zeros());
 
 // The caller has already bounded at by the file length, whose page count fits usize.
@@ -178,6 +178,11 @@ impl Pages {
     /// clone counts in each).
     pub fn held(&self) -> usize {
         self.pages.iter().map(|p| p.capacity()).sum()
+    }
+
+    /// What page `i` holds (shorter than the page: zeros after, up to the file's length).
+    pub fn page(&self, i: usize) -> Option<&[u8]> {
+        self.pages.get(i).map(|p| p.as_slice())
     }
 }
 
