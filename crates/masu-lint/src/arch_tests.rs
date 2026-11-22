@@ -691,6 +691,19 @@ fn fixture(r: Rule) -> Fixture {
             good: GOOD_MESSAGE_WIDTH,
             mutate: ("crates/sake/src/user.rs", |t| Some(t.replace("let (h, m, w, l) = (c.a(0), c.a(1), c.wparam(2), c.lparam(3));", "let (h, m, w, l) = (c.a(0), c.a(1), c.a(2), c.a(3));"))),
         },
+        Rule::WaitDeadline => Fixture {
+            bad: &[
+                ("crates/sake/src/snap.rs", "pub fn point() -> bool {\n    park_as(RESTART, trap as u64, esp as u64, 0);\n}\n"),
+                ("crates/sake/src/k32.rs", "pub(crate) fn sleep_ms(ms: u32) {\n    let end = (ms != u32::MAX).then(|| kome::time::from_now(std::time::Duration::from_millis(u64::from(ms))));\n}\n"),
+                ("crates/sake/src/obj.rs", "fn wait_held_then() {\n    let deadline = (ms != 0xffff_ffff).then(|| kome::time::from_now(Duration::from_millis(u64::from(ms))));\n}\n"),
+            ],
+            good: &[
+                ("crates/sake/src/snap.rs", "pub fn wait_end(ms: u32) -> Option<Instant> {\n    let end = resumed.unwrap_or_else(|| Deadline::after(now, ms));\n}\npub fn point() -> bool {\n    park_as(RESTART, trap as u64, esp as u64, Deadline::word(WAIT_END.get()));\n}\nfn go_on() {\n    RESUMED_END.set(Deadline::of_word(r[3]));\n    crate::k32::wait_gate_start(k, r[1] as u32, r[2] as u32);\n}\n"),
+                ("crates/sake/src/k32.rs", "pub(crate) fn sleep_ms(ms: u32) {\n    let end = crate::snap::wait_end(ms);\n}\n"),
+                ("crates/sake/src/obj.rs", "fn wait_held_then() {\n    let deadline = crate::snap::wait_end(ms);\n}\n"),
+            ],
+            mutate: ("crates/sake/src/snap.rs", |t| Some(t.replace("RESUMED_END.set(Deadline::of_word(r[3]));", "RESUMED_END.set(None);"))),
+        },
         Rule::NotDone => Fixture {
             bad: &[
                 ("crates/sake/src/api.rs", "pub fn unimplemented_result(name: &str) -> u32 {\n    0\n}\nfn unimplemented_call(c: &mut Ctx) -> u32 {\n    let r = unimplemented_result(&n);\n    r\n}\n"),

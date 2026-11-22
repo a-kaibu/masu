@@ -292,6 +292,23 @@ pub(crate) struct Fbo {
     depth: Att,
 }
 
+/// Which framebuffers a name is one of: GL 3.0 / ARB_framebuffer_object's, each context's
+/// own (container objects are not shared), or EXT_framebuffer_object's, shared by the share
+/// group (its spec: "framebuffer objects are shared").
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub(crate) enum Fbos {
+    #[default]
+    Core,
+    Ext,
+}
+
+/// A framebuffer binding: the name, 0 for the window's, and whose name it is.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub(crate) struct FboRef {
+    pub(crate) kind: Fbos,
+    pub(crate) name: u32,
+}
+
 #[derive(Default)]
 pub(crate) struct Renderbuffer {
     gpu: u32,
@@ -339,8 +356,13 @@ pub(crate) struct Ctx {
     draw: u32,
     w: u32,
     h: u32,
-    fbo_draw: u32,
-    fbo_read: u32,
+    fbo_draw: FboRef,
+    fbo_read: FboRef,
+    /// its own framebuffers (Fbos::Core), and those of its names a Gen gave that no Bind used
+    /// yet, and the last name it gave less one
+    fbos: HashMap<u32, Fbo>,
+    fbos_reserved: HashSet<u32>,
+    next_fbo: u32,
     rb: u32,
     caps: HashSet<u32>,
     viewport: [i32; 4],
@@ -387,6 +409,8 @@ pub(crate) struct Ctx {
     pub(crate) program: u32,
     pub(crate) attribs: [Array; 16],
     pub(crate) attrib_values: [[f32; 4]; 16],
+    /// the share group whose objects it sees
+    group: GroupId,
 }
 
 const IDENTITY: [f32; 16] = [1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0];
@@ -398,8 +422,11 @@ impl Ctx {
             draw: 0,
             w: 0,
             h: 0,
-            fbo_draw: 0,
-            fbo_read: 0,
+            fbo_draw: FboRef::default(),
+            fbo_read: FboRef::default(),
+            fbos: HashMap::new(),
+            fbos_reserved: HashSet::new(),
+            next_fbo: 0,
             rb: 0,
             caps: HashSet::new(),
             viewport: [0; 4],
@@ -443,6 +470,7 @@ impl Ctx {
             program: 0,
             attribs: [Array::default(); 16],
             attrib_values: [[0.0, 0.0, 0.0, 1.0]; 16],
+            group: GroupId::default(),
         }
     }
 
@@ -465,24 +493,41 @@ impl Ctx {
     }
 }
 
+/// What the contexts of one share group have between them (wglShareLists, the share context
+/// of wglCreateContextAttribsARB): the objects and their names. A context of another group
+/// sees none of them.
+#[derive(Default)]
+pub(crate) struct Group {
+    pub(crate) textures: HashMap<u32, Texture>,
+    pub(crate) buffers: HashMap<u32, Buffer>,
+    /// the buffers that are mapped
+    pub(crate) mapped: HashSet<u32>,
+    pub(crate) fbos: HashMap<u32, Fbo>,
+    pub(crate) rbs: HashMap<u32, Renderbuffer>,
+    /// (the last name given less one)
+    pub(crate) next_name: u32,
+    /// names a Gen gave that no Bind used yet (glIs* is false for them)
+    pub(crate) reserved: HashSet<(u8, u32)>,
+    pub(crate) shaders: HashMap<u32, glsl::Shader>,
+    pub(crate) programs: HashMap<u32, glsl::Program>,
+}
+
+/// A share group's key: the context that made it.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, Default)]
+pub(crate) struct GroupId(u32);
+
 pub(crate) struct Gl {
     /// (boxed: `with` takes the current one out and puts it back on every call)
     ctxs: HashMap<u32, Box<Ctx>>,
     next_ctx: u32,
-    textures: HashMap<u32, Texture>,
-    buffers: HashMap<u32, Buffer>,
-    /// the buffers that are mapped
-    mapped: HashSet<u32>,
-    fbos: HashMap<u32, Fbo>,
-    rbs: HashMap<u32, Renderbuffer>,
-    next_name: u32,
-    /// names a Gen gave that no Bind used yet (glIs* is false for them)
-    reserved: HashSet<(u8, u32)>,
+    /// every share group but the one of the context `with` runs, which is `objs` while it runs
+    groups: HashMap<GroupId, Group>,
+    /// the share group of the context `with` runs (out of `groups` while it runs; empty
+    /// otherwise)
+    pub(crate) objs: Group,
     drawables: HashMap<u32, Drawable>,
     ff: Option<(u32, u32)>,
     pipelines: HashMap<Vec<u32>, u32>,
-    pub(crate) shaders: HashMap<u32, glsl::Shader>,
-    pub(crate) programs: HashMap<u32, glsl::Program>,
     /// (the program of the context `with` took out of `ctxs`, for collect_programs)
     pub(crate) ctxs_program_hint: Option<u32>,
 }
@@ -493,18 +538,11 @@ impl Gl {
         Gl {
             ctxs: HashMap::new(),
             next_ctx: 1,
-            textures: HashMap::new(),
-            buffers: HashMap::new(),
-            mapped: HashSet::new(),
-            fbos: HashMap::new(),
-            rbs: HashMap::new(),
-            next_name: 1,
-            reserved: HashSet::new(),
+            groups: HashMap::new(),
+            objs: Group::default(),
             drawables: HashMap::new(),
             ff: None,
             pipelines: HashMap::new(),
-            shaders: HashMap::new(),
-            programs: HashMap::new(),
             ctxs_program_hint: None,
         }
     }
@@ -604,9 +642,51 @@ fn with<R: Default>(f: impl FnOnce(&mut Gl, &mut Ctx) -> R) -> R {
     let mut g = lock();
     let g = &mut *g;
     let Some(mut c) = g.ctxs.remove(&id) else { return R::default() };
+    g.objs = g.groups.remove(&c.group).unwrap_or_default();
     let r = f(g, &mut *c);
+    let objs = std::mem::take(&mut g.objs);
+    g.groups.insert(c.group, objs);
     g.ctxs.insert(id, c);
     r
+}
+
+/// The lock with the current context's share group in `objs` (a test's look at the objects).
+#[cfg(test)]
+pub(in crate::gl) fn current_objs() -> glsl::Current {
+    glsl::gl()
+}
+
+/// The share group of this thread's current context.
+fn current_group(g: &Gl) -> Option<GroupId> {
+    g.ctxs.get(&CURRENT.with(|c| c.get())).map(|c| c.group)
+}
+
+/// Runs `f` on share group `id`'s objects, outside any context's call.
+fn in_group<R>(g: &mut Gl, id: GroupId, f: impl FnOnce(&mut Gl) -> R) -> R {
+    g.objs = g.groups.remove(&id).unwrap_or_default();
+    let r = f(g);
+    let objs = std::mem::take(&mut g.objs);
+    g.groups.insert(id, objs);
+    r
+}
+
+/// A share group no context sees any more: its objects go, and their page textures.
+fn drop_group(g: &mut Gl, id: GroupId) {
+    let Some(grp) = g.groups.remove(&id) else { return };
+    gpu::record(|q| {
+        for t in grp.textures.values().filter(|t| t.gpu != 0) {
+            q.cmd(&[gpu::DESTROY_TEXTURE, t.gpu]);
+        }
+        for r in grp.rbs.values().filter(|r| r.gpu != 0) {
+            q.cmd(&[gpu::DESTROY_TEXTURE, r.gpu]);
+        }
+    });
+    for mut b in grp.buffers.into_values() {
+        b.unmap(false);
+    }
+    for l in grp.programs.into_values().filter_map(|p| p.linked) {
+        glsl::forget_linked(g, &l);
+    }
 }
 
 fn mul(a: &[f32; 16], b: &[f32; 16]) -> [f32; 16] {
@@ -626,20 +706,59 @@ fn bytes<T>(v: &[T]) -> &[u8] {
 // ---- the WGL entries (contexts, current context, swap) ----
 
 #[unsafe(no_mangle)]
-pub extern "C" fn vngl_context_create(_share: u32) -> u32 {
+/// A new context; in the share group of context `share` (wglCreateContextAttribsARB's
+/// hShareContext), or of its own with 0. 0 for a `share` that is no context (Windows:
+/// ERROR_INVALID_OPERATION).
+pub extern "C" fn vngl_context_create(share: u32) -> u32 {
     let mut g = lock();
     let g = &mut *g;
+    let group = match share {
+        0 => GroupId(g.next_ctx),
+        s => match g.ctxs.get(&s) {
+            Some(c) => c.group,
+            None => return 0,
+        },
+    };
     let id = g.next_ctx;
     g.next_ctx += 1;
-    g.ctxs.insert(id, Box::new(Ctx::new()));
+    g.groups.entry(group).or_default();
+    g.ctxs.insert(id, Box::new(Ctx { group, ..Ctx::new() }));
     id
+}
+
+/// wglShareLists(with, ctx): `ctx` sees `with`'s objects from now on. FALSE when either is
+/// no context, or `ctx` has objects of its own already (Windows refuses to drop them), or is
+/// current on this thread.
+#[unsafe(no_mangle)]
+pub extern "C" fn vngl_share_lists(with: u32, ctx: u32) -> i32 {
+    let mut g = lock();
+    let g = &mut *g;
+    let (Some(a), Some(b)) = (g.ctxs.get(&with).map(|c| c.group), g.ctxs.get(&ctx).map(|c| c.group)) else { return 0 };
+    if a == b {
+        return 1;
+    }
+    let alone = g.ctxs.values().filter(|c| c.group == b).count() == 1;
+    let empty = g.groups.get(&b).is_none_or(|o| o.textures.is_empty() && o.buffers.is_empty() && o.rbs.is_empty() && o.fbos.is_empty() && o.shaders.is_empty() && o.programs.is_empty());
+    if !alone || !empty || CURRENT.with(|c| c.get()) == ctx {
+        return 0;
+    }
+    g.groups.remove(&b);
+    if let Some(c) = g.ctxs.get_mut(&ctx) {
+        c.group = a;
+    }
+    1
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn vngl_context_destroy(id: u32) {
     let mut g = lock();
-    g.ctxs.remove(&id);
-    g.collect_programs();
+    let Some(c) = g.ctxs.remove(&id) else { return };
+    let group = c.group;
+    if g.ctxs.values().any(|c| c.group == group) {
+        in_group(&mut g, group, Gl::collect_programs);
+    } else {
+        drop_group(&mut g, group);
+    }
     // (the buffers of the windows no context draws to any more go with it: two textures of the
     // window's size a window, kept for good before)
     let g2 = &mut *g;
@@ -752,7 +871,7 @@ fn proc_of(n: &str) -> Option<*const c_void> {
         glReadBuffer, glDrawBuffer, glFlush, glFinish, glHint, glShadeModel, glPolygonMode, glLineWidth,
         glPointSize, glPolygonOffset, glGenBuffers, glDeleteBuffers, glBindBuffer, glIsBuffer, glBufferData,
         glBufferSubData, glMapBuffer, glUnmapBuffer, glGenFramebuffers, glDeleteFramebuffers, glBindFramebuffer,
-        glIsFramebuffer, glFramebufferTexture2D, glFramebufferTexture, glCheckFramebufferStatus, glGenRenderbuffers,
+        glIsFramebuffer, glGenFramebuffersEXT, glDeleteFramebuffersEXT, glBindFramebufferEXT, glIsFramebufferEXT, glFramebufferTexture2D, glFramebufferTexture, glCheckFramebufferStatus, glGenRenderbuffers,
         glDeleteRenderbuffers, glIsRenderbuffer, glBindRenderbuffer, glRenderbufferStorage, glRenderbufferStorageMultisample,
         glFramebufferRenderbuffer, glGetFramebufferAttachmentParameteriv, glGetTexLevelParameteriv,
         glGetTexParameteriv,
@@ -839,8 +958,8 @@ fn get(g: &Gl, c: &Ctx, pname: u32) -> Option<Vec<f64>> {
         0x821D => vec![EXTENSIONS.split(' ').count() as f64],
         0x821B => vec![2.0],
         0x821C => vec![1.0],
-        0x8CA6 => vec![f64::from(c.fbo_draw)],
-        0x8CAA => vec![f64::from(c.fbo_read)],
+        0x8CA6 => vec![f64::from(c.fbo_draw.name)],
+        0x8CAA => vec![f64::from(c.fbo_read.name)],
         0x8CA7 => vec![f64::from(c.rb)],
         0x8894 => vec![f64::from(c.array_buffer)],
         0x8895 => vec![f64::from(c.element_buffer)],
@@ -1322,7 +1441,7 @@ pub(crate) fn fetch(g: &Gl, a: &Array, i: u32, def: [f32; 4]) -> [f32; 4] {
     let off = u64::from(a.ptr) + stride as u64 * u64::from(i);
     let end = off + (ts * n) as u64;
     let base: *const u8 = if a.buffer != 0 {
-        match g.buffers.get(&a.buffer) {
+        match g.objs.buffers.get(&a.buffer) {
             Some(b) if end <= b.data.len() as u64 => unsafe { b.data.as_ptr().add(off as usize) },
             _ => return def,
         }
@@ -1384,7 +1503,7 @@ pub(crate) fn indices(g: &Gl, c: &Ctx, count: i32, ty: u32, ptr: u32) -> Vec<u32
     let ts = type_size(ty);
     let end = u64::from(ptr) + (n * ts) as u64;
     let src: *const u8 = if c.element_buffer != 0 {
-        match g.buffers.get(&c.element_buffer) {
+        match g.objs.buffers.get(&c.element_buffer) {
             Some(b) if end <= b.data.len() as u64 => unsafe { b.data.as_ptr().add(us(ptr)) },
             _ => return Vec::new(),
         }
@@ -1428,8 +1547,8 @@ extern "C" fn glDrawArrays(mode: u32, first: i32, count: i32) {
 }
 /// Buffers still mapped give the draw what was written to them so far.
 fn sync_mapped(g: &mut Gl) {
-    for id in &g.mapped {
-        if let Some(b) = g.buffers.get_mut(id) {
+    for id in &g.objs.mapped {
+        if let Some(b) = g.objs.buffers.get_mut(id) {
             b.sync();
         }
     }
@@ -1480,21 +1599,36 @@ pub(crate) fn target(g: &mut Gl, c: &Ctx) -> Option<(u32, u32, u32, u32, u32)> {
     target_of(g, c, c.fbo_draw)
 }
 
-/// `target` of framebuffer `fbo` (0: the window's) of context `c`
-fn target_of(g: &mut Gl, c: &Ctx, fbo: u32) -> Option<(u32, u32, u32, u32, u32)> {
-    if fbo == 0 {
+/// Framebuffer `f` of context `c`: its own, or its share group's.
+fn fbo<'a>(g: &'a Gl, c: &'a Ctx, f: FboRef) -> Option<&'a Fbo> {
+    match f.kind {
+        Fbos::Core => c.fbos.get(&f.name),
+        Fbos::Ext => g.objs.fbos.get(&f.name),
+    }
+}
+
+fn fbo_mut<'a>(g: &'a mut Gl, c: &'a mut Ctx, f: FboRef) -> Option<&'a mut Fbo> {
+    match f.kind {
+        Fbos::Core => c.fbos.get_mut(&f.name),
+        Fbos::Ext => g.objs.fbos.get_mut(&f.name),
+    }
+}
+
+/// `target` of framebuffer `f` (name 0: the window's) of context `c`
+fn target_of(g: &mut Gl, c: &Ctx, f: FboRef) -> Option<(u32, u32, u32, u32, u32)> {
+    if f.name == 0 {
         if c.draw == 0 {
             return None;
         }
         let d = drawable(g, c.draw, c.w.max(1), c.h.max(1));
         return Some((d.color, 0, d.depth, d.w, d.h));
     }
-    let f = g.fbos.get(&fbo)?;
+    let f = fbo(g, c, f)?;
     let (color, depth) = (f.color, f.depth);
     let att = |g: &Gl, a: Att| -> Option<(u32, u32, u32, u32)> {
         match a {
-            Att::Tex(t, l) => g.textures.get(&t).filter(|t| t.gpu != 0).map(|t| (t.gpu, l, (t.w >> l).max(1), (t.h >> l).max(1))),
-            Att::Rb(r) => g.rbs.get(&r).filter(|r| r.gpu != 0).map(|r| (r.gpu, 0, r.w, r.h)),
+            Att::Tex(t, l) => g.objs.textures.get(&t).filter(|t| t.gpu != 0).map(|t| (t.gpu, l, (t.w >> l).max(1), (t.h >> l).max(1))),
+            Att::Rb(r) => g.objs.rbs.get(&r).filter(|r| r.gpu != 0).map(|r| (r.gpu, 0, r.w, r.h)),
             Att::None => None,
         }
     };
@@ -1706,7 +1840,7 @@ fn draw(g: &mut Gl, c: &mut Ctx, mode: u32, v: Vec<[f32; 16]>) {
     let mut fu = [0u32; 20];
     for u in 0..2 {
         let un = &c.units[u];
-        let t = if un.tex2d { g.textures.get(&un.bound).filter(|t| t.gpu != 0 && t.base != Base::Depth) } else { None };
+        let t = if un.tex2d { g.objs.textures.get(&un.bound).filter(|t| t.gpu != 0 && t.base != Base::Depth) } else { None };
         if let Some(t) = t {
             fu[u] = match un.env {
                 0x2101 => 3,
@@ -1787,7 +1921,7 @@ extern "C" fn glClear(mask: u32) {
 
 unsafe extern "C" fn glGenTextures(n: i32, out: *mut u32) {
     gen_names(K_TEX, n, out, |g, id| {
-        g.textures.insert(id, Texture { min: 0x2702, mag: 0x2601, wrap_s: 0x2901, wrap_t: 0x2901, ..Default::default() });
+        g.objs.textures.insert(id, Texture { min: 0x2702, mag: 0x2601, wrap_s: 0x2901, wrap_t: 0x2901, ..Default::default() });
     })
 }
 
@@ -1797,35 +1931,37 @@ pub(crate) unsafe fn gen_names(kind: u8, n: i32, out: *mut u32, f: impl Fn(&mut 
     if n < 0 {
         return with(|_, c| c.err(GL_INVALID_VALUE));
     }
-    let mut g = lock();
-    let g = &mut *g;
-    for k in 0..n as usize {
-        let id = g.next_free();
-        f(g, id);
-        g.reserved.insert((kind, id));
-        *out.add(k) = id;
-    }
+    with(|g, _| {
+        for k in 0..n as usize {
+            let id = g.next_free();
+            f(g, id);
+            g.objs.reserved.insert((kind, id));
+            *out.add(k) = id;
+        }
+    })
 }
 
 impl Gl {
     /// A name no object has.
     pub(crate) fn next_free(&mut self) -> u32 {
-        while self.in_use(self.next_name) {
-            self.next_name += 1;
+        while self.in_use(self.objs.next_name) {
+            self.objs.next_name += 1;
         }
-        self.next_name += 1;
-        self.next_name - 1
+        self.objs.next_name += 1;
+        self.objs.next_name - 1
     }
 
     fn in_use(&self, id: u32) -> bool {
-        id == 0 || self.textures.contains_key(&id) || self.buffers.contains_key(&id) || self.fbos.contains_key(&id) || self.rbs.contains_key(&id) || self.shaders.contains_key(&id) || self.programs.contains_key(&id)
+        id == 0 || self.objs.textures.contains_key(&id) || self.objs.buffers.contains_key(&id) || self.objs.fbos.contains_key(&id) || self.objs.rbs.contains_key(&id) || self.objs.shaders.contains_key(&id) || self.objs.programs.contains_key(&id)
     }
 
     /// A texture or renderbuffer going away: no framebuffer attaches it any more. (GL keeps it
     /// alive, without its name, in the framebuffers that are not bound; here it is detached
     /// from those too.)
-    fn detach(&mut self, gone: impl Fn(&Att) -> bool) {
-        for f in self.fbos.values_mut() {
+    fn detach(&mut self, c: &mut Ctx, gone: impl Fn(&Att) -> bool) {
+        let group = c.group;
+        let others = self.ctxs.values_mut().filter(|o| o.group == group).flat_map(|o| o.fbos.values_mut());
+        for f in self.objs.fbos.values_mut().chain(c.fbos.values_mut()).chain(others) {
             for a in [&mut f.color, &mut f.depth] {
                 if gone(a) {
                     *a = Att::None;
@@ -1849,15 +1985,15 @@ unsafe extern "C" fn glDeleteTextures(n: i32, names: *const u32) {
     let ids = self::names(n, names);
     with(|g, c| {
         for id in ids {
-            g.reserved.remove(&(K_TEX, id));
-            if let Some(t) = g.textures.remove(&id) {
+            g.objs.reserved.remove(&(K_TEX, id));
+            if let Some(t) = g.objs.textures.remove(&id) {
                 if t.gpu != 0 {
                     gpu::record(|q| q.cmd(&[gpu::DESTROY_TEXTURE, t.gpu]));
                 }
                 for u in c.units.iter_mut().filter(|u| u.bound == id) {
                     u.bound = 0;
                 }
-                g.detach(|a| matches!(a, Att::Tex(t, _) if *t == id));
+                g.detach(c, |a| matches!(a, Att::Tex(t, _) if *t == id));
             }
         }
     })
@@ -1868,18 +2004,16 @@ extern "C" fn glBindTexture(target: u32, t: u32) {
         return;
     }
     with(|g, c| {
-        if t != 0 && !g.textures.contains_key(&t) {
-            g.textures.insert(t, Texture { min: 0x2702, mag: 0x2601, wrap_s: 0x2901, wrap_t: 0x2901, ..Default::default() });
+        if t != 0 && !g.objs.textures.contains_key(&t) {
+            g.objs.textures.insert(t, Texture { min: 0x2702, mag: 0x2601, wrap_s: 0x2901, wrap_t: 0x2901, ..Default::default() });
         }
-        g.reserved.remove(&(K_TEX, t));
+        g.objs.reserved.remove(&(K_TEX, t));
         c.units[c.active].bound = t;
     })
 }
 
 extern "C" fn glIsTexture(t: u32) -> u8 {
-    let g = lock();
-    let g = &*g;
-    u8::from(g.textures.contains_key(&t) && !g.reserved.contains(&(K_TEX, t)))
+    with(|g, _| u8::from(g.objs.textures.contains_key(&t) && !g.objs.reserved.contains(&(K_TEX, t))))
 }
 
 fn base_format(internal: i32) -> Base {
@@ -2094,7 +2228,7 @@ fn pixels_err(format: u32, ty: u32) -> u32 {
 
 /// The bound texture (the default texture, 0, made when first used).
 fn bound_mut<'a>(g: &'a mut Gl, c: &Ctx) -> &'a mut Texture {
-    g.textures.entry(bound_texture(c)).or_insert_with(|| Texture { min: 0x2702, mag: 0x2601, wrap_s: 0x2901, wrap_t: 0x2901, ..Default::default() })
+    g.objs.textures.entry(bound_texture(c)).or_insert_with(|| Texture { min: 0x2702, mag: 0x2601, wrap_s: 0x2901, wrap_t: 0x2901, ..Default::default() })
 }
 
 unsafe extern "C" fn glTexImage2D(target: u32, level: i32, internal: i32, w: i32, h: i32, border: i32, format: u32, ty: u32, pixels: *const u8) {
@@ -2172,7 +2306,7 @@ fn tex_param(target: u32, p: u32, v: f32) {
         return;
     }
     with(|g, c| {
-        let Some(t) = g.textures.get_mut(&bound_texture(c)) else { return };
+        let Some(t) = g.objs.textures.get_mut(&bound_texture(c)) else { return };
         let v = v as u32;
         match p {
             0x2801 => t.min = v,
@@ -2198,7 +2332,7 @@ unsafe extern "C" fn glTexParameterfv(t: u32, p: u32, v: *const f32) {
 }
 unsafe extern "C" fn glGetTexParameteriv(_t: u32, p: u32, out: *mut i32) {
     *out = with(|g, c| {
-        let Some(t) = g.textures.get(&bound_texture(c)) else { return 0 };
+        let Some(t) = g.objs.textures.get(&bound_texture(c)) else { return 0 };
         (match p {
             0x2801 => t.min,
             0x2800 => t.mag,
@@ -2210,7 +2344,7 @@ unsafe extern "C" fn glGetTexParameteriv(_t: u32, p: u32, out: *mut i32) {
 }
 unsafe extern "C" fn glGetTexLevelParameteriv(_t: u32, level: i32, p: u32, out: *mut i32) {
     *out = with(|g, c| {
-        let Some(t) = g.textures.get(&bound_texture(c)) else { return 0 };
+        let Some(t) = g.objs.textures.get(&bound_texture(c)) else { return 0 };
         match p {
             0x1000 => ((t.w >> level).max(1)).cast_signed(),
             0x1001 => ((t.h >> level).max(1)).cast_signed(),
@@ -2251,7 +2385,7 @@ extern "C" fn glGenerateMipmap(target: u32) {
         return;
     }
     with(|g, c| {
-        if let Some(t) = g.textures.get_mut(&bound_texture(c)) && t.gpu != 0 && t.base != Base::Depth {
+        if let Some(t) = g.objs.textures.get_mut(&bound_texture(c)) && t.gpu != 0 && t.base != Base::Depth {
             t.defined = (1u32 << t.levels.min(31)) - 1;
             let id = t.gpu;
             gpu::record(|q| q.cmd(&[gpu::GEN_MIPS, id]));
@@ -2270,7 +2404,7 @@ extern "C" fn glCopyTexSubImage2D(target: u32, level: i32, xo: i32, yo: i32, x: 
     }
     with(|g, c| {
         let Some((src, sl, sw, sh)) = read_target(g, c) else { return };
-        let Some(t) = g.textures.get(&bound_texture(c)) else { return };
+        let Some(t) = g.objs.textures.get(&bound_texture(c)) else { return };
         if t.gpu == 0 || src == 0 {
             return;
         }
@@ -2289,7 +2423,7 @@ extern "C" fn glCopyTexImage2D(target: u32, level: i32, internal: u32, x: i32, y
         if w > MAX_TEXTURE.cast_signed() || h > MAX_TEXTURE.cast_signed() {
             return c.err(GL_INVALID_VALUE);
         }
-        if let Some(t) = g.textures.get_mut(&bound_texture(c)) {
+        if let Some(t) = g.objs.textures.get_mut(&bound_texture(c)) {
             if level == 0 {
                 alloc_texture(t, w.cast_unsigned(), h.cast_unsigned(), base_format(internal.cast_signed()));
             }
@@ -2354,16 +2488,16 @@ unsafe extern "C" fn glReadPixels(x: i32, y: i32, w: i32, h: i32, format: u32, t
 
 unsafe extern "C" fn glGenBuffers(n: i32, out: *mut u32) {
     gen_names(K_BUF, n, out, |g, id| {
-        g.buffers.insert(id, Buffer::default());
+        g.objs.buffers.insert(id, Buffer::default());
     })
 }
 unsafe extern "C" fn glDeleteBuffers(n: i32, names: *const u32) {
     let ids = self::names(n, names);
     with(|g, c| {
         for id in ids {
-            g.reserved.remove(&(K_BUF, id));
-            g.mapped.remove(&id);
-            if let Some(mut b) = g.buffers.remove(&id) {
+            g.objs.reserved.remove(&(K_BUF, id));
+            g.objs.mapped.remove(&id);
+            if let Some(mut b) = g.objs.buffers.remove(&id) {
                 b.unmap(false);
                 for b in [&mut c.array_buffer, &mut c.element_buffer] {
                     if *b == id {
@@ -2377,9 +2511,9 @@ unsafe extern "C" fn glDeleteBuffers(n: i32, names: *const u32) {
 extern "C" fn glBindBuffer(target: u32, b: u32) {
     with(|g, c| {
         if b != 0 {
-            g.buffers.entry(b).or_default();
+            g.objs.buffers.entry(b).or_default();
         }
-        g.reserved.remove(&(K_BUF, b));
+        g.objs.reserved.remove(&(K_BUF, b));
         match target {
             GL_ARRAY_BUFFER => c.array_buffer = b,
             GL_ELEMENT_ARRAY_BUFFER => c.element_buffer = b,
@@ -2389,9 +2523,7 @@ extern "C" fn glBindBuffer(target: u32, b: u32) {
     })
 }
 extern "C" fn glIsBuffer(b: u32) -> u8 {
-    let g = lock();
-    let g = &*g;
-    u8::from(g.buffers.contains_key(&b) && !g.reserved.contains(&(K_BUF, b)))
+    with(|g, _| u8::from(g.objs.buffers.contains_key(&b) && !g.objs.reserved.contains(&(K_BUF, b))))
 }
 fn bound_buffer(c: &Ctx, target: u32) -> u32 {
     match target {
@@ -2403,16 +2535,16 @@ fn bound_buffer(c: &Ctx, target: u32) -> u32 {
 unsafe extern "C" fn glBufferData(target: u32, size: isize, data: *const u8, _usage: u32) {
     with(|g, c| {
         let id = bound_buffer(c, target);
-        let Some(b) = g.buffers.get_mut(&id) else { return c.err(GL_INVALID_OPERATION) };
+        let Some(b) = g.objs.buffers.get_mut(&id) else { return c.err(GL_INVALID_OPERATION) };
         // (new storage: a mapping of the old one ends, as GL has it)
         b.unmap(false);
-        g.mapped.remove(&id);
+        g.objs.mapped.remove(&id);
         b.data = if data.is_null() { vec![0; size.max(0) as usize] } else { std::slice::from_raw_parts(data, size.max(0) as usize).to_vec() };
     })
 }
 unsafe extern "C" fn glBufferSubData(target: u32, off: isize, size: isize, data: *const u8) {
     with(|g, c| {
-        let Some(b) = g.buffers.get_mut(&bound_buffer(c, target)) else { return };
+        let Some(b) = g.objs.buffers.get_mut(&bound_buffer(c, target)) else { return };
         let (o, n) = (off.max(0) as usize, size.max(0) as usize);
         if !data.is_null() && o.saturating_add(n) <= b.data.len() {
             b.data[o..o + n].copy_from_slice(std::slice::from_raw_parts(data, n));
@@ -2431,7 +2563,7 @@ unsafe extern "C" fn glBufferSubData(target: u32, off: isize, size: isize, data:
 extern "C" fn glMapBuffer(target: u32, _access: u32) -> *mut u8 {
     with(|g, c| {
         let id = bound_buffer(c, target);
-        let Some(b) = g.buffers.get_mut(&id) else { return 0 };
+        let Some(b) = g.objs.buffers.get_mut(&id) else { return 0 };
         let Some((alloc, _)) = *GUEST.lock().unwrap_or_else(|e| e.into_inner()) else { return b.data.as_mut_ptr().expose_provenance() };
         // (mapped already: GL_INVALID_OPERATION and no pointer)
         if b.mapped != 0 {
@@ -2445,49 +2577,93 @@ extern "C" fn glMapBuffer(target: u32, _access: u32) -> *mut u8 {
         }
         unsafe { std::ptr::copy_nonoverlapping(b.data.as_ptr(), std::ptr::with_exposed_provenance_mut::<u8>(p), b.data.len()) };
         b.mapped = p;
-        g.mapped.insert(id);
+        g.objs.mapped.insert(id);
         p
     }) as *mut u8
 }
 extern "C" fn glUnmapBuffer(target: u32) -> u8 {
     with(|g, c| {
         let id = bound_buffer(c, target);
-        if let Some(b) = g.buffers.get_mut(&id) {
+        if let Some(b) = g.objs.buffers.get_mut(&id) {
             b.unmap(true);
         }
-        g.mapped.remove(&id);
+        g.objs.mapped.remove(&id);
     });
     1
 }
 
 // ---- framebuffers ----
 
-unsafe extern "C" fn glGenFramebuffers(n: i32, out: *mut u32) {
-    gen_names(K_FBO, n, out, |g, id| {
-        g.fbos.insert(id, Fbo::default());
-    })
-}
-unsafe extern "C" fn glDeleteFramebuffers(n: i32, names: *const u32) {
-    let ids = self::names(n, names);
-    with(|g, c| {
-        for id in &ids {
-            g.reserved.remove(&(K_FBO, *id));
-            g.fbos.remove(id);
-            if c.fbo_draw == *id {
-                c.fbo_draw = 0;
+/// glGenFramebuffers(EXT).
+///
+/// # Safety
+/// `out` has room for `n` names.
+unsafe fn gen_fbos(kind: Fbos, n: i32, out: *mut u32) {
+    match kind {
+        // SAFETY: gen_fbos' contract, gen_names': `n` names' room at `out`
+        Fbos::Ext => unsafe {
+            gen_names(K_FBO, n, out, |g, id| {
+                g.objs.fbos.insert(id, Fbo::default());
+            })
+        },
+        Fbos::Core => with(|_, c| {
+            let Ok(n) = usize::try_from(n) else { return c.err(GL_INVALID_VALUE) };
+            for k in 0..n {
+                let id = (c.next_fbo.saturating_add(1)..=u32::MAX).find(|i| !c.fbos.contains_key(i)).unwrap_or(u32::MAX);
+                c.next_fbo = id;
+                c.fbos.insert(id, Fbo::default());
+                c.fbos_reserved.insert(id);
+                // SAFETY: gen_fbos' contract: `n` names' room at `out`, k < n
+                let at = unsafe { out.add(k) };
+                // SAFETY: as above
+                unsafe { at.write(id) };
             }
-            if c.fbo_read == *id {
-                c.fbo_read = 0;
+        }),
+    }
+}
+/// glDeleteFramebuffers(EXT).
+///
+/// # Safety
+/// `names` holds `n` names.
+unsafe fn delete_fbos(kind: Fbos, n: i32, names: *const u32) {
+    // SAFETY: delete_fbos' contract
+    let ids = unsafe { self::names(n, names) };
+    with(|g, c| {
+        for &name in &ids {
+            match kind {
+                Fbos::Core => {
+                    c.fbos_reserved.remove(&name);
+                    c.fbos.remove(&name);
+                }
+                Fbos::Ext => {
+                    g.objs.reserved.remove(&(K_FBO, name));
+                    g.objs.fbos.remove(&name);
+                }
+            }
+            let gone = FboRef { kind, name };
+            for b in [&mut c.fbo_draw, &mut c.fbo_read] {
+                if *b == gone {
+                    *b = FboRef::default();
+                }
             }
         }
     })
 }
-extern "C" fn glBindFramebuffer(target: u32, f: u32) {
+fn bind_fbo(kind: Fbos, target: u32, name: u32) {
     with(|g, c| {
-        if f != 0 {
-            g.fbos.entry(f).or_default();
+        if name != 0 {
+            match kind {
+                Fbos::Core => {
+                    c.fbos.entry(name).or_default();
+                    c.fbos_reserved.remove(&name);
+                }
+                Fbos::Ext => {
+                    g.objs.fbos.entry(name).or_default();
+                    g.objs.reserved.remove(&(K_FBO, name));
+                }
+            }
         }
-        g.reserved.remove(&(K_FBO, f));
+        let f = FboRef { kind, name };
         if target == GL_FRAMEBUFFER || target == GL_DRAW_FRAMEBUFFER {
             c.fbo_draw = f;
         }
@@ -2496,10 +2672,41 @@ extern "C" fn glBindFramebuffer(target: u32, f: u32) {
         }
     })
 }
+fn is_fbo(kind: Fbos, name: u32) -> u8 {
+    with(|g, c| {
+        u8::from(match kind {
+            Fbos::Core => c.fbos.contains_key(&name) && !c.fbos_reserved.contains(&name),
+            Fbos::Ext => g.objs.fbos.contains_key(&name) && !g.objs.reserved.contains(&(K_FBO, name)),
+        })
+    })
+}
+unsafe extern "C" fn glGenFramebuffers(n: i32, out: *mut u32) {
+    // SAFETY: the GL contract: `n` names' room at `out`
+    unsafe { gen_fbos(Fbos::Core, n, out) }
+}
+unsafe extern "C" fn glDeleteFramebuffers(n: i32, names: *const u32) {
+    // SAFETY: the GL contract: `n` names at `names`
+    unsafe { delete_fbos(Fbos::Core, n, names) }
+}
+extern "C" fn glBindFramebuffer(target: u32, f: u32) {
+    bind_fbo(Fbos::Core, target, f)
+}
 extern "C" fn glIsFramebuffer(f: u32) -> u8 {
-    let g = lock();
-    let g = &*g;
-    u8::from(g.fbos.contains_key(&f) && !g.reserved.contains(&(K_FBO, f)))
+    is_fbo(Fbos::Core, f)
+}
+unsafe extern "C" fn glGenFramebuffersEXT(n: i32, out: *mut u32) {
+    // SAFETY: the GL contract: `n` names' room at `out`
+    unsafe { gen_fbos(Fbos::Ext, n, out) }
+}
+unsafe extern "C" fn glDeleteFramebuffersEXT(n: i32, names: *const u32) {
+    // SAFETY: the GL contract: `n` names at `names`
+    unsafe { delete_fbos(Fbos::Ext, n, names) }
+}
+extern "C" fn glBindFramebufferEXT(target: u32, f: u32) {
+    bind_fbo(Fbos::Ext, target, f)
+}
+extern "C" fn glIsFramebufferEXT(f: u32) -> u8 {
+    is_fbo(Fbos::Ext, f)
 }
 fn attach(target: u32, point: u32, a: Att) {
     with(|g, c| {
@@ -2507,13 +2714,13 @@ fn attach(target: u32, point: u32, a: Att) {
         // (what is attached must be a texture or renderbuffer that exists)
         let exists = match a {
             Att::None => true,
-            Att::Tex(t, _) => g.textures.contains_key(&t) && !g.reserved.contains(&(K_TEX, t)),
-            Att::Rb(r) => g.rbs.contains_key(&r) && !g.reserved.contains(&(K_RB, r)),
+            Att::Tex(t, _) => g.objs.textures.contains_key(&t) && !g.objs.reserved.contains(&(K_TEX, t)),
+            Att::Rb(r) => g.objs.rbs.contains_key(&r) && !g.objs.reserved.contains(&(K_RB, r)),
         };
         if !exists {
             return c.err(GL_INVALID_OPERATION);
         }
-        let Some(f) = g.fbos.get_mut(&id) else { return c.err(GL_INVALID_OPERATION) };
+        let Some(f) = fbo_mut(g, c, id) else { return c.err(GL_INVALID_OPERATION) };
         match point {
             GL_COLOR_ATTACHMENT0 => f.color = a,
             GL_DEPTH_ATTACHMENT | GL_STENCIL_ATTACHMENT | GL_DEPTH_STENCIL_ATTACHMENT => f.depth = a,
@@ -2536,7 +2743,7 @@ extern "C" fn glCheckFramebufferStatus(_target: u32) -> u32 {
 unsafe extern "C" fn glGetFramebufferAttachmentParameteriv(target: u32, point: u32, p: u32, out: *mut i32) {
     *out = with(|g, c| {
         let id = if target == GL_READ_FRAMEBUFFER { c.fbo_read } else { c.fbo_draw };
-        let Some(f) = g.fbos.get(&id) else { return 0 };
+        let Some(f) = fbo(g, c, id) else { return 0 };
         let a = if point == GL_COLOR_ATTACHMENT0 { f.color } else { f.depth };
         match (p, a) {
             (0x8CD0, Att::Tex(..)) => 0x1702,
@@ -2548,43 +2755,41 @@ unsafe extern "C" fn glGetFramebufferAttachmentParameteriv(target: u32, point: u
 }
 unsafe extern "C" fn glGenRenderbuffers(n: i32, out: *mut u32) {
     gen_names(K_RB, n, out, |g, id| {
-        g.rbs.insert(id, Renderbuffer::default());
+        g.objs.rbs.insert(id, Renderbuffer::default());
     })
 }
 unsafe extern "C" fn glDeleteRenderbuffers(n: i32, names: *const u32) {
     let ids = self::names(n, names);
     with(|g, c| {
         for id in ids {
-            g.reserved.remove(&(K_RB, id));
-            if let Some(r) = g.rbs.remove(&id) {
+            g.objs.reserved.remove(&(K_RB, id));
+            if let Some(r) = g.objs.rbs.remove(&id) {
                 if r.gpu != 0 {
                     gpu::record(|q| q.cmd(&[gpu::DESTROY_TEXTURE, r.gpu]));
                 }
                 if c.rb == id {
                     c.rb = 0;
                 }
-                g.detach(|a| matches!(a, Att::Rb(r) if *r == id));
+                g.detach(c, |a| matches!(a, Att::Rb(r) if *r == id));
             }
         }
     })
 }
 extern "C" fn glIsRenderbuffer(r: u32) -> u8 {
-    let g = lock();
-    let g = &*g;
-    u8::from(g.rbs.contains_key(&r) && !g.reserved.contains(&(K_RB, r)))
+    with(|g, _| u8::from(g.objs.rbs.contains_key(&r) && !g.objs.reserved.contains(&(K_RB, r))))
 }
 extern "C" fn glBindRenderbuffer(_target: u32, rb: u32) {
     with(|g, c| {
         if rb != 0 {
-            g.rbs.entry(rb).or_default();
+            g.objs.rbs.entry(rb).or_default();
         }
-        g.reserved.remove(&(K_RB, rb));
+        g.objs.reserved.remove(&(K_RB, rb));
         c.rb = rb;
     })
 }
 extern "C" fn glRenderbufferStorage(_target: u32, internal: u32, w: i32, h: i32) {
     with(|g, c| {
-        let Some(r) = g.rbs.get_mut(&c.rb) else { return c.err(GL_INVALID_OPERATION) };
+        let Some(r) = g.objs.rbs.get_mut(&c.rb) else { return c.err(GL_INVALID_OPERATION) };
         let depth = base_format(internal.cast_signed()) == Base::Depth || matches!(internal, 0x8D48 | 0x8D46 | 0x8D47 | 0x1901);
         let old = r.gpu;
         r.gpu = page_id();
@@ -2612,6 +2817,8 @@ fn unused() -> u32 {
 mod glsl;
 #[cfg(test)]
 mod names_tests;
+#[cfg(test)]
+mod share_tests;
 #[cfg(test)]
 mod draw_tests;
 #[cfg(test)]

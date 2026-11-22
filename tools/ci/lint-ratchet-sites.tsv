@@ -224,7 +224,7 @@ crates/kura/src/d3d11/mod.rs	unsafe_op_in_unsafe_fn	*(gp::<u16>(p + lo32(i) * 2)
 crates/kura/src/d3d11/mod.rs	unsafe_op_in_unsafe_fn	*v = *args.add(i * 2);
 crates/kura/src/d3d11/mod.rs	unsafe_op_in_unsafe_fn	*v = *args.add(i * 2);
 crates/kura/src/d3d11/mod.rs	unsafe_op_in_unsafe_fn	*v = rd(desc, k);
-crates/kura/src/d3d11/mod.rs	unsafe_op_in_unsafe_fn	0 => query_interface(d, this, iface, a(1), a(2)),
+crates/kura/src/d3d11/mod.rs	unsafe_op_in_unsafe_fn	0 => query_interface(d, own, iface, a(1), a(2)),
 crates/kura/src/d3d11/mod.rs	unsafe_op_in_unsafe_fn	10 | 26 => set_slots(d, &mut st.samplers[usize::from(m == 10)], a(1), a(2), a(3)),
 crates/kura/src/d3d11/mod.rs	unsafe_op_in_unsafe_fn	106 => get_slots(d, &st.uavs[1], a(1), a(2), a(3)),
 crates/kura/src/d3d11/mod.rs	unsafe_op_in_unsafe_fn	11 => set_one(d, &mut st.vs, a(1)),
@@ -261,8 +261,8 @@ crates/kura/src/d3d11/mod.rs	unsafe_op_in_unsafe_fn	59 => device_call(d, 9, this
 crates/kura/src/d3d11/mod.rs	unsafe_op_in_unsafe_fn	6 => parent(d, d.adapter, a(1), a(2)),
 crates/kura/src/d3d11/mod.rs	unsafe_op_in_unsafe_fn	6 => parent(d, d.factory, a(1), a(2)),
 crates/kura/src/d3d11/mod.rs	unsafe_op_in_unsafe_fn	6 => parent(d, d.factory, a(1), a(2)),
-crates/kura/src/d3d11/mod.rs	unsafe_op_in_unsafe_fn	6 | 7 => parent(d, d.made_by.get(&this).copied().unwrap_or(d.device), a(1), a(2)),
-crates/kura/src/d3d11/mod.rs	unsafe_op_in_unsafe_fn	6 | 7 => parent(d, d.made_by.get(&this).copied().unwrap_or(d.device), a(1), a(2)),
+crates/kura/src/d3d11/mod.rs	unsafe_op_in_unsafe_fn	6 | 7 => parent(d, d.objs.get(&this).map_or(0, |o| o.dev), a(1), a(2)),
+crates/kura/src/d3d11/mod.rs	unsafe_op_in_unsafe_fn	6 | 7 => parent(d, d.objs.get(&this).map_or(0, |o| o.dev), a(1), a(2)),
 crates/kura/src/d3d11/mod.rs	unsafe_op_in_unsafe_fn	60 => device_call(d, 24, this, a),
 crates/kura/src/d3d11/mod.rs	unsafe_op_in_unsafe_fn	7 => parent(d, device, a(1), a(2)),
 crates/kura/src/d3d11/mod.rs	unsafe_op_in_unsafe_fn	72 | 77 => get_slots(d, &st.cbs[usize::from(m == 77)], a(1), a(2), a(3)),
@@ -457,7 +457,7 @@ crates/kura/src/d3d11/mod.rs	unsafe_op_in_unsafe_fn	put_mapped(out, b.mem, b.siz
 crates/kura/src/d3d11/mod.rs	unsafe_op_in_unsafe_fn	put_mapped(out, mem, pitch, pitch * rows, dxgi);
 crates/kura/src/d3d11/mod.rs	unsafe_op_in_unsafe_fn	put_swap_desc(a(1), [w, h, 60, 1, fmt, 0, 0, samples.0, samples.1, 0x20, 1, hwnd, 1, 0, 0]);
 crates/kura/src/d3d11/mod.rs	unsafe_op_in_unsafe_fn	query_interface(d, buffer, iface, a(2), a(3))
-crates/kura/src/d3d11/mod.rs	unsafe_op_in_unsafe_fn	query_interface(d, id, iface, a(2), a(3))
+crates/kura/src/d3d11/mod.rs	unsafe_op_in_unsafe_fn	return query_interface(d, id, iface, a(2), a(3));
 crates/kura/src/d3d11/mod.rs	unsafe_op_in_unsafe_fn	query_interface(d, id, iface, riid, out)
 crates/kura/src/d3d11/mod.rs	unsafe_op_in_unsafe_fn	raw.push((rd(f, 0), rd(f, 1), rd(f, 2), rd(f, 4), rd(f, 5)));
 crates/kura/src/d3d11/mod.rs	unsafe_op_in_unsafe_fn	raw.push((rd(f, 0), rd(f, 1), rd(f, 2), rd(f, 4), rd(f, 5)));
@@ -639,7 +639,7 @@ crates/kura/src/d3d11/mod.rs	unsafe_op_in_unsafe_fn	wrp(a(7), 0, 0);
 crates/kura/src/d3d11/mod.rs	unsafe_op_in_unsafe_fn	wrp(a(7), 0, o);
 crates/kura/src/d3d11/mod.rs	unsafe_op_in_unsafe_fn	wrp(a(9), 0, 0);
 crates/kura/src/d3d11/mod.rs	unsafe_op_in_unsafe_fn	wrp(a(9), 0, o);
-crates/kura/src/d3d11/mod.rs	unsafe_op_in_unsafe_fn	wrp(ctx_out, 0, d.addr_of(d.context));
+crates/kura/src/d3d11/mod.rs	unsafe_op_in_unsafe_fn	wrp(ctx_out, 0, d.addr_of(ctx));
 crates/kura/src/d3d11/mod.rs	unsafe_op_in_unsafe_fn	wrp(dev_out, 0, d.addr_of(dev));
 crates/kura/src/d3d11/mod.rs	unsafe_op_in_unsafe_fn	wrp(dev_out, 0, f);
 crates/kura/src/d3d11/mod.rs	unsafe_op_in_unsafe_fn	wrp(o, 0, 0);

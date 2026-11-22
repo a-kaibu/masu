@@ -48,6 +48,19 @@ unsafe fn wr(p: u32, i: usize, v: u32) {
     }
 }
 
+/// What a device's handles hold, let go of with the device.
+pub(super) fn release_handles(d: &mut D3d, old: State) {
+    for vs in old.vs.into_iter().flatten() {
+        d.release(vs.decl);
+        if vs.vs != 0 {
+            d.release(vs.vs);
+        }
+    }
+    for id in old.ps.into_iter().flatten().chain(old.sb.into_iter().filter(|&id| id != 0)) {
+        d.release(id);
+    }
+}
+
 /// A Direct3D 9 call with these arguments (`this` first).
 unsafe fn c9(d: &mut D3d, iface: u32, m: u32, this: u32, args: &[u32], after: &mut After) -> u32 {
     device::call(d, iface, m, this, args.as_ptr(), after)
@@ -244,20 +257,8 @@ unsafe fn d3d8_call(d: &mut D3d, m: u32, this: u32, a: &dyn Fn(usize) -> u32, af
             let mut p = pp9(a(5));
             let r = c9(d, IF_D3D9, 16, this, &[me, a(1), a(2), a(3), a(4), lo32(p.as_mut_ptr().expose_provenance()), a(6)], after);
             pp8(a(5), &p);
-            // (a device that failed to be made leaves the live one's shaders and state blocks;
-            // a new one starts with none: release what the old tables held)
-            if r == S_OK {
-                let old = std::mem::take(&mut d.d8);
-                for vs in old.vs.into_iter().flatten() {
-                    d.release(vs.decl);
-                    if vs.vs != 0 {
-                        d.release(vs.vs);
-                    }
-                }
-                for id in old.ps.into_iter().flatten().chain(old.sb.into_iter().filter(|&id| id != 0)) {
-                    d.release(id);
-                }
-            }
+            // (a new device starts with no shaders and state blocks of its own; the others keep
+            // theirs: D3d::install)
             // (Direct3D 8's own states: ZBIAS and the rest 0, PATCHSEGMENTS 1.0,
             // SOFTWAREVERTEXPROCESSING as created; POINTSIZE_MIN 0, POINTSIZE_MAX 8192.0 on
             // either device: tests/winref/golden/d3d8state-32)

@@ -98,7 +98,7 @@ fn view_of(dev: u32, m: u32, b: u32, first: u32, count: u32) -> u32 {
 fn binding_of(bi: u32) -> ([u32; 8], [u32; 4]) {
     let mut g = D11S.locked();
     let Some(d) = g.as_mut() else { return ([0; 8], [0; 4]) };
-    let st = d.st.clone();
+    let st = d.imm_state();
     buffer_view_binding(d, &st, 5, bi)
 }
 
@@ -171,7 +171,7 @@ fn counter_moves_to_the_page_and_back() {
     let e = {
         let mut g = D11S.locked();
         let d = g.as_mut().expect("device");
-        let st = d.st.clone();
+        let st = d.imm_state();
         counter_binding(d, &st, 5, 700)
     };
     let (c, page) = count();
@@ -200,7 +200,7 @@ fn range_tables_written_again_after_a_lost_device() {
     put(vs, &[v]);
     cc(ctx, 67, &[0, 1, vs]);
     let table = |d: &mut D11| {
-        let st = d.st.clone();
+        let st = d.imm_state();
         ranges_binding(d, &st, 5, &[500])[2]
     };
     let first = {

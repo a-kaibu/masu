@@ -329,14 +329,14 @@ pub(super) fn snorm_targets(tree: &Tree) -> Hits {
 
 /// What the review of kura at 6852be1 found wrong, fixed (2026-11-22), each by its spelling in
 /// the code (comments left out): (file, text it must hold, what is wrong without it).
-pub(super) const REVIEW_6852BE1_HAS: [(&str, &str, &str); 23] = [
+pub(super) const REVIEW_6852BE1_HAS: [(&str, &str, &str); 33] = [
     ("crates/kura/src/d3d11/hazards.rs", "out.extend(st.so.iter()", "stream output targets are not outputs: a vertex buffer of one stays bound (D3D11 unbinds it)"),
     ("crates/kura/src/d3d11/hazards.rs", "for vb in st.vbs.iter_mut()", "the vertex buffers checked are not all 32 slots"),
     ("crates/kura/src/d3d11/op.rs", "if let Uavs::Set { start, views, counts } = uavs {", "OMSetRenderTargetsAndUnorderedAccessViews with KEEP render targets does not resolve its new UAVs"),
     ("crates/kura/src/d3d11/mod.rs", "ContextOp::read(d, m, a)", "the immediate context reads a state call its own way, not as the ContextOp a deferred context records"),
     ("crates/kura/src/d3d11/deferred.rs", "ContextOp::read(d, m, a)", "a deferred context records a call its own way, not as the ContextOp the immediate context applies"),
     ("crates/kura/src/d3d11/deferred.rs", "recs: std::sync::Arc<Vec<ContextOp<'static>>>", "a command list keeps raw calls (replayed through guest memory) instead of ContextOps"),
-    ("crates/kura/src/d3d11/mod.rs", "Some(Data::Deferred(_)) => true,", "a deferred context let go of is never destroyed (its state and list hold their objects for good)"),
+    ("crates/kura/src/d3d11/mod.rs", "Some((Data::Deferred(_) | Data::Device(_), _)) => true,", "a deferred context let go of is never destroyed (its state and list hold their objects for good)"),
     ("crates/kura/src/jit.rs", "struct SharedCache", "the shared JIT cache's byte count is kept apart from its map (it drifted)"),
     ("crates/kura/src/jit.rs", "jit::TABLE_SLOTS", "the JIT table's size is not koji's (the loader's 20-bit index)"),
     ("host/vnjit.js", "VNJIT.slots", "vnjitRoom does not refuse a table index past the slots the loader encodes"),
@@ -353,10 +353,20 @@ pub(super) const REVIEW_6852BE1_HAS: [(&str, &str, &str); 23] = [
     ("crates/koji/src/jit/saved.rs", "pages: super::Pages", "the saved index does not say whether a translation was made with the page checks"),
     ("crates/kura/src/jit.rs", ".is_some_and(|e| e.pages.runs_now())", "saved translations are not taken by what they were made with (with the page checks on, none is used)"),
     ("host/vnjit.js", "pages: pages >>> 0,", "the modules' \"pages\" global is not given the page marks of this run"),
+    ("crates/kura/src/d3d11/mod.rs", "let dev = d.new_obj(IF_DEVICE, Data::Device(Dev { level, ..Dev::NONE }));", "D3D11CreateDevice gives back a device made before, not one of its own"),
+    ("crates/kura/src/d3d11/mod.rs", "d.enter(own);", "a call runs on the device last made, not on the device of the object it is called on"),
+    ("crates/kura/src/d3d11/mod.rs", "    Context(Box<Imm>),", "the immediate context's state is not the context's own (one state for every device)"),
+    ("crates/kura/src/gl/mod.rs", "g.objs = g.groups.remove(&c.group).unwrap_or_default();", "a GL call sees every context's objects, not its share group's"),
+    ("crates/kura/src/gl/mod.rs", "pub extern \"C\" fn vngl_share_lists(", "wglShareLists does nothing (every context sharing everything)"),
+    ("crates/sake/src/gl.rs", "(\"wglShareLists\", wglShareLists),", "wglShareLists answers TRUE without sharing"),
+    ("crates/kura/src/gl/mod.rs", "Fbos::Core => c.fbos.get(&f.name),", "GL 3.0 / ARB framebuffers are the share group's, not each context's own"),
+    ("crates/kura/src/gl/mod.rs", "bind_fbo(Fbos::Ext, target, f)", "EXT_framebuffer_object's framebuffers are each context's own, not the share group's"),
+    ("crates/kura/src/d3d11/mod.rs", "let alias = d.new_obj(iface, Data::Opened(id));", "OpenSharedResource on another device gives back the other device's object"),
+    ("crates/kura/src/d3d9/mod.rs", "let mine = std::mem::replace(&mut self.d8, std::mem::take(&mut next.d8));", "Direct3D 8 shader and state block handles are one table for every device"),
 ];
 
 /// (file, text it must not hold, what is wrong with it)
-pub(super) const REVIEW_6852BE1_NOT: [(&str, &str, &str); 12] = [
+pub(super) const REVIEW_6852BE1_NOT: [(&str, &str, &str); 16] = [
     ("crates/kura/src/d3d11/hazards.rs", "0..16", "a fixed slot count: the slots past it are not checked"),
     ("crates/kura/src/d3d11/hazards.rs", "0..128", "a fixed slot count: the slots past it are not checked"),
     ("crates/kura/src/jit.rs", "SHARED_BYTES", "a byte count of the shared cache apart from what the map holds"),
@@ -369,6 +379,10 @@ pub(super) const REVIEW_6852BE1_NOT: [(&str, &str, &str); 12] = [
     ("crates/kura/src/d3d11/deferred.rs", "fn pointed(", "a table of what each method's pointers point to, beside the one that reads them"),
     ("crates/kura/src/d3d11/deferred.rs", "fn objects(m: u32)", "a table of which arguments are objects, beside the one that reads them"),
     ("crates/kura/src/d3d11/deferred.rs", "guest_alloc(lo32(b.len()))", "a recorded call put back into guest memory to be read again"),
+    ("crates/kura/src/d3d11/mod.rs", "made_by: HashMap<u32, u32>", "which device made a child kept apart from the child (one device per process, the others its side-faces)"),
+    ("crates/kura/src/d3d11/mod.rs", "if d.device == 0 {", "a device made only when there is none yet"),
+    ("crates/kura/src/gl/mod.rs", "fn vngl_context_create(_share: u32)", "the share context of a new context not looked at"),
+    ("crates/kura/src/d3d9/d3d8.rs", "let old = std::mem::take(&mut d.d8);", "a new Direct3D 8 device takes the handles of the device before"),
 ];
 
 /// a fix of the review of 6852be1 taken back

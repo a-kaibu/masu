@@ -9,26 +9,9 @@
 
 use kome::locks::Lock as _;
 use super::*;
-use crate::d3d9::trace_tests::{alloc, CALLS, SERIAL};
+use super::deferred_tests::{call1, m, mem, put, rd1, setup};
 use proptest::prelude::*;
 
-fn mem(n: u32) -> u32 {
-    unsafe { alloc(4 * n) as u32 }
-}
-fn put(p: u32, v: &[u32]) {
-    for (i, &x) in v.iter().enumerate() {
-        unsafe { *((p + 4 * i as u32) as *mut u32) = x };
-    }
-}
-fn rd1(p: u32) -> u32 {
-    unsafe { *(p as *const u32) }
-}
-fn call1(id: u32, args: &[u32]) -> u32 {
-    unsafe { call(id, args.as_ptr(), &CALLS) }
-}
-fn m(iface: u32, m: u32) -> u32 {
-    iface << 8 | m
-}
 fn id_of(a: u32) -> u32 {
     let g = D11S.locked();
     g.as_ref().map_or(0, |d| d.id_of(a))
@@ -287,21 +270,12 @@ fn gets(ctx: u32) -> Vec<u32> {
 
 fn state_imm() -> State {
     let g = D11S.locked();
-    g.as_ref().unwrap().st.clone()
+    g.as_ref().unwrap().imm_state()
 }
 fn state_def(def: u32) -> State {
     let g = D11S.locked();
     let d = g.as_ref().unwrap();
     deferred::state_of(d, d.id_of(def)).unwrap().clone()
-}
-
-fn setup() -> std::sync::MutexGuard<'static, ()> {
-    let g = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
-    *D11S.lock().unwrap_or_else(|e| e.into_inner()) = None;
-    let vt = mem(256);
-    put(vt, &(1..=256).map(|i| 0x1000 * i).collect::<Vec<_>>());
-    call1(INIT, &[vt, 256]);
-    g
 }
 
 proptest! {

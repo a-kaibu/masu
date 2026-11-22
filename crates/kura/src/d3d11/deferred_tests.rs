@@ -7,21 +7,21 @@ use kome::locks::Lock as _;
 use super::*;
 use crate::d3d9::trace_tests::{alloc, client_rect, free, CALLS, SERIAL};
 
-fn mem(n: u32) -> u32 {
+pub(super) fn mem(n: u32) -> u32 {
     unsafe { alloc(4 * n) as u32 }
 }
-fn put(p: u32, v: &[u32]) {
+pub(super) fn put(p: u32, v: &[u32]) {
     for (i, &x) in v.iter().enumerate() {
         unsafe { *((p + 4 * i as u32) as *mut u32) = x };
     }
 }
-fn rd1(p: u32) -> u32 {
+pub(super) fn rd1(p: u32) -> u32 {
     unsafe { *(p as *const u32) }
 }
-fn call1(id: u32, args: &[u32]) -> u32 {
+pub(super) fn call1(id: u32, args: &[u32]) -> u32 {
     unsafe { call(id, args.as_ptr(), &CALLS) }
 }
-fn m(iface: u32, m: u32) -> u32 {
+pub(super) fn m(iface: u32, m: u32) -> u32 {
     iface << 8 | m
 }
 fn iface_of(a: u32) -> u32 {
@@ -109,7 +109,7 @@ impl Ctx {
     }
 }
 
-fn setup() -> std::sync::MutexGuard<'static, ()> {
+pub(super) fn setup() -> std::sync::MutexGuard<'static, ()> {
     let g = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
     // (a fresh device as in a process of its own: what other tests left on the one device —
     // objects still bound, references — would count in these tests' reference counts)
@@ -414,8 +414,8 @@ fn newer_interfaces() {
     release(c.dev);
 }
 
-/// Wine's test_private_data on one device per process: "two" devices (the same one) with the
-/// one stored in the other's private data, a texture holding it too; everything goes at the end.
+/// Wine's test_private_data: two devices (each D3D11CreateDevice makes its own) with the one
+/// stored in the other's private data, a texture holding it too; everything goes at the end.
 #[test]
 fn device_in_its_own_private_data() {
     let _g = setup();
@@ -472,11 +472,13 @@ fn device_in_its_own_private_data() {
     }
     assert_eq!(refs(test_object), base + 2);
     release(surface);
-    // (the texture's own reference of the device and the one its private data held)
+    // (the one the texture's private data held; the texture held its own device, not this one)
     assert_eq!(release(tex), 0);
+    assert_eq!(refs(test_object), base + 1);
+    // the device goes, and the reference its private data held with it (Wine's
+    // test_private_data: both Release to 0)
+    assert_eq!(release(c.dev), 0);
     assert_eq!(refs(test_object), base);
-    // the device's two references and the one it holds of itself: after the second, gone
-    assert_eq!(release(c.dev), 2);
     assert_eq!(release(test_object), 0);
     // a device made again starts with nothing left
     let c2 = Ctx::new();

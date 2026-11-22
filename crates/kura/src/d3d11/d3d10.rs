@@ -365,7 +365,7 @@ pub(super) unsafe fn child(d: &mut D11, iface: u32, m: u32, this: u32, a: &dyn F
     match (iface, m) {
         (_, 3) => {
             // GetDevice: the D3D10 one (none for a D3D11 device's resources)
-            if !d.made10 && !d.ten_faces {
+            if !d.dev().made10 && !d.dev().ten_faces {
                 wrp(args[1], 0, 0);
                 return S_OK;
             }
