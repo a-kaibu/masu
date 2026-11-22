@@ -55,9 +55,6 @@ static DOORBELL: AtomicI32 = AtomicI32::new(0);
 /// A page has listed streams: there is a page to decode.
 static PAGE: AtomicBool = AtomicBool::new(false);
 static NEXT: AtomicU32 = AtomicU32::new(1);
-/// Where the page's next list starts (streams in id order from here, wrapping round): with more
-/// open streams than the page's buffer, each is listed in turn.
-static LIST_FROM: AtomicU32 = AtomicU32::new(0);
 
 /// Encoded bytes a stream holds for the page at most, and decoded samples (floats) for the
 /// guest: past either (a page that stopped answering, a guest that stopped taking) the stream
@@ -219,18 +216,21 @@ pub extern "C" fn vnhost_adec_doorbell() -> u32 {
     lo32(DOORBELL.as_ptr().expose_provenance())
 }
 
-/// Lists up to `max` open streams into `out`, 10 words each: id, generation, codec string ptr
-/// and bytes, rate, channels, description ptr and bytes, chunks waiting for the page, whether it
-/// failed. Closed streams are not listed (the page drops its decoders for ids it no longer sees);
-/// with more than `max` open, the next list goes on after the last one listed.
+/// One page of the open streams: up to `max` of those whose id is `from` or more, in id order,
+/// into `out`, 10 words each: id, generation, codec string ptr and bytes, rate, channels,
+/// description ptr and bytes, chunks waiting for the page, whether it failed. Fewer than `max`:
+/// the last page. The page lists every open stream by asking page after page (`from`: the last
+/// id listed + 1) until one is short; only a stream missing from all of them is closed (it took
+/// one page of 32 for all of them and closed the decoders of the streams past it, which lost
+/// their codec state, review of 6852be1).
 ///
 /// # Safety
 /// `out` must hold `max * 10` words.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn vnhost_adec_list(out: *mut u32, max: u32) -> u32 {
+pub unsafe extern "C" fn vnhost_adec_list(out: *mut u32, max: u32, from: u32) -> u32 {
     let Some(words) = (us(max)).checked_mul(10) else { return 0 };
     let out = std::slice::from_raw_parts_mut(out, words);
-    let rows = rows(us(max));
+    let rows = rows(us(max), from);
     for (n, r) in rows.iter().enumerate() {
         out[n * 10..n * 10 + 10].copy_from_slice(&[
             r.id,
@@ -260,20 +260,14 @@ struct Row {
     failed: bool,
 }
 
-fn rows(max: usize) -> Vec<Row> {
+/// The open streams with ids `from` and up, `max` at most, in id order (one page of the list).
+fn rows(max: usize, from: u32) -> Vec<Row> {
     PAGE.store(true, Ordering::Relaxed);
     with(|m| {
         m.retain(|_, s| !s.closed);
-        // in id order from where the last list stopped, round
-        let mut ids: Vec<u32> = m.keys().copied().collect();
+        let mut ids: Vec<u32> = m.keys().copied().filter(|&id| id >= from).collect();
         ids.sort_unstable();
-        let from = LIST_FROM.load(Ordering::Relaxed);
-        let at = ids.partition_point(|&id| id < from);
-        ids.rotate_left(at);
         ids.truncate(max);
-        if let Some(&last) = ids.last() {
-            LIST_FROM.store(if ids.len() < m.len() { last.wrapping_add(1) } else { 0 }, Ordering::Relaxed);
-        }
         ids.iter()
             .map(|id| (*id, &m[id]))
             .map(|(id, s)| Row {
@@ -389,7 +383,7 @@ pub extern "C" fn vnhost_adec_fail(id: u32, generation: u32) {
 /// decoded by `dec` (the chunk's bytes, the stream's channels -> interleaved samples) and done.
 #[doc(hidden)]
 pub fn test_page_pass(dec: &mut dyn FnMut(&[u8], u32) -> Vec<f32>) {
-    for r in rows(usize::MAX) {
+    for r in rows(usize::MAX, 0) {
         let mut last = 0;
         while let Some((b, seq)) = next_chunk(r.id, r.generation) {
             let pcm = dec(&b, r.channels);
@@ -420,7 +414,21 @@ pub(crate) mod tests {
 
     // (the page's exports hand out 32-bit addresses: wasm's; here the same through usize)
     fn list() -> Vec<Row> {
-        rows(64)
+        rows(64, 0)
+    }
+
+    /// Every open stream, as the page lists them: page after page until a short one.
+    fn pass(max: usize) -> Vec<u32> {
+        let mut all = Vec::new();
+        let mut from = 0;
+        loop {
+            let page = rows(max, from);
+            all.extend(page.iter().map(|r| r.id));
+            match page.last() {
+                Some(r) if page.len() == max => from = r.id + 1,
+                _ => return all,
+            }
+        }
     }
 
     fn chunk(id: u32, generation: u32) -> Option<(Vec<u8>, u32)> {
@@ -589,11 +597,11 @@ pub(crate) mod tests {
     proptest! {
         #![proptest_config(ProptestConfig::with_cases(64))]
 
-        /// With more streams open than the page lists at once, every one is listed within
-        /// ceil(n / max) lists, whatever opens and closes in between (it listed an arbitrary
-        /// `max` of a HashMap: some never).
+        /// With more streams open than one page holds, a pass (page after page until a short
+        /// one) lists every open stream once and no closed one, whatever opens and closes
+        /// between the passes (one page of 32 was taken for all of them, review of 6852be1).
         #[test]
-        fn every_stream_gets_listed(n in 1usize..24, max in 1usize..6, churn in proptest::collection::vec(any::<bool>(), 0..8)) {
+        fn a_pass_lists_every_open_stream(n in 1usize..80, max in 1usize..40, churn in proptest::collection::vec(any::<bool>(), 0..8)) {
             let _g = page_on();
             let mut ids: Vec<u32> = (0..n).map(|_| open("mp3", 44100, 1, &[]).unwrap()).collect();
             for c in churn {
@@ -602,21 +610,13 @@ pub(crate) mod tests {
                 } else if ids.len() > 1 {
                     close(ids.remove(0));
                 }
-                let _ = rows(max);
-            }
-            let mut seen = std::collections::HashSet::new();
-            for _ in 0..ids.len().div_ceil(max) {
-                for r in rows(max) {
-                    seen.insert(r.id);
-                }
-            }
-            for id in &ids {
-                prop_assert!(seen.contains(id), "stream {} never listed ({} open, {} a list)", id, ids.len(), max);
+                let seen = pass(max);
+                prop_assert_eq!(&seen, &ids, "{} open, {} a page", ids.len(), max);
             }
             for id in ids {
                 close(id);
             }
-            let _ = rows(usize::MAX);
+            prop_assert!(pass(usize::MAX).is_empty());
         }
     }
 

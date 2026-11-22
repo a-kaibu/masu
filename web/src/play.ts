@@ -150,7 +150,7 @@ interface SakeModule {
   _vnhost_video_fail(id: number): void;
   _free(ptr: number): void;
   _vnhost_adec_doorbell(): number;
-  _vnhost_adec_list(out: number, max: number): number;
+  _vnhost_adec_list(out: number, max: number, from: number): number;
   _vnhost_adec_chunk(id: number, gen: number, size: number, seq: number): number;
   _vnhost_adec_pcm(id: number, gen: number, pcm: number, frames: number, channels: number): void;
   _vnhost_adec_done(id: number, gen: number, seq: number): void;
