@@ -107,7 +107,7 @@ static NAMES: std::sync::OnceLock<fn(Named)> = std::sync::OnceLock::new();
 
 /// Calls `f` after each name made or removed through this module (the first watcher stays)
 pub fn watch_names(f: fn(Named)) {
-    let _ = NAMES.set(f);
+    NAMES.get_or_init(|| f);
 }
 
 fn named(e: Named) {

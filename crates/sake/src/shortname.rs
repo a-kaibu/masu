@@ -214,12 +214,16 @@ fn write_table(host_dir: &str, t: &Table) {
     let p = table_path(host_dir);
     if t.is_empty() {
         if kura::fs::symlink_metadata(&p).is_ok() {
-            let _ = kura::fs::remove_file(&p);
+            if let Err(e) = kura::fs::remove_file(&p) && crate::env_on!("SAKE_TRACE_FILES") {
+                eprintln!("sake: 8.3 table {p}: {e}");
+            }
         }
         return;
     }
     let text: String = t.iter().map(|(l, s)| format!("{l}\t{s}\n")).collect();
-    let _ = kura::fs::write(&p, text);
+    if let Err(e) = kura::fs::write(&p, text) && crate::env_on!("SAKE_TRACE_FILES") {
+        eprintln!("sake: 8.3 table {p}: {e}");
+    }
 }
 
 /// The directory's entries for the guest: every one but `TABLE`

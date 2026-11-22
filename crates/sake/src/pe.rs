@@ -2770,7 +2770,7 @@ mod missing_import_tests {
         put32(&mut v, sec + 20, 0x200);
         put32(&mut v, sec + 36, 0xc000_0040);
         // (rva 0x1000 + k is the file's 0x200 + k)
-        let at = |rva: u32| 0x200 + (rva - 0x1000) as usize;
+        let at = |rva: u32| 0x200 + kome::num::us(rva - 0x1000);
         let text = |v: &mut Vec<u8>, rva: u32, s: &str| v[at(rva)..at(rva) + s.len()].copy_from_slice(s.as_bytes());
         if let Some((d, f)) = import {
             put32(&mut v, dirs + 8, 0x1000);

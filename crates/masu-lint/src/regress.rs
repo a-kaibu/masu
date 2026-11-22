@@ -856,7 +856,7 @@ pub(super) fn product_code(tree: &Tree, f: &Rel) -> String {
         let at = from.saturating_add(rel);
         let after = at.saturating_add(12);
         let rest = text.get(after..).unwrap_or_default();
-        let lead = rest.len() - rest.trim_start().len();
+        let lead = rest.len().saturating_sub(rest.trim_start().len());
         let rest = rest.trim_start();
         let open = rest.find('{');
         let inline = rest.starts_with("mod ") && open.is_some_and(|b| rest.find(';').is_none_or(|s| b < s));
