@@ -7,7 +7,13 @@
  *    reads what the first wrote), a triangle strip's odd triangle, instances;
  *  - RenderTargetWriteMask with a logic op; a logic op on the second target only
  *    (IndependentBlendEnable), the first written plainly;
- *  - a logic op on an R8G8B8A8_UNORM target.
+ *  - which formats CheckFeatureSupport(FORMAT_SUPPORT2) gives OUTPUT_MERGER_LOGIC_OP;
+ *  - every op on targets of formats without it (UNORM, UNORM_SRGB, SNORM, SINT, FLOAT,
+ *    B8G8R8A8, R11G11B10, R16_UNORM): what the output merger writes there;
+ *  - four 4x multisampled R32_UINT targets, every sample read back through Texture2DMS: a full and a partly covered triangle, the pixel shader's SV_Position,
+ *    an interpolated value and SV_Coverage under XOR over 0 (against no logic op: whether the
+ *    shader still runs once a pixel), the blend sample mask, a sample-rate shader
+ *    (SV_SampleIndex), and PSInvocations and a pixel shader's own count of its invocations.
  * WARP or hardware on the Windows runner.
  * libs: -ld3d11 -ld3dcompiler_47
  * run: browser (sake's Direct3D 11 runs in the page: tests/winref/run-browser.mjs) */
@@ -34,7 +40,23 @@ static const char *SRC =
     "uint4 ps(float4 p : SV_Position) : SV_Target { return src; }\n"
     "struct O2 { uint4 a : SV_Target0; uint4 b : SV_Target1; };\n"
     "O2 ps2(float4 p : SV_Position) { O2 o; o.a = src; o.b = src1; return o; }\n"
-    "float4 psf(float4 p : SV_Position) : SV_Target { return srcf; }\n";
+    "float4 psf(float4 p : SV_Position) : SV_Target { return srcf; }\n"
+    "int4 psi(float4 p : SV_Position) : SV_Target { return asint(src); }\n"
+    /* a triangle over half the target (clockwise): the pixels on its diagonal partly covered */
+    "float4 vs_half(uint id : SV_VertexID) : SV_Position { return float4(id == 2 ? 1.0 : -1.0, id == 1 ? 1.0 : -1.0, 0.5, 1); }\n"
+    "struct VI { float4 p : SV_Position; float t : T; };\n"
+    "VI vs_attr(uint id : SV_VertexID) { VI o; o.p = float4(id == 2 ? 1.0 : -1.0, id == 1 ? 1.0 : -1.0, 0.5, 1); o.t = o.p.x * 0.37 + o.p.y * 0.11 + 0.5; return o; }\n"
+    /* the 4x cases write 4 R32_UINT targets (WebGPU multisamples no 64- or 128-bit format) */
+    "struct O4 { uint a : SV_Target0; uint b : SV_Target1; uint c : SV_Target2; uint d : SV_Target3; };\n"
+    "O4 o4(uint4 v) { O4 o; o.a = v.x; o.b = v.y; o.c = v.z; o.d = v.w; return o; }\n"
+    "O4 ps_const(float4 p : SV_Position) { return o4(src); }\n"
+    "O4 ps_attr(VI i, uint c : SV_Coverage) { return o4(uint4(asuint(i.p.x), asuint(i.p.y), asuint(i.t), c)); }\n"
+    "O4 ps_sample(float4 p : SV_Position, uint s : SV_SampleIndex) { return o4(src ^ s); }\n"
+    "RWByteAddressBuffer cnt : register(u4);\n"
+    "O4 ps_count(float4 p : SV_Position) { uint o; cnt.InterlockedAdd(0, 1, o); return o4(src); }\n"
+    /* sample (x % 4) of pixel (x / 4, y) of the 4 multisampled targets */
+    "Texture2DMS<uint> m0 : register(t0); Texture2DMS<uint> m1 : register(t1); Texture2DMS<uint> m2 : register(t2); Texture2DMS<uint> m3 : register(t3);\n"
+    "uint4 ps_read(float4 p : SV_Position) : SV_Target { uint x = (uint)p.x; int2 q = int2(x / 4, (int)p.y); uint k = x % 4; return uint4(m0.Load(q, k), m1.Load(q, k), m2.Load(q, k), m3.Load(q, k)); }\n";
 
 static ID3DBlob *compile(const char *entry, const char *target) {
     ID3DBlob *b = NULL, *err = NULL;
@@ -149,19 +171,20 @@ int main(void) {
     printf("options logic_op %d\n", o.OutputMergerLogicOp);
     if (!o.OutputMergerLogicOp) return 0;
 
-    static const char *names[] = { "vs_full", "vs_twice", "vs_strip", "ps", "ps2", "psf" };
-    static const char *kinds[] = { "vs_4_0", "vs_4_0", "vs_4_0", "ps_4_0", "ps_4_0", "ps_4_0" };
-    ID3DBlob *bl[6];
-    for (int i = 0; i < 6; i++)
+    static const char *names[] = { "vs_full", "vs_twice", "vs_strip", "ps", "ps2", "psf", "psi" };
+    static const char *kinds[] = { "vs_4_0", "vs_4_0", "vs_4_0", "ps_4_0", "ps_4_0", "ps_4_0", "ps_4_0" };
+    ID3DBlob *bl[7];
+    for (int i = 0; i < 7; i++)
         if (!(bl[i] = compile(names[i], kinds[i]))) return 0;
     ID3D11VertexShader *vs_full, *vs_twice, *vs_strip;
-    ID3D11PixelShader *ps, *ps2, *psf;
+    ID3D11PixelShader *ps, *ps2, *psf, *psi;
     ID3D11Device_CreateVertexShader(dev, ID3D10Blob_GetBufferPointer(bl[0]), ID3D10Blob_GetBufferSize(bl[0]), NULL, &vs_full);
     ID3D11Device_CreateVertexShader(dev, ID3D10Blob_GetBufferPointer(bl[1]), ID3D10Blob_GetBufferSize(bl[1]), NULL, &vs_twice);
     ID3D11Device_CreateVertexShader(dev, ID3D10Blob_GetBufferPointer(bl[2]), ID3D10Blob_GetBufferSize(bl[2]), NULL, &vs_strip);
     ID3D11Device_CreatePixelShader(dev, ID3D10Blob_GetBufferPointer(bl[3]), ID3D10Blob_GetBufferSize(bl[3]), NULL, &ps);
     ID3D11Device_CreatePixelShader(dev, ID3D10Blob_GetBufferPointer(bl[4]), ID3D10Blob_GetBufferSize(bl[4]), NULL, &ps2);
     ID3D11Device_CreatePixelShader(dev, ID3D10Blob_GetBufferPointer(bl[5]), ID3D10Blob_GetBufferSize(bl[5]), NULL, &psf);
+    ID3D11Device_CreatePixelShader(dev, ID3D10Blob_GetBufferPointer(bl[6]), ID3D10Blob_GetBufferSize(bl[6]), NULL, &psi);
     {
         D3D11_BUFFER_DESC bd = { 48, D3D11_USAGE_DEFAULT, D3D11_BIND_CONSTANT_BUFFER, 0, 0, 0 };
         ID3D11Device_CreateBuffer(dev, &bd, NULL, &cb);
@@ -321,6 +344,205 @@ int main(void) {
             puts("");
             if (b) ID3D11BlendState_Release(b);
         }
+    }
+    puts("formats with OUTPUT_MERGER_LOGIC_OP (FORMAT_SUPPORT2 0x100)");
+    {
+        printf(" ");
+        for (UINT f = 1; f <= 132; f++) {
+            D3D11_FEATURE_DATA_FORMAT_SUPPORT2 s2 = { (DXGI_FORMAT)f, 0 };
+            if (SUCCEEDED(ID3D11Device_CheckFeatureSupport(dev, D3D11_FEATURE_FORMAT_SUPPORT2, &s2, sizeof s2)) && (s2.OutFormatSupport2 & D3D11_FORMAT_SUPPORT2_OUTPUT_MERGER_LOGIC_OP)) printf(" %u", f);
+        }
+        puts("");
+    }
+
+    puts("every op on targets of formats without logic ops");
+    {
+        static const struct { DXGI_FORMAT f; const char *name; UINT bpp; int kind; UINT dst[2]; } nf[] = {
+            { DXGI_FORMAT_R8G8B8A8_UNORM, "rgba8_unorm", 4, 0, { 0xc3a55a3c } },
+            { DXGI_FORMAT_R8G8B8A8_UNORM_SRGB, "rgba8_srgb", 4, 0, { 0xc3a55a3c } },
+            { DXGI_FORMAT_B8G8R8A8_UNORM, "bgra8_unorm", 4, 0, { 0xc3a55a3c } },
+            { DXGI_FORMAT_R8G8B8A8_SNORM, "rgba8_snorm", 4, 0, { 0xc3a55a3c } },
+            { DXGI_FORMAT_R16_UNORM, "r16_unorm", 2, 0, { 0x5a3c } },
+            { DXGI_FORMAT_R10G10B10A2_UNORM, "rgb10a2_unorm", 4, 0, { 0x9abcdef0 } },
+            { DXGI_FORMAT_R11G11B10_FLOAT, "r11g11b10_float", 4, 0, { 0x3c003c00 } },
+            { DXGI_FORMAT_R16G16_FLOAT, "rg16_float", 4, 0, { 0x3c00b800 } },
+            { DXGI_FORMAT_R32_FLOAT, "r32_float", 4, 0, { 0x3f400000 } },
+            { DXGI_FORMAT_R16G16B16A16_FLOAT, "rgba16_float", 8, 0, { 0x3c00b800, 0x40003400 } },
+            { DXGI_FORMAT_R8G8B8A8_SINT, "rgba8_sint", 4, 1, { 0xc3a55a3c } },
+            { DXGI_FORMAT_R32_SINT, "r32_sint", 4, 1, { 0x12345678 } },
+        };
+        static const float fs[4] = { 0.25f, 0.5f, 1.0f, 0.75f };
+        static const UINT is[4] = { 0x16, 0xfffffff0, 0x70, 0x5 };
+        for (int i = 0; i < (int)(sizeof nf / sizeof nf[0]); i++) {
+            struct target u;
+            if (!target(&u, nf[i].f, nf[i].bpp)) continue;
+            printf("%s: dst", nf[i].name);
+            for (UINT k = 0; k < nf[i].bpp; k += 4) printf(" %08x", nf[i].dst[k / 4]);
+            if (nf[i].bpp == 2) printf(" %04x", nf[i].dst[0]);
+            puts(nf[i].kind ? " src 16 fffffff0 70 5" : " src 0.25 0.5 1 0.75");
+            constants(is, NULL, fs);
+            ID3D11DeviceContext_OMSetRenderTargets(ctx, 1, &u.v, NULL);
+            ID3D11DeviceContext_PSSetShader(ctx, nf[i].kind ? psi : psf, NULL, 0);
+            for (int op = 0; op < 16; op++) {
+                fill(&u, nf[i].dst);
+                ID3D11BlendState *b = blend(FALSE, 0, TRUE, (D3D11_LOGIC_OP)op, 0xf);
+                ID3D11DeviceContext_OMSetBlendState(ctx, b, zero, 0xffffffff);
+                ID3D11DeviceContext_Draw(ctx, 3, 0);
+                printf("  %s:", OPS[op]);
+                if (u.bpp == 2) {
+                    ID3D11DeviceContext_CopyResource(ctx, (ID3D11Resource *)u.staging, (ID3D11Resource *)u.t);
+                    D3D11_MAPPED_SUBRESOURCE m;
+                    if (SUCCEEDED(ID3D11DeviceContext_Map(ctx, (ID3D11Resource *)u.staging, 0, D3D11_MAP_READ, 0, &m))) {
+                        printf(" %04x", *(const unsigned short *)((const unsigned char *)m.pData + 2 * m.RowPitch + 2));
+                        ID3D11DeviceContext_Unmap(ctx, (ID3D11Resource *)u.staging, 0);
+                    }
+                } else {
+                    show(&u, 1, 2);
+                    uniform(&u);
+                }
+                puts("");
+                if (b) ID3D11BlendState_Release(b);
+            }
+            ID3D11Texture2D_Release(u.t);
+            ID3D11Texture2D_Release(u.staging);
+            ID3D11RenderTargetView_Release(u.v);
+        }
+        ID3D11DeviceContext_PSSetShader(ctx, ps, NULL, 0);
+    }
+
+    puts("four 4x multisampled R32_UINT targets (each pixel: its 4 samples, the 4 targets' words each)");
+    {
+        D3D11_TEXTURE2D_DESC md = { W, H, 1, 1, DXGI_FORMAT_R32_UINT, { 4, 0 }, D3D11_USAGE_DEFAULT, D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE, 0, 0 };
+        ID3D11Texture2D *mt[4];
+        ID3D11RenderTargetView *mv[4];
+        ID3D11ShaderResourceView *ms[4];
+        for (int i = 0; i < 4; i++) {
+            if (FAILED(ID3D11Device_CreateTexture2D(dev, &md, NULL, &mt[i]))) { puts("  no 4x target"); puts("done"); return 0; }
+            ID3D11Device_CreateRenderTargetView(dev, (ID3D11Resource *)mt[i], NULL, &mv[i]);
+            ID3D11Device_CreateShaderResourceView(dev, (ID3D11Resource *)mt[i], NULL, &ms[i]);
+        }
+        /* the read-back: W * 4 x H, sample k of pixel x at x * 4 + k */
+        struct target rd;
+        {
+            D3D11_TEXTURE2D_DESC td = { W * 4, H, 1, 1, DXGI_FORMAT_R32G32B32A32_UINT, { 1, 0 }, D3D11_USAGE_DEFAULT, D3D11_BIND_RENDER_TARGET, 0, 0 };
+            ID3D11Device_CreateTexture2D(dev, &td, NULL, &rd.t);
+            td.Usage = D3D11_USAGE_STAGING;
+            td.BindFlags = 0;
+            td.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
+            ID3D11Device_CreateTexture2D(dev, &td, NULL, &rd.staging);
+            ID3D11Device_CreateRenderTargetView(dev, (ID3D11Resource *)rd.t, NULL, &rd.v);
+            rd.bpp = 16;
+        }
+        ID3DBlob *mb[7];
+        static const char *mn[7] = { "vs_half", "vs_attr", "ps_attr", "ps_sample", "ps_count", "ps_read", "ps_const" };
+        static const char *mk[7] = { "vs_4_0", "vs_4_0", "ps_5_0", "ps_5_0", "ps_5_0", "ps_5_0", "ps_5_0" };
+        for (int i = 0; i < 7; i++)
+            if (!(mb[i] = compile(mn[i], mk[i]))) return 0;
+        ID3D11VertexShader *vs_half, *vs_attr;
+        ID3D11PixelShader *ps_attr, *ps_sample, *ps_count, *ps_read, *ps_const;
+        ID3D11Device_CreateVertexShader(dev, ID3D10Blob_GetBufferPointer(mb[0]), ID3D10Blob_GetBufferSize(mb[0]), NULL, &vs_half);
+        ID3D11Device_CreateVertexShader(dev, ID3D10Blob_GetBufferPointer(mb[1]), ID3D10Blob_GetBufferSize(mb[1]), NULL, &vs_attr);
+        ID3D11Device_CreatePixelShader(dev, ID3D10Blob_GetBufferPointer(mb[2]), ID3D10Blob_GetBufferSize(mb[2]), NULL, &ps_attr);
+        ID3D11Device_CreatePixelShader(dev, ID3D10Blob_GetBufferPointer(mb[3]), ID3D10Blob_GetBufferSize(mb[3]), NULL, &ps_sample);
+        ID3D11Device_CreatePixelShader(dev, ID3D10Blob_GetBufferPointer(mb[4]), ID3D10Blob_GetBufferSize(mb[4]), NULL, &ps_count);
+        ID3D11Device_CreatePixelShader(dev, ID3D10Blob_GetBufferPointer(mb[5]), ID3D10Blob_GetBufferSize(mb[5]), NULL, &ps_read);
+        ID3D11Device_CreatePixelShader(dev, ID3D10Blob_GetBufferPointer(mb[6]), ID3D10Blob_GetBufferSize(mb[6]), NULL, &ps_const);
+        ID3D11Buffer *cbuf;
+        ID3D11UnorderedAccessView *cuav;
+        {
+            D3D11_BUFFER_DESC bd = { 16, D3D11_USAGE_DEFAULT, D3D11_BIND_UNORDERED_ACCESS, 0, D3D11_RESOURCE_MISC_BUFFER_ALLOW_RAW_VIEWS, 0 };
+            ID3D11Device_CreateBuffer(dev, &bd, NULL, &cbuf);
+            D3D11_UNORDERED_ACCESS_VIEW_DESC ud;
+            memset(&ud, 0, sizeof ud);
+            ud.Format = DXGI_FORMAT_R32_TYPELESS;
+            ud.ViewDimension = D3D11_UAV_DIMENSION_BUFFER;
+            ud.Buffer.NumElements = 4;
+            ud.Buffer.Flags = D3D11_BUFFER_UAV_FLAG_RAW;
+            ID3D11Device_CreateUnorderedAccessView(dev, (ID3D11Resource *)cbuf, &ud, &cuav);
+        }
+        ID3D11Buffer *cstage;
+        {
+            D3D11_BUFFER_DESC bd = { 16, D3D11_USAGE_STAGING, 0, D3D11_CPU_ACCESS_READ, 0, 0 };
+            ID3D11Device_CreateBuffer(dev, &bd, NULL, &cstage);
+        }
+        D3D11_QUERY_DESC qd = { D3D11_QUERY_PIPELINE_STATISTICS, 0 };
+        ID3D11Query *q;
+        ID3D11Device_CreateQuery(dev, &qd, &q);
+        static const float clear[4] = { 90.0f, 15360.0f, 74565.0f, 7.0f };
+        static const UINT ms_src[4] = { 0x0ff000ff, 0x00ff00ff, 0xf0f0f0f0, 0x80000001 };
+        static const struct { const char *name; int vs; int ps; BOOL logic; D3D11_LOGIC_OP op; UINT mask; int all; } mc[] = {
+            /* vs: 0 full, 1 half, 2 attr; ps: 0 ps, 1 ps_attr, 2 ps_sample, 3 ps_count */
+            { "full, xor", 0, 0, TRUE, D3D11_LOGIC_OP_XOR, 0xffffffff, 0 },
+            { "half, xor", 1, 0, TRUE, D3D11_LOGIC_OP_XOR, 0xffffffff, 1 },
+            { "half, and_inverted", 1, 0, TRUE, D3D11_LOGIC_OP_AND_INVERTED, 0xffffffff, 1 },
+            { "half, sample mask 5, xor", 1, 0, TRUE, D3D11_LOGIC_OP_XOR, 0x5, 1 },
+            { "full, sample mask a, invert", 0, 0, TRUE, D3D11_LOGIC_OP_INVERT, 0xa, 0 },
+            { "position, value, coverage, no logic op", 2, 1, FALSE, D3D11_LOGIC_OP_NOOP, 0xffffffff, 1 },
+            { "position, value, coverage, xor over 0", 2, 1, TRUE, D3D11_LOGIC_OP_XOR, 0xffffffff, 1 },
+            { "position, value, coverage, or over 0", 2, 1, TRUE, D3D11_LOGIC_OP_OR, 0xffffffff, 1 },
+            { "sample-rate shader, xor", 1, 2, TRUE, D3D11_LOGIC_OP_XOR, 0xffffffff, 1 },
+            { "sample-rate shader, no logic op", 1, 2, FALSE, D3D11_LOGIC_OP_NOOP, 0xffffffff, 1 },
+            { "counted, no logic op", 1, 3, FALSE, D3D11_LOGIC_OP_NOOP, 0xffffffff, 0 },
+            { "counted, xor", 1, 3, TRUE, D3D11_LOGIC_OP_XOR, 0xffffffff, 0 },
+            { "counted, copy", 1, 3, TRUE, D3D11_LOGIC_OP_COPY, 0xffffffff, 0 },
+        };
+        ID3D11VertexShader *vss[3] = { vs_full, vs_half, vs_attr };
+        ID3D11PixelShader *pss[4] = { ps_const, ps_attr, ps_sample, ps_count };
+        for (int c = 0; c < (int)(sizeof mc / sizeof mc[0]); c++) {
+            BOOL over0 = strstr(mc[c].name, "over 0") != NULL;
+            for (int i = 0; i < 4; i++) {
+                float cv[4] = { over0 ? 0.0f : clear[i], 0, 0, 0 };
+                ID3D11DeviceContext_ClearRenderTargetView(ctx, mv[i], cv);
+            }
+            static const UINT zc[4] = { 0, 0, 0, 0 };
+            ID3D11DeviceContext_ClearUnorderedAccessViewUint(ctx, cuav, zc);
+            constants(ms_src, NULL, NULL);
+            D3D11_VIEWPORT v = { 0, 0, W, H, 0, 1 };
+            ID3D11DeviceContext_RSSetViewports(ctx, 1, &v);
+            ID3D11DeviceContext_OMSetRenderTargetsAndUnorderedAccessViews(ctx, 4, mv, NULL, 4, 1, &cuav, NULL);
+            ID3D11DeviceContext_VSSetShader(ctx, vss[mc[c].vs], NULL, 0);
+            ID3D11DeviceContext_PSSetShader(ctx, pss[mc[c].ps], NULL, 0);
+            ID3D11BlendState *b = blend(FALSE, 0, mc[c].logic, mc[c].op, 0xf);
+            ID3D11DeviceContext_OMSetBlendState(ctx, b, zero, mc[c].mask);
+            ID3D11DeviceContext_Begin(ctx, (ID3D11Asynchronous *)q);
+            ID3D11DeviceContext_Draw(ctx, 3, 0);
+            ID3D11DeviceContext_End(ctx, (ID3D11Asynchronous *)q);
+            D3D11_QUERY_DATA_PIPELINE_STATISTICS st;
+            memset(&st, 0, sizeof st);
+            while (ID3D11DeviceContext_GetData(ctx, (ID3D11Asynchronous *)q, &st, sizeof st, 0) == S_FALSE) {}
+            ID3D11DeviceContext_CopyResource(ctx, (ID3D11Resource *)cstage, (ID3D11Resource *)cbuf);
+            UINT count = 0;
+            D3D11_MAPPED_SUBRESOURCE m;
+            if (SUCCEEDED(ID3D11DeviceContext_Map(ctx, (ID3D11Resource *)cstage, 0, D3D11_MAP_READ, 0, &m))) {
+                count = *(const UINT *)m.pData;
+                ID3D11DeviceContext_Unmap(ctx, (ID3D11Resource *)cstage, 0);
+            }
+            if (b) ID3D11BlendState_Release(b);
+            /* read every sample back */
+            ID3D11DeviceContext_OMSetBlendState(ctx, NULL, zero, 0xffffffff);
+            ID3D11DeviceContext_OMSetRenderTargetsAndUnorderedAccessViews(ctx, 1, &rd.v, NULL, 1, 0, NULL, NULL);
+            D3D11_VIEWPORT rv = { 0, 0, W * 4, H, 0, 1 };
+            ID3D11DeviceContext_RSSetViewports(ctx, 1, &rv);
+            ID3D11DeviceContext_VSSetShader(ctx, vs_full, NULL, 0);
+            ID3D11DeviceContext_PSSetShader(ctx, ps_read, NULL, 0);
+            ID3D11DeviceContext_PSSetShaderResources(ctx, 0, 4, ms);
+            ID3D11DeviceContext_Draw(ctx, 3, 0);
+            ID3D11ShaderResourceView *none[4] = { NULL, NULL, NULL, NULL };
+            ID3D11DeviceContext_PSSetShaderResources(ctx, 0, 4, none);
+            printf("  %s: ps invocations %llu, counted %u\n", mc[c].name, (unsigned long long)st.PSInvocations, count);
+            if (strncmp(mc[c].name, "counted", 7) == 0) continue;
+            for (int y = 0; y < H; y++) {
+                if (!mc[c].all && y != 1) continue;
+                printf("   row %d:", y);
+                for (int x = 0; x < W; x++) {
+                    if (!mc[c].all && x != 1) continue;
+                    printf(" |");
+                    for (int k = 0; k < 4; k++) show(&rd, x * 4 + k, y);
+                }
+                puts("");
+            }
+        }
+        ID3D11DeviceContext_RSSetViewports(ctx, 1, &vp);
     }
     puts("done");
     return 0;
