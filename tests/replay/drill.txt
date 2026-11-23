@@ -4,3 +4,21 @@
 # are compared as any probe's. status.py --drill writes the lines: from where sake's replay
 # first differed (the frame before it to it), a 16th of the range a run, down to one frame's
 # draws.
+b2007_kaguya-32 0 0 0
+b2011_anim_team_mm-32 0 0 0
+b2012_fudegaki_soft-32 0 0 0
+b2012_trois-32 0 0 0
+b2014_azarashi_soft-32 0 0 0
+b2015_guilty-32 0 0 0
+b2016_alcot-32 0 0 0
+b2019_anim-32 0 0 0
+b2019_sukerasparo-32 0 0 0
+b2020_akabeesoft3-32 0 0 0
+b2026_anim-32 0 0 0
+s2008_clochette_suzunone7-32 0 0 0
+s2011_waffle_sex_friend-32 0 0 0
+s2014_clochette_sakigake-32 0 0 0
+s2015_silkys_plus_neyuki-32 0 0 0
+s2017_nanawind_alice_gram-32 0 0 0
+s2020_wonder_fool_maokatsu-32 0 0 0
+s2022_hooksoft_houkago2-32 0 0 0
