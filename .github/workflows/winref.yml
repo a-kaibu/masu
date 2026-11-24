@@ -49,19 +49,8 @@ jobs:
     steps:
       - uses: actions/checkout@v7.0.1
       - run: tools/ci/cache-keys.sh
-      # (.debs per runner image: tools/ci/apt.sh)
-      - id: cache-1
-        uses: actions/cache/restore@v6.1.0
-        with:
-          path: ~/.apt-cache
-          key: apt-${{ env.CI_IMAGE }}-mingw-w64-clang-lld-llvm
       - name: mingw-w64
         run: tools/ci/apt.sh mingw-w64 clang lld llvm
-      - if: steps.cache-1.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v6.1.0
-        with:
-          path: ~/.apt-cache
-          key: apt-${{ env.CI_IMAGE }}-mingw-w64-clang-lld-llvm
       # (the trial games' traces pulled from ghcr.io, kept: tests/replay/games.py)
       - uses: actions/cache@v6.1.0
         with:
@@ -176,7 +165,7 @@ jobs:
           key: emsdk-${{ runner.os }}-${{ hashFiles('tools/ci/emsdk.sh') }}
       - name: sake's fonts (IPA fonts renamed, for the probes that measure text)
         run: |
-          sudo apt-get update -q && sudo apt-get install -yq --no-install-recommends fonts-ipafont-gothic fonts-ipafont-mincho
+          tools/ci/apt.sh fonts-ipafont-gothic fonts-ipafont-mincho
           pip install fonttools
           python3 tools/ci/sake-fonts.py target/winref-fonts
       - name: The web app and masu

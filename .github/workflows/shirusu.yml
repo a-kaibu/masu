@@ -112,17 +112,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7.0.1
       - run: tools/ci/cache-keys.sh
-      - id: cache-1
-        uses: actions/cache/restore@v6.1.0
-        with:
-          path: ~/.apt-cache
-          key: apt-${{ env.CI_IMAGE }}-unar-unrar-innoextract-convmv-p7zip-full-msitools
       - run: tools/ci/apt.sh unar unrar innoextract convmv p7zip-full msitools
-      - if: steps.cache-1.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v6.1.0
-        with:
-          path: ~/.apt-cache
-          key: apt-${{ env.CI_IMAGE }}-unar-unrar-innoextract-convmv-p7zip-full-msitools
       - uses: actions/download-artifact@v8.0.2
         continue-on-error: true
         with:
@@ -373,11 +363,6 @@ jobs:
         with:
           path: ~/.cache/ms-playwright
           key: playwright-${{ runner.os }}-1.56.1
-      - id: cache-2
-        uses: actions/cache/restore@v6.1.0
-        with:
-          path: ~/.apt-cache
-          key: apt-${{ env.CI_IMAGE }}-unar-unrar-innoextract-convmv-p7zip-full-msitools-zstd-fonts-ipafont-gothic-fonts-ipafont-mincho
       - id: cache-3
         uses: actions/cache/restore@v6.1.0
         with:
@@ -414,11 +399,6 @@ jobs:
         with:
           path: ~/.cache/ms-playwright
           key: playwright-${{ runner.os }}-1.56.1
-      - if: steps.cache-2.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v6.1.0
-        with:
-          path: ~/.apt-cache
-          key: apt-${{ env.CI_IMAGE }}-unar-unrar-innoextract-convmv-p7zip-full-msitools-zstd-fonts-ipafont-gothic-fonts-ipafont-mincho
       - name: The titles on sake
         env:
           IDS: ${{ join(fromJSON(needs.plan.outputs.ids), ' ') }}

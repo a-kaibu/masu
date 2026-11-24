@@ -147,6 +147,24 @@ fn fixture(r: Rule) -> Fixture {
             ],
             mutate: (".github/workflows/bench.yml", |t| Some(t.replace("          ASKED: ${{ inputs.groups }}", "          GROUPS: ${{ inputs.groups }}"))),
         },
+        Rule::AptBundle => Fixture {
+            bad: &[
+                (".github/workflows/formal.yml", "      - name: Z3\n        run: sudo apt-get update -q && sudo apt-get install -yq z3\n"),
+                (".github/workflows/ci.yml", "      - uses: actions/cache@v6.1.0\n        with:\n          path: ~/.apt-cache\n"),
+                ("tests/bench/build.sh", "#!/bin/bash\nsudo apt install -y nasm\n"),
+                (".github/workflows/fuzz.yml", "        run: tools/ci/apt.sh gcc-multilib imagemagick && cargo fuzz run x\n"),
+                (".github/workflows/winref.yml", "        run: tools/ci/apt.sh\n"),
+            ],
+            good: &[
+                ("tools/ci/apt-sets.txt", "# sets\ngcc-multilib imagemagick\nnsis p7zip-full\nz3\n"),
+                (".github/workflows/fuzz.yml", "      # (tools/ci/apt.sh, from the release; apt-get is not run here)\n        run: tools/ci/apt.sh gcc-multilib imagemagick && cargo fuzz run x\n"),
+                (".github/workflows/ci.yml", "        run: tools/ci/apt.sh nsis p7zip-full && python3 tests/a.py\n      - run: (tools/ci/apt.sh z3)\n"),
+                ("tools/ci/apt.sh", "sudo -E apt-get install -yq --no-install-recommends --no-download x\n"),
+                ("tools/ci/apt-bundle.sh", "apt-get update -q\n"),
+                ("vendor/x/install.sh", "apt-get install -y y\n"),
+            ],
+            mutate: (".github/workflows/formal.yml", |t| Some(t.replace("tools/ci/apt.sh z3", "sudo apt-get update -q && sudo apt-get install -yq --no-install-recommends z3"))),
+        },
         Rule::CrtStartup => Fixture {
             bad: &[("crates/sake/src/crt.rs", "fn init() {\n    reg!(malloc, free);\n}\n")],
             good: &[("crates/sake/src/crt.rs", "fn init() {\n    reg!(__C_specific_handler, __dllonexit, __getmainargs, __initenv, __iob_func, __lconv_init, __p__commode, __p__fmode, __set_app_type, __setusermatherr, _acmdln, _amsg_exit, _cexit, _commode, _fmode, _fpreset, _initterm, _iob, _lock, _onexit, _strdup, _unlock, abort, atoi, calloc, exit, fflush, fprintf, free, fwrite, malloc, memcpy, memmove, memset, setvbuf, signal, sprintf, strcmp, strcpy, strlen, strncmp, strrchr, vfprintf, wcscat, wcscmp, wcscpy);\n    implement(\"msvcrt\", \"_swprintf\", swprintf);\n}\n")],
@@ -1005,7 +1023,7 @@ fn every_regex_compiles() {
 #[test]
 fn the_new_rules_find_each_spelling_alone() {
     // (each bad file on its own: one spelling found does not hide another that is missed)
-    for r in [Rule::HandStd, Rule::GuestScratch, Rule::RustLints, Rule::BinDeadPub, Rule::HandBitWidth, Rule::HandUtf16, Rule::NoReturnHandler, Rule::WildcardUnreachable, Rule::SafeRawPointerAbi, Rule::UncheckedJitMode, Rule::OutEscape, Rule::EscapeComment, Rule::ArcTryUnwrap, Rule::ArcCount, Rule::ShellSpecialEnv, Rule::DepthGuard, Rule::TypedRegisters] {
+    for r in [Rule::HandStd, Rule::GuestScratch, Rule::RustLints, Rule::BinDeadPub, Rule::HandBitWidth, Rule::HandUtf16, Rule::NoReturnHandler, Rule::WildcardUnreachable, Rule::SafeRawPointerAbi, Rule::UncheckedJitMode, Rule::OutEscape, Rule::EscapeComment, Rule::ArcTryUnwrap, Rule::ArcCount, Rule::ShellSpecialEnv, Rule::AptBundle, Rule::DepthGuard, Rule::TypedRegisters] {
         for one in fixture(r).bad.chunks(1) {
             assert!(!r.check(&Tree::made_up(one)).is_empty(), "{}: finds nothing in {}", r.id(), one[0].0);
         }
@@ -1090,4 +1108,20 @@ fn rebuild_reads_past_each_test_module() {
     let got = super::rebuild::without_tests(code);
     assert!(got.contains("fn a()") && got.contains("fn b()") && got.contains("fn c()") && got.contains("mod outside;"), "{got}");
     assert!(!got.contains("fn x()") && !got.contains("fn w()"), "{got}");
+}
+
+#[test]
+fn apt_bundle_reads_the_set_up_to_the_end_of_its_command() {
+    // (the set is what apt.sh's "$*" is, which must be a line of apt-sets.txt as written)
+    assert_eq!(regress::apt_set("        run: tools/ci/apt.sh nsis p7zip-full && python3 tests/a.py").as_deref(), Some("nsis p7zip-full"));
+    assert_eq!(regress::apt_set("      - run: (tools/ci/apt.sh z3)").as_deref(), Some("z3"));
+    assert_eq!(regress::apt_set("tools/ci/apt.sh mingw-w64 wine wine32:i386; tests/diff/gdi.py").as_deref(), Some("mingw-w64 wine wine32:i386"));
+    assert_eq!(regress::apt_set("tools/ci/apt.sh a  b | tee x").as_deref(), Some("a b"));
+    assert_eq!(regress::apt_set("cp tools/ci/apt.sh.orig x"), None);
+    assert_eq!(regress::apt_set("        run: tools/ci/apt.sh").as_deref(), Some(""));
+    // (each of the bad fixture's five files once: the mirror read three ways, a set with no
+    // tarball, a call with no package)
+    assert_eq!(Rule::AptBundle.check(&Tree::made_up(fixture(Rule::AptBundle).bad)).len(), 5);
+    // (every set the real workflows give apt.sh has its line: what ci-bundles.yml uploads)
+    assert!(Rule::AptBundle.check(&real_tree()).is_empty());
 }

@@ -107,6 +107,59 @@ pub(super) fn shell_special_env(tree: &Tree) -> Hits {
     out
 }
 
+// --- apt-bundle -------------------------------------------------------------------------------
+
+/// what may run apt itself: the installer of the bundles and the script that makes them
+pub const APT_OWN: [&str; 2] = ["tools/ci/apt.sh", "tools/ci/apt-bundle.sh"];
+/// the sets ci-bundles.yml uploads, one per line
+pub const APT_SETS: &str = "tools/ci/apt-sets.txt";
+const APT_CALL: &str = "tools/ci/apt.sh";
+/// what reads an apt mirror, or the cache of .debs per runner image that did
+const APT_MIRROR: [&str; 4] = ["apt-get ", "apt install", "apt update", ".apt-cache"];
+
+/// the set a line gives tools/ci/apt.sh: its words up to the end of that command
+pub fn apt_set(code: &str) -> Option<String> {
+    let rest = code.match_indices(APT_CALL).filter_map(|(at, _)| code.get(at.saturating_add(APT_CALL.len())..)).find(|r| r.is_empty() || r.starts_with(char::is_whitespace) || r.starts_with(')'))?;
+    let mut words = Vec::new();
+    for w in rest.split_whitespace() {
+        if matches!(w, "&&" | "||" | ";" | "|" | ")" | "\\") {
+            break;
+        }
+        let word = w.trim_end_matches([';', ')']);
+        if !word.is_empty() {
+            words.push(word);
+        }
+        if word.len() < w.len() {
+            break;
+        }
+    }
+    Some(words.join(" "))
+}
+
+pub(super) fn apt_bundle(tree: &Tree) -> Hits {
+    let sets_file = Rel::new(APT_SETS);
+    let sets: BTreeSet<String> = tree.text(&sets_file).lines().map(str::trim).filter(|l| !l.is_empty() && !l.starts_with('#')).map(str::to_owned).collect();
+    let mut out = Hits::new();
+    for p in tree.paths().iter().filter(|p| is_shell(p) && !APT_OWN.contains(&p.as_str())) {
+        for (k, l) in tree.text(p).lines().enumerate() {
+            if l.trim_start().starts_with('#') {
+                continue;
+            }
+            let code = l.split(" #").next().unwrap_or(l);
+            let line = k.saturating_add(1);
+            if let Some(m) = APT_MIRROR.iter().find(|m| code.contains(*m)) {
+                out.push((p.clone(), line, format!("`{}`: apt's mirror at CI time; tools/ci/apt.sh installs a set of tools/ci/apt-sets.txt from the release ci-bundles", m.trim())));
+            }
+            match apt_set(code) {
+                Some(set) if set.is_empty() => out.push((p.clone(), line, "tools/ci/apt.sh given no package".into())),
+                Some(set) if !sets.contains(&set) => out.push((p.clone(), line, format!("`{set}` is not a line of {APT_SETS}: ci-bundles has no tarball for it"))),
+                Some(_) | None => {}
+            }
+        }
+    }
+    out
+}
+
 // --- depth-guard ------------------------------------------------------------------------------
 
 /// The depth limits fixes put on recursion over game and file input (review b00/b04/b07: damaged

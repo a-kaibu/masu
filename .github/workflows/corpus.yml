@@ -129,12 +129,6 @@ jobs:
         with:
           path: ~/.cache/ms-playwright
           key: playwright-${{ runner.os }}-1.56.1
-      # (.debs per runner image: tools/ci/apt.sh)
-      - id: cache-2
-        uses: actions/cache/restore@v6.1.0
-        with:
-          path: ~/.apt-cache
-          key: apt-${{ env.CI_IMAGE }}-unar-unrar-innoextract-convmv-p7zip-full-msitools-zstd-fonts-ipafont-gothic-fonts-ipafont-mincho
       - id: cache-3
         uses: actions/cache/restore@v6.1.0
         with:
@@ -189,11 +183,6 @@ jobs:
         with:
           path: ~/.cache/ms-playwright
           key: playwright-${{ runner.os }}-1.56.1
-      - if: steps.cache-2.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v6.1.0
-        with:
-          path: ~/.apt-cache
-          key: apt-${{ env.CI_IMAGE }}-unar-unrar-innoextract-convmv-p7zip-full-msitools-zstd-fonts-ipafont-gothic-fonts-ipafont-mincho
       - if: steps.cache-3.outputs.cache-hit != 'true'
         uses: actions/cache/save@v6.1.0
         with:

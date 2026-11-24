@@ -74,8 +74,8 @@ jobs:
           echo "js=$(echo " $G " | grep -q ' js ' && echo true || echo false)" >> "$GITHUB_OUTPUT"
           echo "this: CI run $RUN_ID ($SHA); previous: ${OLD_RUN_ID:-none} (${OLD_SHA:-none}); groups: $G"
 
-  # The programs and the fonts, once: apt's mirror is sometimes very slow (a run's job took an hour
-  # to fetch mingw), so one job fetches it, with retries, and the groups' jobs take the result.
+  # The programs and the fonts, once (apt's packages from the release ci-bundles, tools/ci/apt.sh;
+  # the engines from their pinned sources), and the groups' jobs take the result.
   prepare:
     needs: plan
     if: needs.plan.outputs.groups != '[]'
@@ -98,12 +98,6 @@ jobs:
             target/watcom
             target/fpc16
           key: bench-engines-${{ hashFiles('tests/bench/fetch-*.sh', 'tests/bench/build-*.sh', 'tests/bench/*.patch') }}
-      # (.debs per runner image: tools/ci/apt.sh)
-      - id: cache-2
-        uses: actions/cache/restore@v6.1.0
-        with:
-          path: ~/.apt-cache
-          key: apt-${{ env.CI_IMAGE }}-gcc-mingw-w64-i686-g++-mingw-w64-i686-gcc-mingw-w64-x86-64-g++-mingw-w64-x86-64-fpc-nasm-fonts-ipafont-gothic-fonts-ipafont-mincho
       - id: cache-3
         uses: actions/cache/restore@v6.1.0
         with:
@@ -126,11 +120,6 @@ jobs:
             target/watcom
             target/fpc16
           key: bench-engines-${{ hashFiles('tests/bench/fetch-*.sh', 'tests/bench/build-*.sh', 'tests/bench/*.patch') }}
-      - if: steps.cache-2.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v6.1.0
-        with:
-          path: ~/.apt-cache
-          key: apt-${{ env.CI_IMAGE }}-gcc-mingw-w64-i686-g++-mingw-w64-i686-gcc-mingw-w64-x86-64-g++-mingw-w64-x86-64-fpc-nasm-fonts-ipafont-gothic-fonts-ipafont-mincho
       - if: steps.cache-3.outputs.cache-hit != 'true'
         uses: actions/cache/save@v6.1.0
         with:

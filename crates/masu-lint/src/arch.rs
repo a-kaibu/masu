@@ -42,6 +42,7 @@ pub enum Rule {
     ArcCount,
     CatchUnwindAbort,
     ShellSpecialEnv,
+    AptBundle,
     DepthGuard,
     WgslLoadBounds,
     ClearRounding,
@@ -100,7 +101,7 @@ pub enum Rule {
 }
 
 impl Rule {
-    pub const ALL: [Rule; 80] = [
+    pub const ALL: [Rule; 81] = [
         Rule::BuildOutput,
         Rule::HresultCopy,
         Rule::KomeCopy,
@@ -126,6 +127,7 @@ impl Rule {
         Rule::ArcCount,
         Rule::CatchUnwindAbort,
         Rule::ShellSpecialEnv,
+        Rule::AptBundle,
         Rule::DepthGuard,
         Rule::WgslLoadBounds,
         Rule::ClearRounding,
@@ -211,6 +213,7 @@ impl Rule {
             Rule::ArcCount => "arc-count",
             Rule::CatchUnwindAbort => "catch-unwind-abort",
             Rule::ShellSpecialEnv => "shell-special-env",
+            Rule::AptBundle => "apt-bundle",
             Rule::DepthGuard => "depth-guard",
             Rule::WgslLoadBounds => "wgsl-load-bounds",
             Rule::ClearRounding => "clear-rounding",
@@ -296,6 +299,7 @@ impl Rule {
             Rule::ArcCount => "a decision on Arc::strong_count / weak_count holds only while nobody can clone or drop one meanwhile (Arc audit 2026-11-20): each such site is a known site saying which lock makes it so (saves NameLocks, storage gate: the map lock every clone is made under); else let a Drop or Arc::into_inner decide",
             Rule::CatchUnwindAbort => "sake.wasm is built with panic=abort, so catch_unwind in a crate it links never catches (82cdd0d0: naga's GLSL panic ended the game through a catch_unwind; review 2026-11-14 P1-7): return a Result, or check the input before the call",
             Rule::ShellSpecialEnv => "a workflow's env or a script does not set one of bash's own variables (bench.yml's inputs went through GROUPS: a script's GROUPS=.. is dropped, RANDOM/SECONDS/LINENO are replaced, whether an env value gets in depends on the variable and the bash version): give it a name of its own",
+            Rule::AptBundle => "CI installs apt packages only through tools/ci/apt.sh, from the zstd tarball of their .debs on the release ci-bundles (2026-11-24: apt's mirror failed runs, and once took an hour to fetch mingw; the .debs cached per runner image were fetched from it again on every new image): no apt-get or ~/.apt-cache in a workflow or script, and every set given to apt.sh a line of tools/ci/apt-sets.txt, which ci-bundles.yml uploads",
             Rule::DepthGuard => "the depth limits on recursion over game and file input stay (regress::DEPTH_GUARDS; review b00/b04/b07: damaged traces, MSI conditions, shaders, .x files nesting without end blew the stack): keep the const and the check against it; a new limit is added to the list",
             Rule::WgslLoadBounds => "a texel fetch outside its texture is 0 in Direct3D (2026-11-21: ld gave WGSL's texel there): dxwgsl writes textureLoad only as select(zero, textureLoad(..), address in bounds), on one line",
             Rule::ClearRounding => "Windows clears 16-bit and 11/10-bit float channels toward zero (2026-11-21: kura rounded them to the nearest, winref d3d11clear): kura's clear.rs makes them with f16_rtz / rtz_bits, never format::f16_bits",
@@ -382,6 +386,7 @@ impl Rule {
             Rule::ArcCount => arc_use(tree, &["strong_count", "weak_count"]),
             Rule::CatchUnwindAbort => regress::catch_unwind_abort(tree),
             Rule::ShellSpecialEnv => regress::shell_special_env(tree),
+            Rule::AptBundle => regress::apt_bundle(tree),
             Rule::DepthGuard => regress::depth_guard(tree),
             Rule::WgslLoadBounds => regress::wgsl_load_bounds(tree),
             Rule::ClearRounding => regress::clear_rounding(tree),

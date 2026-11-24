@@ -466,12 +466,6 @@ jobs:
           key: jit32-${{ runner.os }}-${{ env.RUST_KEY }}-${{ hashFiles('tools/jit32test/Cargo.lock') }}
           restore-keys: |
             jit32-${{ runner.os }}-${{ env.RUST_KEY }}-
-      # (.debs per runner image: tools/ci/apt.sh)
-      - id: cache-apt
-        uses: actions/cache/restore@v6.1.0
-        with:
-          path: ~/.apt-cache
-          key: apt-${{ env.CI_IMAGE }}-gcc-multilib
       - name: gcc-multilib (jit32test native)
         id: apt
         background: true
@@ -517,11 +511,6 @@ jobs:
         working-directory: tools/jit32test
         run: target/release/jit32test testfloat
       - wait: apt
-      - if: steps.cache-apt.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v6.1.0
-        with:
-          path: ~/.apt-cache
-          key: apt-${{ env.CI_IMAGE }}-gcc-multilib
       - name: 32-bit, against the runner's CPU (random rounding modes and precisions)
         id: jit32-native
         background: true
@@ -635,12 +624,6 @@ jobs:
         with:
           fetch-depth: 0 # (git describe names the build)
       - run: tools/ci/cache-keys.sh
-      # (.debs per runner image: tools/ci/apt.sh)
-      - id: cache-5
-        uses: actions/cache/restore@v6.1.0
-        with:
-          path: ~/.apt-cache
-          key: apt-${{ env.CI_IMAGE }}-mingw-w64-zstd-clang-lld-llvm-msitools-wixl-nsis-ipafont
       - name: mingw-w64, zstd, clang, msitools (host/tests/msiinstall.wxs), the IPA fonts (host/tests/innoinstall.c)
         id: apt
         background: true
@@ -714,11 +697,6 @@ jobs:
       - name: The shared kernel's lock with processes ending anywhere (host/vnkern.js; tests/kernlock.test.mjs)
         run: node --test tests/kernlock.test.mjs
       - wait: apt
-      - if: steps.cache-5.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v6.1.0
-        with:
-          path: ~/.apt-cache
-          key: apt-${{ env.CI_IMAGE }}-mingw-w64-zstd-clang-lld-llvm-msitools-wixl-nsis-ipafont
       - name: Build
         run: tools/ci/build.sh
       # (the SIMD128 kernels of the WMV / WMA decoders against their scalar code, and the rest of
@@ -788,10 +766,6 @@ jobs:
           name: ci-sake-node
           path: target/sake-out
       - run: tools/ci/cache-keys.sh
-      - uses: actions/cache@v6.1.0
-        with:
-          path: ~/.apt-cache
-          key: apt-${{ env.CI_IMAGE }}-mingw-w64-zstd-clang-lld-llvm-msitools-wixl-nsis-ipafont
       - run: tools/ci/apt.sh mingw-w64 zstd clang lld llvm msitools wixl nsis fonts-ipafont-gothic fonts-ipafont-mincho
       - uses: actions/cache@v6.1.0
         with:

@@ -126,8 +126,7 @@ jobs:
         with:
           path: target/winetest/bin
           key: ${{ steps.key.outputs.key }}
-      # (no ~/.apt-cache: these tools are installed only when target/winetest/bin misses, and
-      # the cache was restored on every run for that rare build)
+      # (these tools are installed only when target/winetest/bin misses)
       - name: Build Wine's tests
         if: steps.cache.outputs.cache-hit != 'true'
         run: |
@@ -354,12 +353,6 @@ jobs:
         with:
           path: ~/.cache/ms-playwright
           key: playwright-${{ runner.os }}-1.56.1
-      # (.debs per runner image: tools/ci/apt.sh)
-      - id: cache-5
-        uses: actions/cache/restore@v6.1.0
-        with:
-          path: ~/.apt-cache
-          key: apt-${{ env.CI_IMAGE }}-fonts-ipafont-gothic-fonts-ipafont-mincho
       - id: cache-6
         uses: actions/cache/restore@v6.1.0
         with:
@@ -380,11 +373,6 @@ jobs:
         with:
           path: ~/.cache/ms-playwright
           key: playwright-${{ runner.os }}-1.56.1
-      - if: steps.cache-5.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v6.1.0
-        with:
-          path: ~/.apt-cache
-          key: apt-${{ env.CI_IMAGE }}-fonts-ipafont-gothic-fonts-ipafont-mincho
       - if: steps.cache-6.outputs.cache-hit != 'true'
         uses: actions/cache/save@v6.1.0
         with:
@@ -433,11 +421,9 @@ jobs:
         with:
           name: sake-node
           path: target
-      # (installed every run: its ~/.apt-cache (Wine's packages, ~400 MB) was a tenth of what
-      # the Actions cache holds, and an evicted SingleStepTests cache costs twenty minutes)
+      # (Wine's packages, ~400 MB, from the release ci-bundles: tools/ci/apt.sh)
       - name: Wine (the reference) and mingw-w64
         run: |
-          sudo dpkg --add-architecture i386
           tools/ci/apt.sh mingw-w64 wine wine32:i386
       - name: GDI drawing, sake against Wine
         run: python3 tests/diff/gdi.py

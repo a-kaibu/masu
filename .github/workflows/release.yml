@@ -16,7 +16,7 @@
 # Caches: a run for a tag can only restore caches saved on main (GitHub scopes caches by ref),
 # so nothing is saved by a release: the nightly run on main (schedule: everything but the
 # release job; a dry_run dispatch is the same) saves them (web's emsdk, wasm registry builds and
-# pnpm store, bin's per-target cargo caches, the apt and pip downloads; rust-src and the
+# pnpm store, bin's per-target cargo caches, the pip downloads (apt's packages come from the release ci-bundles); rust-src and the
 # emscripten std are CI's build job's cache).
 name: Release
 
@@ -97,11 +97,6 @@ jobs:
       - run: tools/ci/cache-keys.sh
       # (sake's C:\ is fonts only: the IPA fonts under the Windows names, in the archives as fonts/;
       # the RPG Maker RTPs each server downloads from their publisher, crates/masu/src/rtp.rs)
-      - id: cache-apt
-        uses: actions/cache/restore@v6.1.0
-        with:
-          path: ~/.apt-cache
-          key: apt-${{ env.CI_IMAGE }}-fonts-ipafont-gothic-fonts-ipafont-mincho-python3-fonttools-mingw-w64
       - name: sake's fonts and the benchmark's programs
         id: fonts
         background: true
@@ -201,11 +196,6 @@ jobs:
             ~/.cargo/git
             target
           key: ${{ steps.cargo-cache.outputs.cache-primary-key }}
-      - if: github.ref == 'refs/heads/main' && steps.cache-apt.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v6.1.0
-        with:
-          path: ~/.apt-cache
-          key: apt-${{ env.CI_IMAGE }}-fonts-ipafont-gothic-fonts-ipafont-mincho-python3-fonttools-mingw-w64
 
   bin:
     # (not web: its artifacts are waited for in the job)

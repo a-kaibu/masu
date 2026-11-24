@@ -43,18 +43,8 @@ jobs:
     steps:
       - uses: actions/checkout@v7.0.1
       - run: tools/ci/cache-keys.sh
-      - id: cache-1
-        uses: actions/cache/restore@v6.1.0
-        with:
-          path: ~/.apt-cache
-          key: apt-${{ env.CI_IMAGE }}-mingw-w64-clang-lld-llvm
       - name: mingw-w64
         run: tools/ci/apt.sh mingw-w64 clang lld llvm
-      - if: steps.cache-1.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v6.1.0
-        with:
-          path: ~/.apt-cache
-          key: apt-${{ env.CI_IMAGE }}-mingw-w64-clang-lld-llvm
       - name: asset.sh
         run: sh tests/replay/asset_test.sh
       - name: Probes to record
