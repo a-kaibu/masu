@@ -147,6 +147,19 @@ fn fixture(r: Rule) -> Fixture {
             ],
             mutate: (".github/workflows/bench.yml", |t| Some(t.replace("          ASKED: ${{ inputs.groups }}", "          GROUPS: ${{ inputs.groups }}"))),
         },
+        Rule::CiMirror => Fixture {
+            bad: &[
+                ("tools/ci/mirror.txt", "# name sha256 url\nemsdk-1.tar.xz 00 https://storage.googleapis.com/webassembly/x/wasm-binaries.tar.xz\n"),
+                ("tools/ci/emsdk.sh", "  curl -fsSL \"https://storage.googleapis.com/webassembly/x/wasm-binaries.tar.xz\" | tar xJ -C \"$EMSDK4\"\n"),
+            ],
+            good: &[
+                ("tools/ci/mirror.txt", "# name sha256 url\nemsdk-1.tar.xz 00 https://storage.googleapis.com/webassembly/x/wasm-binaries.tar.xz\n"),
+                ("tools/ci/emsdk.sh", "  tools/ci/fetch.sh emsdk-1.tar.xz \"$EMSDK4/w.tar.xz\"\n"),
+                (".github/workflows/ci-bundles.yml", "          done 3< tools/ci/mirror.txt\n"),
+            ],
+            // (the URL in two pieces: whole, this line would be a site itself)
+            mutate: ("tools/ci/emsdk.sh", |t| Some(t + concat!("curl -fsSL https://storage.googleapis.com/", "webassembly/emscripten-releases-builds/linux/b412b6307e541b93dd93f01b61181e15c17302ec/wasm-binaries.tar.xz | tar xJ\n"))),
+        },
         Rule::AptBundle => Fixture {
             bad: &[
                 (".github/workflows/formal.yml", "      - name: Z3\n        run: sudo apt-get update -q && sudo apt-get install -yq z3\n"),
@@ -1124,4 +1137,12 @@ fn apt_bundle_reads_the_set_up_to_the_end_of_its_command() {
     assert_eq!(Rule::AptBundle.check(&Tree::made_up(fixture(Rule::AptBundle).bad)).len(), 5);
     // (every set the real workflows give apt.sh has its line: what ci-bundles.yml uploads)
     assert!(Rule::AptBundle.check(&real_tree()).is_empty());
+}
+
+#[test]
+fn ci_mirror_reads_the_urls_of_its_list() {
+    assert_eq!(regress::mirror_urls("# name sha256 url\na.tar.xz 00 https://x/a.tar.xz\n\nb 11 https://y/b\n"), ["https://x/a.tar.xz", "https://y/b"]);
+    // (the real list's every URL is fetched nowhere else)
+    assert!(Rule::CiMirror.check(&real_tree()).is_empty());
+    assert!(!regress::mirror_urls(&real_tree().text(&Rel::new(regress::MIRROR))).is_empty());
 }
