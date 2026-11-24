@@ -1,0 +1,22 @@
+# Each set of apt packages CI installs, one per line, exactly as tools/ci/apt.sh is given it: the
+# set's .debs are a zstd tarball on the release ci-bundles (tools/ci/apt-bundle.sh), which
+# .github/workflows/ci-bundles.yml uploads when this file gains a line. masu-lint's apt-bundle
+# rule keeps the workflows to these lines.
+fonts-ipafont-gothic fonts-ipafont-mincho
+fonts-ipafont-gothic fonts-ipafont-mincho python3-fonttools mingw-w64
+g++-mingw-w64-i686 g++-mingw-w64-x86-64 ninja-build
+gcc-mingw-w64-i686 g++-mingw-w64-i686 gcc-mingw-w64-x86-64 g++-mingw-w64-x86-64 fpc nasm fonts-ipafont-gothic fonts-ipafont-mincho
+gcc-multilib
+gcc-multilib imagemagick
+innoextract unshield p7zip-full
+mingw-w64
+mingw-w64 clang lld llvm
+mingw-w64 cmake ninja-build flex bison libgmp-dev libmpc-dev
+mingw-w64 flex bison
+mingw-w64 wine wine32:i386
+mingw-w64 zstd
+mingw-w64 zstd clang lld llvm msitools wixl nsis fonts-ipafont-gothic fonts-ipafont-mincho
+nsis p7zip-full
+unar unrar innoextract convmv p7zip-full msitools
+unar unrar innoextract convmv p7zip-full msitools zstd fonts-ipafont-gothic fonts-ipafont-mincho
+z3
