@@ -279,12 +279,24 @@ fn sat(smt: &mut x::Smt, assert: &E) -> Result<Option<String>, String> {
 }
 
 fn check(seq: &[Instruction]) -> Verdict {
+    check_translation(seq, seq, Exit::End)
+}
+
+enum Exit {
+    End,
+    #[cfg(test)]
+    Interp(u32),
+    #[cfg(test)]
+    Branch { taken: u32, fallthrough: u32 },
+}
+
+fn check_translation(seq: &[Instruction], translated: &[Instruction], exit: Exit) -> Verdict {
     let mut code = Vec::new();
     let mut a = match CodeAssembler::new(32) {
         Ok(a) => a,
         Err(e) => return Verdict::Undecided(e.to_string()),
     };
-    for i in seq {
+    for i in translated {
         if a.add_instruction(*i).is_err() {
             return Verdict::Undecided("assembles".into());
         }
@@ -333,6 +345,15 @@ fn check(seq: &[Instruction]) -> Verdict {
             return Verdict::Undecided(format!("no reference for {i}"));
         }
     }
+    let (expected_pc, expected_status) = match exit {
+        Exit::End => (x::c(32, u64::from(END)), koji::jit::RET_CONTINUE),
+        #[cfg(test)]
+        Exit::Interp(pc) => (x::c(32, u64::from(pc)), koji::jit::RET_INTERP),
+        #[cfg(test)]
+        Exit::Branch { taken, fallthrough } => {
+            (x::ite(&r.zf.v, &x::c(32, u64::from(taken)), &x::c(32, u64::from(fallthrough))), koji::jit::RET_CONTINUE)
+        }
+    };
     let paths = f.run(params, mem, 64);
     let mut proven = 0;
     let mut undecided = Vec::new();
@@ -351,11 +372,10 @@ fn check(seq: &[Instruction]) -> Verdict {
                     }
                 };
                 // (each output that may differ, by name: the report says which ones do)
-                let mut outs: Vec<(String, E)> = vec![("EIP".into(), x::bnot(&x::eq(&got(eip_at), &x::c(32, u64::from(END)))))];
-                // (the region's status: RET_CONTINUE, its state complete at END; any other (the
-                // interpreter to run an instruction, a function-mode exit) is a difference here)
+                let mut outs: Vec<(String, E)> = vec![("EIP".into(), x::bnot(&x::eq(&got(eip_at), &expected_pc)))];
+                // The expected status distinguishes a completed branch from an interpreter exit.
                 let ret = match results.as_slice() {
-                    [r] => x::bnot(&x::eq(r, &x::c(32, koji::jit::RET_CONTINUE as u32 as u64))),
+                    [r] => x::bnot(&x::eq(r, &x::c(32, expected_status as u32 as u64))),
                     _ => x::c(1, 1),
                 };
                 outs.push(("status".into(), ret));
@@ -452,4 +472,80 @@ fn main() -> std::process::ExitCode {
         }
     }
     if fail { std::process::ExitCode::FAILURE } else { std::process::ExitCode::SUCCESS }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn asm(emit: Emit) -> Vec<Instruction> {
+        let mut a = CodeAssembler::new(32).unwrap();
+        emit(&mut a).unwrap();
+        let bytes = a.assemble(u64::from(CODE)).unwrap();
+        Decoder::with_ip(32, &bytes, u64::from(CODE), DecoderOptions::NONE).iter().collect()
+    }
+
+    fn detects(reference: Emit, mutant: Emit, output: &str) {
+        let reference = asm(reference);
+        assert!(matches!(check(&reference), Verdict::Proven(_)));
+        let result = check_translation(&reference, &asm(mutant), Exit::End);
+        match result {
+            Verdict::Differs(report) => assert!(report.split(" at ").next().unwrap().split_whitespace().any(|got| got == output), "{report}"),
+            Verdict::Proven(_) => panic!("the altered translation was proven"),
+            Verdict::Undecided(reason) => panic!("the altered translation was undecided: {reason}"),
+        }
+    }
+
+    fn require_proof(result: Verdict) {
+        match result {
+            Verdict::Proven(paths) => assert!(paths > 0),
+            Verdict::Differs(report) => panic!("{report}"),
+            Verdict::Undecided(reason) => panic!("{reason}"),
+        }
+    }
+
+    #[test]
+    fn before_fault_preserves_the_earlier_flags() {
+        let code = asm(|a| { a.xor(eax, eax)?; a.mov(ecx, dword_ptr(0)) });
+        let pc = code[1].ip32();
+        require_proof(check_translation(&code[..1], &code, Exit::Interp(pc)));
+    }
+
+    #[test]
+    fn after_esp_check_preserves_the_add_flags() {
+        let code = asm(|a| {
+            a.mov(esp, 0x2ff800u32)?;
+            a.mov(eax, 0xffd17800u32)?;
+            a.add(esp, eax)
+        });
+        let pc = code.last().unwrap().next_ip32();
+        require_proof(check_translation(&code, &code, Exit::Interp(pc)));
+    }
+
+    #[test]
+    fn conditional_jump_materializes_flags_on_both_edges() {
+        let taken = END + 0x1000;
+        let mut a = CodeAssembler::new(32).unwrap();
+        a.cmp(eax, ebx).unwrap();
+        a.je(u64::from(taken)).unwrap();
+        let bytes = a.assemble(u64::from(CODE)).unwrap();
+        let code = Decoder::with_ip(32, &bytes, u64::from(CODE), DecoderOptions::NONE).iter().collect::<Vec<_>>();
+        let fallthrough = code[1].next_ip32();
+        require_proof(check_translation(&code[..1], &code, Exit::Branch { taken, fallthrough }));
+    }
+
+    #[test]
+    fn detects_logical_flags() {
+        detects(|a| a.test(eax, ebx), |a| a.cmp(eax, ebx), "CF");
+    }
+
+    #[test]
+    fn detects_lost_shift_carry() {
+        detects(|a| a.shl(eax, 1), |a| { a.shl(eax, 1)?; a.test(eax, eax) }, "CF");
+    }
+
+    #[test]
+    fn detects_wrong_partial_register_merge() {
+        detects(|a| a.mov(ah, bl), |a| a.mov(al, bl), "EAX");
+    }
 }

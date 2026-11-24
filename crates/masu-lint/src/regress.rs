@@ -527,6 +527,8 @@ pub(super) fn d3d9_status(tree: &Tree) -> Hits {
 /// the probe and the test that reads its golden
 const D3D9DEV_PROBE: &str = "tests/winref/probes/d3d9dev.c";
 const D3D9DEV_TEST: &str = "crates/kura/src/d3d9/dev_tests.rs";
+const D3D9_FORMAT: &str = "crates/kura/src/d3d9/format.rs";
+const D3D9DEV_GOLDEN: &str = "tests/winref/golden/d3d9dev-32/stdout.txt";
 
 static D3D9DEV_ROW: LazyLock<Option<Regex>> = LazyLock::new(|| rx(r#"\{\s*(?:D3DFMT_[A-Z0-9_]+|\(D3DFORMAT\)MAKEFOURCC\([^)]*\))\s*,\s*"([A-Za-z0-9_]+)"\s*\}"#));
 
@@ -544,7 +546,79 @@ pub(super) fn d3d9dev_formats(tree: &Tree) -> Hits {
             out.push((probe.clone(), line, format!("d3d9dev asks {} but {D3D9DEV_TEST}'s d3d9_answers_as_the_golden has no \"{}\" => arm", n.as_str(), n.as_str())));
         }
     }
+    let format = Rel::new(D3D9_FORMAT);
+    if tree.has(&format) {
+        conversions_have_windows_answers(tree, format, &mut out);
+    }
     out
+}
+
+/// Explicit conversion answers need a Windows source row. A name in a different
+/// probe (for example, a depth check) does not establish a conversion result.
+fn conversions_have_windows_answers(tree: &Tree, format: Rel, out: &mut Hits) {
+    use syn::visit::Visit;
+
+    #[derive(Default)]
+    struct Formats(Vec<(String, usize)>);
+
+    impl Formats {
+        fn record(&mut self, ident: &syn::Ident) {
+            self.0.push((ident.to_string(), ident.span().start().line));
+        }
+
+        fn variants(&mut self, pat: &syn::Pat) {
+            match pat {
+                syn::Pat::Ident(pat) => self.record(&pat.ident),
+                syn::Pat::Path(pat) => {
+                    if let Some(part) = pat.path.segments.last() {
+                        self.record(&part.ident);
+                    }
+                }
+                syn::Pat::Or(pat) => {
+                    for case in &pat.cases {
+                        self.variants(case);
+                    }
+                }
+                syn::Pat::Paren(pat) => self.variants(&pat.pat),
+                _ => {}
+            }
+        }
+    }
+
+    impl<'ast> Visit<'ast> for Formats {
+        fn visit_arm(&mut self, arm: &'ast syn::Arm) {
+            if let syn::Pat::TupleStruct(pat) = &arm.pat
+                && pat.path.segments.last().is_some_and(|part| part.ident == "Some")
+            {
+                for variant in &pat.elems {
+                    self.variants(variant);
+                }
+            }
+        }
+    }
+
+    let Ok(file) = syn::parse_file(&tree.text(&format)) else { return };
+    let Some(convert) = file.items.iter().find_map(|item| match item {
+        syn::Item::Fn(f) if f.sig.ident == "converts" => Some(f),
+        _ => None,
+    }) else { return };
+    let golden = tree.text(&Rel::new(D3D9DEV_GOLDEN));
+    let sources: BTreeSet<_> = golden.lines().filter_map(|line| {
+        let (source, pairs) = line.trim().strip_prefix("CheckDeviceFormatConversion ")?.split_once(" -> ")?;
+        let mut words = pairs.split_whitespace();
+        let _target = words.next()?;
+        let result = words.next()?;
+        let valid = result.parse::<u32>().is_ok()
+            || result.strip_prefix("0x").is_some_and(|hex| u32::from_str_radix(hex, 16).is_ok());
+        valid.then_some(source)
+    }).collect();
+    let mut formats = Formats::default();
+    formats.visit_block(&convert.block);
+    for (name, line) in formats.0 {
+        if !sources.contains(name.as_str()) {
+            out.push((format.clone(), line, format!("{name} has no CheckDeviceFormatConversion source row in {D3D9DEV_GOLDEN}")));
+        }
+    }
 }
 
 // --- console-lines ---------------------------------------------------------------------------
@@ -1389,4 +1463,121 @@ pub(super) fn jit_exit_contract(tree: &Tree) -> Hits {
         }
     }
     out
+}
+
+/// After-exits must come from the instruction's commit path. Check method ownership
+/// across the lowering files as well as the phase order in Gen::emit.
+pub(super) fn jit_commit_order(tree: &Tree) -> Hits {
+    use syn::spanned::Spanned;
+    use syn::visit::{self, Visit};
+
+    #[derive(Default)]
+    struct Checks {
+        main_module: bool,
+        owner: String,
+        calls: Vec<(String, usize)>,
+        errors: Vec<(usize, String)>,
+    }
+
+    impl Checks {
+        fn check_body(&mut self, name: &syn::Ident, body: &syn::Block, check_order: bool) {
+            self.owner = name.to_string();
+            self.calls.clear();
+            self.visit_block(body);
+            if check_order {
+                let mut calls = self.calls.iter().map(|(name, _)| name.as_str());
+                let body = calls.position(|name| name == "emit_ins");
+                let committed = calls.next() == Some("commit_flags");
+                let early_exit = self.calls.iter().take(body.unwrap_or(self.calls.len())).any(|(name, _)| {
+                    matches!(name.as_str(), "commit_flags" | "watch_after" | "watch_store" | "check_esp")
+                });
+                if body.is_none() || !committed || early_exit {
+                    self.errors.push((name.span().start().line, "emit must commit flags immediately after emit_ins and before its after-checks".into()));
+                }
+            }
+        }
+    }
+
+    impl<'ast> Visit<'ast> for Checks {
+        fn visit_impl_item_fn(&mut self, item: &'ast syn::ImplItemFn) {
+            self.check_body(&item.sig.ident, &item.block, self.main_module && item.sig.ident == "emit");
+        }
+
+        fn visit_item_fn(&mut self, item: &'ast syn::ItemFn) {
+            self.check_body(&item.sig.ident, &item.block, false);
+        }
+
+        fn visit_expr_method_call(&mut self, expr: &'ast syn::ExprMethodCall) {
+            let name = expr.method.to_string();
+            let line = expr.method.span().start().line;
+            let owners: &[&str] = match name.as_str() {
+                "smc_check" | "fresh_store" => &["watch_store"],
+                "watch_store" => &["emit", "watch_after"],
+                "watch_after" | "check_esp" | "commit_flags" | "emit_ins" => &["emit"],
+                _ => &[],
+            };
+            if !owners.is_empty() && !owners.contains(&self.owner.as_str()) {
+                self.errors.push((line, format!("{name} belongs in {}", owners.join(" or "))));
+            }
+            // Visit call operands first, in evaluation order.
+            visit::visit_expr_method_call(self, expr);
+            self.calls.push((name, line));
+        }
+
+        fn visit_path(&mut self, path: &'ast syn::Path) {
+            let mut parts = path.segments.iter().rev();
+            if parts.next().is_some_and(|s| s.ident == "After")
+                && parts.next().is_some_and(|s| s.ident == "ExitAt")
+                && !matches!(self.owner.as_str(), "smc_check" | "fresh_store" | "check_esp" | "exit_contract")
+            {
+                self.errors.push((path.span().start().line, "emit after-exits through the post-commit store or ESP checks".into()));
+            }
+            visit::visit_path(self, path);
+        }
+    }
+
+    let mut out = Hits::new();
+    for file in tree.rs(&["crates/koji/src/jit/"]) {
+        let name = file.0.as_str();
+        if matches!(name, "crates/koji/src/jit/long.rs") || name.starts_with("crates/koji/src/jit/long/") {
+            continue;
+        }
+        let Ok(parsed) = syn::parse_file(&product_code(tree, &file)) else { continue };
+        let mut checks = Checks { main_module: name == "crates/koji/src/jit/mod.rs", ..Checks::default() };
+        checks.visit_file(&parsed);
+        out.extend(checks.errors.into_iter().map(|(line, message)| (file.clone(), line, message)));
+    }
+    out
+}
+
+/// Reads and writes of the x64 budget in the Cpu belong at generated-code boundaries.
+pub(super) fn jit64_budget(tree: &Tree) -> Hits {
+    use syn::visit::{self, Visit};
+
+    #[derive(Default)]
+    struct Accesses {
+        lines: Vec<usize>,
+    }
+
+    impl<'ast> Visit<'ast> for Accesses {
+        fn visit_item_fn(&mut self, f: &'ast syn::ItemFn) {
+            if !matches!(f.sig.ident.to_string().as_str(), "load_budget" | "save_budget") {
+                visit::visit_item_fn(self, f);
+            }
+        }
+
+        fn visit_macro(&mut self, call: &'ast syn::Macro) {
+            for token in call.tokens.clone() {
+                if let proc_macro2::TokenTree::Ident(name) = token && name == "jit_budget" {
+                    self.lines.push(name.span().start().line);
+                }
+            }
+        }
+    }
+
+    let path = Rel::new("crates/koji/src/jit/long.rs");
+    let Ok(file) = syn::parse_file(&product_code(tree, &path)) else { return Vec::new() };
+    let mut accesses = Accesses::default();
+    accesses.visit_file(&file);
+    accesses.lines.into_iter().map(|line| (path.clone(), line, "use the local budget between load_budget and save_budget".into())).collect()
 }

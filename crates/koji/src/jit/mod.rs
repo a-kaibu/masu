@@ -478,6 +478,8 @@ pub struct Region {
     pub instructions: usize,
     /// the guest code it was translated from: (address, length)
     pub code: Vec<(u32, u32)>,
+    /// The number of ranges at the end of code used for callee flag analysis.
+    pub flag_deps: u32,
     /// that code's bytes as the translator read them (None: some unreadable): what a build is
     /// found by again, so code rewritten while it was translated is translated again
     pub text: Option<Vec<u8>>,
@@ -616,10 +618,9 @@ struct Gen<'a> {
     /// with [`LAYOUT`]: whether the instruction went to the interpreter, and per mnemonic
     /// ("*" marking those) the count and wasm bytes
     fell_back: bool,
-    /// the current instruction's store went through write_op / packed's `stored`, which test
-    /// it in a block whose code may be rewritten (Gen::smc, Gen::fresh); for the others
-    /// Gen::emit tests what iced says it wrote
-    store_seen: bool,
+    /// The address local and width of a store emitted by write_op / packed's `stored`.
+    /// Gen::emit tests it after the instruction has committed.
+    store: Option<(u32, u32)>,
     /// whether L_MX, L_MXR and L_MXT hold the x87's modes, loaded at depth modes_depth (see
     /// Gen::modes)
     modes: bool,
@@ -1272,13 +1273,14 @@ impl<'a> Gen<'a> {
         self.c.end();
     }
 
-    /// After a store of `size` bytes at local `e` (+ `off`) in a block of code checked on
+    /// After a store of `size` bytes at local `e` in a block of code checked on
     /// entry: if it wrote into the block's own code, leaves at the next instruction with
     /// Cpu::jit_smc set (the host then keeps the page to the interpreter, as smc_check).
-    fn fresh_store(&mut self, e: u32, off: u32, size: u32) {
+    fn fresh_store(&mut self, e: u32, size: u32) {
         let Some((a, n)) = self.fresh else { return };
-        // a + n > addr + off and addr + off + size > a: (addr + off + size - 1 - a) < n + size - 1
-        self.c.get(e).u32c(off.wrapping_add(size - 1).wrapping_sub(a)).add().u32c(n + size - 1).lt_u();
+        // a + n > addr and addr + size > a: (addr + size - 1 - a) < n + size - 1
+        let last = size.saturating_sub(1);
+        self.c.get(e).u32c(last.wrapping_sub(a)).add().u32c(n.saturating_add(last)).lt_u();
         self.c.if_();
         self.depth += 1;
         self.c.get(L_CPU).u32c(a).store32(Off::smc());
@@ -2011,21 +2013,7 @@ impl<'a> Gen<'a> {
                 } else if self.slots.is_some() {
                     self.slots_reload_if(a, op_bits(ins, i) / 8);
                 }
-                self.store_seen = true;
-                if self.smc {
-                    let off = self.mem_at(a);
-                    let e = self.temp();
-                    self.c.u32c(off).add().set(e);
-                    self.smc_check(e, op_bits(ins, i) / 8);
-                    self.temps -= 1;
-                }
-                if self.fresh.is_some() {
-                    let off = self.mem_at(a);
-                    let e = self.temp();
-                    self.c.set(e);
-                    self.fresh_store(e, off, op_bits(ins, i) / 8);
-                    self.temps -= 1;
-                }
+                self.store = Some((a, op_bits(ins, i) / 8));
             }
         }
     }
@@ -2738,7 +2726,7 @@ impl<'a> Gen<'a> {
     // ---- instructions
 
     /// Emits one instruction; returns false if it ended the block.
-    fn emit(&mut self, last: bool) -> bool {
+    fn emit(&mut self, last: bool, overwrites: bool) -> bool {
         use Mnemonic::*;
         let ins = self.ins;
         self.temps = 0;
@@ -2747,6 +2735,9 @@ impl<'a> Gen<'a> {
         self.mx_ops = (false, None);
         if ins.flow_control() == FlowControl::Next && self.tc.measure.probed(ins.ip32()) {
             self.fallback(false);
+            if last {
+                self.goto(ins.next_ip32());
+            }
             return true;
         }
         // locked read-modify-writes (xchg with memory is one) go to the interpreter, which
@@ -2775,12 +2766,19 @@ impl<'a> Gen<'a> {
             self.xmm_flush();
             self.xmm = (0, 0);
         }
-        self.store_seen = false;
-        let r = self.emit_ins(last, next, simple);
-        // (a store that went its own way, not through write_op: PUSH, FST/FIST, FNSTCW, the
-        // 64-bit and cached 128-bit vector moves, ...; review b02)
-        if (self.smc || self.fresh.is_some()) && r && !self.fell_back && !self.store_seen && ins.flow_control() == FlowControl::Next && !code16(ins) {
-            self.watch_after();
+        self.store = None;
+        let r = self.emit_ins(next, simple);
+        self.commit_flags(overwrites);
+        if (self.smc || self.fresh.is_some()) && r && !self.fell_back && ins.flow_control() == FlowControl::Next {
+            if let Some((a, size)) = self.store {
+                // Use the address of the actual store, including any folded displacement.
+                let off = self.mem_at(a);
+                let e = self.temp();
+                self.c.u32c(off).add().set(e);
+                self.watch_store(e, size);
+            } else if !code16(ins) {
+                self.watch_after();
+            }
         }
         if self.mx_seen.iter().any(|s| s[1].is_some()) {
             // (what the instruction writes: checked no more)
@@ -2810,7 +2808,30 @@ impl<'a> Gen<'a> {
                 self.check_esp(next);
             }
         }
+        if r && last {
+            self.goto(next);
+        }
         r
+    }
+
+    fn commit_flags(&mut self, overwrites: bool) {
+        // Before-exits in emit_ins still see the preceding flags. From here on, an
+        // overwriting instruction's flags are in the lazy locals or were dead.
+        if overwrites {
+            self.pending = None;
+            if !self.flags_live(STATUS_BITS) {
+                self.c.i32c(-1).set(L_OP);
+            }
+        }
+    }
+
+    fn watch_store(&mut self, addr: u32, size: u32) {
+        if self.smc {
+            self.smc_check(addr, size);
+        }
+        if self.fresh.is_some() {
+            self.fresh_store(addr, size);
+        }
     }
 
     /// After the current instruction (it ran, it goes on to the next): for each memory
@@ -2872,12 +2893,7 @@ impl<'a> Gen<'a> {
                 _ => {}
             }
             self.c.set(e);
-            if self.smc {
-                self.smc_check(e, size);
-            }
-            if self.fresh.is_some() {
-                self.fresh_store(e, 0, size);
-            }
+            self.watch_store(e, size);
             self.temps -= 1;
         }
     }
@@ -2894,7 +2910,7 @@ impl<'a> Gen<'a> {
         self.safe[4] = Some(0);
     }
 
-    fn emit_ins(&mut self, last: bool, next: u32, simple: bool) -> bool {
+    fn emit_ins(&mut self, next: u32, simple: bool) -> bool {
         use Mnemonic::*;
         let ins = self.ins;
         if code16(ins) && !ok16(ins) {
@@ -2903,7 +2919,7 @@ impl<'a> Gen<'a> {
             if ends {
                 return false;
             }
-            return self.after(last, next);
+            return true;
         }
         if self.fc.src != FC_SAME && touches_fpu(&ins) && !self.fc_src_kept(&ins) {
             self.fc_sync();
@@ -3061,7 +3077,7 @@ impl<'a> Gen<'a> {
                     self.c.get(L_REG).set(b);
                     self.c.get(old).set(L_REG);
                     self.set_lazy(Kind::Sub, 32, Some(b), Some(old), r, None);
-                    return self.after(last, next);
+                    return true;
                 }
                 self.c.get(a).get(b).atomic32(match mn {
                     Add | Inc | Xadd => 0x1e,
@@ -3076,7 +3092,7 @@ impl<'a> Gen<'a> {
                     self.set_reg_from(ins.op_register(1 - m), old);
                 }
                 if mn == Xchg {
-                    return self.after(last, next);
+                    return true;
                 }
                 let carry = if matches!(mn, Inc | Dec) && self.flags_live(RflagsBits::CF) {
                     let c = self.temp();
@@ -3492,7 +3508,7 @@ impl<'a> Gen<'a> {
                     self.read_op(y, addr);
                     self.c.mul().set(r);
                     self.write_op(0, addr, r);
-                    return self.after(last, next);
+                    return true;
                 }
                 self.read_op(x, addr);
                 self.c.i64_extend_s();
@@ -4064,15 +4080,6 @@ impl<'a> Gen<'a> {
                 }
             }
         }
-        self.after(last, next)
-    }
-
-    /// End of an instruction that does not branch: the block continues, or at its last
-    /// instruction falls through to the next address.
-    fn after(&mut self, last: bool, next: u32) -> bool {
-        if last {
-            self.goto(next);
-        }
         true
     }
 
@@ -4262,7 +4269,15 @@ impl<'a> Gen<'a> {
         let d = lo32(cur.delta.rem_euclid(8));
         let rot = |m: u8| m.rotate_right(d);
         let canon = FCache { on: cur.on, delta: 0, have: rot(cur.have), dirty: rot(cur.dirty), valid: rot(cur.valid), empty: rot(cur.empty), src: FC_SAME };
-        if cur.on && self.fc_out.get(&k).is_none() {
+        if self.structured {
+            // A block may inherit pending writes and pops only when every predecessor
+            // agrees, including edges that arrive with the state already in the Cpu.
+            self.fc_out.entry(k).and_modify(|old| {
+                if *old != canon {
+                    *old = FCache::default();
+                }
+            }).or_insert(canon);
+        } else if cur.on && self.fc_out.get(&k).is_none() {
             self.fc_out.insert(k, canon);
         }
         if cur.on && d != 0 {
@@ -5610,14 +5625,7 @@ fn emit_block<'a>(g: &mut Gen<'a>, blocks: &'a [(u32, Insns)], k: usize, count: 
         *count += 1;
         let b0 = g.c.b.len();
         g.fell_back = false;
-        let go = g.emit(i + 1 == m);
-        if overwrites {
-            // (its flags written: L_OP has them, or they are dead and the Cpu's stand)
-            g.pending = None;
-            if !g.flags_live(STATUS_BITS) {
-                g.c.i32c(-1).set(L_OP);
-            }
-        }
+        let go = g.emit(i.saturating_add(1) == m, overwrites);
         if g.tc.measure.layout {
             let k = alloc::format!("{:?}{}", ins.mnemonic(), if g.fell_back { "*" } else { "" });
             let e = g.sizes.entry(k).or_insert((0, 0));
@@ -5824,9 +5832,15 @@ struct FlagEffect {
     /// it may leave after it ran: all live after it
     leaves_after: bool,
     read: u32,
+    /// only flags overwritten on every execution
     written: u32,
-    /// those live after stay live (a shift by CL, which may be 0; a REP, ECX maybe 0)
-    keeps: bool,
+}
+
+/// A variable shift count or REP can leave the incoming flags intact. Iced already
+/// accounts for immediate counts in the flag masks it reports.
+fn definite_flag_writes(ins: &Instruction, written: u32) -> u32 {
+    let by_cl = (0..ins.op_count()).any(|o| ins.op_kind(o) == OpKind::Register && ins.op_register(o) == Register::CL);
+    if by_cl || ins.has_rep_prefix() || ins.has_repne_prefix() { 0 } else { written }
 }
 
 fn flag_effects(list: &[Instruction], exits: &Exits) -> Vec<FlagEffect> {
@@ -5839,7 +5853,6 @@ fn flag_effects(list: &[Instruction], exits: &Exits) -> Vec<FlagEffect> {
         .map(|(i, ins)| {
             let stores = watched && info.info(ins).used_memory().iter().any(|u| matches!(u.access(), iced_x86::OpAccess::Write | iced_x86::OpAccess::CondWrite | iced_x86::OpAccess::ReadWrite | iced_x86::OpAccess::ReadCondWrite));
             let mut read = ins.rflags_read() & STATUS_BITS;
-            let by_cl = (0..ins.op_count()).any(|o| ins.op_kind(o) == OpKind::Register && ins.op_register(o) == Register::CL);
             if ins.mnemonic() == Mnemonic::Inc || ins.mnemonic() == Mnemonic::Dec {
                 read |= RflagsBits::CF; // the lazy INC/DEC carries CF along
             }
@@ -5854,8 +5867,7 @@ fn flag_effects(list: &[Instruction], exits: &Exits) -> Vec<FlagEffect> {
             FlagEffect {
                 leaves_after: may_leave_after(ins) || stores || exits.after.contains(&ins.ip32()),
                 read,
-                written: ins.rflags_modified() & STATUS_BITS,
-                keeps: by_cl || ins.has_rep_prefix() || ins.has_repne_prefix(),
+                written: definite_flag_writes(ins, ins.rflags_modified() & STATUS_BITS),
             }
         })
         .collect()
@@ -5871,10 +5883,24 @@ fn liveness_of(fx: &[FlagEffect], out: u32) -> (Vec<u32>, Vec<u32>) {
             l = STATUS_BITS;
         }
         live[i] = l;
-        l = if f.keeps { l | f.read } else { (l & !f.written) | f.read };
+        l = (l & !f.written) | f.read;
         before[i] = l;
     }
     (live, before)
+}
+
+/// A callee's entry check can detect a rewrite after the caller has already dropped
+/// its flags. Keep those flags whenever a dependency can be rewritten in place.
+fn stable_flag_code(addr: u32, len: u32) -> bool {
+    let Some(end) = addr.checked_add(len.saturating_sub(1)) else { return false };
+    let stable = |pc| !watched_at(pc) && !DENY.get().is_some_and(|deny| deny(pc));
+    (addr >> 12..=end >> 12).all(|page| stable(page << 12)) && stable(addr)
+}
+
+/// Recheck the permission assumption when publishing or reusing a cached translation.
+pub fn flag_dependencies_stable(code: &[(u32, u32)], count: u32) -> bool {
+    code.len().checked_sub(us(count)).and_then(|start| code.get(start..))
+        .is_some_and(|deps| deps.iter().all(|&(addr, len)| stable_flag_code(addr, len)))
 }
 
 /// The status flags a function called at `target` observes before it writes them: those it
@@ -5885,13 +5911,18 @@ fn liveness_of(fx: &[FlagEffect], out: u32) -> (Vec<u32>, Vec<u32>) {
 /// first (the exit contract: see ExitAt). Its code up to the first branch that is not a direct
 /// jump or call (followed into the callee), at most 4 blocks; the flags it has not written by
 /// then are live.
-fn callee_reads<M: Memory>(mem: &mut M, target: u32) -> u32 {
+fn callee_reads<M: Memory>(mem: &mut M, target: u32, deps: &mut Vec<(u32, u32)>) -> u32 {
     let mut reads = 0;
     let mut written = 0;
     let mut at = target;
     for _ in 0..4 {
         let list = decode(mem, at);
         let Some(last) = list.last() else { break };
+        let len = last.next_ip32().wrapping_sub(at);
+        if !stable_flag_code(at, len) {
+            return STATUS_BITS;
+        }
+        deps.push((at, len));
         let ends = match last.flow_control() {
             FlowControl::ConditionalBranch => None,
             // (a call of its own: on into that callee, whose flags are the ones then)
@@ -5899,9 +5930,10 @@ fn callee_reads<M: Memory>(mem: &mut M, target: u32) -> u32 {
             FlowControl::Next => Some(last.next_ip32()),
             _ => None,
         };
-        reads |= liveness(&list, 0, &Exits::default()).1.first().copied().unwrap_or(0) & !written;
-        for ins in &list {
-            written |= ins.rflags_modified() & STATUS_BITS;
+        let effects = flag_effects(&list, &Exits::default());
+        reads |= liveness_of(&effects, 0).1.first().copied().unwrap_or(STATUS_BITS) & !written;
+        for effect in effects {
+            written |= effect.written;
         }
         match ends {
             Some(a) if written != STATUS_BITS => at = a,
@@ -6452,7 +6484,7 @@ fn translate_seen<M: Memory>(
     if blocks.is_empty() {
         return Ok(None);
     }
-    let code: Vec<(u32, u32)> = blocks
+    let mut code: Vec<(u32, u32)> = blocks
         .iter()
         .map(|(a, list)| {
             let last = list.last();
@@ -6669,7 +6701,7 @@ fn translate_seen<M: Memory>(
         notes: String::new(),
         fuse_zx: false,
         fell_back: false,
-        store_seen: false,
+        store: None,
         modes: false,
         modes_depth: 0,
         modes_always: false,
@@ -6690,6 +6722,7 @@ fn translate_seen<M: Memory>(
     // (what the functions called observe of the flags at the call: see callee_reads; an
     // indirect call's, unknown, are all of them)
     let mut call_reads = BTreeMap::new();
+    let mut flag_deps = BTreeSet::new();
     if fnm {
         let mut by_target = BTreeMap::new();
         for (k, (_, list)) in blocks.iter().enumerate() {
@@ -6699,7 +6732,20 @@ fn translate_seen<M: Memory>(
             }
             if last.flow_control() == FlowControl::Call && last.op0_kind() == OpKind::NearBranch32 && !inlined.contains_key(&k) {
                 let t = last.near_branch32();
-                let r = *by_target.entry(t).or_insert_with(|| if hle_at(mem, t).is_some() { 0 } else { callee_reads(mem, t) });
+                let r = *by_target.entry(t).or_insert_with(|| {
+                    let mut deps = Vec::new();
+                    let reads = if let Some(h) = hle_at(mem, t) {
+                        let len = hle_len(h);
+                        deps.push((t, len));
+                        if stable_flag_code(t, len) { 0 } else { STATUS_BITS }
+                    } else {
+                        callee_reads(mem, t, &mut deps)
+                    };
+                    if reads != STATUS_BITS {
+                        flag_deps.extend(deps);
+                    }
+                    reads
+                });
                 call_reads.insert(k, r);
             }
         }
@@ -6795,6 +6841,7 @@ fn translate_seen<M: Memory>(
             // (a root the function enters at its first instruction only keeps the cache too,
             // loaded below)
             g.fc_fn = Some((if extra.is_empty() { usize::MAX } else { entry }, nb));
+            let mut converged = false;
             for _ in 0..6 {
                 g.fc_in = fin.clone();
                 g.fc_out.clear();
@@ -6802,9 +6849,13 @@ fn translate_seen<M: Memory>(
                 g.c.truncate(b0);
                 let out: BTreeMap<usize, FCache> = g.fc_out.iter().filter(|f| f.1.on).map(|(&k, &f)| (k, f)).collect();
                 if out == fin {
+                    converged = true;
                     break;
                 }
                 fin = out;
+            }
+            if !converged {
+                fin.clear();
             }
             g.fc_in = fin;
             // a root that is a loop's head keeps the cache around the loop too (it went through
@@ -6909,8 +6960,10 @@ fn translate_seen<M: Memory>(
     } else {
         Vec::new()
     };
+    let dep_count = lo32(flag_deps.len());
+    code.extend(flag_deps);
     let text = code_text(mem, &code);
-    Ok(Some(Region { starts, instructions: count, code, text, layout, profile, sites, ctx: *tc }))
+    Ok(Some(Region { starts, instructions: count, code, flag_deps: dep_count, text, layout, profile, sites, ctx: *tc }))
 }
 
 #[cfg(test)]
@@ -7209,7 +7262,7 @@ mod tests {
     #[test]
     fn callee_flag_reads() {
         let all = STATUS_BITS;
-        let cases: [(&str, &[u8], u32); 9] = [
+        let cases: [(&str, &[u8], u32); 10] = [
             // _CIlog10's body (サクラノ刻 0x6e37b8): push edx; wait (the interpreter's: it may
             // leave there); fnstcw [esp]; je
             ("branch first", &[0x52, 0x9b, 0xd9, 0x3c, 0x24, 0x74, 0x10, 0xc3], all),
@@ -7227,12 +7280,66 @@ mod tests {
             ("ret", &[0x89, 0xc8, 0xc3], all),
             // a call first: on into its callee (here the next instruction, the RET: unseen)
             ("call", &[0xe8, 0x00, 0x00, 0x00, 0x00, 0xc3], all),
+            // shl eax,cl; call an ADC: the shift can preserve input carry.
+            ("zero shift", &[0xd3, 0xe0, 0xe8, 0x00, 0x00, 0x00, 0x00, 0x83, 0xd3, 0x00, 0xc3], RflagsBits::CF),
             // a call of a callee that writes them all first (IMUL)
             ("call on", &[0xe8, 0x00, 0x00, 0x00, 0x00, 0x69, 0xc0, 0x37, 0x9e, 0x00, 0x00, 0xc3], 0),
         ];
         for (name, bytes, want) in cases {
-            assert_eq!(callee_reads(&mut crate::Rom::<0x10_0000>(bytes.to_vec()), 0x10_0000), want, "{name}");
+            assert_eq!(callee_reads(&mut crate::Rom::<0x10_0000>(bytes.to_vec()), 0x10_0000, &mut Vec::new()), want, "{name}");
         }
+    }
+
+    #[test]
+    fn caller_translation_tracks_transitive_flag_dependencies() {
+        use core::sync::atomic::{AtomicBool, Ordering};
+
+        const ROOT: u32 = 0x50_0000;
+        const CALLEE: u32 = ROOT + 0x1000;
+        const TAIL: u32 = ROOT + 0x2000;
+        const VOLATILE: u32 = ROOT + 0x3000;
+        static TAIL_WRITABLE: AtomicBool = AtomicBool::new(false);
+        set_fresh(|addr| addr >> 12 == VOLATILE >> 12 || addr >> 12 == TAIL >> 12 && TAIL_WRITABLE.load(Ordering::Relaxed));
+
+        let translate = |tail: u32, head: [u8; 3]| {
+            let mut bytes = alloc::vec![0x90; 0x3100];
+            // xor eax, eax; call CALLEE; xor edx, edx; ret
+            bytes[..2].copy_from_slice(&[0x31, 0xc0]);
+            bytes[2] = 0xe8;
+            bytes[3..7].copy_from_slice(&(CALLEE - ROOT - 7).to_le_bytes());
+            bytes[7..10].copy_from_slice(&[0x31, 0xd2, 0xc3]);
+            // CALLEE tail-jumps to a body too long to inline.
+            bytes[0x1000] = 0xe9;
+            bytes[0x1001..0x1005].copy_from_slice(&(tail - CALLEE - 5).to_le_bytes());
+            let offset = us(tail - ROOT);
+            bytes[offset..offset + 3].copy_from_slice(&head);
+            bytes[offset + 200] = 0xc3;
+            let mut rom = crate::Rom::<ROOT>(bytes);
+            let mut module = Module::default();
+            let region = translate_function(&mut module, &mut rom, ROOT, MAX_BLOCKS, 1000, (0, 0), &|_| None, &|a| a < CALLEE, |a| a < CALLEE).unwrap();
+            (region, module.finish())
+        };
+
+        let ignores_flags = [0x31, 0xdb, 0x90]; // xor ebx, ebx; nop
+        let reads_zf = [0x0f, 0x94, 0xc1]; // setz cl
+        let (before, w0) = translate(TAIL, ignores_flags);
+        let (after, w1) = translate(TAIL, reads_zf);
+        let deps = &before.code[before.code.len() - us(before.flag_deps)..];
+        assert!(deps.contains(&(CALLEE, 5)));
+        assert!(deps.iter().any(|&(addr, len)| addr == TAIL && len >= 3));
+        assert!(flag_dependencies_stable(&before.code, before.flag_deps));
+        TAIL_WRITABLE.store(true, Ordering::Relaxed);
+        assert!(!flag_dependencies_stable(&before.code, before.flag_deps));
+        TAIL_WRITABLE.store(false, Ordering::Relaxed);
+        assert!(!flag_dependencies_stable(&[(VOLATILE - 1, 2)], 1));
+        assert_ne!(before.text, after.text);
+        assert_ne!(w0, w1);
+
+        let (before, w0) = translate(VOLATILE, ignores_flags);
+        let (after, w1) = translate(VOLATILE, reads_zf);
+        assert!(before.code.iter().all(|&(addr, _)| addr != VOLATILE));
+        assert_eq!(before.text, after.text);
+        assert_eq!(w0, w1);
     }
 
     /// rep_ignored over every one-byte opcode and the two-byte Jcc forms, F2 and F3 in front,

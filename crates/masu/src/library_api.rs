@@ -114,11 +114,7 @@ fn error(e: impl std::fmt::Display) -> StatusCode {
 }
 
 fn valid(s: &str) -> bool {
-    !s.is_empty()
-        && s.len() <= 200
-        && !s.starts_with('.')
-        && s.bytes()
-            .all(|c| c.is_ascii_alphanumeric() || b"_.-".contains(&c))
+    masu_kernel::library::valid_game(s.as_bytes())
 }
 
 async fn profile(
@@ -140,7 +136,7 @@ async fn update(
     Path(game): Path<String>,
     Json(p): Json<Profile>,
 ) -> Result<StatusCode, StatusCode> {
-    if !valid(&game) || p.note.len() > 100_000 {
+    if !valid(&game) || !masu_kernel::library::valid_note(p.note.len()) {
         return Err(StatusCode::BAD_REQUEST);
     }
     tokio::task::spawn_blocking(move || db.set_profile(&game, &p))

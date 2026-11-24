@@ -639,6 +639,9 @@ pub fn open_shared(w: &str, access: u32, disposition: u32, share: Option<u32>) -
     let write = access & 0x4000_0000 != 0 || access & 0x1000_0000 != 0 || access & 2 != 0;
     let existing = resolve(w);
     let host = existing.clone().unwrap_or_else(|| resolve_new(w));
+    if disposition == 1 && existing.is_some() {
+        return Err(ERROR_FILE_EXISTS);
+    }
     if let Some(h) = &existing {
         if kura::fs::metadata(h).is_ok_and(|m| m.is_dir()) {
             let f = kura::fs::File::open(h).map_err(|_| ERROR_ACCESS_DENIED)?;
@@ -656,9 +659,6 @@ pub fn open_shared(w: &str, access: u32, disposition: u32, share: Option<u32>) -
     match disposition {
         1 => {
             // CREATE_NEW
-            if existing.is_some() {
-                return Err(ERROR_FILE_EXISTS);
-            }
             o.write(true).create_new(true);
         }
         2 => {

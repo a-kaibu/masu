@@ -233,14 +233,18 @@ fn fixture(r: Rule) -> Fixture {
         },
         Rule::D3d9DevFormats => Fixture {
             bad: &[
-                ("tests/winref/probes/d3d9dev.c", "static const struct { D3DFORMAT f; const char *n; } fm[] = { { D3DFMT_L8, \"L8\" }, { (D3DFORMAT)MAKEFOURCC('N', 'V', '1', '2'), \"NV12\" } };\n"),
-                ("crates/kura/src/d3d9/dev_tests.rs", "let named = |n: &str| match n { \"L8\" => f::L8, other => panic!() };\n"),
-            ],
-            good: &[
+                ("crates/kura/src/d3d9/format.rs", "fn converts(fmt: u32) -> bool { let format = Format::from_raw(fmt); match format { Some(L8) => true, Some(Format::A4R4G4B4) => false, _ => false } }"),
+                ("tests/winref/golden/d3d9dev-32/stdout.txt", "CheckDeviceFormatConversion L8 -> A4R4G4B4 0\nCheckDepthStencilMatch target A4R4G4B4: D16 0\n"),
                 ("tests/winref/probes/d3d9dev.c", "static const struct { D3DFORMAT f; const char *n; } fm[] = { { D3DFMT_L8, \"L8\" }, { (D3DFORMAT)MAKEFOURCC('N', 'V', '1', '2'), \"NV12\" } };\n"),
                 ("crates/kura/src/d3d9/dev_tests.rs", "let named = |n: &str| match n { \"L8\" => f::L8, \"NV12\" => nv12, other => panic!() };\n"),
             ],
-            mutate: ("crates/kura/src/d3d9/dev_tests.rs", |t| Some(t.replace("\"G32R32F\" => f::G32R32F,", ""))),
+            good: &[
+                ("crates/kura/src/d3d9/format.rs", "fn converts(fmt: u32) -> bool { let format = Format::from_raw(fmt); match format { Some(L8) => true, Some(Format::A4R4G4B4) => false, _ => false } }"),
+                ("tests/winref/golden/d3d9dev-32/stdout.txt", "CheckDeviceFormatConversion L8 -> L8 0\nCheckDeviceFormatConversion A4R4G4B4 -> L8 0x8876086a\n"),
+                ("tests/winref/probes/d3d9dev.c", "static const struct { D3DFORMAT f; const char *n; } fm[] = { { D3DFMT_L8, \"L8\" }, { (D3DFORMAT)MAKEFOURCC('N', 'V', '1', '2'), \"NV12\" } };\n"),
+                ("crates/kura/src/d3d9/dev_tests.rs", "let named = |n: &str| match n { \"L8\" => f::L8, \"NV12\" => nv12, other => panic!() };\n"),
+            ],
+            mutate: ("tests/winref/golden/d3d9dev-32/stdout.txt", |t| Some(t.lines().filter(|line| !line.contains("CheckDeviceFormatConversion A4R4G4B4 ->")).collect::<Vec<_>>().join("\n"))),
         },
         Rule::ConsoleLines => Fixture {
             bad: &[("crates/sake/src/crt.rs", "fn puts(s: &str) { eprint!(\"{s}\"); }\n")],
@@ -370,8 +374,8 @@ fn fixture(r: Rule) -> Fixture {
             bad: &[("tests/host-tests.sh", "#!/bin/sh\ncargo test\n")],
             good: &[
                 ("tests/host-tests.sh", "export MASU_OUTS_STRICT=1\n"),
-                ("crates/sake/src/lib.rs", "#[cfg(test)]\nmod outptr_audit;\n"),
-                (".github/workflows/ci.yml", "cargo run -q --release -p masu-lint -- arch\ncargo run -q --release -p masu-lint -- dup\ncargo test --workspace --release\ncargo run -q --release -p masu-lint -- ratchet\nrun: tools/ci/own-workspaces.sh\nrun: cargo test -p masu --bin masu -- --exact pack::tests::adding_a_small_game_takes_the_store_lock_file\n"),
+                ("crates/sake/src/lib.rs", "fn init() {\n    PEB.store(peb, Ordering::Relaxed);\n    gdi::share_table(peb);\n}\n#[cfg(test)]\nmod outptr_audit;\n"),
+                (".github/workflows/ci.yml", "cargo run -q --release -p masu-lint -- arch\ncargo run -q --release -p masu-lint -- dup\ncargo test --workspace --release\ncargo test --locked --release --manifest-path tools/jitbench/Cargo.toml\ncargo run -q --release -p masu-lint -- ratchet\nrun: tools/ci/own-workspaces.sh\nrun: cargo test -p masu --bin masu -- --exact pack::tests::adding_a_small_game_takes_the_store_lock_file\n"),
                 ("crates/sake/src/api.rs", "pub fn fallbacks(dll: &str) -> &'static [&'static str] {\n    if is_crt(dll) { &[\"msvcrt\"] } else { &[\"kernel32\"] }\n}\n/// ```compile_fail\n/// ```\npub type NoReturn = fn(&mut Ctx) -> !;\n"),
             ],
             mutate: ("tests/host-tests.sh", |t| Some(t.replace("export MASU_OUTS_STRICT=1", ""))),
@@ -468,7 +472,7 @@ fn fixture(r: Rule) -> Fixture {
                 ("crates/sake/src/x.rs", "fn f(d: Arc<Data>) -> Option<Data> { Arc::into_inner(d) }\nfn g(r: &Rc<u8>) -> usize { Rc::strong_count(r) }\n"),
                 ("crates/sake/src/y.rs", "#[cfg(test)]\nmod tests {\n    fn t(d: &Arc<u8>) { assert_eq!(Arc::strong_count(d), 1); }\n}\n"),
             ],
-            mutate: ("crates/sake/src/mf/source.rs", |t| Some(t + "\nfn last(d: &Arc<Data>) -> bool { Arc::strong_count(d) == 1 }\n")),
+            mutate: ("crates/masu/src/saves.rs", |t| Some(t + "\nfn last(d: &Arc<NameLocks>) -> bool { Arc::strong_count(d) == 1 }\n")),
         },
         Rule::RustLints => Fixture {
             bad: &[
@@ -800,6 +804,22 @@ fn fixture(r: Rule) -> Fixture {
             ],
             mutate: ("crates/koji/src/jit/mod.rs", |t| Some(t.replace("self.exit_contract(at);", ""))),
         },
+        Rule::JitCommitOrder => Fixture {
+            bad: &[
+                ("crates/koji/src/jit/mod.rs", "impl Gen { fn emit(&mut self) { self.emit_ins(); self.watch_after(); self.commit_flags(true); } }"),
+                ("crates/koji/src/jit/packed.rs", "impl Gen { fn stored(&mut self) { self.smc_check(); self.exit_with(1, ExitAt::After); } }"),
+            ],
+            good: &[
+                ("crates/koji/src/jit/mod.rs", "impl Gen { fn emit(&mut self) { self.emit_ins(); self.commit_flags(true); self.watch_store(); self.check_esp(); } fn watch_store(&mut self) { self.smc_check(); } fn smc_check(&mut self) { self.exit_with(1, ExitAt::After); } }"),
+                ("crates/koji/src/jit/ssa.rs", "fn emit(g: &mut Gen) { g.set_lazy(); }"),
+            ],
+            mutate: ("crates/koji/src/jit/mod.rs", |t| Some(t.replace("self.commit_flags(overwrites);", "self.watch_after(); self.commit_flags(overwrites);"))),
+        },
+        Rule::Jit64Budget => Fixture {
+            bad: &[("crates/koji/src/jit/long.rs", "impl Gen { fn chain() { c.load32(cpu_off!(jit_budget)); } }")],
+            good: &[("crates/koji/src/jit/long.rs", "fn load_budget() { c.load32(cpu_off!(jit_budget)); } fn save_budget() { c.store32(cpu_off!(jit_budget)); } impl Gen { fn chain() { c.get(L_BUD); } }")],
+            mutate: ("crates/koji/src/jit/long.rs", |t| Some(t.replace("c.get(L_BUD).i32c(1)", "c.get(L_CPU).load32(cpu_off!(jit_budget)).i32c(1)"))),
+        },
         Rule::JitHarnessImports => Fixture {
             bad: &[
                 ("tools/jit64test/src/main.rs", "fn new() { linker.define(&store, \"env\", \"table\", table).unwrap(); }\n"),
@@ -941,6 +961,35 @@ fn each_rule_finds_its_regression_in_a_fixture() {
     for r in Rule::ALL {
         let f = fixture(r);
         assert!(!r.check(&Tree::made_up(f.bad)).is_empty(), "{}: finds nothing in its regression fixture", r.id());
+    }
+}
+
+#[test]
+fn required_good_fixture_contains_every_requirement_for_its_files() {
+    let files = fixture(Rule::Required).good;
+    for &(file, required, reason) in REQUIRED.iter() {
+        if let Some((_, source)) = files.iter().find(|(path, _)| *path == file) {
+            assert!(source.contains(required), "add {required:?} to the good fixture for {file}: {reason}");
+        }
+    }
+}
+
+#[test]
+fn removing_production_kernel_calls_fails_the_lint() {
+    let tree = real_tree();
+    for (file, call) in [
+        ("crates/masu/src/saves.rs", "match Save::transition"),
+        ("crates/masu/src/library.rs", "match SessionKernel::transition"),
+        ("crates/masu/src/library.rs", "ProfileKernel::transition"),
+        ("crates/masu/src/library.rs", "if Metadata::transition"),
+        ("crates/masu/src/auth.rs", "masu_kernel::access::anonymous_allowed"),
+    ] {
+        let path = Rel::new(file);
+        let source = tree.text(&path);
+        assert!(source.contains(call), "{file} is missing {call}");
+        let patched = Tree::with(&tree, &path, Some(source.replace(call, "bypassed")));
+        let hits = Rule::Required.check(&patched);
+        assert!(hits.iter().any(|hit| hit.file == path), "lint missed {call}");
     }
 }
 

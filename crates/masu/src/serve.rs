@@ -67,6 +67,10 @@ use crate::saves;
 use crate::tree_list::ChunkId;
 use std::{net::SocketAddr, path::PathBuf, sync::Arc};
 use koji::jit::{saved, wasm};
+use masu_kernel::jit_cache::{JitName, upload_fits};
+#[cfg(test)]
+use masu_kernel::jit_cache::{JIT_NAME_MAX, regions_name};
+use masu_kernel::telemetry::{logs_to_drop, newest_lines};
 use tower_http::services::ServeDir;
 
 #[derive(clap::Args)]
@@ -227,34 +231,6 @@ fn merge_edges(new: &[u8], old: &[u8]) -> Vec<u8> {
         seen.insert(e);
     }
     chunk_bytes(out.into_iter().flat_map(|(a, b)| [a, b]))
-}
-
-/// What `PUT /jit-save/<name>` is, by its name (letters, digits, `_ - .`, not starting with a
-/// dot, JIT_NAME_MAX at most).
-#[derive(Debug, PartialEq, Eq)]
-enum JitName {
-    /// `trace.<game>.<run>`: a run's read trace (kura vfs/trace.rs)
-    Trace(String),
-    /// `<owner>.chunks`: the store chunks a run read first
-    Chunks(String),
-    /// `<program>-<build>`: a run's new regions
-    Regions { prog: String, ver: String },
-}
-
-impl JitName {
-    fn parse(name: &str) -> Option<JitName> {
-        if name.is_empty() || name.len() > JIT_NAME_MAX || name.starts_with('.') || !name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-' || c == '.') {
-            return None;
-        }
-        if name.starts_with("trace.") {
-            return Some(JitName::Trace(name.to_string()));
-        }
-        if name.ends_with(".chunks") {
-            return Some(JitName::Chunks(name.to_string()));
-        }
-        let (prog, ver) = name.rsplit_once('-')?;
-        (regions_name(name)).then(|| JitName::Regions { prog: prog.to_string(), ver: ver.to_string() })
-    }
 }
 
 /// Whose list `file` is, for _shared.chunks's count: a game's (`game.<id>.chunks`, the page's
@@ -466,17 +442,6 @@ async fn save_regions(jit: &Jit, name: &str, prog: &str, ver: &str, body: Bytes)
 /// The parts (`<name>.<k.><version>`) wasm-opt failed on, this server run.
 static OPT_FAILED: std::sync::LazyLock<std::sync::Mutex<std::collections::HashSet<String>>> = std::sync::LazyLock::new(Default::default);
 
-/// A save's name at most (bytes).
-const JIT_NAME_MAX: usize = 200;
-
-/// Whether `name` can be a program's saved regions: `<program>-<build>`, the build letters and
-/// digits only. Others would land on the server's own files (review b01): `sake-x-v1.1` is
-/// part 1 of `sake-x-v1`, and `.parts`, `.opt`, `.idx`, `.next`, `.tmp` its lists and copies.
-fn regions_name(name: &str) -> bool {
-    let Some((prog, ver)) = name.rsplit_once('-') else { return false };
-    !prog.is_empty() && !ver.is_empty() && ver.bytes().all(|b| b.is_ascii_alphanumeric()) && name.len() <= JIT_NAME_MAX && !name.starts_with('.')
-}
-
 /// Optimizes the saved regions of `names` on the server, where there is time to (binaryen's
 /// `wasm-opt -O2`, MASU_WASM_OPT, beside the server or on the PATH; nothing without it): each part's module gets
 /// an optimized copy `<name>.<k.><version>.opt.wasm` that `<name>.parts` lists instead. The
@@ -578,7 +543,7 @@ const SHARED: &str = "_shared";
 /// Whether two saved regions are the same translation's (any thread could have built either).
 #[cfg(test)]
 fn same(a: &saved::Entry, b: &saved::Entry) -> bool {
-    a.roots == b.roots && a.code == b.code && a.text == b.text && (a.build > 0) == (b.build > 0) && a.pages == b.pages
+    a.roots == b.roots && a.code == b.code && a.flag_deps == b.flag_deps && a.text == b.text && (a.build > 0) == (b.build > 0) && a.pages == b.pages
 }
 
 /// What [`same`] compares, hashed: two regions with the same key are the same translation's.
@@ -597,7 +562,7 @@ fn same_key(e: &saved::Entry) -> [u8; 32] {
     for (a, b) in &e.code {
         h.update(&a.to_le_bytes()).update(&b.to_le_bytes());
     }
-    h.update(&e.text);
+    h.update(&e.flag_deps.to_le_bytes()).update(&e.text);
     *h.finalize().as_bytes()
 }
 
@@ -706,8 +671,9 @@ async fn add_part_within(dir: &std::path::Path, name: &str, new_wasm: Vec<u8>, n
     let Some(fresh) = fresh else { return StatusCode::BAD_REQUEST };
     // (a game's regions stop growing once its code paths have run; this only bounds a runaway:
     // all the parts' modules, and on the disk with the optimized copies besides)
-    let modules: u64 = parts.iter().map(|(w, _)| w.len() as u64).sum::<u64>() + fresh.len() as u64;
-    if modules > max.0 || on_disk(dir, name).await + fresh.len() as u64 > max.1 {
+    let bytes = |module: &[u8]| u64::try_from(module.len()).unwrap_or(u64::MAX);
+    let modules = parts.iter().map(|(w, _)| bytes(w)).fold(0, u64::saturating_add);
+    if !upload_fits(modules, on_disk(dir, name).await, bytes(&fresh), max) {
         return StatusCode::INSUFFICIENT_STORAGE;
     }
     let fresh_idx: Vec<saved::Entry> = new_idx.into_iter().zip(&keep).filter(|x| *x.1).map(|x| x.0).collect();
@@ -784,12 +750,12 @@ const JIT_DISK_MAX_BYTES: u64 = 512 << 20;
 
 /// The bytes of `name`'s files in `dir` (`<name>.*`).
 async fn on_disk(dir: &std::path::Path, name: &str) -> u64 {
-    let mut n = 0;
+    let mut n = 0u64;
     let prefix = format!("{name}.");
     if let Ok(mut d) = tokio::fs::read_dir(dir).await {
         while let Ok(Some(e)) = d.next_entry().await {
             if e.file_name().to_string_lossy().starts_with(&prefix) {
-                n += e.metadata().await.map_or(0, |m| m.len());
+                n = n.saturating_add(e.metadata().await.map_or(0, |m| m.len()));
             }
         }
     }
@@ -846,19 +812,6 @@ async fn bench_log(State(jit): State<Jit>, body: Bytes) -> StatusCode {
 /// A bench results file at most (bytes).
 const BENCH_FILE_MAX: u64 = 32 << 20;
 
-/// The end of `text` at most `keep` bytes long that starts at a line's start (after a newline;
-/// all of it when it fits).
-fn newest_lines(text: &[u8], keep: usize) -> &[u8] {
-    if text.len() <= keep {
-        return text;
-    }
-    let from = text.len() - keep;
-    match text[from..].iter().position(|&b| b == b'\n') {
-        Some(i) => &text[from + i + 1..],
-        None => &[],
-    }
-}
-
 /// The device runs kept (`bench-results.jsonl`), at most the last BENCH_RUNS_MAX, one per line.
 async fn bench_results(State(jit): State<Jit>) -> Response {
     let text = tokio::fs::read_to_string(jit.0.join("bench-results.jsonl")).await.unwrap_or_default();
@@ -876,23 +829,9 @@ const LOGS_MAX: usize = 2000;
 /// 64 GiB).
 const LOGS_BYTES: u64 = 2 << 30;
 
-/// Which of the logs `list` (newest first: name, size, time) go so that at most `count` stay,
-/// `bytes` in all; the newest always stays.
-fn logs_to_drop(list: &[(String, u64, u64)], count: usize, bytes: u64) -> Vec<&str> {
-    let mut total = 0u64;
-    let mut out = Vec::new();
-    for (i, (name, size, _)) in list.iter().enumerate() {
-        total = total.saturating_add(*size);
-        if i > 0 && (i >= count || total > bytes) {
-            out.push(name.as_str());
-        }
-    }
-    out
-}
-
 /// Stores a page's log as `<logs>/<name>.txt`.
 async fn save_log(State(dir): State<Arc<PathBuf>>, Path(name): Path<String>, body: Bytes) -> StatusCode {
-    if name.is_empty() || name.len() > 200 || name.starts_with('.') || !name.chars().all(|c| c.is_ascii_alphanumeric() || "_-.".contains(c)) {
+    if !masu_kernel::library::valid_game(name.as_bytes()) {
         return StatusCode::BAD_REQUEST;
     }
     let _ = tokio::fs::create_dir_all(&*dir).await;
@@ -1800,7 +1739,7 @@ mod tests {
     /// `n` regions from `base` (one function each).
     fn regions(n: u32, base: u32) -> Vec<saved::Entry> {
         (0..n)
-            .map(|i| saved::Entry { roots: vec![base + i * 16], starts: vec![(base + i * 16, 0)], code: vec![(base + i * 16, 4)], text: (base + i).to_le_bytes().to_vec(), build: 0, sites: vec![], pages: koji::jit::Pages::Checked })
+            .map(|i| saved::Entry { roots: vec![base + i * 16], starts: vec![(base + i * 16, 0)], code: vec![(base + i * 16, 4)], flag_deps: 0, text: (base + i).to_le_bytes().to_vec(), build: 0, sites: vec![], pages: koji::jit::Pages::Checked })
             .collect()
     }
 
@@ -2253,7 +2192,8 @@ mod tests {
     fn make((roots, starts, code, text, build, sites): Fields) -> saved::Entry {
         // (the kind of checks taken from the build: either kind with either build)
         let pages = if roots.len() % 2 == 0 { koji::jit::Pages::Checked } else { koji::jit::Pages::Unchecked };
-        saved::Entry { roots, starts, code, text, build, sites, pages }
+        let flag_deps = u32::from(starts.is_empty());
+        saved::Entry { roots, starts, code, flag_deps, text, build, sites, pages }
     }
 
     proptest::proptest! {

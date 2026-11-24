@@ -5,5 +5,6 @@
 # exactly those of formal/jit32tv-undecided.txt (a new one, or one listed that is decided now).
 set -euo pipefail
 cd "$(dirname "$0")/../tools/jit32tv"
+cargo test --release --locked --quiet
 cargo build --release --locked --quiet
 target/release/jit32tv --expect ../../formal/jit32tv-undecided.txt "$@"

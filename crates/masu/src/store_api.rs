@@ -4,6 +4,7 @@
 
 use kome::locks::Rw as _;
 use crate::storage::Storage;
+use masu_kernel::store::{Catalog, DIRECT_MANY_LIMIT, catalog_namespace, chunk_path, wasm_filename};
 use axum::{
     extract::{Path, State},
     http::{header, StatusCode},
@@ -30,29 +31,17 @@ struct Store {
 
 /// What `/store/<path>` serves: the catalog (a tree's list, a game's description or cover).
 /// A chunk is not one: the page fetches it from the bucket (`/store-direct`).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Catalog {
-    Tree,
-    Game,
-}
-
-impl Catalog {
-    fn of(path: &str) -> Option<Catalog> {
-        let p = std::path::Path::new(path);
-        if !p.components().all(|c| matches!(c, std::path::Component::Normal(_))) {
-            return None;
-        }
-        match path.split('/').next()? {
-            "trees" => Some(Catalog::Tree),
-            "games" => Some(Catalog::Game),
-            _ => None,
-        }
+fn catalog(path: &str) -> Option<Catalog> {
+    let p = std::path::Path::new(path);
+    if !p.components().all(|c| matches!(c, std::path::Component::Normal(_))) {
+        return None;
     }
+    catalog_namespace(path.split('/').next()?)
 }
 
 /// `/store/<path>`: a catalog file from the bucket. The DB and keys are never reachable here.
 async fn file(State(s): State<Store>, Path(path): Path<String>) -> Response {
-    if Catalog::of(&path).is_none() {
+    if catalog(&path).is_none() {
         return StatusCode::NOT_FOUND.into_response();
     }
     match s.remote.get(&path).await {
@@ -104,22 +93,14 @@ fn direct_json(d: &crate::storage::Direct) -> serde_json::Map<String, serde_json
     v
 }
 
-/// Whether `path` is a chunk's path (`chunks/<ab>/<hash>`), all /store-direct answers for.
-fn chunk_path(path: &str) -> bool {
-    path.split('/').count() == 3 && path.starts_with("chunks/") && path.bytes().all(|b| b.is_ascii_hexdigit() || b == b'/' || b.is_ascii_lowercase())
-}
-
-/// Chunk paths one `POST /store-direct` may ask for.
-const DIRECT_MANY: usize = 4096;
-
 /// `POST /store-direct` with a JSON list of chunk paths: `{"<path>": {url, key, object}}` for
 /// those the page may fetch from the bucket itself, as `GET /store-direct/<path>` answers each
 /// (host/fetch-bridge.js masuDirectMany: a game's chunks asked for at once, so its first read
 /// of each goes to the bucket without a round trip here first). Those it leaves out the bucket
-/// does not have; 413 past DIRECT_MANY paths.
+/// does not have; 413 past DIRECT_MANY_LIMIT paths.
 async fn direct_many(State(s): State<Store>, axum::Json(paths): axum::Json<Vec<String>>) -> Response {
     let remote = &*s.remote;
-    if paths.len() > DIRECT_MANY {
+    if paths.len() > DIRECT_MANY_LIMIT {
         return StatusCode::PAYLOAD_TOO_LARGE.into_response();
     }
     let mut out = serde_json::Map::new();
@@ -140,11 +121,6 @@ async fn direct_many(State(s): State<Store>, axum::Json(paths): axum::Json<Vec<S
     r
 }
 
-/// Whether `name` is one of sake's wasm files (`sake.wasm`, `sake-grow.wasm`, ...).
-fn wasm_name(name: &str) -> bool {
-    name.len() <= 64 && name.ends_with(".wasm") && name.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_' || b == b'.') && !name.starts_with('.')
-}
-
 /// Puts sake's wasm files (`<web>/sake/*.wasm`, ~23 MB each, ~5 MB as zstd) in the bucket as
 /// chunks (named by their BLAKE3 like a game's, zstd-coded, encrypted), those not there yet,
 /// and notes them in `wasm` for `/sake-direct`: the page then fetches sake from the bucket at
@@ -152,7 +128,7 @@ fn wasm_name(name: &str) -> bool {
 /// minutes before a game could start). Each build once: a release's files are the same at
 /// every start.
 async fn publish_wasm(remote: &Storage, web: &std::path::Path, wasm: &WasmCatalog) -> anyhow::Result<usize> {
-    let mut names: Vec<String> = std::fs::read_dir(web.join("sake"))?.filter_map(|e| e.ok()?.file_name().into_string().ok()).filter(|n| wasm_name(n)).collect();
+    let mut names: Vec<String> = std::fs::read_dir(web.join("sake"))?.filter_map(|e| e.ok()?.file_name().into_string().ok()).filter(|n| wasm_filename(n)).collect();
     names.sort();
     let mut sent = 0;
     for name in names {
@@ -267,12 +243,12 @@ mod tests {
     }
 
     proptest::proptest! {
-        /// Catalog::of takes plain paths under trees/ and games/ only: never chunks/, a way up,
+        /// The catalog takes plain paths under trees/ and games/ only: never chunks/, a way up,
         /// or anything else of the store.
         #[test]
         fn catalog_model(top in "(trees|games|chunks|keys|\\.\\.|)", rest in "(/[a-z.]{0,4}){0,3}") {
             let path = format!("{top}{rest}");
-            let got = Catalog::of(&path);
+            let got = catalog(&path);
             let plain = std::path::Path::new(&path).components().all(|c| matches!(c, std::path::Component::Normal(_)));
             let want = match top.as_str() {
                 "trees" if plain => Some(Catalog::Tree),
@@ -370,10 +346,10 @@ mod tests {
     }
 
     proptest::proptest! {
-        /// wasm_name takes only plain names ending in .wasm (no folders, no hidden files)
+        /// wasm_filename takes only plain names ending in .wasm (no folders, no hidden files)
         #[test]
         fn wasm_name_model(n in "[a-z./_%-]{0,12}(\\.wasm)?") {
-            let ok = wasm_name(&n);
+            let ok = wasm_filename(&n);
             proptest::prop_assert_eq!(ok, n.ends_with(".wasm") && !n.starts_with('.') && !n.contains('/') && !n.contains('%'));
         }
     }
@@ -436,7 +412,7 @@ mod tests {
                 assert!(all[n].get("pack").is_none() && one.get("pack").is_none(), "{n}");
             }
         }
-        let many = vec![names[0].clone(); DIRECT_MANY + 1];
+        let many = vec![names[0].clone(); DIRECT_MANY_LIMIT + 1];
         assert_eq!(post(serde_json::to_string(&many).unwrap()).await.0, StatusCode::PAYLOAD_TOO_LARGE);
         let _ = std::fs::remove_dir_all(dir);
     }

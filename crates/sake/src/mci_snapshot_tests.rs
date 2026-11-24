@@ -197,6 +197,20 @@ fn mci_command_snapshot() {
         let ty_shown = if ty == tp { "tp".to_string() } else { format!("{ty:#x}") };
         writeln!(out, "open {flags:#x} {ty_shown}: {r}{}", if r == 0 { format!(" id#{}", ids.len()) } else { String::new() }).unwrap();
     }
+    // One second of 16-bit mono at 11,025 Hz. Check the return value as well as MCI's status.
+    let wave = ids[0];
+    for (format, length) in [(TimeFormat::Ms, 1_000), (TimeFormat::Samples, 11_025), (TimeFormat::Bytes, 22_050)] {
+        mem::fill(p, 64, 0);
+        w32(p + 4, format.code());
+        assert_eq!(call(mciSendCommandA, &[wave, MCI_SET, MCI_SET_TIME_FORMAT, p]), 0);
+        mem::fill(p, 64, 0);
+        w32(p + 8, MCI_STATUS_LENGTH);
+        assert_eq!(call(mciSendCommandA, &[wave, MCI_STATUS, MCI_STATUS_ITEM, p]), 0);
+        assert_eq!(r32(p + 4), length, "MCI time format {format:?}");
+    }
+    // The randomized snapshot starts in the default format.
+    w32(p + 4, TimeFormat::Ms.code());
+    assert_eq!(call(mciSendCommandA, &[wave, MCI_SET, MCI_SET_TIME_FORMAT, p]), 0);
     let msgs = [MCI_CLOSE, MCI_PLAY, MCI_SEEK, MCI_STOP, MCI_PAUSE, MCI_INFO, MCI_GETDEVCAPS, MCI_SET, MCI_STATUS, MCI_CUE, MCI_WINDOW, MCI_PUT, MCI_WHERE, MCI_RESUME, MCI_SETAUDIO, 0x805, 0x80f, 0x1234];
     let flag_bits = [MCI_WAIT, MCI_FROM, MCI_TO, 0x100, 0x200, 0x400, 0x800, 0x1_0000, 0x2_0000, 0x4_0000, 0x80_0000, 0x100_0000];
     let mut r = Rng(0x00c1_c0de);

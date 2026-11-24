@@ -492,4 +492,41 @@ changed (their VEX.256 forms), the rest the same bytes.
 
 MASU_JIT_MEMCOUNT counts the SIMD loads and stores too: each goes through
 `Code::simd_access` with a `wasm::SimdMem`. masu-lint jit-simd-access fails a raw SIMD memory
-opcode or `swap_hi`. Not measured in V8 yet: jitbench has no long-mode program (issue).
+opcode or `swap_hi`. jitbench now runs `avx2_int` in long mode and includes the upper YMM
+halves in the checksum. Its native test checks every output word against scalar arithmetic.
+
+### AVX2 and local chain budget measurements
+
+`avx2_int` at the default scale runs 64 passes over 4,096 vector pairs. The tables use
+five rounds of five hot runs in Node 26.13.1 and desktop Chromium with a Pixel 7 profile
+and 4× CPU throttling. A and B had equal checksums, 602 cold interpreter steps, six hot
+dispatcher exits and zero hot interpreter step calls in each comparison.
+
+The first comparison uses the harness on `d4740c15^` and on the updated tree, which also
+includes the local chain budget and the JIT correctness fixes.
+
+| Runtime | Hot ms | Cold ms | Cold p95 ms | Translate ms | V8 load ms | Wasm bytes | Peak memory |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| Node | 15.67 → 2.67 | 60.94 → 54.83 | 159 → 99.91 | 10.47 → 15.04 | 0.33 → 0.28 | 3,657 → 2,564 | 375 → 371 MiB RSS |
+| Chromium | 42.15 → 10.46 | 196 → 152 | 251 → 221 | 54.20 → 56.62 | 1.61 → 1.45 | 3,657 → 2,564 | 10 → 10 MiB JS heap |
+
+The baseline was also built with the same SIMD access counters enabled, leaving the original
+half swaps in place. These totals include all counted Cpu field accesses during a hot run.
+
+| Count | Before | After |
+|---|---:|---:|
+| Loads | 24,641,452 | 6,291,439 |
+| Stores | 14,418,315 | 5,505,458 |
+| Total | 39,059,767 | 11,796,897 |
+
+The second comparison isolates the long-mode budget change. Generated loops and same-module
+chains keep the budget in a Wasm local. Module exits and calls to external code synchronize
+it with `Cpu::jit_budget`.
+
+| Runtime | Hot ms | Cold ms | Cold p95 ms | Translate ms | V8 load ms | Wasm bytes | Peak memory |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| Node | 2.78 → 1.81 | 29.45 → 19.96 | 38.01 → 33.26 | 7.55 → 4.81 | 0.33 → 0.27 | 2,569 → 2,564 | 371 → 371 MiB RSS |
+| Chromium | 12.22 → 10.09 | 133 → 144 | 160 → 211 | 47.17 → 56.31 | 1.82 → 1.24 | 2,569 → 2,564 | 10 → 10 MiB JS heap |
+
+The cold p95 is based on just five cold starts per build. The Chromium environment simulates
+browser settings and CPU throttling on the host.

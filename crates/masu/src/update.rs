@@ -35,29 +35,10 @@ pub fn target() -> Option<(&'static str, &'static str)> {
     (std::env::consts::OS == "linux").then_some(("linux", arch))
 }
 
-/// `a` newer than `b`: dotted numbers compared as numbers ("0.3.10" > "0.3.9"), a leading `v`
-/// ignored, a missing part as 0; anything after a `-` (a prerelease) is older than without.
-pub fn newer(a: &str, b: &str) -> bool {
-    let parse = |s: &str| {
-        let s = s.trim().trim_start_matches('v');
-        let (core, pre) = s.split_once('-').map_or((s, None), |(c, p)| (c, Some(p.to_string())));
-        let mut n: Vec<u64> = core.split('.').map(|x| x.parse().unwrap_or(0)).collect();
-        while n.last() == Some(&0) {
-            n.pop();
-        }
-        (n, pre)
-    };
-    let ((an, ap), (bn, bp)) = (parse(a), parse(b));
-    match an.cmp(&bn) {
-        std::cmp::Ordering::Greater => true,
-        std::cmp::Ordering::Less => false,
-        std::cmp::Ordering::Equal => match (ap, bp) {
-            (None, Some(_)) => true,
-            (Some(x), Some(y)) => x > y,
-            _ => false,
-        },
-    }
-}
+pub use masu_kernel::update::newer;
+use masu_kernel::update::fresh;
+#[cfg(test)]
+use masu_kernel::update::{CHECK_ERR, CHECK_OK};
 
 /// (a proxy from the environment, but not for this machine: ureq 2 does not read NO_PROXY)
 fn agent_for(url: &str) -> ureq::Agent {
@@ -212,14 +193,6 @@ struct Up {
 /// a failure) however often the page asks (review b01: each GET asked, up to 300 s each).
 /// (with the releases' address it is for)
 static LATEST: std::sync::Mutex<Option<(String, std::time::Instant, std::result::Result<String, String>)>> = std::sync::Mutex::new(None);
-const CHECK_OK: Duration = Duration::from_secs(600);
-const CHECK_ERR: Duration = Duration::from_secs(60);
-
-/// Whether an answer of `age` is still good (`ok`: it was a version).
-fn fresh(age: Duration, ok: bool) -> bool {
-    age < if ok { CHECK_OK } else { CHECK_ERR }
-}
-
 fn latest_kept() -> std::result::Result<String, String> {
     let at = base();
     if let Some((u, t, r)) = LATEST.lock().unwrap_or_else(|e| e.into_inner()).as_ref() && *u == at && fresh(t.elapsed(), r.is_ok()) {

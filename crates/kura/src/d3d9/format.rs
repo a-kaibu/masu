@@ -293,18 +293,15 @@ pub fn autogen(fmt: u32) -> AutoGen {
     }
 }
 
-/// Formats CheckDeviceFormatConversion converts from and to (winref d3d9dev): the RGB formats
-/// with all three color channels and a DXGI twin. Measured yes: X8R8G8B8, A8R8G8B8, R5G6B5,
-/// X1R5G5B5, A1R5G5B5, A2R10G10B10, A8B8G8R8, A16B16G16R16F, A32B32G32R32F; measured
-/// D3DERR_NOTAVAILABLE: X8B8G8R8 (no DXGI twin), G16R16, R32F (not RGB), A8, A8L8, L8, P8, V8U8,
-/// YUY2, UYVY, NV12, DXT1. A4R4G4B4, A2B10G10R10, A16B16G16R16 (yes) and X4R4G4B4, R16F,
-/// G16R16F, G32R32F (no) follow the same rule; winref d3d9dev asks them too.
+/// Formats accepted by CheckDeviceFormatConversion in the Windows d3d9dev probe.
+/// Keep explicit formats backed by a source row. Other formats are unavailable.
+/// The tested common RGB formats convert, but A4R4G4B4 and X4R4G4B4 are unavailable.
 pub fn converts(fmt: u32) -> bool {
     use Format::*;
     match Format::from_raw(fmt) {
-        Some(X8R8G8B8 | A8R8G8B8 | R5G6B5 | X1R5G5B5 | A2R10G10B10 | A16B16G16R16F | A1R5G5B5 | A4R4G4B4 | A8B8G8R8 | A2B10G10R10 | A16B16G16R16 | A32B32G32R32F) => true,
-        Some(X4R4G4B4 | X8B8G8R8 | G16R16 | R16F | G16R16F | R32F | G32R32F | R8G8B8 | A8 | L8 | A8L8 | A4L4 | L16 | P8 | V8U8 | L6V5U5 | X8L8V8U8 | Q8W8V8U8 | V16U16 | A2W10V10U10 | Q16W16V16U16 | DXT1 | DXT2 | DXT3 | DXT4 | DXT5) => false,
-        Some(D16_LOCKABLE | D32 | D15S1 | D24S8 | D24X8 | D24X4S4 | D16 | D32F_LOCKABLE | D24FS8 | INDEX16 | INDEX32) | None => false,
+        Some(X8R8G8B8 | A8R8G8B8 | R5G6B5 | X1R5G5B5 | A2R10G10B10 | A16B16G16R16F | A1R5G5B5 | A8B8G8R8 | A2B10G10R10 | A16B16G16R16 | A32B32G32R32F) => true,
+        Some(A4R4G4B4 | X4R4G4B4 | X8B8G8R8 | G16R16 | R16F | G16R16F | R32F | G32R32F | A8 | L8 | A8L8 | P8 | V8U8 | DXT1) => false,
+        _ => false,
     }
 }
 

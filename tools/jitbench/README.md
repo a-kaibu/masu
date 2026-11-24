@@ -2,7 +2,7 @@
 
 koji (the translator itself, as kura has it) built to wasm32 with shared memory, and the
 modules it makes loaded the way kura's vnjit.js loads them: one instance per translation, its
-functions in a shared table, the dispatcher's module from `jb_dispatch_module`. Fixed x86
+functions in a shared table, the dispatcher's module from `jb_dispatch_module`. Fixed x86 and x64
 programs (src/progs.rs) run from their entry to their end, translated when a block has run
 50 times (`jb_run`, as kura's ring).
 
@@ -16,6 +16,7 @@ programs (src/progs.rs) run from their entry to their end, translated when a blo
 | x87_dot | an x87 dot product |
 | sort | insertion sort (loads, stores and compares in a nested loop) |
 | flags_mem | memory operands between a flag writer and its reader (exits that must keep the flags) |
+| avx2_int | long-mode AVX2 integer operations over YMM registers, including YMM8 |
 
 ## Running
 
@@ -46,5 +47,7 @@ cold ms (the first run: the interpreter's warm-up, translation and V8's compile)
 over the rounds (the tail a scene change sees), translate ms (koji's own time), V8 load ms
 (WebAssembly.Module + Instance of the translations), wasm B (their bytes), interp steps (the
 instructions the interpreter ran in the cold run), step calls and exits per hot run (the ways
-back to the interpreter and to the dispatcher), the checksums (A and B must agree), the peak
-RSS (node) or JS heap (Chromium).
+back to the interpreter and to the dispatcher), the checksums, the peak RSS (Node) or JS heap
+(Chromium). Each sample must complete successfully, and all samples for a program must have
+the same checksum. A JIT sample must load and execute generated code. Use `nojit=1` for an
+interpreter baseline. A single-run report with `memcount=1` includes Cpu field loads and stores.

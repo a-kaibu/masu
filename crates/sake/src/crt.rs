@@ -749,7 +749,7 @@ fn free(c: &mut Ctx) -> u32 {
     0
 }
 /// _aligned_offset_malloc(size, align, offset): `p + offset` is a multiple of `align` (a power
-/// of two, or 0: pointer-sized); the block's start and size sit in the 8 bytes before `p`. A
+/// of two, or 0: pointer-sized); the effective alignment, start and size sit before `p`. A
 /// bad alignment, or an offset not inside the block, is EINVAL and NULL.
 fn aligned_alloc(n: u32, align: u32, offset: u32) -> u32 {
     if align & align.wrapping_sub(1) != 0 || (offset != 0 && offset >= n) {
@@ -757,14 +757,21 @@ fn aligned_alloc(n: u32, align: u32, offset: u32) -> u32 {
         return 0;
     }
     let align = align.max(8);
-    let raw = mem::heap_alloc(n.saturating_add(align + 8), false);
+    let Some(total) = n.checked_add(align.saturating_add(12)).filter(|&total| total <= mem::HI - mem::LO) else {
+        set_errno(12);
+        return 0;
+    };
+    let raw = mem::heap_alloc(total, false);
     if raw == 0 {
         set_errno(12);
         return 0;
     }
-    let p = ((raw + 8 + offset + align - 1) & !(align - 1)) - offset;
-    w32(p - 8, raw);
-    w32(p - 4, n);
+    let mask = align.saturating_sub(1);
+    let aligned = raw.saturating_add(12).saturating_add(offset).saturating_add(mask) & !mask;
+    let p = aligned.saturating_sub(offset);
+    w32(p.saturating_sub(12), align);
+    w32(p.saturating_sub(8), raw);
+    w32(p.saturating_sub(4), n);
     p
 }
 fn _aligned_malloc(c: &mut Ctx) -> u32 {
@@ -801,8 +808,55 @@ fn _aligned_realloc(c: &mut Ctx) -> u32 {
 fn _aligned_offset_realloc(c: &mut Ctx) -> u32 {
     aligned_realloc(c.a(0), c.a(1), c.a(2), c.a(3))
 }
+fn _aligned_recalloc(c: &mut Ctx) -> u32 {
+    aligned_recalloc(c, 0)
+}
+fn _aligned_offset_recalloc(c: &mut Ctx) -> u32 {
+    let offset = if mem::x64() { c.a64(4) } else { u64::from(c.a(4)) };
+    aligned_recalloc(c, offset)
+}
+fn aligned_recalloc(c: &mut Ctx, offset: u64) -> u32 {
+    let p = c.a(0);
+    let (count, size, align) = if mem::x64() {
+        (c.a64(1), c.a64(2), c.a64(3))
+    } else {
+        (u64::from(c.a(1)), u64::from(c.a(2)), u64::from(c.a(3)))
+    };
+    let Some(n) = count.checked_mul(size).and_then(|n| u32::try_from(n).ok()).filter(|&n| n <= mem::HI - mem::LO) else {
+        set_errno(12);
+        return 0;
+    };
+    if p != 0 && n == 0 {
+        return _aligned_free(c);
+    }
+    let effective_align = align.max(8);
+    if !align.is_power_of_two() || (offset != 0 && offset >= u64::from(n))
+        || (p != 0 && (effective_align != u64::from(r32(p.saturating_sub(12))) || u64::from(p).saturating_add(offset) % effective_align != 0))
+    {
+        io::invalid_parameter(c);
+        return 0;
+    }
+    let Ok(align) = u32::try_from(align) else {
+        set_errno(12);
+        return 0;
+    };
+    let Ok(offset) = u32::try_from(offset) else {
+        io::invalid_parameter(c);
+        return 0;
+    };
+    let old_size = if p == 0 { 0 } else { r32(p.saturating_sub(4)) };
+    let q = aligned_realloc(p, n, align, offset);
+    if q != 0 && n > old_size {
+        mem::zero(q.saturating_add(old_size), n.saturating_sub(old_size));
+    }
+    q
+}
 fn _aligned_msize(c: &mut Ctx) -> u32 {
     r32(c.a(0) - 4)
+}
+/// Wine's test__get_heap_handle (ucrtbase:misc) checks that this is GetProcessHeap().
+fn _get_heap_handle(_: &mut Ctx) -> u32 {
+    crate::k32::PROCESS_HEAP
 }
 fn _mkdir(c: &mut Ctx) -> u32 {
     if crate::k32::mkdir(&crate::k32::arg_str(c.a(0), false)) != 0 { 0 } else { set_errno(17); u32::MAX }
@@ -2664,19 +2718,26 @@ fn with_file<R>(fp: u32, f: impl FnOnce(&mut Stream) -> R) -> Option<R> {
     Some(f(&mut g))
 }
 
-fn fopen_mode(path: &str, mode: &[u8]) -> Option<File> {
+fn fopen_mode(path: &str, mode: &[u8]) -> Result<File, u32> {
+    let flags = mode.split(|&b| b == b',').next().unwrap_or_default();
+    let exclusive = flags.contains(&b'x');
+    if exclusive && (flags.first() != Some(&b'w') || flags.iter().filter(|&&b| b == b'x').count() != 1) {
+        return Err(22);
+    }
     let (access, disp) = match mode.first() {
         Some(b'r') if mode.contains(&b'+') => (0xc000_0000, 3),
         Some(b'r') => (0x8000_0000, 3),
+        // CREATE_NEW lets the file system arbitrate competing exclusive opens.
+        Some(b'w') if exclusive => (0xc000_0000, 1),
         Some(b'w') => (0xc000_0000, 2),
         Some(b'a') => (0xc000_0000, 4),
-        _ => return None,
+        _ => return Err(2),
     };
-    let f = crate::files::open(path, access, disp).ok()?;
+    let f = crate::files::open(path, access, disp).map_err(|err| if exclusive { io::errno_for(err) } else { 2 })?;
     if mode.first() == Some(&b'a') {
         f.seek(SeekFrom::End(0));
     }
-    Some(f)
+    Ok(f)
 }
 fn new_stream(f: File, mode: &[u8]) -> u32 {
     let f = Arc::new(f);
@@ -2720,22 +2781,29 @@ fn _get_stream_buffer_pointers(c: &mut Ctx) -> u32 {
 }
 fn fopen(c: &mut Ctx) -> u32 {
     let (path, mode) = (a2s(&cstr(c.a(0))), cstr(c.a(1)));
-    match fopen_mode(&path, &mode) {
-        Some(f) => new_stream(f, &mode),
-        None => {
-            set_errno(2);
-            0
-        }
-    }
+    open_stdio(c, &path, &mode).unwrap_or(0)
 }
 fn _wfopen(c: &mut Ctx) -> u32 {
     let path = String::from_utf16_lossy(&wstr(c.a(0)));
     let mode: Vec<u8> = wstr(c.a(1)).iter().map(|&u| u as u8).collect();
-    match fopen_mode(&path, &mode) {
-        Some(f) => new_stream(f, &mode),
-        None => {
-            set_errno(2);
-            0
+    open_stdio(c, &path, &mode).unwrap_or(0)
+}
+fn fopen_error(c: &mut Ctx, errno: u32) {
+    if errno == 22 {
+        io::invalid_parameter(c);
+    } else {
+        set_errno(errno);
+    }
+}
+fn open_stdio(c: &mut Ctx, path: &str, mode: &[u8]) -> Result<u32, u32> {
+    match fopen_mode(path, mode) {
+        Ok(f) => {
+            let fp = new_stream(f, mode);
+            if fp == 0 { Err(r32(crate::cur().teb + ERRNO_TEB)) } else { Ok(fp) }
+        }
+        Err(errno) => {
+            fopen_error(c, errno);
+            Err(errno)
         }
     }
 }
@@ -2776,17 +2844,20 @@ fn close_stream(fp: u32) -> bool {
 }
 /// freopen / _wfreopen (path, mode, stream): the stream's file closed and `path` opened in its
 /// place (the same FILE); NULL, the stream closed, when it can't be opened
-fn reopen(path: &str, mode: &[u8], fp: u32) -> u32 {
+fn reopen(c: &mut Ctx, path: &str, mode: &[u8], fp: u32) -> u32 {
     let Some(old) = FILES.locked().get_or_insert_with(HashMap::default).get(&fp).cloned() else { return 0 };
     // the old descriptor goes (a standard one too), so the file takes the lowest free one:
     // freopen of stdout opens descriptor 1, which _dup2 can later point back at the console
     let old_fd = old.lock().unwrap_or_else(|e| e.into_inner()).fd;
     io::close_fd(old_fd);
-    let Some(f) = fopen_mode(path, mode) else {
-        FILES.locked().get_or_insert_with(HashMap::default).remove(&fp);
-        mem::heap_free(fp);
-        set_errno(2);
-        return 0;
+    let f = match fopen_mode(path, mode) {
+        Ok(f) => f,
+        Err(errno) => {
+            FILES.locked().get_or_insert_with(HashMap::default).remove(&fp);
+            mem::heap_free(fp);
+            fopen_error(c, errno);
+            return 0;
+        }
     };
     let f = Arc::new(f);
     let fd = io::fd_of_file(f.clone());
@@ -2809,11 +2880,13 @@ pub(super) fn follow_fd(fd: u32) {
     }
 }
 fn freopen(c: &mut Ctx) -> u32 {
-    reopen(&a2s(&cstr(c.a(0))), &cstr(c.a(1)), c.a(2))
+    let (path, mode, fp) = (a2s(&cstr(c.a(0))), cstr(c.a(1)), c.a(2));
+    reopen(c, &path, &mode, fp)
 }
 fn _wfreopen(c: &mut Ctx) -> u32 {
     let mode: Vec<u8> = wstr(c.a(1)).iter().map(|&u| kome::num::lo8(u)).collect();
-    reopen(&String::from_utf16_lossy(&wstr(c.a(0))), &mode, c.a(2))
+    let (path, fp) = (String::from_utf16_lossy(&wstr(c.a(0))), c.a(2));
+    reopen(c, &path, &mode, fp)
 }
 fn fread(c: &mut Ctx) -> u32 {
     fread_to(c.a(0), c.a(1), c.a(2), c.a(3))
@@ -3217,9 +3290,7 @@ fn fopen_s(c: &mut Ctx) -> u32 {
     if pf == 0 {
         return 22;
     }
-    let fp = fopen_mode(&path, &mode).map_or(0, |f| new_stream(f, &mode));
-    wp(pf, fp);
-    if fp == 0 { 2 } else { 0 }
+    open_stdio_s(c, pf, &path, &mode)
 }
 fn _wfopen_s(c: &mut Ctx) -> u32 {
     if c.a(0) == 0 {
@@ -3227,9 +3298,18 @@ fn _wfopen_s(c: &mut Ctx) -> u32 {
     }
     let path = String::from_utf16_lossy(&wstr(c.a(1)));
     let mode: Vec<u8> = wstr(c.a(2)).iter().map(|&u| u as u8).collect();
-    let fp = fopen_mode(&path, &mode).map_or(0, |f| new_stream(f, &mode));
-    wp(c.a(0), fp);
-    if fp == 0 { 2 } else { 0 }
+    let pf = c.a(0);
+    open_stdio_s(c, pf, &path, &mode)
+}
+fn open_stdio_s(c: &mut Ctx, pf: u32, path: &str, mode: &[u8]) -> u32 {
+    wp(pf, 0);
+    match open_stdio(c, path, mode) {
+        Ok(fp) => {
+            wp(pf, fp);
+            0
+        }
+        Err(errno) => errno,
+    }
 }
 
 // setjmp/longjmp: jmp_buf = ebp, ebx, edi, esi, esp, SEH frame, eip (as msvcrt's first fields)
@@ -4685,6 +4765,7 @@ pub fn init() {
     implement("msvcrt", "_swprintf", swprintf);
     implement("msvcrt", "_wfsopen", _wfopen);
     reg!(_aligned_malloc, _aligned_free, _aligned_realloc, _aligned_msize, _aligned_offset_malloc, _aligned_offset_realloc, _mkdir, _wmkdir);
+    reg!(_aligned_recalloc, _aligned_offset_recalloc, _get_heap_handle);
     reg!(fread_s, _time64, _splitpath, _wsplitpath, _splitpath_s, _wsplitpath_s);
     reg!(_get_narrow_winmain_command_line, _get_wide_winmain_command_line);
     implement("msvcrt", "_time32", _time32);
@@ -5443,6 +5524,45 @@ mod limits_tests {
     use proptest::prelude::*;
 
     #[test]
+    fn exclusive_stdio_open_preserves_an_existing_file() {
+        let _guest = enter();
+        guest_thread();
+        let root = std::env::temp_dir().join(format!("sake-exclusive-{}", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
+        let path = format!("Z:{}\\exclusive.txt", root.to_string_lossy().replace('/', "\\"));
+        let p = crate::test_guest::astr(&path);
+        let m = mem::Scratch::new(8, true);
+        let set_mode = |mode: &[u8]| {
+            mem::zero(m.get(), 8);
+            mem::write(m.get(), mode);
+        };
+        let host = root.join("exclusive.txt");
+        for mode in [b"wx".as_slice(), b"w+x", b"wbx"] {
+            let _ = std::fs::remove_file(&host);
+            set_mode(mode);
+            let fp = call(fopen, &[p, m.get()]);
+            assert_ne!(fp, 0);
+            assert_eq!(call(fclose, &[fp]), 0);
+            std::fs::write(&host, b"original").unwrap();
+            assert_eq!(call(fopen, &[p, m.get()]), 0);
+            assert_eq!(r32(call(_errno, &[])), 17);
+            assert_eq!(std::fs::read(&host).unwrap(), b"original");
+        }
+        let out = mem::Scratch::new(4, true);
+        w32(out.get(), u32::MAX);
+        assert_eq!(call(fopen_s, &[out.get(), p, m.get()]), 17);
+        assert_eq!(r32(out.get()), 0);
+        for mode in [b"rx", b"xw"] {
+            set_mode(mode);
+            assert_eq!(call(fopen, &[p, m.get()]), 0);
+            assert_eq!(r32(call(_errno, &[])), 22);
+        }
+        assert_eq!(std::fs::read(&host).unwrap(), b"original");
+        mem::heap_free(p);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn fopen_fails_when_no_descriptor_is_left() {
         let _g = enter();
         guest_thread();
@@ -5527,6 +5647,48 @@ mod limits_tests {
 
 /// A C runtime's export resolves to the C runtime, never to ntdll's own CRT (its legacy edges:
 /// ucrtbase!strtol and msvcr*!strtol were ntdll's once ntdll!strtol came; review e18bf44).
+#[cfg(test)]
+mod aligned_recalloc_tests {
+    use super::*;
+    use crate::test_guest::{call, enter, guest_thread};
+
+    #[test]
+    fn ucrt_aligned_recalloc_preserves_data_and_zeros_only_new_bytes() {
+        let _guest = enter();
+        guest_thread();
+        init();
+        for (name, offset) in [("_aligned_recalloc", 0), ("_aligned_offset_recalloc", 8)] {
+            let handler = crate::api::find_impl("ucrtbase", name).expect(name);
+            let recalloc = |p, count, size, align| call(handler, &[p, count, size, align, offset]);
+            let p = recalloc(0, 4, 8, 64);
+            assert_ne!(p, 0);
+            assert_eq!((p + offset) % 64, 0);
+            assert_eq!(mem::bytes(p, 32), [0; 32]);
+            mem::fill(p, 32, 0xcc);
+
+            let q = recalloc(p, 8, 8, 64);
+            assert_ne!(q, 0);
+            assert_eq!((q + offset) % 64, 0);
+            assert_eq!(mem::bytes(q, 32), [0xcc; 32]);
+            assert_eq!(mem::bytes(q + 32, 32), [0; 32]);
+
+            let p = recalloc(q, 2, 8, 64);
+            assert_ne!(p, 0);
+            assert_eq!((p + offset) % 64, 0);
+            assert_eq!(recalloc(p, u32::MAX, 2, 64), 0);
+            assert_eq!(r32(call(_errno, &[])), 12);
+            assert_eq!(recalloc(p, 2, 8, 10), 0);
+            assert_eq!(r32(call(_errno, &[])), 22);
+            assert_eq!(recalloc(p, 2, 8, 32), 0);
+            assert_eq!(r32(call(_errno, &[])), 22);
+            assert_eq!(mem::bytes(p, 16), [0xcc; 16]);
+            assert_eq!(recalloc(p, 0, 8, 64), 0);
+        }
+        let heap = crate::api::find_impl("ucrtbase", "_get_heap_handle").unwrap();
+        assert_eq!(call(heap, &[]), crate::k32::PROCESS_HEAP);
+    }
+}
+
 #[cfg(test)]
 mod crt_resolution_tests {
     use crate::api;

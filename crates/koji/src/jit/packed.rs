@@ -631,27 +631,12 @@ impl Gen<'_> {
         self.vstore(d);
     }
 
-    /// After a store of `size` bytes at local `a` (+ offset `off`): kept stack slots, and
-    /// the check for code written in a self-modifying block (as write_op).
+    /// Reload kept stack slots and record the store for the instruction's after-checks.
     fn stored(&mut self, a: u32, size: u32) {
-        self.store_seen = true;
         if self.slots.is_some() {
             self.slots_reload_if(a, size);
         }
-        if self.smc {
-            let off = self.mem_at(a);
-            let e = self.temp();
-            self.c.u32c(off).add().set(e);
-            self.smc_check(e, size);
-            self.temps -= 1;
-        }
-        if self.fresh.is_some() {
-            let off = self.mem_at(a);
-            let e = self.temp();
-            self.c.set(e);
-            self.fresh_store(e, off, size);
-            self.temps -= 1;
-        }
+        self.store = Some((a, size));
     }
 
     /// Leaves for the interpreter when the instruction may set an MXCSR flag (see mxguard).

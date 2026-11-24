@@ -10,6 +10,7 @@ use axum::{
     routing::get,
     Router,
 };
+use masu_kernel::access::tls_relay_destination as destination;
 #[cfg(test)]
 use std::net::SocketAddr;
 use std::{net::IpAddr, sync::Arc, time::Duration};
@@ -64,14 +65,6 @@ fn routes(relay: Relay) -> Router {
     Router::new()
         .route("/net/tls/{target}", get(upgrade))
         .with_state(relay)
-}
-fn destination(target: &str) -> Option<(&'static str, u16)> {
-    match target {
-        "soft-denchi" => Some(("charge1.soft-denchi.jp", 443)),
-        "dmm-softdenchi" => Some(("dlsoft.dmm.co.jp", 443)),
-        "dmm-doujin-softdenchi" => Some(("softdenchi-doujin-api.dmm.co.jp", 443)),
-        _ => None,
-    }
 }
 /// Browser WebSockets carry cookies on GET; the ordinary write guard is not
 /// enough. Check the Origin even for locally trusted masu users. The Origin may match the Host

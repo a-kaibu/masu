@@ -1,7 +1,7 @@
 //! A translation made with the page checks on (PAGE_NOACCESS / PAGE_GUARD marked: kura's
 //! fault_pages) is saved and used in a later process with the checks on: it reads the page
 //! marks through the "pages" global it imports, given at instantiation, not through an address
-//! of the run that made it; it says it was made with the checks (saved::Entry::pages, VNJ3),
+//! of the run that made it; it says it was made with the checks (saved::Entry::pages),
 //! and only such ones are taken once the checks are on (review of 6852be1: a game with stack
 //! guard pages never used saved code). PAGE_CHECK is a static: this test is alone in its binary.
 
@@ -55,7 +55,7 @@ fn globals(b: &[u8]) -> Result<(Vec<(String, String, bool)>, usize), String> {
 
 /// The entry kura saves for a region (save(): roots, starts, code, its text, the pages).
 fn entry(r: &jit::Region, root: u32) -> saved::Entry {
-    saved::Entry { roots: vec![root], starts: r.starts.clone(), code: r.code.clone(), text: r.text.clone().unwrap_or_default(), build: 0, sites: r.sites.clone(), pages: r.ctx.pages }
+    saved::Entry { roots: vec![root], starts: r.starts.clone(), code: r.code.clone(), flag_deps: r.flag_deps, text: r.text.clone().unwrap_or_default(), build: 0, sites: r.sites.clone(), pages: r.ctx.pages }
 }
 
 /// Loads and stores through ECX/EDX, each of the widths: what the checks guard (a POP to

@@ -12,6 +12,9 @@
 #![cfg_attr(not(test), warn(dead_code_pub_in_binary))]
 use iced_x86::code_asm::*;
 use iced_x86::{BlockEncoder, BlockEncoderOptions, Code, Instruction, InstructionBlock, MemoryOperand, Register};
+#[path = "../../jit-outcome.rs"]
+mod jit_outcome;
+use jit_outcome::{RunError, compare_outcomes};
 use koji::{Cpu, Exit, Fault};
 use std::sync::atomic::Ordering::Relaxed;
 use wasmtime::*;
@@ -1034,6 +1037,76 @@ fn fixed() -> Result<Vec<(&'static str, Vec<Instruction>)>, IcedError> {
     a.sub(edx, 1)?;
     a.jmp(top)?;
     v.push(("exit fault in a loop", a.take_instructions()));
+    // The ADD commits a new CF and moves ESP inside the guest range, outside its safe margin.
+    // The exit at SETC must carry the ADD's flags rather than the pending CMP.
+    let mut a = CodeAssembler::new(32)?;
+    let mut add = a.create_label();
+    a.mov(ecx, 0u32)?;
+    a.mov(esp, STACK - 0x800)?;
+    a.mov(eax, 0x17000u32.wrapping_sub(STACK - 0x800))?;
+    a.cmp(ecx, 0)?;
+    a.jmp(add)?;
+    a.set_label(&mut add)?;
+    a.add(esp, eax)?;
+    a.setb(dl)?;
+    a.mov(esp, STACK - 0x800)?;
+    a.jmp(END as u64)?;
+    v.push(("exit after ADD to ESP", a.take_instructions()));
+
+    // The ADD faults before it can replace the incoming CF.
+    let mut a = CodeAssembler::new(32)?;
+    let mut add = a.create_label();
+    a.mov(ecx, 0u32)?;
+    a.cmp(ecx, 1)?;
+    a.jmp(add)?;
+    a.set_label(&mut add)?;
+    a.add(edx, dword_ptr(0))?;
+    a.xor(edx, edx)?;
+    a.jmp(END as u64)?;
+    v.push(("exit before faulting ADD", a.take_instructions()));
+
+    // The same after-exit after a MOV must still carry the CMP's flags.
+    let mut a = CodeAssembler::new(32)?;
+    let mut mov = a.create_label();
+    a.mov(eax, 0x17000u32)?;
+    a.cmp(eax, 0x18000)?;
+    a.jmp(mov)?;
+    a.set_label(&mut mov)?;
+    a.mov(esp, eax)?;
+    a.setb(dl)?;
+    a.mov(esp, STACK - 0x800)?;
+    a.jmp(END as u64)?;
+    v.push(("exit after MOV to ESP", a.take_instructions()));
+
+    // This writes the ADD's own opcode and must leave with the new flags.
+    let mut a = CodeAssembler::new(32)?;
+    a.add(byte_ptr(CODE), 0x80u32)?;
+    a.seto(dl)?;
+    a.jmp(END as u64)?;
+    v.push(("fresh exit after arithmetic store", a.take_instructions()));
+
+    // The callee's shift can preserve CF for the nested ADC.
+    for (count, name) in [(0u32, "callee shift by zero"), (1, "callee shift by one")] {
+        let mut a = CodeAssembler::new(32)?;
+        let mut f = a.create_label();
+        let mut g = a.create_label();
+        a.mov(ecx, count)?;
+        a.mov(ebx, 0u32)?;
+        a.xor(eax, eax)?;
+        a.cmp(eax, 1)?;
+        a.call(f)?;
+        a.xor(edx, edx)?;
+        a.jmp(END as u64)?;
+        a.set_label(&mut f)?;
+        a.shl(eax, cl)?;
+        a.call(g)?;
+        a.ret()?;
+        a.set_label(&mut g)?;
+        a.adc(ebx, 0)?;
+        a.ret()?;
+        v.push((name, a.take_instructions()));
+    }
+
     // Rotates whose flags are live (an exception, PUSHFD): their CF and OF go into the exact
     // EFLAGS with the other flags kept (koji Gen::rotate_flags), by immediates and by CL (0 mod
     // 32 keeps them all), 8, 16 and 32 bits
@@ -1503,6 +1576,8 @@ fn fixed() -> Result<Vec<(&'static str, Vec<Instruction>)>, IcedError> {
 struct Mode {
     /// function mode; else regions of at most `blocks` blocks
     fns: bool,
+    /// Force the root of a fixed regression case through function codegen.
+    entry_as_function: bool,
     blocks: usize,
     hoist: bool,
     slots: u32,
@@ -1542,8 +1617,8 @@ fn mx_check() -> bool {
 }
 
 struct Jit {
-    store: Store<()>,
-    linker: Linker<()>,
+    store: Store<Option<RunError>>,
+    linker: Linker<Option<RunError>>,
     engine: Engine,
     table: Table,
     run: TypedFunc<i32, i32>,
@@ -1585,7 +1660,7 @@ fn hash_insert(base: usize, a: u32, v: u32) -> Result<(), String> {
 
 impl Jit {
     fn new(engine: &Engine, dispatch: &Module, memory: &SharedMemory, base: usize, mode: Mode) -> Jit {
-        let mut store = Store::new(engine, ());
+        let mut store = Store::new(engine, None);
         // A region can loop (and chain) without coming back to run's step limit: a trap then,
         // not a CI that hangs (as jit64test)
         store.set_fuel(FUEL).unwrap();
@@ -1598,7 +1673,7 @@ impl Jit {
         let pages = Global::new(&mut store, GlobalType::new(ValType::I32, Mutability::Const), Val::I32(0)).unwrap();
         linker.define(&store, "env", "pages", pages).unwrap();
         linker
-            .func_wrap("env", "step", move |cpu: i32| -> i32 {
+            .func_wrap("env", "step", move |mut caller: wasmtime::Caller<'_, Option<RunError>>, cpu: i32| -> i32 {
                 let m = base as *mut u8;
                 assert_eq!(cpu as u32, CPU);
                 let mut c = unsafe { get_cpu(m) };
@@ -1616,7 +1691,10 @@ impl Jit {
                     Exit::Continue if !koji::jit::sse_ok(c.mxcsr) => 2,
                     Exit::Continue if mx_check() => 2,
                     Exit::Continue => 0,
-                    _ => 2,
+                    exit => {
+                        *caller.data_mut() = Some(RunError::guest(exit, &c));
+                        2
+                    }
                 }
             })
             .unwrap();
@@ -1697,7 +1775,7 @@ impl Jit {
         self.known.insert(eip);
         let mut m = koji::jit::wasm::Module::default();
         let accept = |a: u32| a != END;
-        let fns = self.mode.fns && eip % 3 != 1;
+        let fns = self.mode.fns && (self.mode.entry_as_function && eip == CODE || eip % 3 != 1);
         let region = if fns {
             koji::jit::FN.store(true, Relaxed);
             koji::jit::translate_function(&mut m, &mut Mem(base as *mut u8), eip, koji::jit::MAX_BLOCKS, 1000, (END, END + 16), &|_| None, &|_| true, accept)
@@ -1730,7 +1808,7 @@ impl Jit {
             self.known.insert(a);
             let v = if fns { idx | (i as u32) << koji::jit::ENTRY_SHIFT | koji::jit::FN_TAG } else { idx | k << koji::jit::ENTRY_SHIFT };
             if hash_insert(base, a, v).is_err() {
-                return Ok(Made::Left);
+                return Err(format!("hash table full at {a:#x}"));
             }
         }
         LOADED.fetch_add(1, Relaxed);
@@ -1739,7 +1817,7 @@ impl Jit {
 
     /// Runs from cpu.eip until END: the dispatcher, translations of what it misses, the
     /// interpreter for what they leave to it.
-    fn run(&mut self, base: usize) -> Result<(), String> {
+    fn run(&mut self, base: usize) -> Result<(), RunError> {
         let m = base as *mut u8;
         for _ in 0..200_000 {
             let mut c = unsafe { get_cpu(m) };
@@ -1756,7 +1834,7 @@ impl Jit {
                 let r = koji::step(&mut c, &mut Mem(m));
                 unsafe { put_cpu(m, &c) };
                 if r != Exit::Continue {
-                    return Err(format!("interpreter exit {r:?} at {:#x}", c.eip));
+                    return Err(RunError::guest(r, &c));
                 }
                 continue;
             }
@@ -1767,7 +1845,10 @@ impl Jit {
             c.jit_code_pages = PAGES;
             c.jit_budget = 1 << 16;
             unsafe { put_cpu(m, &c) };
-            let r = self.run.call(&mut self.store, CPU as i32).map_err(|e| format!("trap: {e:?}"))?;
+            let r = self.run.call(&mut self.store, CPU as i32).map_err(RunError::wasm)?;
+            if let Some(error) = self.store.data_mut().take() {
+                return Err(error);
+            }
             let c = unsafe { get_cpu(m) };
             if std::env::var("JTRACE").is_ok() {
                 eprintln!("run -> {r} eip {:#x} top {} empty {:#x}", c.eip, c.fpu.top, c.fpu.empty);
@@ -1783,7 +1864,7 @@ impl Jit {
             match r {
                 0 => {}
                 1 if c.eip == END => return Ok(()),
-                1 if !self.known.contains(&c.eip) && self.translate(base, c.eip)? == Made::Loaded => {}
+                1 if !self.known.contains(&c.eip) && self.translate(base, c.eip).map_err(RunError::Translation)? == Made::Loaded => {}
                 1 => {
                     // (as kura: the interpreter up to the next branch)
                     let mut c = c;
@@ -1791,7 +1872,7 @@ impl Jit {
                         let (r, branch) = koji::step_flow(&mut c, &mut Mem(m));
                         if r != Exit::Continue {
                             unsafe { put_cpu(m, &c) };
-                            return Err(format!("interpreter exit {r:?} at {:#x}", c.eip));
+                            return Err(RunError::guest(r, &c));
                         }
                         if branch || c.eip == END {
                             break;
@@ -1803,14 +1884,14 @@ impl Jit {
                 // (a step that changed MXCSR: on in the interpreter; one that read its flags)
                 2 if PARTWAY.swap(false, Relaxed) => {}
                 2 if !koji::jit::sse_ok(c.mxcsr) || SWITCHED.load(Relaxed) => {}
-                s => return Err(format!("status {s} at {:#x}", c.eip)),
+                s => return Err(RunError::Harness(format!("status {s} at {:#x}", c.eip))),
             }
         }
-        Err("no end".into())
+        Err(RunError::Limit)
     }
 }
 
-fn interp(base: usize) -> Result<(), String> {
+fn interp(base: usize) -> Result<(), RunError> {
     let m = base as *mut u8;
     let mut c = unsafe { get_cpu(m) };
     for _ in 0..1_000_000 {
@@ -1821,10 +1902,10 @@ fn interp(base: usize) -> Result<(), String> {
         let r = koji::step(&mut c, &mut Mem(m));
         if r != Exit::Continue {
             unsafe { put_cpu(m, &c) };
-            return Err(format!("interpreter exit {r:?} at {:#x}", c.eip));
+            return Err(RunError::guest(r, &c));
         }
     }
-    Err("no end".into())
+    Err(RunError::Limit)
 }
 
 fn initial(rng: &mut Rng) -> Cpu {
@@ -1925,9 +2006,9 @@ fn state(c: &Cpu) -> Vec<(String, String)> {
     v
 }
 
-fn run_case(engine: &Engine, dispatch: &Module, memory: &SharedMemory, base: usize, list: &[Instruction], data: &[u8], cpu0: &Cpu, mode: Mode) -> (Vec<String>, Vec<u8>) {
+fn run_case(engine: &Engine, dispatch: &Module, memory: &SharedMemory, base: usize, list: &[Instruction], data: &[u8], cpu0: &Cpu, mode: Mode) -> (Vec<String>, Vec<u8>, bool) {
     let m = base as *mut u8;
-    let Some(code) = encode(list, CODE as u64) else { return (Vec::new(), Vec::new()) };
+    let Some(code) = encode(list, CODE as u64) else { return (Vec::new(), Vec::new(), true) };
     let setup = || unsafe {
         std::ptr::write_bytes(m.add(0x10000), 0, MEM - 0x10000);
         std::ptr::copy_nonoverlapping(code.as_ptr(), m.add(CODE as usize), code.len());
@@ -1947,8 +2028,8 @@ fn run_case(engine: &Engine, dispatch: &Module, memory: &SharedMemory, base: usi
     if std::env::var("JTRACE").is_ok() {
         eprintln!("interpreter: {want:?}");
     }
-    if want.as_ref().is_err_and(|e| e == "no end") {
-        return (diffs, code);
+    if matches!(want, Err(RunError::Limit)) {
+        return (diffs, code, true);
     }
     setup();
     // (the interpreter's run above may have switched it)
@@ -1969,7 +2050,7 @@ fn run_case(engine: &Engine, dispatch: &Module, memory: &SharedMemory, base: usi
             let ips: Vec<u32> = (&mut dec).into_iter().map(|i| i.ip() as u32).collect();
             for &ip in ips.iter().rev() {
                 if let Err(e) = jit.translate(base, ip) {
-                    return (vec![format!("translation: {e}")], code);
+                    return (vec![format!("translation: {e}")], code, false);
                 }
             }
             setup();
@@ -1980,7 +2061,7 @@ fn run_case(engine: &Engine, dispatch: &Module, memory: &SharedMemory, base: usi
         let ips: Vec<u32> = (&mut dec).into_iter().map(|i| i.ip() as u32).collect();
         for &ip in ips.iter().rev() {
             if let Err(e) = jit.translate(base, ip) {
-                return (vec![format!("translation: {e}")], code);
+                return (vec![format!("translation: {e}")], code, false);
             }
         }
     }
@@ -1995,18 +2076,8 @@ fn run_case(engine: &Engine, dispatch: &Module, memory: &SharedMemory, base: usi
         want_cpu.mxcsr &= !0x3f;
         got_cpu.mxcsr &= !0x3f;
     }
-    // Both stopped at an exception: the same exception at the same place, with the same state
-    // (flags too: masu's SEH gives them to the guest's handler). Other stops (no end, a trap
-    // of the fuel) are not compared.
-    let fault = |r: &Result<(), String>| r.as_ref().err().is_some_and(|e| e.starts_with("interpreter exit Fault"));
-    if want.is_err() && got.is_err() && !(fault(&want) && fault(&got)) {
-        return (diffs, code);
-    }
-    if fault(&want) && fault(&got) && want != got {
-        diffs.push(format!("exceptions: interp {want:?} jit {got:?}"));
-    }
-    if want.is_ok() != got.is_ok() {
-        diffs.push(format!("runs: interp {want:?} jit {got:?}"));
+    if !compare_outcomes(&want, &got, &mut diffs) {
+        return (diffs, code, false);
     }
     let (w, g): (std::collections::BTreeMap<_, _>, std::collections::BTreeMap<_, _>) = (state(&want_cpu).into_iter().collect(), state(&got_cpu).into_iter().collect());
     for k in w.keys().chain(g.keys().filter(|k| !w.contains_key(*k))) {
@@ -2021,7 +2092,7 @@ fn run_case(engine: &Engine, dispatch: &Module, memory: &SharedMemory, base: usi
     if want_stack != got_stack {
         diffs.push("stack differs".into());
     }
-    (diffs, code)
+    (diffs, code, false)
 }
 
 /// A random program: a body of 5 to 45 instructions' worth of items, up to 2 subroutines.
@@ -2075,6 +2146,8 @@ fn main() {
         return;
     }
     // the dispatcher's hash against dispatch::slot with tables past 2^17 entries
+    let mut skipped = 0;
+    let mut compared = 0;
     let mut fails = bigtable::run(&engine, &dispatch, &memory, base);
     let mut rng = Rng(seed.wrapping_mul(0x9e37_79b9_7f4a_7c15) | 1);
     // fixed programs first, in every mode
@@ -2088,18 +2161,30 @@ fn main() {
             println!("fixed {name}: does not encode");
             continue;
         }
+        let flag_regression = name.starts_with("exit ") || name.starts_with("fresh ") || name.starts_with("callee ");
         for fns in [false, true] {
             for blocks in [1, 2, koji::jit::MAX_BLOCKS] {
-                let mode = Mode { fns, blocks, hoist: true, slots: 0, pre: false, exact: !name.starts_with("mx "), fresh: false, stale: 0, ssa: ssa_or(blocks != 2) };
+                let mode = Mode { fns, entry_as_function: flag_regression || name == "x87 loop pop", blocks, hoist: true, slots: 0, pre: false, exact: !name.starts_with("mx "), fresh: name.starts_with("fresh "), stale: 0, ssa: ssa_or(blocks != 2) };
                 let data = random_data(&mut rng);
                 let mut cpu0 = initial(&mut rng);
                 if name.starts_with("x87 root") {
                     x87_root_stack(&mut cpu0, &mut rng);
                 }
-                let (diffs, _) = run_case(&engine, &dispatch, &memory, base, &list, &data, &cpu0, mode);
-                if !diffs.is_empty() {
-                    fails += 1;
-                    println!("fixed {name} {mode:?}: {}", diffs.join("; "));
+                let ssa_modes: &[bool] = if flag_regression && std::env::var_os("JSSA").is_none() {
+                    &[false, true]
+                } else {
+                    std::slice::from_ref(&mode.ssa)
+                };
+                for &ssa in ssa_modes {
+                    let mode = Mode { ssa, ..mode };
+                    let (mut diffs, _, skip) = run_case(&engine, &dispatch, &memory, base, &list, &data, &cpu0, mode);
+                    skipped += usize::from(skip);
+                    compared += usize::from(!skip);
+                    if skip { diffs.push("fixed case did not produce a reference result".into()); }
+                    if !diffs.is_empty() {
+                        fails += 1;
+                        println!("fixed {name} {mode:?}: {}", diffs.join("; "));
+                    }
                 }
             }
         }
@@ -2112,6 +2197,7 @@ fn main() {
     for t in 0..count {
         let mode = Mode {
             fns: rng.below(2) == 0,
+            entry_as_function: false,
             blocks: rng.pick(&[1, 2, 3, koji::jit::MAX_BLOCKS]),
             hoist: rng.below(2) == 0,
             slots: rng.pick(&[0, 0, 6]),
@@ -2130,11 +2216,13 @@ fn main() {
         if std::env::var("JONLY").is_ok_and(|o| o != t.to_string()) {
             continue;
         }
-        let (diffs, _) = run_case(&engine, &dispatch, &memory, base, &list, &data, &cpu0, mode);
+        let (diffs, _, skip) = run_case(&engine, &dispatch, &memory, base, &list, &data, &cpu0, mode);
+        skipped += usize::from(skip);
+        compared += usize::from(!skip);
         if !diffs.is_empty() {
             list = shrink(list, &diffs, |l| run_case(&engine, &dispatch, &memory, base, l, &data, &cpu0, mode).0);
         }
-        let (diffs, code) = run_case(&engine, &dispatch, &memory, base, &list, &data, &cpu0, mode);
+        let (diffs, code, _) = run_case(&engine, &dispatch, &memory, base, &list, &data, &cpu0, mode);
         if !diffs.is_empty() {
             fails += 1;
             if fails <= 10 || std::env::var("JALL").is_ok() {
@@ -2167,7 +2255,7 @@ fn main() {
         fails += 1;
         println!("no translation loaded");
     }
-    println!("{count} tests, {fails} failed");
+    println!("{compared} compared, {skipped} skipped, {fails} failed");
     if fails > 0 {
         std::process::exit(1);
     }
@@ -2186,10 +2274,94 @@ fn test_setup() -> (Engine, SharedMemory, Module, usize) {
 }
 
 #[cfg(test)]
-const TEST_MODE: Mode = Mode { fns: false, blocks: 1, hoist: true, slots: 0, pre: false, exact: true, fresh: false, stale: 0, ssa: false };
+const TEST_MODE: Mode = Mode { fns: false, entry_as_function: false, blocks: 1, hoist: true, slots: 0, pre: false, exact: true, fresh: false, stale: 0, ssa: false };
 
 /// A region that jumps to itself never comes back to run's step limit: the fuel ends it, an
 /// error, not a hang.
+#[test]
+fn watched_store_leaves_with_committed_flags() {
+    koji::jit::set_watch(|ip| ip == CODE);
+    let mut cfg = Config::new();
+    cfg.wasm_threads(true).consume_fuel(true);
+    let engine = Engine::new(&cfg).unwrap();
+    let pages = koji::jit::wasm::memory_min_pages();
+    let memory = SharedMemory::new(&engine, MemoryType::shared(pages, pages)).unwrap();
+    let m = memory.data().as_ptr().cast::<u8>().cast_mut();
+    let base = m as usize;
+    let dispatch = Module::new(&engine, koji::jit::dispatch::module()).unwrap();
+    let mut a = CodeAssembler::new(32).unwrap();
+    a.add(byte_ptr(CODE), 128).unwrap();
+    a.seto(dl).unwrap();
+    a.jmp(END as u64).unwrap();
+    let bytes = encode(&a.take_instructions(), u64::from(CODE)).unwrap();
+    let cpu = Cpu { eip: CODE, mxcsr: 0x1f80, ..Cpu::default() };
+    let setup = || unsafe {
+        std::ptr::copy_nonoverlapping(bytes.as_ptr(), m.add(CODE as usize), bytes.len());
+        put_cpu(m, &cpu);
+    };
+    setup();
+    interp(base).unwrap();
+    let mut want = unsafe { get_cpu(m) };
+    want.materialize();
+
+    setup();
+    let mut jit = Jit::new(&engine, &dispatch, &memory, base, TEST_MODE);
+    let page = CODE >> 12;
+    unsafe {
+        m.add((PAGES + (page >> 5) * 4) as usize).cast::<u32>().write(1 << (page & 31));
+    }
+    jit.run(base).unwrap();
+    let mut got = unsafe { get_cpu(m) };
+    got.materialize();
+    assert_eq!(got.eflags, want.eflags);
+    assert_eq!(got.regs[koji::EDX] & 0xff, 1);
+}
+
+#[test]
+fn a_volatile_callee_change_preserves_the_cached_callers_flags() {
+    const CALLEE: u32 = CODE + 0x1000;
+    koji::jit::set_fresh(|ip| ip >> 12 == CALLEE >> 12);
+    let mut cfg = Config::new();
+    cfg.wasm_threads(true).consume_fuel(true);
+    let engine = Engine::new(&cfg).unwrap();
+    let pages = koji::jit::wasm::memory_min_pages();
+    let memory = SharedMemory::new(&engine, MemoryType::shared(pages, pages)).unwrap();
+    let m = memory.data().as_ptr().cast::<u8>().cast_mut();
+    let base = m as usize;
+    let dispatch = Module::new(&engine, koji::jit::dispatch::module()).unwrap();
+    let mut a = CodeAssembler::new(32).unwrap();
+    a.xor(eax, eax).unwrap();
+    a.call(u64::from(CALLEE)).unwrap();
+    a.xor(edx, edx).unwrap();
+    a.jmp(u64::from(END)).unwrap();
+    let bytes = encode(&a.take_instructions(), u64::from(CODE)).unwrap();
+    let mut cpu = Cpu { eip: CODE, eflags: 0x202, mxcsr: 0x1f80, ..Cpu::default() };
+    cpu.regs[koji::ESP] = STACK - 0x800;
+    unsafe {
+        std::ptr::copy_nonoverlapping(bytes.as_ptr(), m.add(CODE as usize), bytes.len());
+        let callee = m.add(CALLEE as usize);
+        // xor ebx, ebx; nop ...; ret (too long to inline)
+        std::ptr::write_bytes(callee, 0x90, 200);
+        std::ptr::copy_nonoverlapping([0x31, 0xdb].as_ptr(), callee, 2);
+        callee.add(200).write(0xc3);
+        put_cpu(m, &cpu);
+    }
+    let mut jit = Jit::new(&engine, &dispatch, &memory, base, Mode { fns: true, entry_as_function: true, ..TEST_MODE });
+    assert!(jit.translate(base, CODE).unwrap() == Made::Loaded);
+
+    // Replace the flag writer with SETZ CL while the caller remains installed.
+    unsafe {
+        std::ptr::copy_nonoverlapping([0x0f, 0x94, 0xc1].as_ptr(), m.add(CALLEE as usize), 3);
+    };
+    interp(base).unwrap();
+    let want = unsafe { get_cpu(m) };
+    assert_eq!(want.regs[koji::ECX] & 0xff, 1);
+    unsafe { put_cpu(m, &cpu) };
+    jit.run(base).unwrap();
+    let got = unsafe { get_cpu(m) };
+    assert_eq!(got.regs[koji::ECX], want.regs[koji::ECX]);
+}
+
 #[test]
 fn looping_region_is_bounded() {
     let (engine, memory, dispatch, base) = test_setup();
@@ -2203,7 +2375,7 @@ fn looping_region_is_bounded() {
         let mut jit = Jit::new(&engine, &dispatch, &memory, base, Mode { fns, ..TEST_MODE });
         jit.store.set_fuel(10_000).unwrap();
         let error = jit.run(base).unwrap_err();
-        assert!(error.contains("fuel"), "{error}");
+        assert_eq!(error, RunError::Limit);
     }
 }
 

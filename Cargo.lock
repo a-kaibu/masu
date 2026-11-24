@@ -1560,6 +1560,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "h5i-app-core"
+version = "0.5.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ed6d77cae390eb6b63fac0a990b426ca056deff9f1d7c89482a309febf72c248"
+
+[[package]]
 name = "half"
 version = "2.7.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2271,11 +2277,13 @@ dependencies = [
  "foresee",
  "form_urlencoded",
  "futures-util",
+ "h5i-app-core",
  "inno",
  "koji",
  "kome",
  "lazy-regex",
  "libc",
+ "masu-kernel",
  "masu-tls",
  "md-5 0.11.0",
  "proptest",
@@ -2304,6 +2312,13 @@ dependencies = [
  "uuid",
  "zip",
  "zstd 0.13.5",
+]
+
+[[package]]
+name = "masu-kernel"
+version = "0.1.0"
+dependencies = [
+ "h5i-app-core",
 ]
 
 [[package]]

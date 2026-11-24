@@ -350,7 +350,7 @@ pub(super) fn close_fd(fd: u32) -> bool {
 }
 
 /// errno for a Windows error.
-fn errno_for(e: u32) -> u32 {
+pub(super) fn errno_for(e: u32) -> u32 {
     match e {
         2 | 3 | 15 | 123 => ENOENT,
         80 | 183 => EEXIST,

@@ -1,5 +1,7 @@
 //! User data is separate from the immutable game store.
 use anyhow::{ensure, Result};
+use h5i_app_core::Kernel;
+use masu_kernel::library::{Metadata, MetadataCommand, Profile as ProfileKernel, ProfileRecord};
 use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
@@ -28,7 +30,8 @@ pub struct MetaStatus {
 pub const EGS_GAMES_MAX_AGE_MS: i64 = 24 * 3_600_000;
 
 /// A fetch left pending this long (the server stopped during it) reads as failed.
-pub const META_STALE_MS: i64 = 10 * 60_000;
+#[cfg(test)]
+use masu_kernel::library::METADATA_STALE_MS as META_STALE_MS;
 
 fn now_ms() -> i64 {
     std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_millis() as i64)
@@ -162,8 +165,11 @@ impl Library {
     /// Starts a fetch of `url` for `game`: its state is pending until `finish_meta` with the
     /// job returned (a later start makes an earlier job's result go nowhere).
     pub fn begin_meta(&self, game: &str, url: &str) -> Result<String> {
-        ensure!(url.len() <= 2048, "url too long");
-        let job = uuid::Uuid::new_v4().to_string();
+        let job = uuid::Uuid::new_v4().as_u128();
+        let Ok((job, ())) = Metadata::transition(&(), &None, &MetadataCommand::Begin { job, url_bytes: url.len() }) else {
+            anyhow::bail!("url too long");
+        };
+        let job = uuid::Uuid::from_u128(job).to_string();
         self.connect()?.execute(
             "INSERT INTO game_meta(game,url,job,state,error,updated_ms) VALUES(?,?,?,'pending','',?) ON CONFLICT(game) DO UPDATE SET url=excluded.url,job=excluded.job,state='pending',error='',updated_ms=excluded.updated_ms",
             params![game, url, job, now_ms()],
@@ -174,21 +180,30 @@ impl Library {
     /// Ends `job`: its info (JSON) and cover (bytes, media type; `None` keeps the one before), or
     /// the error. False when the job is no longer the game's last.
     pub fn finish_meta(&self, game: &str, job: &str, result: std::result::Result<(String, Option<(Vec<u8>, String)>), String>) -> Result<bool> {
-        let c = self.connect()?;
-        let n = match result {
+        use rusqlite::OptionalExtension;
+        let Ok(job) = uuid::Uuid::parse_str(job) else { return Ok(false) };
+        let mut c = self.connect()?;
+        let tx = c.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+        let active: Option<String> = tx.query_row("SELECT job FROM game_meta WHERE game=?", [game], |r| r.get(0)).optional()?;
+        let active = active.and_then(|job| uuid::Uuid::parse_str(&job).ok()).map(|job| job.as_u128());
+        if Metadata::transition(&(), &active, &MetadataCommand::Finish { job: job.as_u128() }).is_err() {
+            return Ok(false);
+        }
+        match result {
             Ok((info, cover)) => {
                 let (bytes, ty) = cover.map_or((None, None), |(b, t)| (Some(b), Some(t)));
-                c.execute(
-                    "UPDATE game_meta SET state='ok',error='',info=?,cover=coalesce(?,cover),cover_type=coalesce(?,cover_type),updated_ms=? WHERE game=? AND job=?",
-                    params![info, bytes, ty, now_ms(), game, job],
+                tx.execute(
+                    "UPDATE game_meta SET state='ok',error='',info=?,cover=coalesce(?,cover),cover_type=coalesce(?,cover_type),updated_ms=? WHERE game=?",
+                    params![info, bytes, ty, now_ms(), game],
                 )?
             }
-            Err(e) => c.execute(
-                "UPDATE game_meta SET state='error',error=?,updated_ms=? WHERE game=? AND job=?",
-                params![e.chars().take(1000).collect::<String>(), now_ms(), game, job],
+            Err(e) => tx.execute(
+                "UPDATE game_meta SET state='error',error=?,updated_ms=? WHERE game=?",
+                params![e.chars().take(1000).collect::<String>(), now_ms(), game],
             )?,
         };
-        Ok(n == 1)
+        tx.commit()?;
+        Ok(true)
     }
 
     pub fn meta_status(&self, game: &str) -> Result<Option<MetaStatus>> {
@@ -200,7 +215,7 @@ impl Library {
             })
             .optional()?;
         Ok(s.map(|mut s| {
-            if s.state == "pending" && now_ms() - s.updated_ms > META_STALE_MS {
+            if s.state == "pending" && masu_kernel::library::metadata_pending_expired(s.updated_ms, now_ms()) {
                 s.state = "error".into();
                 s.error = "取得が途中で止まりました（サーバーの再起動など）".into();
             }
@@ -355,9 +370,17 @@ impl Library {
     }
 
     pub fn set_profile(&self, game: &str, p: &Profile) -> Result<()> {
-        ensure!(p.note.len() <= 100_000, "note too long");
-        self.connect()?.execute("INSERT INTO profiles(game,favorite,note) VALUES(?,?,?) ON CONFLICT(game) DO UPDATE SET favorite=excluded.favorite,note=excluded.note",
-            params![game,p.favorite,p.note])?;
+        Self::write_profile(&self.connect()?, game, p)
+    }
+
+    pub(crate) fn write_profile(c: &Connection, game: &str, p: &Profile) -> Result<()> {
+        let command = ProfileRecord { favorite: p.favorite, note: p.note.as_bytes().to_vec() };
+        let Ok((write, ())) = ProfileKernel::transition(&(), &ProfileRecord::default(), &command) else {
+            anyhow::bail!("note too long");
+        };
+        let note = std::str::from_utf8(&write.note)?;
+        c.execute("INSERT INTO profiles(game,favorite,note) VALUES(?,?,?) ON CONFLICT(game) DO UPDATE SET favorite=excluded.favorite,note=excluded.note",
+            params![game,write.favorite,note])?;
         Ok(())
     }
 
@@ -377,18 +400,35 @@ impl Library {
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)?
             .as_millis() as i64;
-        ensure!(
-            s.started_ms > 0
-                && s.started_ms <= now + 60_000
-                && s.elapsed_ms >= 0
-                && s.elapsed_ms <= (now - s.started_ms).max(0) + 60_000,
-            "invalid session time"
-        );
-        let c = self.connect()?;
-        let n = c.execute("INSERT INTO sessions(id,game,started_ms,elapsed_ms) VALUES(?,?,?,?) ON CONFLICT(id) DO UPDATE SET elapsed_ms=max(sessions.elapsed_ms,excluded.elapsed_ms) WHERE sessions.game=excluded.game AND sessions.started_ms=excluded.started_ms",
-            params![s.id,s.game,s.started_ms,s.elapsed_ms])?;
-        ensure!(n == 1, "session identity conflict");
+        let mut c = self.connect()?;
+        let tx = c.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+        ensure!(Self::merge_session(&tx, s, Some(now))?, "session identity conflict");
+        tx.commit()?;
         Ok(())
+    }
+
+    /// Reads and applies a session transition within the caller's write transaction.
+    /// A conflicting ID belongs to another session and is kept as-is.
+    pub(crate) fn merge_session(tx: &rusqlite::Transaction<'_>, s: &Session, now_ms: Option<i64>) -> Result<bool> {
+        use masu_kernel::session::{Command, Record, Refusal, Session as SessionKernel};
+        use rusqlite::OptionalExtension;
+
+        let previous = tx.query_row("SELECT game,started_ms,elapsed_ms FROM sessions WHERE id=?", [&s.id], |r| {
+            Ok(Record { game: r.get::<_, String>(0)?.into_bytes(), started_ms: r.get(1)?, elapsed_ms: r.get(2)? })
+        }).optional()?;
+        let cmd = Command {
+            record: Record { game: s.game.as_bytes().to_vec(), started_ms: s.started_ms, elapsed_ms: s.elapsed_ms },
+            now_ms,
+        };
+        let write = match SessionKernel::transition(&(), &previous, &cmd) {
+            Ok((write, ())) => write,
+            Err(Refusal::IdentityConflict) => return Ok(false),
+            Err(Refusal::InvalidTime) => anyhow::bail!("invalid session time"),
+        };
+        let game = std::str::from_utf8(&write.game)?;
+        tx.execute("INSERT INTO sessions(id,game,started_ms,elapsed_ms) VALUES(?,?,?,?) ON CONFLICT(id) DO UPDATE SET elapsed_ms=excluded.elapsed_ms",
+            params![s.id, game, write.started_ms, write.elapsed_ms])?;
+        Ok(true)
     }
 
     pub fn sessions(&self) -> Result<Vec<Session>> {

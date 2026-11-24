@@ -140,7 +140,10 @@ pub extern "C" fn jb_set(knob: u32, v: u32) {
     let on = v != 0;
     match knob {
         4 => NOJIT.store(on, Relaxed),
-        0 => jit::FN.store(on, Relaxed),
+        0 => {
+            jit::FN.store(on, Relaxed);
+            jit::long::FN64.store(on, Relaxed);
+        }
         1 => jit::HOIST.store(on, Relaxed),
         2 => jit::wasm::MEMCOUNT.store(on, Relaxed),
         3 => jit::MX_EXACT.store(on, Relaxed),
@@ -178,14 +181,20 @@ pub extern "C" fn jb_setup(i: u32, scale: u32, keep: u32) -> u32 {
         std::ptr::copy_nonoverlapping(p.data.as_ptr(), DATA as usize as *mut u8, p.data.len());
     }
     let c = cpu();
-    *c = Cpu { eip: CODE, ..Cpu::default() };
+    *c = Cpu { mode64: u32::from(p.long), eip: CODE, ..Cpu::default() };
     for (r, v) in p.regs {
         c.regs[r] = v;
     }
     c.regs[koji::ESP] = STACK - 0x100;
     // the guest's return address: END
     // SAFETY: the stack's top, in the guest's range
-    unsafe { *((STACK - 0x100) as usize as *mut u32) = END };
+    unsafe {
+        if p.long {
+            *((STACK - 0x100) as usize as *mut u64) = u64::from(END);
+        } else {
+            *((STACK - 0x100) as usize as *mut u32) = END;
+        }
+    }
     c.eflags = 0x202;
     if keep == 0 {
         // SAFETY: the hash table, the call cache and page bits: this crate's (below the guest)
@@ -198,12 +207,25 @@ pub extern "C" fn jb_setup(i: u32, scale: u32, keep: u32) -> u32 {
     }
     ST.with(|s| s.borrow_mut().stats = Stats::default());
     STEP_CALLS.store(0, Relaxed);
+    if jit::wasm::MEMCOUNT.load(Relaxed) {
+        for count in &jit::wasm::MEM_COUNTS {
+            count.store(0, Relaxed);
+        }
+    }
     p.code.len() as u32
 }
 
 /// Counter `k` of the last runs (since jb_setup), Stats' order
 #[unsafe(no_mangle)]
 pub extern "C" fn jb_stat(k: u32) -> f64 {
+    if k == 10 || k == 11 {
+        use jit::wasm::{MEM_COUNTS, MEM_CPU_SLOTS, MEM_SITE_SLOTS};
+        let start = if k == 10 { 0 } else { MEM_CPU_SLOTS };
+        return MEM_COUNTS.chunks_exact(MEM_SITE_SLOTS)
+            .flat_map(|site| &site[start..start + MEM_CPU_SLOTS])
+            .map(|count| f64::from(count.load(Relaxed)))
+            .sum();
+    }
     ST.with(|s| {
         let mut s = s.borrow().stats;
         s.step_calls = f64::from(STEP_CALLS.load(Relaxed));
@@ -219,11 +241,20 @@ pub extern "C" fn jb_checksum() -> u32 {
     c2.materialize();
     let mut h: u32 = 0x811c_9dc5;
     let mut mix = |v: u32| h = (h ^ v).wrapping_mul(0x0100_0193);
-    for i in 0..8 {
-        mix(c2.regs[koji::Gpr::ALL[i]]);
+    if c2.mode64 != 0 {
+        for r in koji::Reg64::ALL {
+            let v = c2.gpr(r);
+            mix(v as u32);
+            mix((v >> 32) as u32);
+        }
+    } else {
+        for i in 0..8 {
+            mix(c2.regs[koji::Gpr::ALL[i]]);
+        }
     }
     mix(c2.eflags & 0x8d5);
-    for x in c2.xmm.iter().take(8) {
+    let long_vectors = c2.xmm8.iter().chain(c2.ymmh[..16].iter()).take(if c2.mode64 != 0 { 24 } else { 0 });
+    for x in c2.xmm.iter().chain(long_vectors) {
         mix(*x as u32);
         mix((*x >> 32) as u32);
         mix((*x >> 64) as u32);
@@ -324,13 +355,23 @@ fn hash_insert(a: u32, v: u32) -> bool {
     false
 }
 
-fn translate(st: &mut State, eip: u32) -> bool {
+fn translate(st: &mut State, eip: u32, long: bool) -> Result<bool, ()> {
     st.known.insert(eip);
-    let fns = jit::FN.load(Relaxed);
+    let fns = if long { jit::long::FN64.load(Relaxed) } else { jit::FN.load(Relaxed) };
     let t0 = unsafe { jb_now() };
     let ran = st.ran.clone();
     let accept = |a: u32| a != END;
-    let built = if fns {
+    let built = if long {
+        let mut m = Module::default();
+        let trap = (END, END + 16);
+        let entry = u64::from(eip);
+        let r = if fns {
+            jit::long::translate_function64(&mut m, &mut Linear, entry, trap, 1000, |a, _| accept(a))
+        } else {
+            jit::long::translate_region64(&mut m, &mut Linear, &[entry], trap, |a, _| accept(a))
+        };
+        r.map(|r| (m, r))
+    } else if fns {
         jit::translate_function_fit(None, &mut Linear, eip, jit::MAX_BLOCKS, 1000, 250, (END, END + 16), &|_| None, &|a| ran.contains(&a), accept)
     } else {
         let mut m = Module::default();
@@ -338,7 +379,7 @@ fn translate(st: &mut State, eip: u32) -> bool {
     };
     let Some((m, region)) = built else {
         st.stats.translate_ms += unsafe { jb_now() } - t0;
-        return false;
+        return Ok(false);
     };
     let bytes = m.finish();
     st.stats.translate_ms += unsafe { jb_now() } - t0;
@@ -354,17 +395,19 @@ fn translate(st: &mut State, eip: u32) -> bool {
     };
     if base < 0 {
         st.stats.load_fail += 1.0;
-        return false;
+        return Err(());
     }
     let idx = base as u32;
     for (i, &(a, k)) in region.starts.iter().enumerate() {
         st.known.insert(a);
-        let v = if fns { idx | (i as u32) << jit::ENTRY_SHIFT | jit::FN_TAG } else { idx | k << jit::ENTRY_SHIFT };
+        let entry = if long || !fns { k } else { i as u32 };
+        let tag = if fns { jit::FN_TAG } else { 0 };
+        let v = idx | entry << jit::ENTRY_SHIFT | tag;
         if !hash_insert(a, v) {
-            return false;
+            return Err(());
         }
     }
-    true
+    Ok(true)
 }
 
 /// Runs the program set up from EIP to END: 0 done, 1 an exception (the interpreter's), 2 a
@@ -415,8 +458,12 @@ pub extern "C" fn jb_run() -> u32 {
                     let eip = c.eip;
                     let m = st.misses.entry(eip).or_insert(0);
                     *m += 1;
-                    if *m >= THRESHOLD && !st.known.contains(&eip) && translate(st, eip) {
-                        continue;
+                    if *m >= THRESHOLD && !st.known.contains(&eip) {
+                        match translate(st, eip, c.mode64 != 0) {
+                            Ok(true) => continue, // dispatch the installed translation at this EIP
+                            Ok(false) => {}
+                            Err(()) => return 2,
+                        }
                     }
                     // the interpreter up to the next branch
                     for _ in 0..4096 {

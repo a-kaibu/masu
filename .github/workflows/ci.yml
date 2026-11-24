@@ -260,6 +260,10 @@ jobs:
       # (crates/masu-lint/src/dup.rs); the copies kept on purpose are in tools/ci/dup-sites.tsv)
       - name: Duplicate lint (masu-lint dup)
         run: cargo run -q --release -p masu-lint -- dup
+      - name: JIT benchmark result checks
+        run: |
+          node --test tools/jitbench/core.test.mjs
+          cargo test --locked --release --manifest-path tools/jitbench/Cargo.toml
       # (SingleStepTests: real-mode tests recorded on a real 80386EX, 80286, 8086, 8088 and
       # NEC V20, ~1.9 GB, which crates/koji/tests/singlestep.rs runs when they are there)
       - id: cache-2

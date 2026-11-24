@@ -178,7 +178,7 @@ fn tailnet(peer: SocketAddr, h: &HeaderMap) -> bool {
 
 /// Where to go after signing in: a path of this server's (not `//host`, which is another one).
 fn next_path(next: Option<String>) -> String {
-    next.filter(|n| n.starts_with('/') && !n.starts_with("//") && !n.starts_with("/\\") && !n.contains(['\r', '\n'])).unwrap_or_else(|| "/".into())
+    next.filter(|n| masu_kernel::access::return_path(n.as_bytes())).unwrap_or_else(|| "/".into())
 }
 
 fn page(status: StatusCode, note: &str, next: &str) -> Response {
@@ -239,7 +239,7 @@ pub async fn guard(State(auth): State<Arc<Auth>>, ConnectInfo(peer): ConnectInfo
         return login(&auth, req).await;
     }
     let h = req.headers();
-    if (!auth.strict && (local(peer, h) || tailnet(peer, h))) || auth.signed_in(h) {
+    if masu_kernel::access::anonymous_allowed(auth.strict, local(peer, h) || tailnet(peer, h)) || auth.signed_in(h) {
         return next.run(req).await;
     }
     let back = req.uri().path_and_query().map_or("/", |p| p.as_str()).to_string();

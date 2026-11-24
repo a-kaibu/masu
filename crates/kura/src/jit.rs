@@ -286,6 +286,10 @@ fn code_kept(code: &[(u32, u32)]) -> bool {
     code.iter().all(|&(a, n)| !page_set(&SMC_PAGES, a) && !page_set(&SMC_PAGES, a.saturating_add(n.max(1) - 1)))
 }
 
+fn translation_code_kept(code: &[(u32, u32)], flag_deps: u32) -> bool {
+    code_kept(code) && jit::flag_dependencies_stable(code, flag_deps)
+}
+
 /// The interpreter's store of `len` bytes at `a` (cpu.rs Linear): whether it hit translated
 /// code (then handled by [`smc_hit`]). The page bitmap first (a store to a page without
 /// translated code: two bit tests, no lock), the code's byte ranges then.
@@ -540,6 +544,7 @@ struct Shared {
     bytes: Vec<u8>,
     starts: Vec<(u32, u32)>,
     code: Vec<(u32, u32)>,
+    flag_deps: u32,
     /// the guest code bytes of `code`, concatenated
     text: Vec<u8>,
     /// a function's (jit::FN): its build (1 up; 0 for a region) and indirect call sites
@@ -716,7 +721,7 @@ fn region_text(mem: &mut Linear, region: &jit::Region) -> Option<Vec<u8>> {
 /// A region for `roots` some thread built from the same code as ours.
 fn shared(mem: &mut Linear, roots: &[u32]) -> Option<Arc<Shared>> {
     let list = SHARED.locked().as_ref()?.get(roots)?.clone();
-    list.into_iter().rev().find(|r| r.ctx.runs_now() && code_kept(&r.code) && code_bytes(mem, &r.code).is_some_and(|t| t == r.text))
+    list.into_iter().rev().find(|r| r.ctx.runs_now() && translation_code_kept(&r.code, r.flag_deps) && code_bytes(mem, &r.code).is_some_and(|t| t == r.text))
 }
 
 fn share(mem: &mut Linear, roots: &[u32], bytes: Vec<u8>, region: &jit::Region) {
@@ -725,7 +730,7 @@ fn share(mem: &mut Linear, roots: &[u32], bytes: Vec<u8>, region: &jit::Region) 
 
 fn share_build(mem: &mut Linear, key: Vec<u32>, bytes: Vec<u8>, region: &jit::Region, build: u32) {
     let Some(text) = region_text(mem, region) else { return };
-    let r = Arc::new(Shared { bytes, starts: region.starts.clone(), code: region.code.clone(), text, build, sites: region.sites.clone(), ctx: region.ctx, seq: share_seq() });
+    let r = Arc::new(Shared { bytes, starts: region.starts.clone(), code: region.code.clone(), flag_deps: region.flag_deps, text, build, sites: region.sites.clone(), ctx: region.ctx, seq: share_seq() });
     share_push(key, r);
 }
 
@@ -1024,6 +1029,7 @@ fn drop_pages(st: &mut State, pages: &[(u32, u32)]) -> bool {
     if !st.pending.is_empty() {
         return false;
     }
+    st.park.forget(|base| bad.contains(&base));
     let mask = (1u32 << jit::ENTRY_SHIFT) - 1;
     let (gone, kept): (Vec<[u32; 2]>, Vec<[u32; 2]>) = st.hash.iter().filter(|e| e[0] != 0).partition(|e| bad.contains(&(e[1] & mask)));
     st.hash.iter_mut().for_each(|e| *e = [0, 0]);
@@ -1673,7 +1679,7 @@ fn find_saved(mem: &mut Linear, roots: &[u32], exact: bool, trap: (u32, u32)) ->
         .filter(|&i| !exact || s.entries[i].roots == roots)
         .filter(|&i| s.entries[i].code.iter().all(|&(a, n)| a.saturating_add(n) <= trap.0 || a >= trap.1))
         .filter(|&i| s.entries.get(i).is_some_and(|e| e.pages.runs_now()))
-        .filter(|&i| code_kept(&s.entries[i].code) && code_bytes(mem, &s.entries[i].code).is_some_and(|t| t == s.entries[i].text))
+        .filter(|&i| translation_code_kept(&s.entries[i].code, s.entries[i].flag_deps) && code_bytes(mem, &s.entries[i].code).is_some_and(|t| t == s.entries[i].text))
         .max_by_key(|&i| s.entries.get(i).map(|e| (e.roots.len(), e.pages == jit::Pages::now())))
 }
 
@@ -1728,7 +1734,7 @@ fn find_saved_fn(mem: &mut Linear, eip: u32) -> Option<usize> {
         .iter()
         .copied()
         .filter(|&i| s.entries.get(i).is_some_and(|e| e.pages.runs_now()))
-        .filter(|&i| code_kept(&s.entries[i].code) && code_bytes(mem, &s.entries[i].code).is_some_and(|t| t == s.entries[i].text))
+        .filter(|&i| translation_code_kept(&s.entries[i].code, s.entries[i].flag_deps) && code_bytes(mem, &s.entries[i].code).is_some_and(|t| t == s.entries[i].text))
         .max_by_key(|&i| s.entries.get(i).map(|e| (e.build, e.pages == jit::Pages::now())))
 }
 
@@ -1765,15 +1771,17 @@ const SAVE_EVERY: Duration = Duration::from_secs(30);
 /// A save with no answer by then counts as failed (a slow phone's upload of a big one included).
 const SAVE_TIMEOUT: Duration = Duration::from_secs(300);
 
+type SaveBuild = (Vec<u32>, jit::Pages, u32);
+
 /// What has been sent to be saved and what came of it (maybe_save): a region counts as saved
 /// only once the server took it; one whose save failed goes again, the wait doubling (30 s up
 /// to 8 min) while saves keep failing.
 #[derive(Default)]
 struct SaveBook {
     /// a region's newest build the server took (or refused for good)
-    done: HashMap<Vec<u32>, u32>,
+    done: HashMap<jit::Pages, HashMap<Vec<u32>, u32>>,
     /// sent, no answer yet: id -> (when, the regions' builds, the chunks list's length when it is one)
-    inflight: HashMap<u32, (Instant, Vec<(Vec<u32>, u32)>, Option<usize>)>,
+    inflight: HashMap<u32, (Instant, Vec<SaveBuild>, Option<usize>)>,
     next_id: u32,
     /// failures in a row
     fails: u32,
@@ -1788,11 +1796,19 @@ const CHUNKS_STEP: usize = 32;
 
 impl SaveBook {
     /// Whether `build` of region `r` is to be sent: newer than the one taken, and not on its way.
-    fn wanted(&self, r: &[u32], build: u32) -> bool {
-        self.done.get(r).is_none_or(|&b| build > b) && !self.inflight.values().any(|(_, rs, _)| rs.iter().any(|(x, b)| x == r && *b >= build))
+    fn wanted(&self, r: &[u32], pages: jit::Pages, build: u32) -> bool {
+        self.done.get(&pages).and_then(|done| done.get(r)).is_none_or(|&b| build > b)
+            && !self.inflight.values().any(|(_, rs, _)| rs.iter().any(|(x, p, b)| x == r && *p == pages && *b >= build))
     }
 
-    fn send(&mut self, now: Instant, regions: Vec<(Vec<u32>, u32)>, chunks: Option<usize>) -> u32 {
+    fn wanted_builds<'a>(&'a self, roots: &'a [u32], builds: &'a [Arc<Shared>]) -> impl Iterator<Item = &'a Arc<Shared>> {
+        [jit::Pages::Unchecked, jit::Pages::Checked].into_iter().filter_map(move |pages| {
+            let newest = builds.iter().filter(|b| b.ctx.pages == pages && b.ctx.saveable()).max_by_key(|b| b.build)?;
+            self.wanted(roots, pages, newest.build).then_some(newest)
+        })
+    }
+
+    fn send(&mut self, now: Instant, regions: Vec<SaveBuild>, chunks: Option<usize>) -> u32 {
         self.next_id = self.next_id.wrapping_add(1);
         self.inflight.insert(self.next_id, (now, regions, chunks));
         self.next_id
@@ -1808,8 +1824,8 @@ impl SaveBook {
         let Some((_, regions, chunks)) = self.inflight.remove(&id) else { return };
         match a {
             Ack::Taken | Ack::Refused => {
-                for (r, b) in regions {
-                    let d = self.done.entry(r).or_insert(b);
+                for (r, pages, b) in regions {
+                    let d = self.done.entry(pages).or_default().entry(r).or_insert(b);
                     *d = (*d).max(b);
                 }
                 // (refused: not again until it is longer either)
@@ -1952,11 +1968,7 @@ fn maybe_save() {
         let sh = SHARED.locked();
         let Some(sh) = sh.as_ref() else { return };
         sh.iter()
-            .filter_map(|(r, l)| {
-                let s = l.iter().max_by_key(|s| s.build)?;
-                // (made with counters of this run or the MXCSR flag checks: not for another)
-                (s.ctx.saveable() && book.wanted(r, s.build)).then(|| (r.clone(), s.clone()))
-            })
+            .flat_map(|(roots, builds)| book.wanted_builds(roots, builds).map(|build| (roots.clone(), build.clone())))
             .collect()
     };
     // the store chunks the run read so far, in order (the next run's page fetches them ahead):
@@ -1972,7 +1984,7 @@ fn maybe_save() {
         return;
     }
     g.1 = Some(now);
-    let id = book.send(now, new.iter().map(|(r, s)| (r.clone(), s.build)).collect(), None);
+    let id = book.send(now, new.iter().map(|(r, s)| (r.clone(), s.ctx.pages, s.build)).collect(), None);
     drop(guard);
     // merged and sent on a thread of its own: the merge of a few hundred functions took the
     // game's thread tens of ms
@@ -2021,6 +2033,7 @@ fn save((url, id, new, chunks): Save) {
             roots: if s.build > 0 { r[..1].to_vec() } else { r.clone() },
             starts: s.starts.clone(),
             code: s.code.clone(),
+            flag_deps: s.flag_deps,
             text: s.text.clone(),
             build: s.build,
             sites: s.sites.clone(),
@@ -3085,7 +3098,7 @@ fn take_built(st: &mut State, mem: &mut Linear) {
         // when hot)
         let kept: Vec<bool> = items
             .iter()
-            .map(|(_, _, b)| b.as_ref().is_none_or(|(_, r, text)| code_kept(&r.code) && code_bytes(mem, &r.code).is_some_and(|t| t == *text)))
+            .map(|(_, _, b)| b.as_ref().is_none_or(|(_, r, text)| translation_code_kept(&r.code, r.flag_deps) && code_bytes(mem, &r.code).is_some_and(|t| t == *text)))
             .collect();
         for ((eip, _, b), k) in items.iter().zip(&kept) {
             if !k && b.is_some() && wx_page(*eip) {
@@ -3157,6 +3170,9 @@ fn finish_fn(st: &mut State, eip: u32, build: u32, built: Built, at: Option<u32>
         st.known.insert(eip);
         return false;
     };
+    if !jit::flag_dependencies_stable(&region.code, region.flag_deps) {
+        return false;
+    }
     let t1 = Instant::now();
     let ok = match at {
         Some(base) => {
@@ -3174,7 +3190,7 @@ fn finish_fn(st: &mut State, eip: u32, build: u32, built: Built, at: Option<u32>
     }
     if ok {
         keep_profile(&mut region);
-        let r = Arc::new(Shared { bytes, starts: region.starts, code: region.code, text, build, sites: region.sites, ctx: region.ctx, seq: share_seq() });
+        let r = Arc::new(Shared { bytes, starts: region.starts, code: region.code, flag_deps: region.flag_deps, text, build, sites: region.sites, ctx: region.ctx, seq: share_seq() });
         share_push(fn_key(eip).to_vec(), r);
         maybe_save();
     }
@@ -3620,8 +3636,8 @@ mod table_tests {
 mod save_tests {
     use super::*;
 
-    fn regions(n: u32, build: u32) -> Vec<(Vec<u32>, u32)> {
-        (0..n).map(|i| (vec![0x1000 + i], build)).collect()
+    fn regions(n: u32, build: u32) -> Vec<SaveBuild> {
+        (0..n).map(|i| (vec![0x1000 + i], jit::Pages::Unchecked, build)).collect()
     }
 
     #[test]
@@ -3630,12 +3646,50 @@ mod save_tests {
         let mut b = SaveBook::default();
         let id = b.send(t0, regions(3, 0), None);
         // on its way: not sent again, not saved either
-        assert!(!b.wanted(&[0x1000], 0));
-        assert!(b.wanted(&[0x1000], 1), "a newer build goes");
+        assert!(!b.wanted(&[0x1000], jit::Pages::Unchecked, 0));
+        assert!(b.wanted(&[0x1000], jit::Pages::Unchecked, 1), "a newer build goes");
         b.answer(id, Ack::Taken);
-        assert!(!b.wanted(&[0x1000], 0) && b.wanted(&[0x1000], 1));
+        assert!(!b.wanted(&[0x1000], jit::Pages::Unchecked, 0) && b.wanted(&[0x1000], jit::Pages::Unchecked, 1));
         assert!(b.inflight.is_empty());
         assert_eq!(b.wait(), SAVE_EVERY);
+    }
+
+    #[test]
+    fn page_check_variants_have_independent_save_history() {
+        use jit::Pages::{Checked, Unchecked};
+        let now = Instant::now();
+        let mut book = SaveBook::default();
+        let roots = vec![0x1000];
+        let old = book.send(now, vec![(roots.clone(), Unchecked, 1)], None);
+        assert!(!book.wanted(&roots, Unchecked, 1));
+        assert!(book.wanted(&roots, Checked, 1));
+        let new = book.send(now, vec![(roots.clone(), Checked, 1)], None);
+        book.answer(old, Ack::Taken);
+        book.answer(new, Ack::Failed);
+        assert!(!book.wanted(&roots, Unchecked, 1));
+        assert!(book.wanted(&roots, Checked, 1));
+    }
+
+    #[test]
+    fn newest_saveable_build_is_chosen_per_page_check_mode() {
+        use jit::Pages::{Checked, Unchecked};
+        let make = |pages, build| {
+            let mut ctx = jit::TranslationContext::now(jit::context::Arch::Flat32);
+            ctx.pages = pages;
+            ctx.float = jit::context::Float::Fast;
+            ctx.ranges = jit::context::Ranges::Checked;
+            ctx.measure = jit::context::Measure::default();
+            Arc::new(Shared { bytes: vec![], starts: vec![], code: vec![], flag_deps: 0, text: vec![], build, sites: vec![], ctx, seq: 0 })
+        };
+        let roots = vec![0x1000];
+        let builds = [make(Unchecked, 9), make(Checked, 0), make(Checked, 1)];
+        let mut book = SaveBook::default();
+        let due = |book: &SaveBook| book.wanted_builds(&roots, &builds).map(|b| (b.ctx.pages, b.build)).collect::<Vec<_>>();
+        assert_eq!(due(&book), vec![(Unchecked, 9), (Checked, 1)]);
+        let id = book.send(Instant::now(), vec![(roots.clone(), Unchecked, 9)], None);
+        assert_eq!(due(&book), vec![(Checked, 1)]);
+        book.answer(id, Ack::Taken);
+        assert_eq!(due(&book), vec![(Checked, 1)]);
     }
 
     #[test]
@@ -3646,14 +3700,14 @@ mod save_tests {
         for _ in 0..6 {
             let id = b.send(t0, regions(2, 0), None);
             b.answer(id, Ack::Failed);
-            assert!(b.wanted(&[0x1000], 0) && b.wanted(&[0x1001], 0), "sent again");
+            assert!(b.wanted(&[0x1000], jit::Pages::Unchecked, 0) && b.wanted(&[0x1001], jit::Pages::Unchecked, 0), "sent again");
             waits.push(b.wait().as_secs());
         }
         assert_eq!(waits, [60, 120, 240, 480, 480, 480]);
         let id = b.send(t0, regions(2, 0), None);
         b.answer(id, Ack::Taken);
         assert_eq!(b.wait(), SAVE_EVERY, "back to every 30 s once one is taken");
-        assert!(!b.wanted(&[0x1000], 0));
+        assert!(!b.wanted(&[0x1000], jit::Pages::Unchecked, 0));
     }
 
     #[test]
@@ -3661,8 +3715,8 @@ mod save_tests {
         let mut b = SaveBook::default();
         let id = b.send(Instant::now(), regions(1, 2), None);
         b.answer(id, Ack::Refused);
-        assert!(!b.wanted(&[0x1000], 2) && !b.wanted(&[0x1000], 1));
-        assert!(b.wanted(&[0x1000], 3));
+        assert!(!b.wanted(&[0x1000], jit::Pages::Unchecked, 2) && !b.wanted(&[0x1000], jit::Pages::Unchecked, 1));
+        assert!(b.wanted(&[0x1000], jit::Pages::Unchecked, 3));
     }
 
     #[test]
@@ -3676,7 +3730,7 @@ mod save_tests {
         b.expire(t0 + SAVE_TIMEOUT - Duration::from_secs(1));
         assert_eq!(b.inflight.len(), 2);
         b.expire(t0 + SAVE_TIMEOUT);
-        assert!(b.inflight.is_empty() && b.wanted(&[0x1000], 0));
+        assert!(b.inflight.is_empty() && b.wanted(&[0x1000], jit::Pages::Unchecked, 0));
         assert!(b.chunks_due(5), "the chunks list goes again too");
         // a late answer for one already given up: nothing
         b.answer(c, Ack::Taken);
@@ -3783,7 +3837,7 @@ mod save_tests {
         vnhost_jit_saved(a, 1);
         vnhost_jit_saved(NO_ACK, 0);
         take_acks(&mut b);
-        assert!(!b.wanted(&[0x1000], 0), "the save's own answer stands");
+        assert!(!b.wanted(&[0x1000], jit::Pages::Unchecked, 0), "the save's own answer stands");
     }
 
     #[test]
@@ -3792,16 +3846,16 @@ mod save_tests {
         // (ids far from the other tests': slots are per process)
         b.next_id = 1000;
         let a = b.send(Instant::now(), regions(1, 0), None);
-        let c = b.send(Instant::now(), vec![(vec![0x2000], 0)], None);
+        let c = b.send(Instant::now(), vec![(vec![0x2000], jit::Pages::Unchecked, 0)], None);
         vnhost_jit_saved(a, 1);
         // a stale answer in c's slot (an id 32 before): not c's
         ack(c.wrapping_sub(32), Ack::Taken);
         take_acks(&mut b);
-        assert!(!b.wanted(&[0x1000], 0));
+        assert!(!b.wanted(&[0x1000], jit::Pages::Unchecked, 0));
         assert!(b.inflight.contains_key(&c));
         vnhost_jit_saved(c, 0);
         take_acks(&mut b);
-        assert!(b.inflight.is_empty() && b.wanted(&[0x2000], 0) && b.fails == 1);
+        assert!(b.inflight.is_empty() && b.wanted(&[0x2000], jit::Pages::Unchecked, 0) && b.fails == 1);
     }
 }
 
@@ -3844,7 +3898,7 @@ mod late_tests {
     use proptest::prelude::*;
 
     fn entry(root: u32, build: u32) -> Entry {
-        Entry { roots: vec![root], starts: vec![(root, 0)], code: vec![(root, 4)], text: vec![0x90; 4], build, sites: vec![], pages: jit::Pages::Unchecked }
+        Entry { roots: vec![root], starts: vec![(root, 0)], code: vec![(root, 4)], flag_deps: 0, text: vec![0x90; 4], build, sites: vec![], pages: jit::Pages::Unchecked }
     }
 
     /// A part as the page hands it over: its bytes kept for good (as kura keeps the page's).
@@ -4006,6 +4060,27 @@ mod invalidate_tests {
             // a translation in flight may be of the old code: the whole state goes instead
             st.pending.insert(0x500000);
             assert!(!drop_pages(st, &[(0x500, 0x500)]));
+        });
+        STATE.with(|s| *s.borrow_mut() = None);
+    }
+
+    #[test]
+    fn changing_only_a_flag_dependency_drops_the_caller_and_its_parked_copy() {
+        with_state(|st| {
+            let caller = 0x401100;
+            let callee = 0x500000;
+            let code = vec![(caller, 8), (callee, 2)];
+            put(st, 1, &[caller], &code);
+            put(st, 2, &[0x604010], &[(0x604010, 8)]);
+            st.calls[0] = [caller, 1];
+            st.park.track(park::Wx { base: 1, entries: vec![(caller, 1)], roots: vec![caller], func: None, code, text: vec![0; 10] });
+
+            assert!(drop_pages(st, &[(callee >> 12, callee >> 12)]));
+            assert_eq!(slot_of(st, caller), None);
+            assert_eq!(st.calls[0], [0, 0]);
+            assert!(!st.known.contains(&caller));
+            assert!(!st.park.bases().any(|base| base == 1));
+            assert_eq!(slot_of(st, 0x604010), Some(2));
         });
         STATE.with(|s| *s.borrow_mut() = None);
     }
@@ -4241,7 +4316,7 @@ mod invalidate_tests {
 
     #[test]
     fn shared_builds_are_bounded() {
-        let mk = |text: u8, build: u32, n: usize| Arc::new(Shared { bytes: vec![0; n], starts: vec![], code: vec![], text: vec![text], build, sites: vec![], ctx: jit::TranslationContext::now(jit::context::Arch::Flat32), seq: share_seq() });
+        let mk = |text: u8, build: u32, n: usize| Arc::new(Shared { bytes: vec![0; n], starts: vec![], code: vec![], flag_deps: 0, text: vec![text], build, sites: vec![], ctx: jit::TranslationContext::now(jit::context::Arch::Flat32), seq: share_seq() });
         let key = vec![0xdead_0000u32];
         // a newer build of the same code takes the older one's place
         share_push(key.clone(), mk(1, 1, 10));
@@ -4272,7 +4347,7 @@ mod invalidate_tests {
     /// change left 100 bytes held and 0 counted). Each check takes the same lock as a push.
     #[test]
     fn shared_bytes_are_what_the_map_holds_under_any_interleaving() {
-        let mk = |text: u8, build: u32, n: usize| Arc::new(Shared { bytes: vec![0; n], starts: vec![], code: vec![], text: vec![text], build, sites: vec![], ctx: jit::TranslationContext::now(jit::context::Arch::Flat32), seq: share_seq() });
+        let mk = |text: u8, build: u32, n: usize| Arc::new(Shared { bytes: vec![0; n], starts: vec![], code: vec![], flag_deps: 0, text: vec![text], build, sites: vec![], ctx: jit::TranslationContext::now(jit::context::Arch::Flat32), seq: share_seq() });
         let check = || {
             let g = SHARED.locked();
             if let Some(c) = g.as_ref() {

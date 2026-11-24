@@ -245,9 +245,10 @@ pub fn run(engine: &Engine, dispatch: &Module, memory: &SharedMemory, base: usiz
                 let mut cpu0 = initial(&mut rng);
                 cpu0.fpu.cw = cw;
                 cpu0.mxcsr = mxcsr;
-                let mode = Mode { fns: s % 2 == 1, blocks: 1 + s as usize % 3, hoist: true, slots: 0, pre: false, exact: s % 4 != 3, fresh: false, stale: 0, ssa: crate::ssa_or(s % 2 == 0) };
+                let mode = Mode { fns: s % 2 == 1, entry_as_function: false, blocks: 1 + s as usize % 3, hoist: true, slots: 0, pre: false, exact: s % 4 != 3, fresh: false, stale: 0, ssa: crate::ssa_or(s % 2 == 0) };
                 runs += 1;
-                let (diffs, _) = run_case(engine, dispatch, memory, base, &list, &d, &cpu0, mode);
+                let (mut diffs, _, skipped) = run_case(engine, dispatch, memory, base, &list, &d, &cpu0, mode);
+                if skipped { diffs.push("reference run could not be compared".into()); }
                 if !diffs.is_empty() {
                     fails += 1;
                     if fails <= 20 {

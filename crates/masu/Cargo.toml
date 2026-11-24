@@ -12,6 +12,8 @@ ignored = ["md-5", "rust-s3"]
 
 [dependencies]
 kome = { path = "../kome" }
+masu-kernel = { path = "../masu-kernel" }
+h5i-app-core.workspace = true
 foresee = { path = "../foresee" }
 # Siglus' Scene.pck (decrypting, unpacking, its key from the game's own files): what each scene
 # names, for foresee.rs. MPL-2.0.

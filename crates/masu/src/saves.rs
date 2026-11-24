@@ -1,5 +1,5 @@
 //! Versioned saves; local SQLite or encrypted S3, with optimistic concurrency.
-use crate::{library::Library, storage::{Storage, SAVE_REVISIONS}};
+use crate::{library::Library, storage::Storage};
 use axum::{
     body::Bytes,
     extract::{Path, State},
@@ -8,6 +8,8 @@ use axum::{
     routing::get,
     Router,
 };
+use h5i_app_core::Kernel;
+use masu_kernel::save::{Refusal, Save, older_than_grace, oldest_retained_revision};
 use rusqlite::OptionalExtension;
 use std::{path::Path as FsPath, sync::Arc};
 
@@ -138,10 +140,7 @@ impl Saves {
             Ok(db.connect()?.query_row("SELECT revision FROM saves WHERE name=?", [n], |r| r.get(0)).optional()?.unwrap_or(0))
         })
         .await??;
-        if revision != expected {
-            return Ok(false);
-        }
-        let next = revision + 1;
+        let Some(next) = next_revision(revision, expected)? else { return Ok(false) };
         if let Some(remote) = &self.remote {
             remote.put(&format!("saves/{name}/{next}"), &data).await?;
         }
@@ -171,7 +170,7 @@ impl Saves {
     /// Deletes the save states' files (`state.<game>.<hash>`, named by their content, see
     /// web/src/savestate.ts) that no index of their game names, once written `grace` ago: an
     /// index is `state.<game>.index`, its current revision and, with S3, the older ones kept
-    /// ([`SAVE_REVISIONS`]: a device may still list a state of one of them). Files of the old
+    /// ([`masu_kernel::save::SAVE_REVISIONS`]: a device may still list a state of one of them). Files of the old
     /// layout (`state.<game>.<slot>`) are left. Returns how many went.
     pub async fn prune_states(&self, grace: std::time::Duration) -> anyhow::Result<usize> {
         // (no lock while the indexes are read from the bucket: each game's files go later under
@@ -191,7 +190,7 @@ impl Saves {
             let (seen, set) = named.entry(game).or_insert_with(|| (0, Some(Default::default())));
             *seen = *revision;
             let revisions = match &self.remote {
-                Some(_) => (revision - SAVE_REVISIONS + 1).max(1)..=*revision,
+                Some(_) => oldest_retained_revision(*revision)..=*revision,
                 None => *revision..=*revision,
             };
             for r in revisions {
@@ -205,11 +204,11 @@ impl Saves {
                 }
             }
         }
-        let before = now_ms() - grace.as_millis() as i64;
+        let now = now_ms();
         let mut doomed: std::collections::BTreeMap<&str, Vec<&str>> = Default::default();
         for (name, _, written) in &rows {
             let Some((hash, game)) = state_name(name) else { continue };
-            if !is_hash(hash) || *written >= before || named.get(game).is_some_and(|(_, s)| s.as_ref().is_none_or(|s| s.contains(hash))) {
+            if !is_hash(hash) || !older_than_grace(*written, now, grace.as_millis()) || named.get(game).is_some_and(|(_, s)| s.as_ref().is_none_or(|s| s.contains(hash))) {
                 continue;
             }
             doomed.entry(game).or_default().push(name);
@@ -229,7 +228,7 @@ impl Saves {
                 let _file = self.lock.lock(name).await;
                 // (written again meanwhile: new)
                 let Some((revision, written)) = revision(name)? else { continue };
-                if written >= before {
+                if !older_than_grace(written, now, grace.as_millis()) {
                     continue;
                 }
                 if let Some(remote) = &self.remote {
@@ -249,6 +248,14 @@ impl Saves {
 }
 
 /// The table of the browsers' records each write held or superseded ([`Saves::write_bytes`]).
+pub(crate) fn next_revision(revision: i64, expected: i64) -> anyhow::Result<Option<i64>> {
+    match Save::transition(&(), &revision, &expected) {
+        Ok((next, ())) => Ok(Some(next)),
+        Err(Refusal::StaleRevision) => Ok(None),
+        Err(Refusal::RevisionExhausted) => anyhow::bail!("invalid or exhausted save revision"),
+    }
+}
+
 fn covers_table(db: &Library) -> anyhow::Result<()> {
     db.connect()?.execute_batch("CREATE TABLE IF NOT EXISTS save_covers(name TEXT NOT NULL, generation TEXT NOT NULL, revision INTEGER NOT NULL, PRIMARY KEY(name, generation));")?;
     Ok(())
@@ -321,12 +328,7 @@ fn state_hashes(index: &[u8], into: &mut std::collections::HashSet<String>) -> b
 }
 
 fn valid(name: &str) -> bool {
-    !name.is_empty()
-        && name.len() <= 200
-        && !name.starts_with('.')
-        && name
-            .bytes()
-            .all(|c| c.is_ascii_alphanumeric() || b"_.-".contains(&c))
+    masu_kernel::library::valid_game(name.as_bytes())
 }
 fn failure(e: anyhow::Error) -> Response {
     eprintln!("saves: {e}");
@@ -412,6 +414,20 @@ mod tests {
         http::Request,
     };
     use tower::ServiceExt;
+
+    #[tokio::test]
+    async fn local_store_commits_only_one_writer_and_rejects_counter_wraparound() {
+        let dir = tempfile::tempdir().unwrap();
+        let state = Saves::open(Library::new(dir.path()).unwrap(), None).unwrap();
+        let (a, b) = tokio::join!(state.write("race", 0, b"first"), state.write("race", 0, b"second"));
+        let a = a.unwrap();
+        assert_ne!(a, b.unwrap());
+        let winner: &[u8] = if a { b"first" } else { b"second" };
+        assert_eq!(state.read("race").await.unwrap(), Some((1, winner.to_vec())));
+        state.db.connect().unwrap().execute("UPDATE saves SET revision=? WHERE name='race'", [i64::MAX]).unwrap();
+        assert!(state.write("race", i64::MAX, b"replace").await.is_err());
+        assert_eq!(state.read("race").await.unwrap(), Some((i64::MAX, winner.to_vec())));
+    }
 
     #[tokio::test]
     async fn http_save_preconditions_and_persistence() {

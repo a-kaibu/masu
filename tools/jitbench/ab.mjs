@@ -6,8 +6,12 @@
 // knobs for one side (after the shared ones: one build, a knob off against on).
 import { execFileSync } from 'node:child_process';
 import { runInBrowser } from './browser.mjs';
+import { validateComparison } from './core.mjs';
 
 const [, , a, b, rounds = '5', only = '', shared = ''] = process.argv;
+if (!a || !b || !Number.isInteger(Number(rounds)) || Number(rounds) < 1) {
+  throw new Error('usage: node ab.mjs A.wasm B.wasm [positive rounds] [programs] [knobs]');
+}
 const node = process.execPath;
 const runs = { A: [], B: [] };
 for (let r = 0; r < Number(rounds); r++) {
@@ -23,7 +27,7 @@ for (let r = 0; r < Number(rounds); r++) {
 }
 const med = (v) => { const s = [...v].sort((x, y) => x - y); return s[s.length >> 1]; };
 const p95 = (v) => { const s = [...v].sort((x, y) => x - y); return s[Math.min(s.length - 1, Math.ceil(s.length * 0.95) - 1)]; };
-const names = runs.A[0].map((p) => p.name);
+const names = validateComparison(runs);
 const cols = [
   ['hot ms', (p) => p.hot_med],
   ['cold ms', (p) => p.cold],
@@ -45,8 +49,7 @@ for (const name of names) {
     const y = agg(get('B').map(g));
     return `${f(x)} / ${f(y)} (${x ? (y / x).toFixed(3) : '-'})`;
   });
-  const sums = new Set([...get('A'), ...get('B')].map((p) => p.sum));
-  console.log(`| ${name} | ${cells.join(' | ')} | ${sums.size === 1 ? 'same' : 'DIFFER ' + [...sums].join(',')} |`);
+  console.log(`| ${name} | ${cells.join(' | ')} | same |`);
 }
 const rss = (k) => med(runs[k].map((round) => Math.max(...round.map((p) => p.rss_mb))));
 console.log(`\npeak ${process.env.JB_BROWSER ? 'JS heap' : 'RSS'} MB A ${rss('A').toFixed(0)} B ${rss('B').toFixed(0)}`);

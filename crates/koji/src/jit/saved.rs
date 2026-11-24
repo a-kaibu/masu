@@ -4,10 +4,11 @@
 //!
 //! A function's (jit::FN) entry is two module functions, its adapter and itself.
 //!
-//! Index: "VNJ2", count, then per entry: roots, starts (address, block), code (address,
+//! Index: "VNJ4", count, then per entry: roots, starts (address, block), code (address,
 //! length) as u32-counted lists of u32s, the code bytes (u32 length first), then the build
 //! (0: a region, else a function's) and the function's indirect call sites (counted list).
-//! "VNJ1" is the same without the last two (regions only).
+//! VNJ3 added the page-check mode. VNJ4 adds the number of callee flag dependency ranges
+//! at the end of the code list. VNJ1 has neither build numbers nor indirect call sites.
 
 use kome::num::*;
 use alloc::vec::Vec;
@@ -17,6 +18,7 @@ pub struct Entry {
     pub roots: Vec<u32>,
     pub starts: Vec<(u32, u32)>,
     pub code: Vec<(u32, u32)>,
+    pub flag_deps: u32,
     /// the guest code bytes of `code`, concatenated
     pub text: Vec<u8>,
     /// 0 for a region, else a function's build (1 up)
@@ -39,7 +41,7 @@ impl Entry {
     /// What every entry the JIT makes is (an index from the network or a damaged file may say
     /// anything): a root (its name), and the code bytes of all its ranges.
     pub fn consistent(&self) -> bool {
-        !self.roots.is_empty() && self.code.iter().map(|&(_, n)| u64::from(n)).sum::<u64>() == lo64(self.text.len())
+        !self.roots.is_empty() && us(self.flag_deps) <= self.code.len() && self.code.iter().map(|&(_, n)| u64::from(n)).sum::<u64>() == lo64(self.text.len())
     }
 
     /// Module functions (table entries) it takes.
@@ -49,7 +51,9 @@ impl Entry {
 }
 
 pub fn encode(entries: &[Entry]) -> Vec<u8> {
-    let mut out = Vec::from(&b"VNJ3"[..]);
+    // A new server may merge uploads for older translators. Keep their indexes readable.
+    let has_flag_deps = entries.iter().any(|e| e.flag_deps != 0);
+    let mut out = Vec::from(if has_flag_deps { &b"VNJ4"[..] } else { &b"VNJ3"[..] });
     let u = |out: &mut Vec<u8>, v: u32| out.extend_from_slice(&v.to_le_bytes());
     u(&mut out, lo32(entries.len()));
     for e in entries {
@@ -75,6 +79,9 @@ pub fn encode(entries: &[Entry]) -> Vec<u8> {
             super::Pages::Unchecked => 0,
             super::Pages::Checked => 1,
         });
+        if has_flag_deps {
+            u(&mut out, e.flag_deps);
+        }
     }
     out
 }
@@ -110,10 +117,11 @@ pub fn decode_all(mut b: &[u8]) -> Option<Vec<Entry>> {
 
 /// An index at the start of `b`, and its length.
 fn decode_one(b: &[u8]) -> Option<(Vec<Entry>, usize)> {
-    let (v2, v3) = match b.get(..4)? {
-        b"VNJ1" => (false, false),
-        b"VNJ2" => (true, false),
-        b"VNJ3" => (true, true),
+    let version = match b.get(..4)? {
+        b"VNJ1" => 1,
+        b"VNJ2" => 2,
+        b"VNJ3" => 3,
+        b"VNJ4" => 4,
         _ => return None,
     };
     let mut r = Reader(b, 4);
@@ -129,13 +137,14 @@ fn decode_one(b: &[u8]) -> Option<(Vec<Entry>, usize)> {
             let n = us(r.u()?);
             let text = b.get(r.1..r.1.checked_add(n)?)?.to_vec();
             r.1 += n;
-            let (build, sites) = if v2 { (r.u()?, (0..r.u()?).map(|_| r.u()).collect::<Option<Vec<_>>>()?) } else { (0, Vec::new()) };
-            let pages = match if v3 { r.u()? } else { 0 } {
+            let (build, sites) = if version >= 2 { (r.u()?, (0..r.u()?).map(|_| r.u()).collect::<Option<Vec<_>>>()?) } else { (0, Vec::new()) };
+            let pages = match if version >= 3 { r.u()? } else { 0 } {
                 0 => super::Pages::Unchecked,
                 1 => super::Pages::Checked,
                 _ => return None,
             };
-            let e = Entry { roots, starts, code, text, build, sites, pages };
+            let flag_deps = if version >= 4 { r.u()? } else { 0 };
+            let e = Entry { roots, starts, code, flag_deps, text, build, sites, pages };
             e.consistent().then_some(e)
         })
         .collect::<Option<Vec<_>>>()?;
@@ -191,17 +200,31 @@ mod decode_tests {
         assert!(decode(&b).is_none() && decode_all(&b).is_none());
     }
 
+    #[test]
+    fn old_indexes_have_no_callee_dependency_suffix() {
+        for (version, extra) in [(b"VNJ1", 0), (b"VNJ2", 2), (b"VNJ3", 3)] {
+            let mut bytes = version.to_vec();
+            // One entry, one root, empty starts/code/text, optional build/sites/pages.
+            for word in [1u32, 1, 0x1000, 0, 0, 0, 0, 0, 0].into_iter().take(6 + extra) {
+                bytes.extend_from_slice(&word.to_le_bytes());
+            }
+            let entries = decode(&bytes).unwrap();
+            assert_eq!(entries[0].flag_deps, 0);
+            assert_eq!(&encode(&entries)[..4], b"VNJ3");
+        }
+    }
+
     proptest! {
         /// What is written is read back; and whatever bytes are changed, cut or added, what is
         /// read (if anything) has a root in every entry and can be named.
         #[test]
         fn damaged_indexes_have_roots_or_are_refused(es in prop::collection::vec(entry(), 0..5), flips in prop::collection::vec((any::<prop::sample::Index>(), any::<u8>()), 0..6), cut in proptest::option::of(any::<prop::sample::Index>())) {
-            let es: Vec<Entry> = es.into_iter().map(|(roots, starts, text, build, sites)| Entry { roots, code: alloc::vec![(starts.first().map_or(0, |s| s.0), text.len() as u32)], starts, text, sites, pages: if build == 1 { super::super::Pages::Checked } else { super::super::Pages::Unchecked }, build }).collect();
+            let es: Vec<Entry> = es.into_iter().map(|(roots, starts, text, build, sites)| Entry { roots, flag_deps: 1, code: alloc::vec![(starts.first().map_or(0, |s| s.0), text.len() as u32)], starts, text, sites, pages: if build == 1 { super::super::Pages::Checked } else { super::super::Pages::Unchecked }, build }).collect();
             let mut b = encode(&es);
             let back = decode(&b).unwrap();
             prop_assert_eq!(back.len(), es.len());
             for (a, e) in back.iter().zip(&es) {
-                prop_assert!(a.roots == e.roots && a.starts == e.starts && a.code == e.code && a.text == e.text && a.build == e.build && a.sites == e.sites && a.pages == e.pages);
+                prop_assert_eq!(a, e);
             }
             for (at, v) in flips {
                 let i = at.index(b.len());
@@ -229,7 +252,8 @@ mod tests {
             // (one time in four the text is a byte off)
             let n: u32 = code.iter().map(|c| c.1).sum::<u32>() + u32::from(skew == 0);
             let pages = if checked { super::super::Pages::Checked } else { super::super::Pages::Unchecked };
-            Entry { roots, starts, code, text: alloc::vec![fill; n as usize], build, sites, pages }
+            let flag_deps = u32::from(fill % 4);
+            Entry { roots, starts, code, flag_deps, text: alloc::vec![fill; n as usize], build, sites, pages }
         })
     }
 
@@ -273,9 +297,9 @@ mod tests {
     /// The review's case: an entry with no roots.
     #[test]
     fn no_roots_refused() {
-        let e = Entry { roots: Vec::new(), starts: Vec::new(), code: Vec::new(), text: Vec::new(), build: 1, sites: Vec::new(), pages: super::super::Pages::Unchecked };
+        let e = Entry { roots: Vec::new(), flag_deps: 0, starts: Vec::new(), code: Vec::new(), text: Vec::new(), build: 1, sites: Vec::new(), pages: super::super::Pages::Unchecked };
         assert!(decode(&encode(&[e])).is_none());
-        let e = Entry { roots: alloc::vec![1], starts: Vec::new(), code: alloc::vec![(0x1000, 4)], text: alloc::vec![0; 3], build: 0, sites: Vec::new(), pages: super::super::Pages::Checked };
+        let e = Entry { roots: alloc::vec![1], flag_deps: 0, starts: Vec::new(), code: alloc::vec![(0x1000, 4)], text: alloc::vec![0; 3], build: 0, sites: Vec::new(), pages: super::super::Pages::Checked };
         assert!(decode(&encode(&[e])).is_none());
     }
 }

@@ -87,9 +87,10 @@ pub fn run(engine: &Engine, dispatch: &Module, memory: &SharedMemory, base: usiz
                 if let Some(pc) = op.x87 {
                     cpu0.fpu.cw = x87_cw(pc, rc);
                 }
-                let mode = Mode { fns: rng.below(2) == 0, blocks: rng.pick(&[1, 2, koji::jit::MAX_BLOCKS]), hoist: rng.below(2) == 0, slots: 0, pre: rng.below(4) == 0, exact: true, fresh: false, stale: 0, ssa: crate::ssa_or(rng.below(2) == 0) };
+                let mode = Mode { fns: rng.below(2) == 0, entry_as_function: false, blocks: rng.pick(&[1, 2, koji::jit::MAX_BLOCKS]), hoist: rng.below(2) == 0, slots: 0, pre: rng.below(4) == 0, exact: true, fresh: false, stale: 0, ssa: crate::ssa_or(rng.below(2) == 0) };
                 runs += 1;
-                let (mut diffs, _) = run_case(engine, dispatch, memory, base, &list, &d, &cpu0, mode);
+                let (mut diffs, _, skipped) = run_case(engine, dispatch, memory, base, &list, &d, &cpu0, mode);
+                if skipped { diffs.push("reference run could not be compared".into()); }
                 // the JIT's results (left in memory by run_case) against TestFloat's
                 let m = unsafe { std::slice::from_raw_parts((base + DATA as usize) as *const u8, DATA_LEN as usize) };
                 for (k, c) in batch.iter().enumerate() {

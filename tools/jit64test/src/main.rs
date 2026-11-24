@@ -10,12 +10,14 @@ mod native;
 use iced_x86::{BlockEncoder, BlockEncoderOptions, Code, Instruction, InstructionBlock, MemoryOperand, Register};
 use std::collections::HashMap;
 use std::sync::atomic::Ordering::Relaxed;
+#[path = "../../jit-outcome.rs"]
+mod jit_outcome;
+use jit_outcome::{RunError, compare_outcomes};
 use koji::{Cpu, Exit, Fault};
 use wasmtime::*;
 
 /// A `step` import that left EIP at a REP it stopped part way (koji::REP_STEP_MAX): the
 /// region's status 2 means "go on from EIP", as in kura.
-static PARTWAY: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 const CPU: u32 = 0x2000;
 const CODE: u32 = 0x10_0000;
 const END: u32 = 0x18_0000;
@@ -48,7 +50,7 @@ impl koji::Memory for Mem {
         }
         // (as kura's interp_write: the interpreter's store into translated code)
         if in_code(a) {
-            CODE_WRITTEN.store(true, Relaxed);
+            CODE_WRITTEN.set(true);
         }
         unsafe { *self.0.add(a as usize) = v };
         Ok(())
@@ -123,7 +125,7 @@ fn random_ins(rng: &mut Rng, out: &mut Vec<Instruction>, rip_hi: u32) {
         mem(rng, rip)
     };
     use Code as C;
-    if rip_hi == 0 && (WATCH.load(Relaxed) || FRESH.load(Relaxed)) && rng.below(60) == 0 {
+    if rip_hi == 0 && (WATCH.get() || FRESH.get()) && rng.below(60) == 0 {
         // a store into the program's own code (koji::jit::long's Gen::smc, Gen::fresh_store):
         // its first bytes,
         // often an instruction that already ran or runs next in a loop
@@ -780,24 +782,24 @@ fn clear_tables(base: usize) {
     unsafe { std::ptr::write_bytes((base + CALLS as usize) as *mut u8, 0, (koji::jit::CALL_CACHE * 8) as usize) };
 }
 
-/// Whether translations test their stores against the pages with translated code
-/// (koji::jit::set_watch, as kura for a main executable's W|X pages).
-static WATCH: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 fn watch(_: u32) -> bool {
-    WATCH.load(Relaxed)
+    WATCH.get()
 }
 
-/// Whether translations check their code on entry (koji::jit::set_fresh, as kura for W|X pages
-/// outside the exe: Mono's code in a 64-bit process): a region entered where the code is no
-/// longer what it was made from leaves with Cpu::jit_stale; its stores into its own block
-/// leave with Cpu::jit_smc.
-static FRESH: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 fn fresh(_: u32) -> bool {
-    FRESH.load(Relaxed)
+    FRESH.get()
 }
 /// Regions entered and found stale (Cpu::jit_stale) in this run.
 static STALE_HITS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 thread_local! {
+    // Each Wasmtime run has its own guest memory. Parallel tests often use the same guest
+    // addresses, so their code-write history and translation hooks must stay on their thread.
+    static WATCH: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    static FRESH: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    static CODE_RANGES: std::cell::RefCell<Vec<(u32, u32)>> = const { std::cell::RefCell::new(Vec::new()) };
+    static CODE_WRITTEN: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    static PARTWAY: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    static SWITCHED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     /// instructions regions handed to the interpreter (the `step` import), on this thread
     static STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     /// calls of the `callmiss` import, on this thread
@@ -822,19 +824,15 @@ fn host_api(c: &mut Cpu, m: *mut u8) {
     c.rip_hi = (ret >> 32) as u32;
 }
 
-/// The translated code's byte ranges (kura's CODE_RANGES), and whether the interpreter wrote
-/// into them since last asked.
-static CODE_RANGES: std::sync::Mutex<Vec<(u32, u32)>> = std::sync::Mutex::new(Vec::new());
-static CODE_WRITTEN: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 fn in_code(a: u32) -> bool {
-    CODE_RANGES.lock().unwrap().iter().any(|&(s, n)| a >= s && a - s < n.max(1))
+    CODE_RANGES.with_borrow(|ranges| ranges.iter().any(|&(s, n)| a >= s && a - s < n.max(1)))
 }
 
 struct Jit {
     engine: Engine,
     memory: SharedMemory,
-    store: Store<()>,
-    linker: Linker<()>,
+    store: Store<Option<RunError>>,
+    linker: Linker<Option<RunError>>,
     table: Table,
     /// eip -> (function, block, table index)
     entries: HashMap<u32, (Func, u32, u32)>,
@@ -852,7 +850,7 @@ const FUEL: u64 = 100_000_000;
 
 impl Jit {
     fn new(engine: &Engine, memory: &SharedMemory, base: usize) -> Jit {
-        let mut store = Store::new(engine, ());
+        let mut store = Store::new(engine, None);
         // A region can loop (and chain) without returning to run's host-side step limit.
         // Trap instead of hanging the whole CI when a generated program or the JIT loops.
         store.set_fuel(FUEL).unwrap();
@@ -865,7 +863,7 @@ impl Jit {
         let pages = Global::new(&mut store, GlobalType::new(ValType::I32, Mutability::Const), Val::I32(0)).unwrap();
         linker.define(&store, "env", "pages", pages).unwrap();
         linker
-            .func_wrap("env", "step", move |cpu: i32| -> i32 {
+            .func_wrap("env", "step", move |mut caller: wasmtime::Caller<'_, Option<RunError>>, cpu: i32| -> i32 {
                 let m = base as *mut u8;
                 assert_eq!(cpu as u32, CPU);
                 STEPS.set(STEPS.get() + 1);
@@ -876,17 +874,20 @@ impl Jit {
                 match r {
                     // (as kura: a REP stopped part way leaves the region)
                     Exit::Continue if (c.eip, c.rip_hi) == ip => {
-                        PARTWAY.store(true, std::sync::atomic::Ordering::Relaxed);
+                        PARTWAY.set(true);
                         2
                     }
                     // (as kura: it rewrote translated code, the region leaves)
-                    Exit::Continue if CODE_WRITTEN.load(Relaxed) => 2,
+                    Exit::Continue if CODE_WRITTEN.get() => 2,
                     // (as kura: another MXCSR mode leaves the region, and so does the first
                     // read of its flags)
                     Exit::Continue if !koji::jit::sse_ok(c.mxcsr) => 2,
                     Exit::Continue if mx_check() => 2,
                     Exit::Continue => 0,
-                    _ => 2,
+                    exit => {
+                        *caller.data_mut() = Some(RunError::guest(exit, &c));
+                        2
+                    }
                 }
             })
             .unwrap();
@@ -936,8 +937,8 @@ impl Jit {
             .unwrap();
         clear_tables(base);
         unsafe { std::ptr::write_bytes((base + PAGES as usize) as *mut u8, 0, 0x1000) };
-        CODE_RANGES.lock().unwrap().clear();
-        CODE_WRITTEN.store(false, Relaxed);
+        CODE_RANGES.with_borrow_mut(Vec::clear);
+        CODE_WRITTEN.set(false);
         koji::jit::set_watch(watch);
         koji::jit::set_fresh(fresh);
         Jit { engine: engine.clone(), memory: memory.clone(), store, linker, table, entries: HashMap::new(), range: (0, u32::MAX), rewritten: false, fnm: koji::jit::long::FN64.load(Relaxed) }
@@ -955,7 +956,7 @@ impl Jit {
         unsafe { put_cpu(m, &c) };
     }
 
-    fn translate(&mut self, base: usize, eip: u32, rip_hi: u32) -> Result<(), String> {
+    fn translate(&mut self, base: usize, eip: u32, rip_hi: u32) -> Result<bool, String> {
         // Each translated region owns one Wasmtime instance until the store is
         // dropped. Recycle the translations and their dispatch tables together.
         if self.table.size(&self.store) >= 4096 {
@@ -976,12 +977,22 @@ impl Jit {
             koji::jit::long::translate_function64_with(&mut m, &mut Mem(base as *mut u8), full, &[], (END, END + 16), 1000, &hint, |a, _| a != END && a >= lo && a < hi)
         } else {
             koji::jit::long::translate_region64(&mut m, &mut Mem(base as *mut u8), &[full], (END, END + 16), |a, _| a != END && a >= lo && a < hi)
-        }
-        .ok_or("refused")?;
+        };
+        let Some(region) = region else {
+            // If there is no decodable instruction here, the interpreter reports
+            // the guest exception as it would on a dispatcher miss.
+            let mut bytes = [0; 15];
+            let n = koji::Memory::fetch(&mut Mem(base as *mut u8), eip, &mut bytes);
+            let ins = iced_x86::Decoder::with_ip(64, &bytes[..n], full, iced_x86::DecoderOptions::NONE).decode();
+            if ins.is_invalid() {
+                return Ok(false);
+            }
+            return Err(format!("refused at {full:#x}"));
+        };
         let tag = if fnm { koji::jit::FN_TAG } else { 0 };
         let bytes = m.finish();
         for &(a, n) in &region.code {
-            CODE_RANGES.lock().unwrap().push((a, n));
+            CODE_RANGES.with_borrow_mut(|ranges| ranges.push((a, n)));
             for p in (a >> 12)..=((a + n.max(1) - 1) >> 12) {
                 if p < 0x8000 {
                     let w = (base + PAGES as usize + 4 * (p as usize >> 5)) as *mut u32;
@@ -1023,11 +1034,11 @@ impl Jit {
                 h = (h + 1) & (HASH_N - 1);
             }
         }
-        Ok(())
+        Ok(true)
     }
 
     /// Runs from cpu.eip until END: regions, the interpreter for what they leave to it.
-    fn run(&mut self, base: usize) -> Result<usize, String> {
+    fn run(&mut self, base: usize) -> Result<usize, RunError> {
         let m = base as *mut u8;
         let mut regions = 0;
         // (a program's store can raise a loop count it runs once rewritten, one interpreter
@@ -1048,7 +1059,7 @@ impl Jit {
             }
             // (as kura: translations made without the MXCSR flag checks go)
             mx_check();
-            if SWITCHED.swap(false, Relaxed) {
+            if SWITCHED.replace(false) {
                 clear_tables(base);
                 self.entries.clear();
             }
@@ -1059,12 +1070,18 @@ impl Jit {
                 let r = koji::step(&mut c, &mut Mem(m));
                 unsafe { put_cpu(m, &c) };
                 if r != Exit::Continue {
-                    return Err(format!("interpreter exit {r:?} at {:#x}", c.eip));
+                    return Err(RunError::guest(r, &c));
                 }
                 continue;
             }
-            if !self.entries.contains_key(&c.eip) {
-                self.translate(base, c.eip, c.rip_hi)?;
+            if !self.entries.contains_key(&c.eip) && !self.translate(base, c.eip, c.rip_hi).map_err(RunError::Translation)? {
+                let mut c = c;
+                let exit = koji::step(&mut c, &mut Mem(m));
+                unsafe { put_cpu(m, &c) };
+                if exit != Exit::Continue {
+                    return Err(RunError::guest(exit, &c));
+                }
+                return Err(RunError::Harness("undecodable entry continued in the interpreter".into()));
             }
             let (f, k, idx) = self.entries[&c.eip];
             self.chain(base);
@@ -1072,7 +1089,10 @@ impl Jit {
             params[0] = Val::I32(CPU as i32);
             params[1] = Val::I32((idx | k << koji::jit::ENTRY_SHIFT | if self.fnm { koji::jit::FN_TAG } else { 0 }) as i32);
             let mut results = vec![Val::I32(0); 1];
-            f.call(&mut self.store, &params, &mut results).map_err(|e| format!("trap: {e:?}"))?;
+            f.call(&mut self.store, &params, &mut results).map_err(RunError::wasm)?;
+            if let Some(error) = self.store.data_mut().take() {
+                return Err(error);
+            }
             regions += 1;
             if std::env::var("JTRACE").is_ok() { let c = unsafe { get_cpu(m) }; eprintln!("entry {:#x} -> status {} at {:x}:{:#x} rsp {:#x} rbx {} rsi {}", params[1].unwrap_i32(), results[0].unwrap_i32(), c.rip_hi, c.eip, c.gpr(koji::Reg64::Rsp), c.gpr(koji::Reg64::Rbx), c.gpr(koji::Reg64::Rsi)); }
             let mut c = unsafe { get_cpu(m) };
@@ -1081,8 +1101,8 @@ impl Jit {
                 // the interpreter runs the block's first instruction, then it is made again)
                 let a = std::mem::take(&mut c.jit_stale);
                 unsafe { put_cpu(m, &c) };
-                if !FRESH.load(Relaxed) || results[0].unwrap_i32() != 1 || c.eip != a {
-                    return Err(format!("stale exit at {a:#x}: fresh {}, status {}, eip {:#x}", FRESH.load(Relaxed), results[0].unwrap_i32(), c.eip));
+                if !FRESH.get() || results[0].unwrap_i32() != 1 || c.eip != a {
+                    return Err(RunError::Harness(format!("stale exit at {a:#x}: fresh {}, status {}, eip {:#x}", FRESH.get(), results[0].unwrap_i32(), c.eip)));
                 }
                 STALE_HITS.fetch_add(1, Relaxed);
                 clear_tables(base);
@@ -1095,13 +1115,13 @@ impl Jit {
                 let a = std::mem::take(&mut c.jit_smc);
                 unsafe { put_cpu(m, &c) };
                 if results[0].unwrap_i32() != 1 {
-                    return Err(format!("store at {a:#x} into a page with code: status {}", results[0].unwrap_i32()));
+                    return Err(RunError::Harness(format!("store at {a:#x} into a page with code: status {}", results[0].unwrap_i32())));
                 }
                 if in_code(a) {
-                    CODE_WRITTEN.store(true, Relaxed);
+                    CODE_WRITTEN.set(true);
                 }
             }
-            if CODE_WRITTEN.swap(false, Relaxed) {
+            if CODE_WRITTEN.replace(false) {
                 self.rewritten = true;
                 clear_tables(base);
                 self.entries.clear();
@@ -1113,20 +1133,20 @@ impl Jit {
                     let r = koji::step(&mut c, &mut Mem(m));
                     unsafe { put_cpu(m, &c) };
                     if r != Exit::Continue {
-                        return Err(format!("interpreter exit {r:?} at {:#x}", c.eip));
+                        return Err(RunError::guest(r, &c));
                     }
                 }
                 // (a step that changed MXCSR: on in the interpreter; one that read its flags)
-                2 if PARTWAY.swap(false, Relaxed) => {}
-                2 if !koji::jit::sse_ok(unsafe { get_cpu(m) }.mxcsr) || SWITCHED.load(Relaxed) || self.rewritten => {}
-                s => return Err(format!("status {s} at {:#x}", unsafe { get_cpu(m) }.eip)),
+                2 if PARTWAY.replace(false) => {}
+                2 if !koji::jit::sse_ok(unsafe { get_cpu(m) }.mxcsr) || SWITCHED.get() || self.rewritten => {}
+                s => return Err(RunError::Harness(format!("status {s} at {:#x}", unsafe { get_cpu(m) }.eip))),
             }
         }
-        Err("no end".into())
+        Err(RunError::Limit)
     }
 }
 
-fn interp(base: usize) -> Result<(), String> {
+fn interp(base: usize) -> Result<(), RunError> {
     let m = base as *mut u8;
     let mut c = unsafe { get_cpu(m) };
     for _ in 0..1_000_000 {
@@ -1138,10 +1158,10 @@ fn interp(base: usize) -> Result<(), String> {
         if r != Exit::Continue {
             // (the state where it stopped, as jit32test: before, the one it started with)
             unsafe { put_cpu(m, &c) };
-            return Err(format!("interpreter exit {r:?} at {:#x}", c.eip));
+            return Err(RunError::guest(r, &c));
         }
     }
-    Err("no end".into())
+    Err(RunError::Limit)
 }
 
 fn initial(rng: &mut Rng, rip_hi: u32) -> Cpu {
@@ -1195,31 +1215,21 @@ fn initial(rng: &mut Rng, rip_hi: u32) -> Cpu {
 /// of them (STMXCSR, FXSAVE), as a program that never reads them runs.
 static EXACT: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
 
-/// The JIT's MXCSR flag mode switched (a step read the flags): translations are dropped.
-static SWITCHED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
-
 /// As kura's mx_check: the program read the MXCSR flags first (in the interpreter).
 fn mx_check() -> bool {
     let s = koji::jit::mx_switched();
     if s {
-        SWITCHED.store(true, Relaxed);
+        SWITCHED.set(true);
     }
     s
 }
 
-/// An interpreter fault at an address in [MEM, GUEST_HI): "interpreter exit Fault(Fault { addr: N, .."
-fn wild_fault(e: &str) -> bool {
-    let Some(i) = e.find("addr: ") else { return false };
-    let n: String = e[i + 6..].chars().take_while(|c| c.is_ascii_digit()).collect();
-    n.parse::<u32>().is_ok_and(|a| a >= limit() && a < koji::jit::GUEST_HI)
-}
-
 /// `pre`: (FRESH) another program run first at the same address by the same Jit, whose
 /// translations the case's program then meets: they must find their code changed.
-fn run_case(engine: &Engine, memory: &SharedMemory, base: usize, list0: &[Instruction], data: &[u8], cpu0: &Cpu, rip_hi: u32, pre: Option<(&[Instruction], &Cpu)>) -> (Vec<String>, Vec<u8>) {
+fn run_case(engine: &Engine, memory: &SharedMemory, base: usize, list0: &[Instruction], data: &[u8], cpu0: &Cpu, rip_hi: u32, pre: Option<(&[Instruction], &Cpu)>) -> (Vec<String>, Vec<u8>, bool) {
     let m = base as *mut u8;
     let rip = CODE as u64 | (rip_hi as u64) << 32;
-    let Some(code) = encode(list0, rip) else { return (Vec::new(), Vec::new()) };
+    let Some(code) = encode(list0, rip) else { return (Vec::new(), Vec::new(), true) };
     let setup = |cpu: &Cpu| unsafe {
         std::ptr::write_bytes(m.add(0x10000), 0, MEM - 0x10000);
         std::ptr::copy_nonoverlapping(code.as_ptr(), m.add(CODE as usize), code.len());
@@ -1232,23 +1242,23 @@ fn run_case(engine: &Engine, memory: &SharedMemory, base: usize, list0: &[Instru
         koji::jit::MX_EXACT.store(false, Relaxed);
         koji::jit::mx_switched();
         let want = interp(base);
-        if want.as_ref().is_err_and(|e| e == "no end") {
+        if matches!(want, Err(RunError::Limit)) {
             // There is no reference final state. Previously this was ignored only AFTER
             // running the JIT, which could loop forever on the same generated program.
-            return (Vec::new(), code);
+            return (Vec::new(), code, true);
         }
         // (a store into the code made an instruction access an address beyond this harness's
         // memory but in the JIT's guest window, which regions access directly: not comparable)
-        if want.as_ref().is_err_and(|e| wild_fault(e)) {
-            return (Vec::new(), code);
+        if matches!(want, Err(RunError::Guest { exit: Exit::Fault(f), .. }) if f.addr >= limit() && f.addr < koji::jit::GUEST_HI) {
+            return (Vec::new(), code, true);
         }
         let reads = koji::jit::mx_switched();
         let exact = EXACT.load(Relaxed);
         koji::jit::MX_EXACT.store(exact, Relaxed);
-        SWITCHED.store(false, Relaxed);
+        SWITCHED.set(false);
         let (mut want_cpu, want_data, want_stack) = unsafe { (get_cpu(m), std::slice::from_raw_parts(m.add(DATA as usize), DATA_LEN as usize).to_vec(), std::slice::from_raw_parts(m.add(STACK as usize - 0x1000), 0x1000).to_vec()) };
         let mut jit = Jit::new(engine, memory, base);
-        if let Some((pl, pc)) = pre.filter(|_| FRESH.load(Relaxed)) {
+        if let Some((pl, pc)) = pre.filter(|_| FRESH.get()) {
             if let Some(pcode) = encode(pl, rip) {
                 unsafe {
                     std::ptr::write_bytes(m.add(0x10000), 0, MEM - 0x10000);
@@ -1256,15 +1266,17 @@ fn run_case(engine: &Engine, memory: &SharedMemory, base: usize, list0: &[Instru
                     std::ptr::copy_nonoverlapping(data.as_ptr(), m.add(DATA as usize), data.len());
                     put_cpu(m, pc);
                 }
-                let _ = jit.run(base);
+                if let Err(e @ (RunError::Translation(_) | RunError::HostTrap(_) | RunError::Harness(_))) = jit.run(base) {
+                    return (vec![format!("warm-up: {e}")], code, false);
+                }
                 // (its translations stay; whatever it found rewritten is forgotten; the program
                 // gets its own fuel: one that ran into the zeroes past its code spent all of it,
                 // and the program then trapped at once, seed 5682 test 3607)
                 jit.rewritten = false;
                 jit.store.set_fuel(FUEL).unwrap();
-                CODE_WRITTEN.store(false, Relaxed);
+                CODE_WRITTEN.set(false);
                 koji::jit::MX_EXACT.store(exact, Relaxed);
-                SWITCHED.store(false, Relaxed);
+                SWITCHED.set(false);
             }
         }
         setup(cpu0);
@@ -1274,7 +1286,9 @@ fn run_case(engine: &Engine, memory: &SharedMemory, base: usize, list0: &[Instru
             let mut dec = iced_x86::Decoder::with_ip(64, &code, rip, iced_x86::DecoderOptions::NONE);
             let ips: Vec<u64> = (&mut dec).into_iter().map(|i| i.ip()).collect();
             for &ip in ips.iter().rev() {
-                let _ = jit.translate(base, ip as u32, (ip >> 32) as u32);
+                if let Err(e) = jit.translate(base, ip as u32, (ip >> 32) as u32) {
+                    return (vec![format!("translation: {e}")], code, false);
+                }
             }
         }
         let got = jit.run(base);
@@ -1291,21 +1305,8 @@ fn run_case(engine: &Engine, memory: &SharedMemory, base: usize, list0: &[Instru
         if !exact && !reads && koji::jit::mx_exact() {
             diffs.push("mx: the JIT switched to the flag checks, the program read no flags".into());
         }
-        // both stopped at an exception: the same exception at the same place, with the same
-        // state, flags too (the exit contract, jit::ExitAt: masu's SEH gives them to the
-        // guest's handler); other stops (no end, the fuel) are not compared
-        let (want_e, got_e) = (want.as_ref().err(), got.as_ref().err());
-        let fault = |e: Option<&String>| e.is_some_and(|e| e.starts_with("interpreter exit Fault"));
-        if want_e.is_some() && got_e.is_some() && !(fault(want_e) && fault(got_e)) {
-            return (diffs, code);
-        }
-        if fault(want_e) && fault(got_e) && want_e != got_e {
-            diffs.push(format!("exceptions: interp {want:?} jit {got:?}"));
-        }
-        if want.is_err() || got.is_err() {
-            if want.is_ok() != got.is_ok() {
-                diffs.push(format!("runs: interp {want:?} jit {got:?}"));
-            }
+        if !compare_outcomes(&want, &got, &mut diffs) {
+            return (diffs, code, false);
         }
         for i in 0..16 {
             if want_cpu.gpr(koji::Reg64::ALL[i]) != got_cpu.gpr(koji::Reg64::ALL[i]) {
@@ -1345,7 +1346,7 @@ fn run_case(engine: &Engine, memory: &SharedMemory, base: usize, list0: &[Instru
         if want_stack != got_stack {
             diffs.push("stack differs".into());
         }
-    (diffs, code)
+    (diffs, code, false)
 }
 
 /// `exe <file.exe> <lo> <hi> [count] [seed]`: the exe's code in [lo, hi) (low-32 addresses of the
@@ -1472,22 +1473,37 @@ fn exe_mode(args: &[String]) {
         setup();
         let mut jit = Jit::new(&engine, &memory, base);
         jit.range = (lo, hi);
-        let mut done = false;
+        let mut outcome = Err(RunError::Limit);
         for _ in 0..20000 {
             let c = unsafe { get_cpu(m) };
             if outside(&c) {
-                done = true;
+                outcome = Ok(());
                 break;
             }
-            if !jit.entries.contains_key(&c.eip) && jit.translate(base, c.eip, c.rip_hi).is_err() {
-                break;
+            if !jit.entries.contains_key(&c.eip) {
+                match jit.translate(base, c.eip, c.rip_hi) {
+                    Ok(true) => {}
+                    Ok(false) => {
+                        outcome = Err(RunError::Harness(format!("undecodable entry at {:#x}", c.eip)));
+                        break;
+                    }
+                    Err(e) => {
+                        outcome = Err(RunError::Translation(e));
+                        break;
+                    }
+                }
             }
             let (f, k, _) = jit.entries[&c.eip];
             let mut params = vec![Val::I32(0); 16];
             params[0] = Val::I32(CPU as i32);
             params[1] = Val::I32((k << koji::jit::ENTRY_SHIFT) as i32);
             let mut results = vec![Val::I32(0); 1];
-            if f.call(&mut jit.store, &params, &mut results).is_err() {
+            if let Err(e) = f.call(&mut jit.store, &params, &mut results) {
+                outcome = Err(RunError::wasm(e));
+                break;
+            }
+            if let Some(e) = jit.store.data_mut().take() {
+                outcome = Err(e);
                 break;
             }
             match results[0].unwrap_i32() {
@@ -1497,13 +1513,21 @@ fn exe_mode(args: &[String]) {
                     let r = koji::step(&mut c, &mut Mem(m));
                     unsafe { put_cpu(m, &c) };
                     if r != Exit::Continue {
+                        outcome = Err(RunError::guest(r, &c));
                         break;
                     }
                 }
-                _ => break,
+                status => {
+                    outcome = Err(RunError::Harness(format!("status {status} at {:#x}", c.eip)));
+                    break;
+                }
             }
         }
-        if !done {
+        if let Err(e) = outcome {
+            fails += 1;
+            if fails <= 10 {
+                println!("test {t} from {start:#x}: {e}");
+            }
             continue;
         }
         compared += 1;
@@ -1540,6 +1564,9 @@ fn exe_mode(args: &[String]) {
         }
     }
     println!("{count} tests, {compared} compared, {fails} failed");
+    if fails > 0 {
+        std::process::exit(1);
+    }
 }
 
 fn main() {
@@ -1558,6 +1585,8 @@ fn main() {
     let engine = Engine::new(&config).unwrap();
     let memory = SharedMemory::new(&engine, MemoryType::shared(koji::jit::wasm::memory_min_pages(), koji::jit::wasm::memory_min_pages())).unwrap();
     let base = memory.data().as_ptr() as *mut u8 as usize;
+    let mut skipped = 0;
+    let mut compared = 0;
     let mut fails = 0;
     let mut rng = Rng(seed.wrapping_mul(0x9e37_79b9_7f4a_7c15) | 1);
     for t in 0..count {
@@ -1578,10 +1607,10 @@ fn main() {
         koji::jit::long::FN64.store(std::env::var("JFN").is_ok() || t / 6 % 2 == 1, Relaxed);
         koji::jit::long::DEBUG_BLOCKS.store(if t % 2 == 1 { 1 + t / 2 % 3 } else { 0 }, std::sync::atomic::Ordering::Relaxed);
         // (every other pair of tests: stores checked against the code, some into it)
-        WATCH.store(t / 4 % 2 == 0, Relaxed);
+        WATCH.set(t / 4 % 2 == 0);
         // (the other pairs, half of them: code checked on entry, some programs after another
         // one's translations at the same address)
-        FRESH.store(t / 4 % 2 == 1 && t / 8 % 2 == 0, Relaxed);
+        FRESH.set(t / 4 % 2 == 1 && t / 8 % 2 == 0);
         let mut list = Vec::new();
         let n = 5 + rng.below(40) as usize;
         while list.len() < n {
@@ -1597,7 +1626,7 @@ fn main() {
         let mut list = structure(&mut rng, list, sub, rip_hi);
         let data: Vec<u8> = (0..DATA_LEN).map(|_| rng.next() as u8).collect();
         let cpu0 = initial(&mut rng, rip_hi);
-        let pre = if FRESH.load(Relaxed) && rng.below(2) == 0 {
+        let pre = if FRESH.get() && rng.below(2) == 0 {
             let mut other = Vec::new();
             let n = 5 + rng.below(40) as usize;
             while other.len() < n {
@@ -1612,7 +1641,9 @@ fn main() {
         if std::env::var("JONLY").is_ok_and(|o| o != t.to_string()) {
             continue;
         }
-        let (mut diffs, mut code) = run_case(&engine, &memory, base, &list, &data, &cpu0, rip_hi, pre);
+        let (mut diffs, mut code, skip) = run_case(&engine, &memory, base, &list, &data, &cpu0, rip_hi, pre);
+        skipped += usize::from(skip);
+        compared += usize::from(!skip);
         // (JNOSHRINK: the program as generated)
         if !diffs.is_empty() && std::env::var("JNOSHRINK").is_err() {
             // shrink: drop instructions while it still fails
@@ -1630,7 +1661,7 @@ fn main() {
                     i += 1;
                 }
             }
-            (diffs, code) = run_case(&engine, &memory, base, &list, &data, &cpu0, rip_hi, pre);
+            (diffs, code, _) = run_case(&engine, &memory, base, &list, &data, &cpu0, rip_hi, pre);
         }
         let rip = CODE as u64 | (rip_hi as u64) << 32;
         if !diffs.is_empty() {
@@ -1649,9 +1680,80 @@ fn main() {
             }
         }
     }
-    println!("{} tests, {fails} failed ({} stale regions found)", count, STALE_HITS.load(Relaxed));
+    println!("{compared} compared, {skipped} skipped, {fails} failed ({} stale regions found)", STALE_HITS.load(Relaxed));
     if fails > 0 {
         std::process::exit(1);
+    }
+}
+
+#[test]
+fn rsp_relative_fault_preserves_flags() {
+    let mut config = Config::new();
+    config.wasm_threads(true).consume_fuel(true);
+    let engine = Engine::new(&config).unwrap();
+    let pages = koji::jit::wasm::memory_min_pages();
+    let memory = SharedMemory::new(&engine, MemoryType::shared(pages, pages)).unwrap();
+    let base = memory.data().as_ptr() as *mut u8 as usize;
+    let m = base as *mut u8;
+    let code = [
+        0x29, 0xc0,             // sub eax, eax
+        0xeb, 0x00,             // jmp to the next block
+        0x8b, 0x0c, 0x24,       // mov ecx, [rsp]
+        0x83, 0xc2, 0x01,       // add edx, 1
+        0xc3,                   // ret
+    ];
+    let cpu = Cpu { mode64: 1, eip: CODE, mxcsr: 0x1f80, ..Cpu::default() };
+    unsafe {
+        std::ptr::copy_nonoverlapping(code.as_ptr(), m.add(CODE as usize), code.len());
+        put_cpu(m, &cpu);
+    }
+    let want = interp(base);
+    assert_eq!(want, Err(RunError::Guest { exit: Exit::Fault(Fault { addr: 0, write: false }), pc: u64::from(CODE + 4) }));
+    let mut before = unsafe { get_cpu(m) };
+    before.materialize();
+    assert_eq!(before.eflags, 0x246);
+    for fnm in [false, true] {
+        unsafe { put_cpu(m, &cpu) };
+        let mut jit = Jit::new(&engine, &memory, base);
+        jit.fnm = fnm;
+        assert_eq!(jit.run(base).map(|_| ()), want, "function mode: {fnm}");
+        let mut got = unsafe { get_cpu(m) };
+        got.materialize();
+        assert_eq!(got.eflags, before.eflags, "function mode: {fnm}");
+    }
+}
+
+#[test]
+fn exhausted_budget_is_written_back_on_the_loop_exit() {
+    let mut config = Config::new();
+    config.wasm_threads(true).consume_fuel(true);
+    let engine = Engine::new(&config).unwrap();
+    let pages = koji::jit::wasm::memory_min_pages();
+    let memory = SharedMemory::new(&engine, MemoryType::shared(pages, pages)).unwrap();
+    let m = memory.data().as_ptr().cast::<u8>().cast_mut();
+    let base = m as usize;
+    let code = [0xff, 0xc0, 0xeb, 0xfc]; // inc eax; jmp CODE
+    for fnm in [false, true] {
+        let mut cpu = Cpu { mode64: 1, eip: CODE, jit_budget: 2, mxcsr: 0x1f80, ..Cpu::default() };
+        cpu.set_gpr(koji::Reg64::Rsp, u64::from(STACK - 0x800));
+        unsafe {
+            std::ptr::copy_nonoverlapping(code.as_ptr(), m.add(CODE as usize), code.len());
+            put_cpu(m, &cpu);
+        }
+        let mut jit = Jit::new(&engine, &memory, base);
+        jit.fnm = fnm;
+        assert!(jit.translate(base, CODE, 0).unwrap());
+        jit.chain(base);
+        let (entry, block, index) = jit.entries[&CODE];
+        let mut args = vec![Val::I32(0); 16];
+        args[0] = Val::I32(CPU as i32);
+        args[1] = Val::I32((index | block << koji::jit::ENTRY_SHIFT) as i32);
+        let mut result = [Val::I32(-1)];
+        entry.call(&mut jit.store, &args, &mut result).unwrap();
+        let got = unsafe { get_cpu(m) };
+        assert_eq!((result[0].unwrap_i32(), got.eip), (0, CODE), "function mode: {fnm}");
+        assert_eq!(got.gpr(koji::Reg64::Rax), 2, "function mode: {fnm}");
+        assert_eq!(got.jit_budget, -1, "function mode: {fnm}");
     }
 }
 
@@ -1675,7 +1777,7 @@ fn looping_region_is_bounded() {
     let mut jit = Jit::new(&engine, &memory, base);
     jit.store.set_fuel(10_000).unwrap();
     let error = jit.run(base).unwrap_err();
-    assert!(error.contains("fuel"), "{error}");
+    assert_eq!(error, RunError::Limit);
 }
 
 #[test]
@@ -1731,13 +1833,32 @@ fn self_modifying(watch: bool) -> u64 {
         std::ptr::copy_nonoverlapping(code.as_ptr(), (base + CODE as usize) as *mut u8, code.len());
         put_cpu(base as *mut u8, &cpu);
     }
-    WATCH.store(watch, Relaxed);
+    WATCH.set(watch);
     let mut jit = Jit::new(&engine, &memory, base);
     jit.run(base).unwrap();
-    WATCH.store(false, Relaxed);
+    WATCH.set(false);
     let c = unsafe { get_cpu(base as *mut u8) };
     assert_eq!(c.eip, END);
     c.gpr(koji::Reg64::Rdx)
+}
+
+#[test]
+fn parallel_runs_keep_code_watch_and_ranges_separate() {
+    let ready = std::sync::Barrier::new(2);
+    std::thread::scope(|scope| {
+        scope.spawn(|| {
+            WATCH.set(true);
+            FRESH.set(true);
+            CODE_RANGES.with_borrow_mut(|ranges| ranges.push((CODE, 16)));
+            CODE_WRITTEN.set(true);
+            ready.wait();
+            assert!(watch(CODE) && fresh(CODE) && in_code(CODE) && CODE_WRITTEN.get());
+        });
+        scope.spawn(|| {
+            ready.wait();
+            assert!(!watch(CODE) && !fresh(CODE) && !in_code(CODE) && !CODE_WRITTEN.get());
+        });
+    });
 }
 
 #[test]

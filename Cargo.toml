@@ -1,11 +1,14 @@
 [workspace]
 resolver = "2"
-members = ["crates/apitrace", "crates/kome", "crates/foresee", "crates/crt", "crates/dxwgsl", "crates/vorbis", "crates/hlslc", "crates/glwgsl", "crates/kura", "crates/masu", "crates/koji", "crates/sake", "crates/msidb", "crates/tls-client", "crates/shaderconf", "crates/waits", "crates/mpeg1", "crates/asf", "crates/wmcodec", "crates/decbench", "crates/masu-lint"]
+members = ["crates/apitrace", "crates/kome", "crates/foresee", "crates/crt", "crates/dxwgsl", "crates/vorbis", "crates/hlslc", "crates/glwgsl", "crates/kura", "crates/masu", "crates/masu-kernel", "crates/koji", "crates/sake", "crates/msidb", "crates/tls-client", "crates/shaderconf", "crates/waits", "crates/mpeg1", "crates/asf", "crates/wmcodec", "crates/decbench", "crates/masu-lint"]
 exclude = ["fuzz", "vendor/ring", "vendor/naga"]
 
 [workspace.package]
 edition = "2024"
 license = "MIT OR Apache-2.0"
+
+[workspace.dependencies]
+h5i-app-core = { version = "=0.5.6", default-features = false }
 
 # (naga validates every shader the tests translate: unoptimized, a big compute shader takes
 # seconds)

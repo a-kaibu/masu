@@ -45,43 +45,68 @@ export function run(rtBytes, { only = '', knobs = '', hot: HOT = 7, scale: SCALE
   }
   const knob = { fn: 0, hoist: 1, memcount: 2, mxexact: 3, nojit: 4, ssa: 5 };
   ex.jb_set(0, 1); // function mode, as kura
+  let nojit = false;
   for (const kv of knobs.split(',').filter(Boolean)) {
     const [k, v] = kv.split('=');
     if (!(k in knob)) throw new Error(`no knob ${k} (${Object.keys(knob).join(', ')})`);
     ex.jb_set(knob[k], Number(v));
+    if (k === 'nojit') nojit = (Number(v) >>> 0) !== 0;
   }
-  const STATS = ['translate_ms', 'translations', 'wasm_bytes', 'guest_ins', 'interp_steps', 'step_calls', 'exit_interp', 'exit_continue', 'dispatches', 'load_fail'];
+  const STATS = ['translate_ms', 'translations', 'wasm_bytes', 'guest_ins', 'interp_steps', 'step_calls', 'exit_interp', 'exit_continue', 'dispatches', 'load_fail', 'cpu_loads', 'cpu_stores'];
   const names = [];
   for (let i = 0; i < ex.jb_programs(); i++) {
     const n = ex.jb_program_name(i);
     names.push(new TextDecoder().decode(new Uint8Array(memory.buffer, ex.jb_buf() >>> 0, n).slice()));
   }
   const want = only ? only.split(',') : names;
+  if (!want.length || want.some((name) => !names.includes(name))) throw new Error(`unknown benchmark selection: ${only}`);
+  if (!Number.isInteger(HOT) || HOT < 1) throw new Error('hot runs must be a positive integer');
   const stats = () => Object.fromEntries(STATS.map((s, k) => [s, ex.jb_stat(k)]));
   const out = [];
   for (const [i, name] of names.entries()) {
     if (!want.includes(name)) continue;
     loadMs = 0;
-    ex.jb_setup(i, SCALE, 0);
+    if (!ex.jb_setup(i, SCALE, 0)) throw new Error(`${name}: cold setup failed`);
     let t0 = performance.now();
     const r = ex.jb_run();
     const cold = performance.now() - t0;
     const coldStats = stats();
+    if (coldStats.load_fail) throw new Error(`${name}: translation failed to load: ${failed[0] ?? 'unknown error'}`);
+    if (r !== 0) throw new Error(`${name}: cold run failed with status ${r}`);
+    if (!nojit && coldStats.translations < 1) throw new Error(`${name}: cold run made no translations`);
     const coldLoad = loadMs;
     const sum = ex.jb_checksum() >>> 0;
     const hot = [];
     let hotStats = null;
     for (let k = 0; k < HOT; k++) {
-      ex.jb_setup(i, SCALE, 1);
+      if (!ex.jb_setup(i, SCALE, 1)) throw new Error(`${name}: hot setup failed`);
       t0 = performance.now();
       const r2 = ex.jb_run();
       hot.push(performance.now() - t0);
       hotStats = stats();
-      if (r2 !== r || (ex.jb_checksum() >>> 0) !== sum) throw new Error(`${name}: hot run ${k} differs`);
+      if (r2 !== 0) throw new Error(`${name}: hot run ${k} failed with status ${r2}`);
+      if ((ex.jb_checksum() >>> 0) !== sum) throw new Error(`${name}: hot run ${k} checksum differs`);
     }
     hot.sort((a, b) => a - b);
     out.push({ name, status: r, sum: sum.toString(16), cold, hot_min: hot[0], hot_med: hot[hot.length >> 1], load_ms: coldLoad, cold_stats: coldStats, hot_stats: hotStats, rss_mb: memoryMb() });
   }
   if (failed.length) throw new Error(`${failed.length} translations failed to load: ${failed[0]}`);
   return out;
+}
+
+
+// Compare all samples before reporting any timing ratios.
+export function validateComparison({ A, B }) {
+  const names = A[0]?.map((p) => p.name) ?? [];
+  const rounds = [...A, ...B];
+  if (!names.length || !B.length || rounds.some((round) => round.length !== names.length || names.some((name) => !round.some((p) => p.name === name)))) {
+    throw new Error('A/B benchmark programs differ');
+  }
+  for (const name of names) {
+    const samples = rounds.map((round) => round.find((p) => p.name === name));
+    if (samples.some((p) => p.status !== 0)) throw new Error(`${name}: A/B run failed`);
+    const sums = new Set(samples.map((p) => p.sum));
+    if (sums.size !== 1) throw new Error(`${name}: A/B checksums differ: ${[...sums].join(', ')}`);
+  }
+  return names;
 }

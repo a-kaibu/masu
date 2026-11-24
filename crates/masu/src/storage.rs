@@ -2092,7 +2092,8 @@ struct Sent {
     size: i64,
 }
 /// Revisions of a save kept in S3 (older ones are retired, see [`Storage::gc`]).
-pub const SAVE_REVISIONS: i64 = 8;
+#[cfg(test)]
+use masu_kernel::save::SAVE_REVISIONS;
 
 /// Tries after the first for a request the bucket could not answer (see [`retrying`]).
 pub(crate) const RETRIES: u32 = 8;
@@ -2403,7 +2404,8 @@ impl Storage {
         Ok(())
     }
 
-    /// Forgets save `name`'s revisions older than the last [`SAVE_REVISIONS`] up to `current`.
+    /// Forgets save `name`'s revisions older than the last
+    /// [`masu_kernel::save::SAVE_REVISIONS`] up to `current`.
     pub fn prune_save(&self, name: &str, current: i64) -> Result<()> {
         let prefix = format!("saves/{name}/");
         let old: Vec<String> = {
@@ -2413,7 +2415,8 @@ impl Storage {
             let rows = q.query_map(rusqlite::params![prefix, format!("saves/{name}0")], |r| r.get::<_, String>(0))?;
             rows.collect::<rusqlite::Result<Vec<_>>>()?
                 .into_iter()
-                .filter(|l| l[prefix.len()..].parse::<i64>().is_ok_and(|r| r <= current - SAVE_REVISIONS))
+                .filter(|l| l.strip_prefix(&prefix).and_then(|rev| rev.parse::<i64>().ok())
+                    .is_some_and(|rev| masu_kernel::save::revision_expired(current, rev)))
                 .collect()
         };
         for l in old {
@@ -2476,9 +2479,9 @@ impl Storage {
             let rows = q.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?;
             rows.collect::<rusqlite::Result<_>>()?
         };
-        let cutoff = now_ms() - grace.as_millis() as i64;
+        let now = now_ms();
         for (object, at, pinned) in retired {
-            if pinned || at >= cutoff {
+            if pinned || !masu_kernel::save::older_than_grace(at, now, grace.as_millis()) {
                 out.kept = out.kept.saturating_add(1);
                 continue;
             }
@@ -3085,25 +3088,29 @@ impl Storage {
                 rows.collect::<rusqlite::Result<_>>()?
             };
             for (logical, theirs, size, ours) in rows {
+                use masu_kernel::store::{MergeObject, merge_object};
+
                 let catalog = logical.starts_with("games/") || logical.starts_with("trees/");
                 if catalog {
                     catalog_path(store, &logical)?;
                 }
                 let object = |e: &str| -> Result<Uuid> { Ok(serde_json::from_str::<Envelope>(e)?.object) };
-                tx.execute("INSERT OR IGNORE INTO imported_objects(object) VALUES(?)", [object(&theirs)?.to_string()])?;
-                match ours {
-                    None => {
+                let incoming = object(&theirs)?;
+                let local = ours.as_deref().map(object).transpose()?;
+                tx.execute("INSERT OR IGNORE INTO imported_objects(object) VALUES(?)", [incoming.to_string()])?;
+                match merge_object(local.map(|id| id.as_u128()), incoming.as_u128(), catalog) {
+                    MergeObject::Add => {
                         tx.execute("INSERT INTO main.objects(logical,envelope,size) VALUES(?,?,?)", rusqlite::params![logical, theirs, size])?;
                         out.added += 1;
                     }
-                    Some(ours) if object(&ours)? == object(&theirs)? => out.same += 1,
-                    Some(ours) if catalog => {
+                    MergeObject::Same => out.same = out.same.saturating_add(1),
+                    MergeObject::Replace(old) => {
                         tx.execute("UPDATE main.objects SET envelope=?,size=? WHERE logical=?", rusqlite::params![theirs, size, logical])?;
-                        retire(&tx, object(&ours)?)?;
+                        retire(&tx, Uuid::from_u128(old))?;
                         replaced.push(logical.clone());
                         out.replaced += 1;
                     }
-                    Some(_) => {
+                    MergeObject::Keep => {
                         out.kept += 1;
                     }
                 }

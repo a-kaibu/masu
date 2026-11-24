@@ -208,7 +208,7 @@ fn read_package(store: &Path, id: &str, bytes: &[u8]) -> Result<Package> {
         mounts.push(Value::String(format!("{guest}={tree}")));
     }
     restored["mounts"] = Value::Array(mounts);
-    ensure!(m.profile.note.len() <= 100_000, "note too long");
+    ensure!(masu_kernel::library::valid_note(m.profile.note.len()), "note too long");
     for s in &m.sessions {
         uuid::Uuid::parse_str(&s.id)?;
         ensure!(s.elapsed_ms >= 0, "invalid duration");
@@ -246,7 +246,8 @@ pub async fn import(store: &Path, id: &str, bytes: axum::body::Bytes, saves: &Sa
             let (db, key) = (saves.db.clone(), key.clone());
             tokio::task::spawn_blocking(move || -> Result<i64> {
                 use rusqlite::OptionalExtension;
-                Ok(db.connect()?.query_row("SELECT revision FROM saves WHERE name=?", [&key], |r| r.get(0)).optional()?.unwrap_or(0) + 1)
+                let current = db.connect()?.query_row("SELECT revision FROM saves WHERE name=?", [&key], |r| r.get(0)).optional()?.unwrap_or(0);
+                crate::saves::next_revision(current, current)?.ok_or_else(|| anyhow::anyhow!("portable import revision conflict"))
             })
             .await??
         };
@@ -259,16 +260,17 @@ pub async fn import(store: &Path, id: &str, bytes: axum::body::Bytes, saves: &Sa
     let revisions = tokio::task::spawn_blocking(move || -> Result<Vec<(String, i64)>> {
         let id = id2.as_str();
         let mut c = db.connect()?;
-        let tx = c.transaction()?;
+        let tx = c.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
         tx.execute("INSERT INTO game_settings(game,config) VALUES(?,?) ON CONFLICT(game) DO UPDATE SET config=excluded.config",rusqlite::params![id,serde_json::to_string(&restored)?])?;
         let mut revisions = Vec::new();
         for (key, revision, data) in staged {
             tx.execute("INSERT INTO saves(name,revision,data) VALUES(?,?,?) ON CONFLICT(name) DO UPDATE SET revision=excluded.revision,data=excluded.data",rusqlite::params![key,revision,local.then_some(data)])?;
             revisions.push((key, revision));
         }
-        tx.execute("INSERT INTO profiles(game,favorite,note) VALUES(?,?,?) ON CONFLICT(game) DO UPDATE SET favorite=excluded.favorite,note=excluded.note",rusqlite::params![id,m.profile.favorite,m.profile.note])?;
-        for s in m.sessions {
-            tx.execute("INSERT INTO sessions(id,game,started_ms,elapsed_ms) VALUES(?,?,?,?) ON CONFLICT(id) DO UPDATE SET elapsed_ms=max(sessions.elapsed_ms,excluded.elapsed_ms) WHERE sessions.game=excluded.game AND sessions.started_ms=excluded.started_ms",rusqlite::params![s.id,id,s.started_ms,s.elapsed_ms])?;
+        crate::library::Library::write_profile(&tx, id, &m.profile)?;
+        for mut s in m.sessions {
+            s.game = id.to_owned();
+            crate::library::Library::merge_session(&tx, &s, None)?;
         }
         tx.commit()?;
         Ok(revisions)
