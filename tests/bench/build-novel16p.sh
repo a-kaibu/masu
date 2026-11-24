@@ -5,23 +5,23 @@
 # (3.2.2) and Open Watcom's linker (build-novel16.sh's WATCOM_DIR/watcom). The RTL's license
 # (modified LGPL) goes with the game.
 #
-#   tests/bench/build-novel16p.sh DIR WATCOM_DIR      (needs fpc, nasm, git, make)
+#   tests/bench/build-novel16p.sh DIR WATCOM_DIR      (needs fpc, nasm, zstd, make)
 set -euo pipefail
 ROOT=$(cd "$(dirname "$0")/../.." && pwd)
 DIR=$(mkdir -p "$1" && cd "$1" && pwd)
 WATCOM=$(cd "$2" && pwd)/watcom
 export WATCOM
-REPO=https://gitlab.com/freepascal.org/fpc/source.git
-COMMIT=cda6e50f26f319d22fc0458ec99ba8fc369cac73
+# (the tree of commit cda6e50f26f3 of gitlab.com/freepascal.org/fpc/source, on the release
+# ci-bundles: tools/ci/mirror.txt, git checked it against the commit there)
+TREE=fpc-cda6e50f26f3.tar.zst
 FPC=$DIR/fpc/lib/fpc/3.3.1
 export PATH=$WATCOM/binl64:$PATH
 if [ ! -x "$FPC/ppcross8086" ]; then
   S=$(mktemp -d)
   trap 'rm -rf "$S"' EXIT
-  # (a commit, fetched by its hash: git checks what it gets against it)
-  git -C "$S" init -q
-  for i in 1 2 3 4; do git -C "$S" fetch -q --depth 1 "$REPO" "$COMMIT" && break; sleep $((i * 2)); done
-  git -C "$S" checkout -q FETCH_HEAD
+  "$ROOT/tools/ci/fetch.sh" "$TREE" "$S/$TREE"
+  tar -C "$S" --zstd -xf "$S/$TREE"
+  rm "$S/$TREE"
   # (large model: the game's data is far; nasm and wlink as they are, no target prefix)
   make -C "$S" -j"$(nproc)" crossinstall OS_TARGET=win16 CPU_TARGET=i8086 BINUTILSPREFIX= \
     CROSSOPT="-WmLarge -CX -XXs -O2" INSTALL_PREFIX="$DIR/fpc" >"$DIR/fpc-build.log" 2>&1 ||

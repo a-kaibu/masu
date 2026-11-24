@@ -2,8 +2,16 @@
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 
-# Keep local and CI runs on the same image. No host data or credentials are mounted.
-image=rustfs/rustfs@sha256:ed9210d6411d77ffceb70d94b964a3cb7d225983368bc25bebe01e995293dcc2
+# Keep local and CI runs on the same image: RustFS by its digest, the release ci-bundles' copy
+# (tools/ci/mirror.txt; not Docker Hub at run time), loaded once under its own tag. No host data
+# or credentials are mounted.
+image=masu-ci/rustfs-ed9210d6411d
+if ! docker image inspect "$image" >/dev/null 2>&1; then
+    t=$(mktemp)
+    tools/ci/fetch.sh rustfs-ed9210d6411d.tar.zst "$t"
+    zstd -dc "$t" | docker load -q
+    rm -f "$t"
+fi
 name="masu-rustfs-${GITHUB_RUN_ID:-local}-$$"
 export AWS_ACCESS_KEY_ID=masu-ci-access
 export AWS_SECRET_ACCESS_KEY=masu-ci-secret-only-for-tests

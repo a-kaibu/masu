@@ -2,7 +2,7 @@
 # Builds the engine of the ONScripter benchmark's game (testdata/onscripter) into
 # DIR/onscripter.exe (32-bit, as NScripter games are) and DIR/onscripter64.exe (x64), once: ONScripter 20230825 (GPL 2; Debian's copy of the release) linked
 # statically with SDL 1.2.15, SDL_image (BMP and PNG), SDL_mixer (WAV), SDL_ttf, FreeType, libpng,
-# zlib and bzip2, every source pinned by its hash. SDL 1.2 draws with GDI (windib) and plays through
+# zlib and bzip2, every source pinned by its hash (tools/ci/mirror.txt). SDL 1.2 draws with GDI (windib) and plays through
 # waveOut. One change (onscripter-benchlog.patch): a
 # `benchlog "text"` command that prints the line, the harness's signals (NScripter has no way to).
 #
@@ -11,25 +11,15 @@ set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 DIR=$(mkdir -p "$1" && cd "$1" && pwd)
 [ -f "$DIR/onscripter.exe" ] && [ -f "$DIR/onscripter64.exe" ] && exit 0
-SRC=(
-  "https://deb.debian.org/debian/pool/main/o/onscripter/onscripter_20230825.orig.tar.gz 03299ab9468b080ac0a90211ad4479376add45db3ef5a46be69b4c23c440fb87"
-  "https://www.libsdl.org/release/SDL-1.2.15.tar.gz d6d316a793e5e348155f0dd93b979798933fb98aa1edebcc108829d6474aad00"
-  "https://www.libsdl.org/projects/SDL_image/release/SDL_image-1.2.12.tar.gz 0b90722984561004de84847744d566809dbb9daf732a9e503b91a1b5a84e5699"
-  "https://www.libsdl.org/projects/SDL_mixer/release/SDL_mixer-1.2.12.tar.gz 1644308279a975799049e4826af2cfc787cad2abb11aa14562e402521f86992a"
-  "https://www.libsdl.org/projects/SDL_ttf/release/SDL_ttf-2.0.11.tar.gz 724cd895ecf4da319a3ef164892b72078bd92632a5d812111261cde248ebcdb7"
-  "https://download.savannah.gnu.org/releases/freetype/freetype-2.13.3.tar.xz 0550350666d427c74daeb85d5ac7bb353acba5f76956395995311a9c6f063289"
-  "https://zlib.net/fossils/zlib-1.3.1.tar.gz 9a93b2b7dfdac77ceba5a558a580e74667dd6fede4585b91eefb60f03b72df23"
-  "https://download.sourceforge.net/libpng/libpng-1.6.44.tar.xz 60c4da1d5b7f0aa8d158da48e8f8afa9773c1c8baa5d21974df61f1886b8ce8e"
-  "https://sourceware.org/pub/bzip2/bzip2-1.0.8.tar.gz ab5a03176ee106d3f0fa90e381da478ddae405918153cca248e682cd0c4a2269"
-)
+# (the release ci-bundles' copies, each pinned by its hash in tools/ci/mirror.txt)
+SRC=(onscripter_20230825.orig.tar.gz SDL-1.2.15.tar.gz SDL_image-1.2.12.tar.gz SDL_mixer-1.2.12.tar.gz SDL_ttf-2.0.11.tar.gz
+  freetype-2.13.3.tar.xz zlib-1.3.1.tar.gz libpng-1.6.44.tar.xz bzip2-1.0.8.tar.gz)
 W=$(mktemp -d)
 trap 'rm -rf "$W"' EXIT
 mkdir -p "$W/src"
-for s in "${SRC[@]}"; do
-  url=${s% *} sha=${s#* } f=$W/${url##*/}
-  for i in 1 2 3 4; do curl -fsSL --retry 3 -o "$f" "$url" && break; sleep $((i * 2)); done
-  echo "$sha  $f" | sha256sum -c --quiet
-  tar -C "$W/src" -xf "$f"
+for n in "${SRC[@]}"; do
+  "$HERE/../../tools/ci/fetch.sh" "$n" "$W/$n"
+  tar -C "$W/src" -xf "$W/$n"
 done
 patch -d "$W/src/onscripter-20230825" -p1 -s < "$HERE/onscripter-benchlog.patch"
 for H in i686-w64-mingw32 x86_64-w64-mingw32; do

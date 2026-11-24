@@ -170,11 +170,17 @@ pub fn mirror_urls(text: &str) -> Vec<String> {
     text.lines().filter(|l| !l.trim_start().starts_with('#')).filter_map(|l| l.split_whitespace().nth(2)).map(str::to_owned).collect()
 }
 
-/// `ci-mirror`: a file of mirror.txt fetched from its own host again, anywhere in the tree
+/// what fetches in CI: the shell scripts and workflows, and the Python and JavaScript they run
+/// (a table such as tests/corpus/titles.tsv names a game's own page: the corpus' store keeps games)
+fn fetches(p: &Rel) -> bool {
+    is_shell(p) || (!p.as_str().starts_with("vendor/") && [".py", ".mjs", ".js"].iter().any(|x| p.as_str().ends_with(x)))
+}
+
+/// `ci-mirror`: a file of mirror.txt fetched from its own host again by a script or workflow
 pub(super) fn ci_mirror(tree: &Tree) -> Hits {
     let urls = mirror_urls(&tree.text(&Rel::new(MIRROR)));
     let mut out = Hits::new();
-    for p in tree.paths().iter().filter(|p| !p.as_str().starts_with("vendor/") && !MIRROR_OWN.contains(&p.as_str())) {
+    for p in tree.paths().iter().filter(|p| fetches(p) && !MIRROR_OWN.contains(&p.as_str())) {
         for (k, l) in tree.text(p).lines().enumerate() {
             if let Some(u) = urls.iter().find(|u| l.contains(u.as_str())) {
                 out.push((p.clone(), k.saturating_add(1), format!("{u}: fetched from outside GitHub; tools/ci/fetch.sh gets the release ci-bundles' copy (tools/ci/mirror.txt)")));

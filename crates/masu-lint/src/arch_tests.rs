@@ -149,13 +149,16 @@ fn fixture(r: Rule) -> Fixture {
         },
         Rule::CiMirror => Fixture {
             bad: &[
-                ("tools/ci/mirror.txt", "# name sha256 url\nemsdk-1.tar.xz 00 https://storage.googleapis.com/webassembly/x/wasm-binaries.tar.xz\n"),
+                ("tools/ci/mirror.txt", "# name sha256 url\nemsdk-1.tar.xz 00 https://storage.googleapis.com/webassembly/x/wasm-binaries.tar.xz\nrustfs-ab.tar.zst docker rustfs/rustfs@sha256:ab\n"),
                 ("tools/ci/emsdk.sh", "  curl -fsSL \"https://storage.googleapis.com/webassembly/x/wasm-binaries.tar.xz\" | tar xJ -C \"$EMSDK4\"\n"),
+                ("tools/ci/rustfs.sh", "docker run -d rustfs/rustfs@sha256:ab /data\n"),
+                ("tests/x.mjs", "await fetch('https://storage.googleapis.com/webassembly/x/wasm-binaries.tar.xz');\n"),
             ],
             good: &[
                 ("tools/ci/mirror.txt", "# name sha256 url\nemsdk-1.tar.xz 00 https://storage.googleapis.com/webassembly/x/wasm-binaries.tar.xz\n"),
                 ("tools/ci/emsdk.sh", "  tools/ci/fetch.sh emsdk-1.tar.xz \"$EMSDK4/w.tar.xz\"\n"),
                 (".github/workflows/ci-bundles.yml", "          done 3< tools/ci/mirror.txt\n"),
+                ("tests/corpus/titles.tsv", "r1\tThe Question\tRen'Py\t2026\thttps://storage.googleapis.com/webassembly/x/wasm-binaries.tar.xz\n"),
             ],
             // (the URL in two pieces: whole, this line would be a site itself)
             mutate: ("tools/ci/emsdk.sh", |t| Some(t + concat!("curl -fsSL https://storage.googleapis.com/", "webassembly/emscripten-releases-builds/linux/b412b6307e541b93dd93f01b61181e15c17302ec/wasm-binaries.tar.xz | tar xJ\n"))),
@@ -1144,5 +1147,7 @@ fn ci_mirror_reads_the_urls_of_its_list() {
     assert_eq!(regress::mirror_urls("# name sha256 url\na.tar.xz 00 https://x/a.tar.xz\n\nb 11 https://y/b\n"), ["https://x/a.tar.xz", "https://y/b"]);
     // (the real list's every URL is fetched nowhere else)
     assert!(Rule::CiMirror.check(&real_tree()).is_empty());
+    // (a curl of a file, a docker run of an image, a fetch in JavaScript: each the list's source)
+    assert_eq!(Rule::CiMirror.check(&Tree::made_up(fixture(Rule::CiMirror).bad)).len(), 3);
     assert!(!regress::mirror_urls(&real_tree().text(&Rel::new(regress::MIRROR))).is_empty());
 }

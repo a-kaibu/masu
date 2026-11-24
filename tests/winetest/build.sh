@@ -1,7 +1,7 @@
 #!/bin/bash
 # Builds Wine's conformance tests (dlls/<dll>/tests) as Windows programs, the way Wine itself
 # builds them (its own headers, import libraries and test.h, compiled with mingw-w64), from a
-# pinned Wine release downloaded at build time. Nothing of Wine is kept in this repository
+# pinned Wine release fetched at build time. Nothing of Wine is kept in this repository
 # (Wine is LGPL); only the list of tests and their expected results on sake are.
 #
 #   tests/winetest/build.sh [dll ...]     (default: every dll in tests/winetest/dlls.txt)
@@ -12,7 +12,6 @@
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 VER=11.20
-SHA256=eac8ca448f9c0087f963026b4dc276d1e2b7fbb64056edc093e59bbb7e56fe28
 W=${WINETEST:-$HERE/../../target/winetest}
 ARCHS=${ARCHS:-i386 x86_64}
 mkdir -p "$W"
@@ -20,8 +19,8 @@ W=$(cd "$W" && pwd)
 DLLS=${*:-$(grep -v '^#' "$HERE/dlls.txt" | awk 'NF {print $1}')}
 
 if [ ! -f "$W/wine-$VER/configure" ]; then
-  curl -fsSL -o "$W/wine-$VER.tar.xz" "https://dl.winehq.org/wine/source/${VER%%.*}.x/wine-$VER.tar.xz"
-  echo "$SHA256  $W/wine-$VER.tar.xz" | sha256sum -c --quiet
+  # (the release ci-bundles' copy, pinned by its hash in tools/ci/mirror.txt)
+  "$HERE/../../tools/ci/fetch.sh" "wine-$VER.tar.xz" "$W/wine-$VER.tar.xz"
   tar xJf "$W/wine-$VER.tar.xz" -C "$W"
   rm "$W/wine-$VER.tar.xz"
 fi
