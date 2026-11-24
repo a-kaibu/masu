@@ -64,18 +64,48 @@ jobs:
             gh release upload ci-bundles --clobber "$RUNNER_TEMP/out/$n" "$RUNNER_TEMP/out/$n.sha256"
             echo "$n: uploaded ($set)" >> "$GITHUB_STEP_SUMMARY"
           done 3< tools/ci/apt-sets.txt
-      - name: Each file of tools/ci/mirror.txt not there yet
+      - name: Each line of tools/ci/mirror.txt not there yet
         run: |
           gh release view ci-bundles --json assets -q '.assets[].name' > "$RUNNER_TEMP/have.txt"
-          while read -r name sum url <&3; do
+          while read -r name sum src <&3; do
             case $name in ''|'#'*) continue ;; esac
-            if grep -qxF "$name" "$RUNNER_TEMP/have.txt"; then
-              echo "$name: there"
-              continue
-            fi
-            curl -fsSL --retry 5 --retry-all-errors -o "$RUNNER_TEMP/$name" "$url"
-            echo "$sum  $RUNNER_TEMP/$name" | sha256sum -c
-            gh release upload ci-bundles "$RUNNER_TEMP/$name"
-            rm "$RUNNER_TEMP/$name"
-            echo "$name: uploaded ($url)" >> "$GITHUB_STEP_SUMMARY"
+            f=$RUNNER_TEMP/$name
+            case $sum in
+              git:*|docker)
+                if grep -qxF "$name" "$RUNNER_TEMP/have.txt" && grep -qxF "$name.sha256" "$RUNNER_TEMP/have.txt"; then
+                  echo "$name: there"
+                  continue
+                fi
+                if [ "$sum" = docker ]; then
+                  # (pulled by its digest, which docker checks; saved under a tag of its own,
+                  # which docker load gives back)
+                  docker pull -q "$src"
+                  tag=masu-ci/${name%.tar.zst}
+                  docker tag "$src" "$tag"
+                  docker save "$tag" | zstd -q -T0 -19 -o "$f"
+                else
+                  # (fetched by its commit, which git checks)
+                  g=$RUNNER_TEMP/git-$name
+                  git init -q "$g"
+                  git -C "$g" fetch -q --depth 1 "$src" "${sum#git:}"
+                  [ "$(git -C "$g" rev-parse FETCH_HEAD)" = "${sum#git:}" ]
+                  git -C "$g" archive --format=tar FETCH_HEAD | zstd -q -T0 -19 -o "$f"
+                  rm -rf "$g"
+                fi
+                (cd "$RUNNER_TEMP" && sha256sum "$name" > "$name.sha256")
+                gh release upload ci-bundles --clobber "$f" "$f.sha256"
+                rm "$f" "$f.sha256"
+                ;;
+              *)
+                if grep -qxF "$name" "$RUNNER_TEMP/have.txt"; then
+                  echo "$name: there"
+                  continue
+                fi
+                curl -fsSL --retry 5 --retry-all-errors -o "$f" "$src"
+                echo "$sum  $f" | sha256sum -c
+                gh release upload ci-bundles "$f"
+                rm "$f"
+                ;;
+            esac
+            echo "$name: uploaded ($src)" >> "$GITHUB_STEP_SUMMARY"
           done 3< tools/ci/mirror.txt
