@@ -21,3 +21,4 @@ libpng-1.6.44.tar.xz 60c4da1d5b7f0aa8d158da48e8f8afa9773c1c8baa5d21974df61f1886b
 bzip2-1.0.8.tar.gz ab5a03176ee106d3f0fa90e381da478ddae405918153cca248e682cd0c4a2269 https://sourceware.org/pub/bzip2/bzip2-1.0.8.tar.gz
 fpc-cda6e50f26f3.tar.zst git:cda6e50f26f319d22fc0458ec99ba8fc369cac73 https://gitlab.com/freepascal.org/fpc/source.git
 rustfs-ed9210d6411d.tar.zst docker rustfs/rustfs@sha256:ed9210d6411d77ffceb70d94b964a3cb7d225983368bc25bebe01e995293dcc2
+kr2_232r2.zip 5544e94e50f4e36c149214a255ea9547896694eb9eceadb6ed2f341709bf9a86 https://krkren.github.io/download/kr2_232r2.zip
