@@ -17,9 +17,10 @@ b2020_akabeesoft3-32 0 0 0
 b2026_anim-32 0 0 0
 s2008_clochette_suzunone7-32 0 0 0
 s2011_clochette_kamikaze-32 0 0 0
-s2011_waffle_sex_friend-32 0 0 0
 s2014_clochette_sakigake-32 0 0 0
-s2015_clochette_kokonatsu-32 0 0 0
+s2015_ensemble_sweet_yakimochi-32 0 0 0
 s2015_silkys_plus_neyuki-32 0 0 0
-s2017_nanawind_alice_gram-32 0 0 0
+s2017_akabeesoft3_tonofuta-32 0 0 0
+s2020_wonder_fool_maokatsu-32 0 0 0
 s2021_giga_fuyukiss-32 0 0 0
+s2022_hooksoft_houkago2-32 0 0 0
