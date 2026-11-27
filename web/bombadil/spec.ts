@@ -3,7 +3,9 @@ import { actions, extract, getFingerprint, type ActionTemplate } from "@antithes
 export { noUncaughtExceptions, noUnhandledPromiseRejections } from "@antithesishq/bombadil/browser/defaults";
 
 const controls = extract(({ document }) => {
-  const buttons = Array.from(document.querySelectorAll<HTMLButtonElement>("button"));
+  const buttons = Array.from(
+    document.querySelectorAll<HTMLButtonElement | HTMLTextAreaElement>('button, textarea[aria-label="メモ"]'),
+  );
   return buttons.flatMap((button) => {
     if (button.disabled) return [];
     const label = button.getAttribute("aria-label") ?? button.textContent?.trim() ?? "";
@@ -28,8 +30,9 @@ const controls = extract(({ document }) => {
   });
 });
 
-const screen = extract(({ document, window }) => {
+const screen = extract(({ document, window, lastAction }) => {
   const info = document.querySelector('[data-testid="game-info"]');
+  const note = info?.querySelector<HTMLTextAreaElement>('textarea[aria-label="メモ"]');
   const first = document.querySelector('[data-testid="save-first"]');
   const rect = info?.closest('[role="dialog"]')?.getBoundingClientRect();
   const scroll = rect ? { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 } : null;
@@ -39,6 +42,9 @@ const screen = extract(({ document, window }) => {
     game: new URL(window.location.href).searchParams.get("game"),
     cards: document.querySelectorAll("li[data-game]").length,
     scroll,
+    note: note?.value ?? null,
+    canType: !!note && document.activeElement === note,
+    typed: typeof lastAction === "object" && lastAction !== null && "TypeText" in lastAction,
     returning: Array.from(document.querySelectorAll("button")).some((b) =>
       b.textContent?.includes("一覧に戻る"),
     ),
@@ -58,6 +64,7 @@ let lastGame: string | null = null;
 export const explore = actions(() => {
   const current = screen.current;
   const steps: ActionTemplate[] = ["Wait"];
+  if (current.canType) steps.push({ TypeText: { text: { Regexp: "[a-z]{1,5}" } } });
   if (current.game !== null) {
     if (lastGame !== current.game) launches += 1;
     steps.push("Back");
@@ -100,4 +107,14 @@ export const saveProgressDoesNotGoBack = always(() => {
 export const libraryHasNoRunningGame = always(() => {
   const { cards, game, returning } = screen.current;
   return cards === 0 || game !== null || !returning;
+});
+
+// Typing is the only action that changes the note's visible text. Remember it
+// by game across details panels, including when a favorite PUT finishes.
+const notes = new Map<string, string>();
+export const noteSurvivesSelection = always(() => {
+  const { note, info, typed } = screen.current;
+  if (info === null || note === null) return true;
+  if (typed || !notes.has(info)) notes.set(info, note);
+  return notes.get(info) === note;
 });

@@ -21,84 +21,98 @@ import {
 
 const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
-/** A game's record: loaded once, the favorite flag saved at once, the note on 保存 (the
- * server's copy, the note typed and the flag asked for kept apart: profile-draft.ts). */
-export function useProfile(game: string, onFavorite?: (on: boolean) => void) {
-  const [model, setModel] = useState<ProfileModel>(emptyProfile);
-  const [error, setError] = useState("");
-  const [busy, setBusy] = useState(false);
-  // (the latest model for the handlers: a PUT's body is built from what is saved now)
-  const latest = useRef(model);
-  const step = (a: ProfileAction) => {
-    latest.current = profileStep(latest.current, a);
-    setModel(latest.current);
+type GameRecord = { model: ProfileModel; error: string; busy: boolean };
+const emptyRecord: GameRecord = { model: emptyProfile, error: "", busy: false };
+
+/** Keep a game's draft and pending writes while the library is open, even when the
+ * details panel unmounts. A response updates the same game that made the request. */
+export function useProfile(game: string | undefined, onFavorite: (game: string, on: boolean) => void) {
+  const [records, setRecords] = useState(() => new Map<string, GameRecord>());
+  const latest = useRef(records);
+  const writes = useRef(new Map<string, Promise<boolean>>());
+  const current = (id: string) => latest.current.get(id) ?? emptyRecord;
+  const change = (id: string, patch: Partial<GameRecord>) => {
+    const next = new Map(latest.current);
+    next.set(id, { ...current(id), ...patch });
+    latest.current = next;
+    setRecords(next);
   };
-  const load = () =>
-    api<Profile>(`library/${encodeURIComponent(game)}`).then((p) => {
-      step({ kind: "loaded", profile: p });
-      setError("");
-    });
+  const step = (id: string, action: ProfileAction) => {
+    change(id, { model: profileStep(current(id).model, action) });
+  };
+  const read = async (id: string, active: () => boolean) => {
+    const pending = writes.current.get(id);
+    await pending;
+    if (!active()) return;
+    const profile = await api<Profile>(`library/${encodeURIComponent(id)}`);
+    if (active() && writes.current.get(id) === pending) {
+      change(id, { model: profileStep(current(id).model, { kind: "loaded", profile }), error: "" });
+    }
+  };
   useEffect(() => {
+    if (!game) return;
     let active = true;
-    latest.current = emptyProfile;
-    setModel(emptyProfile);
-    api<Profile>(`library/${encodeURIComponent(game)}`)
-      .then((p) => active && step({ kind: "loaded", profile: p }))
-      .catch((e: unknown) => active && setError(message(e)));
+    void read(game, () => active).catch((e: unknown) => {
+      if (active) change(game, { error: message(e) });
+    });
     return () => {
       active = false;
     };
   }, [game]);
-  // (one PUT at a time, each built when it goes from what is saved then: a note sent while the
-  // flag's PUT was out does not take the flag back on the server)
-  const chain = useRef<Promise<unknown>>(Promise.resolve());
-  const queued = (body: () => Profile | null): Promise<boolean> => {
-    const go = () => {
-      const b = body();
-      return b ? put(b) : Promise.resolve(false);
+
+  // Each PUT is assembled from the game's latest saved state when it reaches the
+  // front of its queue. Writes continue to share that queue after closing the panel.
+  const queued = (id: string, body: () => Profile | null): Promise<boolean> => {
+    const go = async () => {
+      const next = body();
+      if (!next) return false;
+      change(id, { busy: true });
+      try {
+        await api(`library/${encodeURIComponent(id)}`, next);
+        return true;
+      } catch (e) {
+        toast.error(`保存できませんでした: ${message(e)}`);
+        return false;
+      } finally {
+        change(id, { busy: false });
+      }
     };
-    const r = chain.current.then(go, go);
-    chain.current = r;
-    return r;
+    const result = (writes.current.get(id) ?? Promise.resolve()).then(go, go);
+    writes.current.set(id, result);
+    return result;
   };
-  const put = async (next: Profile) => {
-    setBusy(true);
-    try {
-      await api(`library/${encodeURIComponent(game)}`, next);
-      return true;
-    } catch (e) {
-      toast.error(`保存できませんでした: ${message(e)}`);
-      return false;
-    } finally {
-      setBusy(false);
-    }
-  };
-  const profile = shown(model);
+  const { model, error, busy } = (game && records.get(game)) || emptyRecord;
   return {
-    profile,
+    profile: shown(model),
     error,
     busy,
     dirty: model.draft !== null,
-    setNote: (note: string) => step({ kind: "typed", note }),
+    setNote: (note: string) => {
+      if (game) step(game, { kind: "typed", note });
+    },
     toggleFavorite: async () => {
-      if (!latest.current.saved) return;
-      const on = !shown(latest.current)?.favorite;
-      step({ kind: "favorite-asked", on });
-      const ok = await queued(() => favoriteBody(latest.current, on));
-      step({ kind: "favorite-done", ok, on });
-      if (ok) onFavorite?.(on);
+      if (!game || !current(game).model.saved) return;
+      const on = !shown(current(game).model)?.favorite;
+      step(game, { kind: "favorite-asked", on });
+      const ok = await queued(game, () => favoriteBody(current(game).model, on));
+      step(game, { kind: "favorite-done", ok, on });
+      if (ok) onFavorite(game, on);
     },
     saveNote: async () => {
-      const body = noteBody(latest.current);
+      if (!game) return;
+      const body = noteBody(current(game).model);
       if (!body) return;
-      step({ kind: "note-sent", note: body.note });
-      const ok = await queued(() =>
-        latest.current.saved ? { ...latest.current.saved, note: body.note } : null,
-      );
-      step({ kind: "note-done", ok, note: body.note });
+      step(game, { kind: "note-sent", note: body.note });
+      const ok = await queued(game, () => {
+        const saved = current(game).model.saved;
+        return saved ? { ...saved, note: body.note } : null;
+      });
+      step(game, { kind: "note-done", ok, note: body.note });
       if (ok) toast.success("メモを保存しました");
     },
-    reload: load,
+    reload: async () => {
+      if (game) await read(game, () => true);
+    },
   };
 }
 
