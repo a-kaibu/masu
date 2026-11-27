@@ -119,7 +119,12 @@ fn _Current_set(c: &mut Ctx) -> u32 {
 /// _Temp_get(wchar_t (&dst)[MAX_PATH]): GetTempPathW's answer, `dst`
 fn _Temp_get(c: &mut Ctx) -> u32 {
     let dst = c.a(0);
-    k32(c, "GetTempPathW", &[MAX_PATH, dst]);
+    let scratch = mem::Scratch::new(MAX_PATH * 2, true);
+    let n = k32(c, "GetTempPathW", &[MAX_PATH, scratch.get()]);
+    // The CRT copies the terminated path, leaving the rest of the caller's buffer intact.
+    if n != 0 && n < MAX_PATH {
+        mem::copy(dst, scratch.get(), (n + 1) * 2);
+    }
     dst
 }
 
