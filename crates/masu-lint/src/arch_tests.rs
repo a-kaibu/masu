@@ -404,7 +404,7 @@ fn fixture(r: Rule) -> Fixture {
             bad: &[("tests/host-tests.sh", "#!/bin/sh\ncargo test\n")],
             good: &[
                 ("tests/host-tests.sh", "export MASU_OUTS_STRICT=1\n"),
-                ("crates/sake/src/lib.rs", "#[cfg(test)]\nmod outptr_audit;\n"),
+                ("crates/sake/src/lib.rs", "#[cfg(test)]\nmod outptr_audit;\n    PEB.store(peb, Ordering::Relaxed);\n    gdi::share_table(peb);\n"),
                 (".github/workflows/ci.yml", "cargo run -q --release -p masu-lint -- arch\ncargo run -q --release -p masu-lint -- dup\ncargo test --workspace --release\ncargo run -q --release -p masu-lint -- ratchet\nrun: tools/ci/own-workspaces.sh\nrun: cargo test -p masu --bin masu -- --exact pack::tests::adding_a_small_game_takes_the_store_lock_file\n"),
                 ("crates/sake/src/api.rs", "pub fn fallbacks(dll: &str) -> &'static [&'static str] {\n    if is_crt(dll) { &[\"msvcrt\"] } else { &[\"kernel32\"] }\n}\n/// ```compile_fail\n/// ```\npub type NoReturn = fn(&mut Ctx) -> !;\n"),
             ],
@@ -984,6 +984,17 @@ fn each_rule_lets_the_right_spelling_through() {
         let f = fixture(r);
         let hits = r.check(&Tree::made_up(f.good));
         assert!(hits.is_empty(), "{}: flags its good fixture: {hits:?}", r.id());
+    }
+}
+
+#[test]
+fn required_fixture_includes_every_guard_for_its_files() {
+    for (file, contents) in fixture(Rule::Required).good {
+        for (path, guard, _) in REQUIRED {
+            if *file == path {
+                assert!(contents.contains(guard), "required good fixture for {path} is missing {guard:?}");
+            }
+        }
     }
 }
 
