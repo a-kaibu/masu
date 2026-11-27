@@ -350,7 +350,7 @@ pub(super) fn close_fd(fd: u32) -> bool {
 }
 
 /// errno for a Windows error.
-fn errno_for(e: u32) -> u32 {
+pub(super) fn errno_for(e: u32) -> u32 {
     match e {
         2 | 3 | 15 | 123 => ENOENT,
         80 | 183 => EEXIST,
@@ -1013,6 +1013,10 @@ fn stat_name_ok(path: &str) -> bool {
     let bare_drive = path.len() == 2 && path.ends_with(':');
     !path.is_empty() && !bare_drive && !path.contains(['*', '?']) && (trimmed.len() == path.len() || trimmed.is_empty() || trimmed.ends_with(':'))
 }
+/// The UCRT also accepts a directory with a trailing separator. Bare drive names still fail.
+fn ucrt_stat_directory_suffix(path: &str) -> bool {
+    path.ends_with(['\\', '/']) && !path.contains(['*', '?'])
+}
 fn stat(c: &mut Ctx, k: StatKind, wide: bool) -> u32 {
     let (path, p) = (path_arg(c.a(0), wide), c.a(1));
     if p == 0 {
@@ -1021,8 +1025,8 @@ fn stat(c: &mut Ctx, k: StatKind, wide: bool) -> u32 {
     }
     // (the UCRT takes a directory's name with a separator after it, not a file's: ucrtbase:misc
     // test__stat32; msvcrt takes neither)
-    let ucrt_dir = is_ucrt(c) && !path.contains(['*', '?']);
-    if !stat_name_ok(&path) && !ucrt_dir {
+    let named = stat_name_ok(&path);
+    if !named && !(is_ucrt(c) && ucrt_stat_directory_suffix(&path)) {
         set_errno(ENOENT);
         return u32::MAX;
     }
@@ -1031,7 +1035,7 @@ fn stat(c: &mut Ctx, k: StatKind, wide: bool) -> u32 {
         set_errno(ENOENT);
         return u32::MAX;
     };
-    if !stat_name_ok(&path) && !m.is_dir() {
+    if !named && !m.is_dir() {
         set_errno(ENOENT);
         return u32::MAX;
     }

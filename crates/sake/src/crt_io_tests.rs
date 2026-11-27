@@ -69,6 +69,16 @@ fn stat_names_are_windows() {
     }
 }
 
+#[test]
+fn ucrt_stat_allows_directory_separators_and_rejects_bare_drives() {
+    for name in ["c:\\", "C:/", ".\\", "C:\\Windows\\"] {
+        assert!(stat_name_ok(name) || ucrt_stat_directory_suffix(name), "{name:?}");
+    }
+    for name in ["c:", "", "dir?\\"] {
+        assert!(!(stat_name_ok(name) || ucrt_stat_directory_suffix(name)), "{name:?}");
+    }
+}
+
 proptest! {
     // a trailing separator is accepted exactly when what precedes it is empty or a drive
     #[test]
