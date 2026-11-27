@@ -868,6 +868,16 @@ fn fixture(r: Rule) -> Fixture {
             ],
             mutate: ("tools/jit32test/src/main.rs", |t| Some(t.replace("koji::jit::SSA.store(mode.ssa, Relaxed);", ""))),
         },
+        Rule::Jit64Budget => Fixture {
+            bad: &[
+                ("crates/koji/src/jit/long.rs", "fn f() { let b = cpu_off!(jit_budget); }\n"),
+                ("crates/koji/src/jit/long/sse.rs", "fn f() { let b = offset_of!(Cpu, jit_budget); }\n"),
+            ],
+            good: &[
+                ("crates/koji/src/jit/long.rs", "fn reload_budget(c: &mut Code) { c.get(L_CPU).load32(cpu_off!(jit_budget)).set(L_BUD); }\nfn spill_budget(c: &mut Code) { c.get(L_CPU).get(L_BUD).store32(cpu_off!(jit_budget)); }\nfn f() { c.get(L_BUD); }\n"),
+            ],
+            mutate: ("crates/koji/src/jit/long.rs", |t| Some(t.replace("fn decrement_budget(c: &mut Code) -> &mut Code {", "fn decrement_budget(c: &mut Code) -> &mut Code {\n    let b = cpu_off!(jit_budget);"))),
+        },
         Rule::JitSimdAccess => Fixture {
             bad: &[
                 ("crates/koji/src/jit/long/sse.rs", "fn f(&mut self) { self.c.get(L_A).simd(0); self.swap_hi(&regs); }\n"),

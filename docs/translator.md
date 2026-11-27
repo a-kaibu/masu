@@ -540,3 +540,28 @@ builds. Each counting run produced checksum `28c4b3a8`.
 | Per vector | 206 | 46 |
 
 The emitted hot path executed 77.7% fewer SIMD memory operations.
+
+## Local x64 chain budget (2026-11-27, stage 5)
+
+Region and function bodies load the chain budget once and decrement the Wasm
+local on back edges and chains. Transfers to another translation and calls
+that can change the Cpu synchronize the value. `masu-lint jit64-budget` checks
+the two emission sites. The jit64test differential run passed 6,000 programs.
+With `JIT64_BUDGET=2 JRING=1` it passed another 1,500 and reported 195 runs
+with at least one exhausted dispatch.
+
+The `avx2_int` A/B used the setup above with `34a6ab88` as A and the local-budget
+change as B. Both builds produced `28c4b3a8`. Each cell gives A / B over five
+alternating rounds.
+
+| V8 and JIT mode | Hot (ms) | Cold (ms) | Cold p95 (ms) | Translate (ms) | V8 load (ms) | Module bytes | Peak memory (MiB) |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| Node, function | 7.28 / 6.40 | 34.04 / 33.92 | 34.77 / 35.35 | 7.84 / 7.50 | 0.44 / 0.40 | 4868 / 4855 | 364 / 364 RSS |
+| Node, region | 7.19 / 7.15 | 32.97 / 32.51 | 41.69 / 34.05 | 6.07 / 5.84 | 0.34 / 0.34 | 4440 / 4416 | 363 / 366 RSS |
+| Chromium, function | 51.95 / 49.80 | 189 / 196 | 195 / 213 | 54.76 / 54.49 | 2.23 / 2.46 | 4868 / 4855 | 10 / 10 JS heap |
+| Chromium, region | 50.09 / 50.13 | 173 / 171 | 180 / 192 | 39.81 / 40.79 | 2.18 / 2.15 | 4440 / 4416 | 10 / 10 JS heap |
+
+Both builds executed 1,520 interpreter instructions per cold run. In a hot
+run each made one interpreter dispatch, zero interpreter step calls from
+generated code and 16 total exits. The hot function mode improved in this
+sample. Region medians stayed within 1%.

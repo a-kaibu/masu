@@ -126,7 +126,8 @@ const L_DBG: u32 = L_FC + 4; // i32: debugging
 const L_H: u32 = L_FC + 5; // i32: the exit's hash probe (see Gen::chain)
 const L_E: u32 = L_FC + 6; // i32
 const L_W: u32 = L_FC + 7; // i32: the address a store of the instruction writes (Gen::smc)
-const N_I32: u32 = 8;
+const L_BUD: u32 = L_FC + 8; // i32: Cpu::jit_budget while inside a translation
+const N_I32: u32 = 9;
 const L_V0: u32 = L_FC + N_I32; // v128: SSE operands (long/sse.rs)
 const L_V1: u32 = L_V0 + 1;
 const L_V2: u32 = L_V1 + 1; // v128: the MXCSR guard's scratch (long/sse.rs)
@@ -475,6 +476,20 @@ fn fn_adapter(f: u32, hi: u32) -> Func {
 
 fn void<T>(_: T) {}
 
+/// Read the budget at entry and after calls that can change the Cpu.
+fn reload_budget(c: &mut Code) {
+    c.get(L_CPU).load32(cpu_off!(jit_budget)).set(L_BUD);
+}
+
+/// Exits and callees see the remaining budget in the Cpu.
+fn spill_budget(c: &mut Code) {
+    c.get(L_CPU).get(L_BUD).store32(cpu_off!(jit_budget));
+}
+
+fn decrement_budget(c: &mut Code) -> &mut Code {
+    c.get(L_BUD).i32c(1).sub().tee(L_BUD)
+}
+
 /// The low 32 bits of an address (the dispatcher's key, the host trap range's).
 fn low_half(a: u64) -> u32 {
     u32::try_from(a & 0xffff_ffff).unwrap_or(u32::MAX)
@@ -501,6 +516,7 @@ impl<'a> Gen<'a> {
     /// Returns from a function (FN64): `status` and `rip` (pushed by the closures), then the
     /// registers' locals.
     fn ret_fn(&mut self, status: impl FnOnce(&mut Code), rip: impl FnOnce(&mut Code)) {
+        spill_budget(&mut self.c);
         status(&mut self.c);
         rip(&mut self.c);
         for i in 0..16 {
@@ -1174,9 +1190,7 @@ impl<'a> Gen<'a> {
             }
             if label.1 {
                 // a loop's next round: count down the budget
-                let b = cpu_off!(jit_budget);
-                self.c.get(L_CPU).get(L_CPU).load32(b).i32c(1).sub().store32(b);
-                self.c.get(L_CPU).load32(b).i32c(0).le_s().if_();
+                decrement_budget(&mut self.c).i32c(0).le_s().if_();
                 self.depth += 1;
                 self.exit_to(target, 0);
                 self.depth -= 1;
@@ -1190,9 +1204,7 @@ impl<'a> Gen<'a> {
         }
         if target <= self.ins.ip() {
             // backward: count down the budget
-            let b = cpu_off!(jit_budget);
-            self.c.get(L_CPU).get(L_CPU).load32(b).i32c(1).sub().store32(b);
-            self.c.get(L_CPU).load32(b).i32c(0).le_s().if_();
+            decrement_budget(&mut self.c).i32c(0).le_s().if_();
             self.depth += 1;
             self.exit_to(target, 0);
             self.depth -= 1;
@@ -1207,11 +1219,10 @@ impl<'a> Gen<'a> {
     /// trip). Code here is inside the dispatch loop only; `hi` is the region's 4GB alias.
     fn chain(&mut self, hi: u32) {
         let c = &mut self.c;
-        let (hash, maskf, b) = (cpu_off!(jit_hash), cpu_off!(jit_mask), cpu_off!(jit_budget));
+        let (hash, maskf) = (cpu_off!(jit_hash), cpu_off!(jit_mask));
         let mask = (1u32 << ENTRY_SHIFT) - 1;
         c.get(L_ST).eqz().if_(); // loop 1
-        c.get(L_CPU).get(L_CPU).load32(b).i32c(1).sub().store32(b);
-        c.get(L_CPU).load32(b).i32c(0).gt_s();
+        decrement_budget(c).i32c(0).gt_s();
         // (address 0 is the key of an empty slot: never a region)
         c.get(L_NT).x(I32_WRAP).i32c(0).ne().and().if_(); // loop 2
         // (L_H holds the mask first: dispatch::slot)
@@ -1241,6 +1252,7 @@ impl<'a> Gen<'a> {
             // (in this 4GB alias only: the callee's prologue would find the Cpu's stale)
             c.get(L_DBG).u32c(super::FN_TAG).and().i32c(0).ne();
             c.get(L_NT).i64c(32).x(I64_SHR_U).x(I32_WRAP).u32c(hi).eq().and().if_();
+            spill_budget(c);
             fn_args(c, |c| void(c.get(L_RA)), |c| void(c.get(L_DBG)), |c| void(c.get(L_DEPTH)));
             c.get(L_DBG).u32c(mask).and().i32c(1).add();
             c.op(0x13).op(lo8(T_FN)).op(0); // return_call_indirect, table 0
@@ -1259,6 +1271,7 @@ impl<'a> Gen<'a> {
         let c = &mut self.c;
         c.get(L_CPU).get(L_NT).x(I32_WRAP).store32(cpu_off!(eip));
         c.get(L_CPU).get(L_NT).i64c(32).x(I64_SHR_U).x(I32_WRAP).store32(cpu_off!(rip_hi));
+        spill_budget(c);
         c.get(L_CPU).get(L_DBG);
         for i in 2..N_PARAMS {
             // (a function's tail jump: as deep as this one, its RET goes back to our caller)
@@ -1312,7 +1325,7 @@ impl<'a> Gen<'a> {
         // (to the ring: (FN_TAG | site, target), when the budget's hash has its top 3 bits clear)
         if matches!(target, CallTarget::Sampled) && site & super::FN_TAG == 0 {
             let ring = cpu_off!(jit_ring);
-            self.c.get(L_CPU).load32(cpu_off!(jit_budget)).u32c(0x9e37_79b1).mul().i32c(29).shr_u().eqz().if_();
+            self.c.get(L_BUD).u32c(0x9e37_79b1).mul().i32c(29).shr_u().eqz().if_();
             self.c.get(L_CPU).load32(ring).tee(h).get(h).load32(0).tee(v).i32c(1).add().store32(0);
             self.c.get(h).get(v).u32c(super::RING_SIZE.wrapping_sub(1)).and().i32c(3).shl().add().tee(h);
             self.c.u32c(super::FN_TAG | site).store32(4);
@@ -1329,9 +1342,11 @@ impl<'a> Gen<'a> {
         self.c.get(v).eqz().br_if(0);
         // (the flags dead at the return address: the callee's RET there leaves them out)
         let dead = self.index.get(&next).is_some_and(|&k| !self.blocks[k].flags_in);
+        spill_budget(&mut self.c);
         fn_args(&mut self.c, |c| void(c.i64c(if dead { lo64(next).cast_signed() } else { 0 })), |c| void(c.get(v)), |c| void(c.get(L_DEPTH).i32c(1).add()));
         self.c.get(v).u32c((1 << ENTRY_SHIFT) - 1).and().i32c(1).add().call_indirect(T_FN, 0);
         fn_results(&mut self.c, h, L_NT);
+        reload_budget(&mut self.c);
         // another status: the state is in the Cpu, passed up
         self.c.get(h).i32c(RET_FN).ne().if_();
         self.ret_fn(|c| void(c.get(h)), |c| void(c.i64c(0)));
@@ -1397,7 +1412,9 @@ impl<'a> Gen<'a> {
         let ip = self.ins.ip();
         self.c.get(L_CPU).u32c(lo32(ip)).store32(cpu_off!(eip));
         self.c.get(L_CPU).u32c(lo32(ip >> 32)).store32(cpu_off!(rip_hi));
+        spill_budget(&mut self.c);
         self.c.get(L_CPU).call(F_STEP).tee(L_ST);
+        reload_budget(&mut self.c);
         if ends {
             self.ret_st(L_ST);
             return;
@@ -1413,6 +1430,7 @@ impl<'a> Gen<'a> {
 
     /// `return status` with the state already in the Cpu.
     fn ret_status(c: &mut Code, st: u32) {
+        spill_budget(c);
         c.get(st).ret();
     }
 
@@ -2445,9 +2463,7 @@ impl<'a> Gen<'a> {
                     self.c.set(L_NT);
                     self.flags_to_cpu();
                     if back {
-                        let b = cpu_off!(jit_budget);
-                        self.c.get(L_CPU).get(L_CPU).load32(b).i32c(1).sub().store32(b);
-                        self.c.get(L_CPU).load32(b).i32c(0).le_s().if_();
+                        decrement_budget(&mut self.c).i32c(0).le_s().if_();
                         self.depth += 1;
                         self.c.get(L_NT);
                         self.exit_dyn(0);
@@ -3600,6 +3616,7 @@ fn translate_seen64<M: Memory>(tc: &TranslationContext, module: &mut Module, mem
         g.c.i32c(RET_INTERP).ret();
         g.c.end();
     }
+    reload_budget(&mut g.c);
     g.c.i32c(0).set(L_FC);
     if !fnm {
         g.load_regs();

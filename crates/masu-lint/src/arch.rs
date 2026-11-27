@@ -85,6 +85,7 @@ pub enum Rule {
     JitContext,
     JitBudgetHarness,
     JitSimdAccess,
+    Jit64Budget,
     RunPlan,
     DllSearch,
     FullPathOneRule,
@@ -102,7 +103,7 @@ pub enum Rule {
 }
 
 impl Rule {
-    pub const ALL: [Rule; 82] = [
+    pub const ALL: [Rule; 83] = [
         Rule::BuildOutput,
         Rule::HresultCopy,
         Rule::KomeCopy,
@@ -171,6 +172,7 @@ impl Rule {
         Rule::JitContext,
         Rule::JitBudgetHarness,
         Rule::JitSimdAccess,
+        Rule::Jit64Budget,
         Rule::RunPlan,
         Rule::DllSearch,
         Rule::FullPathOneRule,
@@ -258,6 +260,7 @@ impl Rule {
             Rule::JitContext => "jit-context",
             Rule::JitBudgetHarness => "jit-budget-harness",
             Rule::JitSimdAccess => "jit-simd-access",
+            Rule::Jit64Budget => "jit64-budget",
             Rule::DllSearch => "dll-search",
             Rule::FullPathOneRule => "full-path-one-rule",
             Rule::ShortNameTable => "short-name-table",
@@ -345,6 +348,7 @@ impl Rule {
             Rule::JitContext => "koji's generators read the modes (MXCSR flag checks, page checks, 16-bit code's segment, functions, measuring, budgets) from the translation's jit::TranslationContext, made once when it begins, never from the statics: a mode the host turned on while another thread translated made a translation part one, part the other, kept as the first; and the 16-bit segment base was a static every translation read, behind a gate (regress::JIT_MODES / JIT_MODE_READS)",
             Rule::JitBudgetHarness => "each codegen choice of koji's TranslationContext budget (the statics TranslationContext::now reads into Budget: SSA, HOIST, SLOTS_MAX, ...) is set by jit32test from its Mode, so the random differential runs translate with it on and off; a budget static it does not vary is named in regress::JIT_BUDGET_UNVARIED with why. The SSA runs (jit::ssa) came with a choice jitbench's build put in a stray file and nothing ran (regress::JIT_BUDGET_HARNESS)",
             Rule::JitSimdAccess => "koji emits a SIMD load or store only through wasm::Code::simd_access (v128load, v128store, simd_mem with a wasm::SimdMem), never a raw `.simd(<memory opcode>)`, so MASU_JIT_MEMCOUNT counts it (SIMD accesses went uncounted); and a VEX.256 form reads its registers' upper halves in place (long/sse.rs Lane), never swapping them in the Cpu (`swap_hi`: every leave had to swap them back) (regress::JIT_SIMD_RAW)",
+            Rule::Jit64Budget => "the x64 translator accesses Cpu::jit_budget through reload_budget and spill_budget; loops and chains keep it local between calls and exits",
             Rule::DllSearch => "sake's loader looks for a DLL named without a path in LdrGetDllPath's folders for that load (its module and LoadLibraryEx's flags, SetDefaultDllDirectories' with none) and for a DLL's imports as the load that found it (review b5dacf4 2.1: find_dll_file had an order of its own with the folder of every DLL loaded by path in it, and LoadLibraryEx's LOAD_LIBRARY_SEARCH_* flags never reached it; winref dllsearch): pe::LoadSearch::folders is dllpath::dll_folders, LoadLibraryExW passes its flags, and pe.rs names no folders of its own (regress::DLL_SEARCH / DLL_SEARCH_NOT)",
             Rule::FullPathOneRule => "every file operation opens the full path GetFullPathName names (review b5dacf4 2.2: CreateFile opened `D:save.dat` as D:\\save.dat while GetFullPathName answered from the `=D:` variable): files::full_path makes a Win32 name full with fullpath's RtlGetFullPathName_Ustr (regress::FULL_PATH)",
             Rule::ShortNameTable => "an 8.3 name is given when its long name is made and kept in its folder's table until the name is removed or renamed, as NTFS keeps it (review b5dacf4 2.3: the short names were made again from every listing, so deleting one file changed another's, and a reload gave new ones): kura::fs tells the one watcher each name made and removed, sake watches from its first guest path, shortname reads the kept table, and sake lists and removes folders only through shortname::read_dir / remove_dir (the table is no guest entry) (regress::SHORT_NAMES)",
@@ -433,6 +437,7 @@ impl Rule {
             Rule::JitContext => regress::jit_context(tree),
             Rule::JitBudgetHarness => regress::jit_budget_harness(tree),
             Rule::JitSimdAccess => regress::jit_simd_access(tree),
+            Rule::Jit64Budget => regress::jit64_budget(tree),
             Rule::DllSearch => regress::dll_search(tree),
             Rule::FullPathOneRule => regress::full_path_one_rule(tree),
             Rule::ShortNameTable => regress::short_name_table(tree),
