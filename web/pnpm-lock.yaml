@@ -36,6 +36,9 @@ importers:
         specifier: ^3.7.0
         version: 3.7.0
     devDependencies:
+      '@antithesishq/bombadil':
+        specifier: 0.8.0
+        version: 0.8.0
       '@tailwindcss/vite':
         specifier: ^4.3.4
         version: 4.3.4(@voidzero-dev/vite-plus-core@1.4.0(jiti@2.7.0)(typescript@5.9.3))
@@ -65,6 +68,10 @@ importers:
         version: 1.4.0(@vitest/ui@5.0.5(vitest@5.0.5))(jiti@2.7.0)(typescript@5.9.3)
 
 packages:
+
+  '@antithesishq/bombadil@0.8.0':
+    resolution: {integrity: sha512-BVMjC4vDR2wOhSS0uWMiS3KqVWb8Y9BdN+KiJwBSXi7+vZ5HkLkBfTCk83Dal5E0Evb3wSOT46SFxLgNCGXbmQ==}
+    hasBin: true
 
   '@babel/code-frame@7.29.7':
     resolution: {integrity: sha512-Aup7aUOfpbAUg2ROOJN6Iw5f9DMBlzu0mIkm/malLQFN/YQgO48wCj0Kxa3sEHJvPVFg7siR+qRInwXd2qhQKw==}
@@ -1909,6 +1916,8 @@ packages:
     engines: {node: '>=14.18.0'}
 
 snapshots:
+
+  '@antithesishq/bombadil@0.8.0': {}
 
   '@babel/code-frame@7.29.7':
     dependencies:

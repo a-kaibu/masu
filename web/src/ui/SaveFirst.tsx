@@ -58,7 +58,7 @@ export function SaveFirst({
   };
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className="max-w-md p-5" data-testid="save-first">
+      <DialogContent className="max-w-md p-5" data-testid="save-first" data-game-id={game.id}>
         <DialogHeader className="pr-8">
           <DialogTitle>{game.title}</DialogTitle>
           <DialogDescription>

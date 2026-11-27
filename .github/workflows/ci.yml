@@ -880,6 +880,21 @@ jobs:
         run: |
           mkdir -p "$RUNNER_TEMP/masu-browser" && pnpm add --dir "$RUNNER_TEMP/masu-browser" playwright@1.63.0
           "$RUNNER_TEMP/masu-browser/node_modules/.bin/playwright" install chromium
+      - name: Explore library, device saves and launch with Bombadil
+        env:
+          PLAYWRIGHT: ${{ runner.temp }}/masu-browser/node_modules/playwright/index.mjs
+          BOMBADIL_TRACE: ${{ runner.temp }}/masu-bombadil/trace.bin
+        run: |
+          (cd web && pnpm install --frozen-lockfile)
+          export BOMBADIL_CHROME="$(node --input-type=module -e 'console.log((await import(process.env.PLAYWRIGHT)).chromium.executablePath())')"
+          node tests/bombadil-browser.mjs target/release/masu
+      - if: failure()
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: bombadil-trace
+          path: ${{ runner.temp }}/masu-bombadil/trace.bin
+          if-no-files-found: ignore
+          retention-days: 3
       # One browser at a time: software rendering itself uses several cores.
       - name: The page's tests
         env:
