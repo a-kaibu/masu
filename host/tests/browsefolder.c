@@ -3,7 +3,7 @@
  * folder: BFFM_INITIALIZED (lParam the program's), BFFM_SETSELECTION by path (A and W) or by
  * ID list, BFFM_SELCHANGED for each selection, then IDOK or IDCANCEL posted to the dialog;
  * the ID list it returns (SHGetPathFromIDList), the display name; a path that is not there
- * leaves the root (the desktop) selected. SHUFFLE! Essence+ asks where its saves go this way
+ * leaves the supplied filesystem root selected. SHUFFLE! Essence+ asks where its saves go this way
  * and quits when it gets NULL. Paths under the current folder are shown as <cwd>, the desktop
  * from %USERPROFILE%. (sake: misc.rs sh_browse_for_folder; compared with Windows by
  * tests/winref)
@@ -61,7 +61,7 @@ static int CALLBACK cb(HWND h, UINT m, LPARAM lp, LPARAM data) {
     return 0;
 }
 
-static LPITEMIDLIST run(const char *what, const char *path, int wide, LPCITEMIDLIST pidl, int button) {
+static LPITEMIDLIST run(const char *what, const char *path, int wide, LPCITEMIDLIST pidl, LPCITEMIDLIST root, int button) {
     memset(&T, 0, sizeof T);
     T.path = path;
     T.wide = wide;
@@ -72,6 +72,7 @@ static LPITEMIDLIST run(const char *what, const char *path, int wide, LPCITEMIDL
     if (wide) {
         BROWSEINFOW bi = {0};
         WCHAR wn[MAX_PATH] = L"?";
+        bi.pidlRoot = root;
         bi.pszDisplayName = wn;
         bi.lpszTitle = L"where the saves go";
         bi.ulFlags = BIF_RETURNONLYFSDIRS;
@@ -81,6 +82,7 @@ static LPITEMIDLIST run(const char *what, const char *path, int wide, LPCITEMIDL
         WideCharToMultiByte(CP_ACP, 0, wn, -1, name, sizeof name, NULL, NULL);
     } else {
         BROWSEINFOA bi = {0};
+        bi.pidlRoot = root;
         bi.pszDisplayName = name;
         bi.lpszTitle = "where the saves go";
         bi.ulFlags = BIF_RETURNONLYFSDIRS;
@@ -112,12 +114,13 @@ int main(void) {
     sprintf(miss, "%s\\bff_missing", cwd);
     CreateDirectoryA(a, NULL);
     CreateDirectoryA(b, NULL);
-    LPITEMIDLIST pa = run("A path, OK", a, 0, NULL, IDOK);
-    LPITEMIDLIST pw = run("W path, OK", b, 1, NULL, IDOK);
-    LPITEMIDLIST pp = run("ID list, OK", NULL, 0, pa, IDOK);
-    run("A path, cancel", a, 0, NULL, IDCANCEL);
-    LPITEMIDLIST pm = run("missing path, OK", miss, 0, NULL, IDOK);
-    LPITEMIDLIST pn = run("nothing selected, OK", NULL, 0, NULL, IDOK);
+    LPITEMIDLIST pa = run("A path, OK", a, 0, NULL, NULL, IDOK);
+    if (!pa) return 1;
+    LPITEMIDLIST pw = run("W path, OK", b, 1, NULL, NULL, IDOK);
+    LPITEMIDLIST pp = run("ID list, OK", NULL, 0, pa, NULL, IDOK);
+    run("A path, cancel", a, 0, NULL, NULL, IDCANCEL);
+    LPITEMIDLIST pm = run("missing path, OK", miss, 0, NULL, pa, IDOK);
+    LPITEMIDLIST pn = run("nothing selected, OK", NULL, 0, NULL, pa, IDOK);
     CoTaskMemFree(pa);
     CoTaskMemFree(pw);
     CoTaskMemFree(pp);

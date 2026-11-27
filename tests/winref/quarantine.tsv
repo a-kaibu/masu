@@ -7,7 +7,6 @@
 # (and --quarantine-observed FILE writes them): CI never approves or updates them itself.
 gdipfont-32	https://github.com/a-kaibu/masu/issues/108	IPA substitute fonts and Japanese locale differ from the Windows runner.
 gdipfont-64	https://github.com/a-kaibu/masu/issues/108	IPA substitute fonts and Japanese locale differ from the Windows runner.
-host_browsefolder-32	https://github.com/a-kaibu/masu/issues/108	Headless folder selection and callback ordering differ from the Windows dialog.
 rgnshape-32	https://github.com/a-kaibu/masu/issues/55	Ellipse and round-rectangle region scan conversion differs.
 rgnshape-64	https://github.com/a-kaibu/masu/issues/55	Ellipse and round-rectangle region scan conversion differs.
 versions-32	https://github.com/a-kaibu/masu/issues/105	Remaining composite version comparisons and SSPI table entries differ.
