@@ -1,0 +1,14 @@
+no major types 80070057 flags 0
+different major types 00000001 flags a
+both subtypes absent 00000000 flags f
+one subtype absent 00000001 flags d
+different subtypes 00000001 flags 9
+extra format attribute 00000000 flags f
+extra format reversed 00000000 flags f
+different format keys 00000001 flags b
+different format value 00000001 flags b
+different minimum frame rate 00000000 flags f
+extra maximum frame rate 00000000 flags f
+extra user data 00000001 flags 7
+different user data 00000001 flags 7
+matching user data 00000000 flags f
