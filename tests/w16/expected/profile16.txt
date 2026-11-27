@@ -1,0 +1,4 @@
+write 1
+private 6 sample
+private default 4 defa tail x
+profile default 7 profile

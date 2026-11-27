@@ -1,0 +1,4 @@
+code read alias 1
+copy into supplied selector 1
+call through alias 42, release 1
+original stays callable 1

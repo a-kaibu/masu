@@ -140,10 +140,10 @@ const SIMPLE: &[(&str, &str, &str, &str)] = &[
     ("KERNEL.GetTickCount", "kernel32!GetTickCount", "", "l"),
     ("KERNEL.GetCurrentTime", "kernel32!GetTickCount", "", "l"),
     ("KERNEL.GetPrivateProfileInt", "kernel32!GetPrivateProfileIntA", "ppsp", "i"),
-    ("KERNEL.GetPrivateProfileString", "kernel32!GetPrivateProfileStringA", "pppppwp", "i"),
+    ("KERNEL.GetPrivateProfileString", "kernel32!GetPrivateProfileStringA", "ppppwp", "i"),
     ("KERNEL.WritePrivateProfileString", "kernel32!WritePrivateProfileStringA", "pppp", "i"),
     ("KERNEL.GetProfileInt", "kernel32!GetProfileIntA", "pps", "i"),
-    ("KERNEL.GetProfileString", "kernel32!GetProfileStringA", "pppw", "i"),
+    ("KERNEL.GetProfileString", "kernel32!GetProfileStringA", "ppppw", "i"),
     ("KERNEL.WriteProfileString", "kernel32!WriteProfileStringA", "ppp", "i"),
     ("KERNEL.OutputDebugString", "kernel32!OutputDebugStringA", "p", "i"),
     ("MMSYSTEM.mciSendString", "winmm!mciSendStringA", "ppwh", "l"),
@@ -277,6 +277,33 @@ pub fn init() {
     reg("KERNEL.GetWinFlags", |_| 0x0413);
     reg("KERNEL.LockSegment", |c| c.a(0));
     reg("KERNEL.UnlockSegment", |c| c.a(0));
+    // A selector alias owns a descriptor, while its bytes are still owned by the source.
+    // In the 16-bit interpreter both kinds of descriptor can name the same guest segment.
+    for name in ["AllocCStoDSAlias", "AllocDStoCSAlias", "AllocAlias"] {
+        reg(&format!("KERNEL.{name}"), |c| w16::sel_base(c.w(0)).map_or(0, |(base, size)| u32::from(w16::sel_alloc(base, size))));
+    }
+    reg("KERNEL.AllocSelector", |c| {
+        let src = c.w(0);
+        if src == 0 {
+            return u32::from(w16::sel_alloc(0, 1));
+        }
+        w16::sel_base(src).map_or(0, |(base, size)| u32::from(w16::sel_alloc_n(base, size, size.div_ceil(0x10000).max(1))))
+    });
+    reg("KERNEL.FreeSelector", |c| {
+        let sel = c.w(0);
+        if w16::sel_base(sel).is_none() {
+            return u32::from(sel);
+        }
+        w16::sel_free(sel);
+        0
+    });
+    reg("KERNEL.PrestoChangoSelector", |c| {
+        let (src, dst) = (c.w(0), c.w(1));
+        if let Some((base, size)) = w16::sel_base(src) && w16::sel_base(dst).is_some() {
+            w16::sel_set_base(dst, base, size);
+        }
+        u32::from(dst)
+    });
     reg("KERNEL.GlobalAlloc", |c| w16::global_alloc(c.a(1), c.w(0) & 0x40 != 0) as u32);
     reg("KERNEL.GlobalReAlloc", |c| w16::global_realloc(c.w(0), c.a(1), c.w(2) & 0x40 != 0) as u32);
     reg("KERNEL.GlobalFree", |c| {
