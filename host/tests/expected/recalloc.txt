@@ -14,3 +14,11 @@ aligned realignment: ok
 aligned overflow preserves allocation: ok
 aligned shrink: ok
 aligned zero size frees: ok
+offset recalloc export: ok
+offset initial zero: ok
+offset growth: ok
+offset zero extension: ok
+offset realignment: ok
+offset overflow preserves allocation: ok
+offset shrink: ok
+offset zero size frees: ok

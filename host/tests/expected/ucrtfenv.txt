@@ -1,0 +1,17 @@
+default 3f00003f 00000000
+round 000 result 0 now 000 ctrl 3f00003f mx 1f80
+round 100 result 0 now 100 ctrl 7f00013f mx 3f80
+round 200 result 0 now 200 ctrl bf00023f mx 5f80
+round 300 result 0 now 300 ctrl ff00033f mx 7f80
+round 400 result 1 now 300 ctrl ff00033f mx 7f80
+denorm 0 ctrl 3f00003f save 0 mx 1f80
+denorm 1 ctrl 3f00083f save 0 mx 1fc0
+denorm 2 ctrl 3f000c3f save 0 mx 9f80
+denorm 3 ctrl 3f00043f save 0 mx 9fc0
+invalid 1
+hold matches 1 status 08000008
+restored 000
+sse status 28000028 except 08000008 test 08
+sse clear 20000020
+set flags 0 stat 30000030 test 10
+end 00
