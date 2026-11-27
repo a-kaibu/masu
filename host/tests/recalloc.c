@@ -45,5 +45,27 @@ int main(void) {
     p=aligned(p,4,1,128);
     CHECK("aligned shrink",p&&p[0]==0x53&&p[3]==0x53);
     CHECK("aligned zero size frees",aligned(p,0,1,128)==NULL);
+    unsigned char *(__cdecl *offset_recalloc)(void *,size_t,size_t,size_t,size_t)=
+        (void *)GetProcAddress(crt,"_aligned_offset_recalloc");
+    CHECK("offset recalloc export",offset_recalloc);if(!offset_recalloc)return 1;
+    p=offset_recalloc(NULL,6,4,32,8);
+    zero=p!=NULL;if(p)for(int i=0;i<24;i++)zero&=p[i]==0;
+    CHECK("offset initial zero",zero&&((uintptr_t)p+8)%32==0);if(!p)return 1;
+    memset(p,0x2d,24);
+    p=offset_recalloc(p,48,1,32,8);
+    preserve=p!=NULL;if(p)for(int i=0;i<24;i++)preserve&=p[i]==0x2d;
+    CHECK("offset growth",preserve&&((uintptr_t)p+8)%32==0);
+    if(!p)return 1;
+    zero=1;for(int i=24;i<48;i++)zero&=p[i]==0;
+    CHECK("offset zero extension",zero);
+    p=offset_recalloc(p,48,1,128,7);
+    CHECK("offset realignment",p&&p[23]==0x2d&&((uintptr_t)p+7)%128==0);
+    if(!p)return 1;
+    bad=offset_recalloc(p,SIZE_MAX,2,128,7);
+    CHECK("offset overflow preserves allocation",bad==NULL&&*error()==12&&p[14]==0x2d);
+    p=offset_recalloc(p,8,1,64,1);
+    CHECK("offset shrink",p&&p[0]==0x2d&&p[7]==0x2d&&((uintptr_t)p+1)%64==0);
+    if(!p)return 1;
+    CHECK("offset zero size frees",offset_recalloc(p,0,1,128,7)==NULL);
     return failed;
 }

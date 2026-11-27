@@ -651,6 +651,178 @@ fn fp_status(c: &mut Ctx) -> u32 {
 fn sw_bits(f: u32) -> u32 {
     [(1, 0x10), (2, 0x80000), (4, 8), (8, 4), (0x10, 2), (0x20, 1)].iter().filter(|&&(b, _)| f & b != 0).fold(0, |a, &(_, s)| a | s)
 }
+// The UCRT fenv_t has separate control and status words. Each repeats the exception
+// bits of both units in its low byte, plus the x87 (x86 only) and SSE bits separately.
+const FE_ALL_EXCEPT: u32 = 0x1f;
+const FE_ROUND: u32 = 0x300;
+
+fn env_flags(f: u32) -> u32 {
+    let ms = sw_bits(f);
+    (ms & FE_ALL_EXCEPT) | (ms & 0x80000) >> 14
+}
+
+fn raw_env_flags(f: u32) -> u32 {
+    em_of((f & FE_ALL_EXCEPT) | (f & 0x20) << 14, 0)
+}
+
+fn pack_env_flags(x87: u32, sse: u32) -> u32 {
+    let x = env_flags(x87);
+    let y = env_flags(sse);
+    (x << 16) | (y << 24) | x | y
+}
+
+fn get_env_control(c: &Ctx) -> u32 {
+    let mx = c.cpu.mxcsr;
+    let sse_round = sse_control(mx) & FE_ROUND;
+    let denorm = match (mx & 0x40 != 0, mx & 0x8000 != 0) {
+        (false, false) => 0,
+        (true, false) => 0x800,
+        (false, true) => 0xc00,
+        (true, true) => 0x400,
+    };
+    let sse = sse_round | sse_round << 22 | denorm;
+    if mem::x64() {
+        return pack_env_flags(0, mx >> 7) | sse;
+    }
+    let cw = c.cpu.fpu.cw;
+    let x87 = x87_control(cw);
+    let round = x87 & FE_ROUND;
+    let precision = (x87 & 0x30000) >> 4;
+    let infinity = (x87 & 0x40000) >> 4;
+    pack_env_flags(u32::from(cw), mx >> 7) | sse | round | round << 14 | precision | infinity
+}
+
+fn get_env_status(c: &mut Ctx, mask: u32) -> u32 {
+    koji::jit::mx_read(0);
+    let x = if mem::x64() { 0 } else { u32::from(c.cpu.fpu.sw) };
+    pack_env_flags(x & mask, c.cpu.mxcsr & mask)
+}
+
+fn unpack_env_flags(word: u32) -> (u32, u32) {
+    let x = if mem::x64() { 0 } else { raw_env_flags(word >> 16) };
+    (x, raw_env_flags(word >> 24))
+}
+
+fn put_env_status(c: &mut Ctx, x87: u32, sse: u32) {
+    koji::jit::mx_read(0);
+    c.cpu.mxcsr = (c.cpu.mxcsr & !0x3f) | sse;
+    if !mem::x64() {
+        c.cpu.fpu.sw = (c.cpu.fpu.sw & !0x80ff) | x87 as u16;
+    }
+}
+
+fn fegetenv(c: &mut Ctx) -> u32 {
+    let out = c.a(0);
+    if out == 0 {
+        return 1;
+    }
+    w32(out, get_env_control(c));
+    w32(out + 4, get_env_status(c, 0x3f));
+    0
+}
+
+fn fesetenv(c: &mut Ctx) -> u32 {
+    let env = c.a(0);
+    if env == 0 {
+        return 1;
+    }
+    let (control, status) = (r32(env), r32(env + 4));
+    if control == 0 && status == 0 {
+        return _fpreset(c);
+    }
+    let (x_mask, s_mask) = unpack_env_flags(control);
+    let (x_stat, s_stat) = unpack_env_flags(status);
+    let x_round = if mem::x64() { 0 } else { (control >> 14) & FE_ROUND };
+    let s_round = (control >> 22) & FE_ROUND;
+    let denorm = control & 0xc00;
+    let x_mode = if mem::x64() { 0 } else { control & 0x7000 };
+    let packed_control = pack_env_flags(x_mask, s_mask) | x_round | s_round | x_round << 14 | s_round << 22 | denorm | x_mode;
+    if pack_env_flags(x_stat, s_stat) != status || packed_control != control || x_mode & 0x3000 == 0x3000 {
+        return 1;
+    }
+    let mx_mode = match denorm {
+        0x400 => 0x8040,
+        0x800 => 0x40,
+        0xc00 => 0x8000,
+        _ => 0,
+    };
+    c.cpu.mxcsr = (c.cpu.mxcsr & !(0xff80 | 0x40)) | (s_mask << 7) | (s_round << 5) | mx_mode;
+    if !mem::x64() {
+        set_x87_control(c, x_mode << 4 | x_round | sw_bits(x_mask), 0xf031f);
+    }
+    put_env_status(c, x_stat, s_stat);
+    0
+}
+
+fn fegetround(c: &mut Ctx) -> u32 {
+    fp_control(c) & FE_ROUND
+}
+
+fn fesetround(c: &mut Ctx) -> u32 {
+    let mode = c.a(0);
+    if mode & !FE_ROUND != 0 {
+        return 1;
+    }
+    set_fp_control(c, mode, FE_ROUND);
+    0
+}
+
+fn fetestexcept(c: &mut Ctx) -> u32 {
+    fp_status(c) & c.a(0) & FE_ALL_EXCEPT
+}
+
+fn fegetexceptflag(c: &mut Ctx) -> u32 {
+    let (out, flags) = (c.a(0), c.a(1));
+    if out == 0 {
+        return 1;
+    }
+    w32(out, get_env_status(c, em_of(flags, 0)));
+    0
+}
+
+fn set_except_flags(c: &mut Ctx, bits: u32, flags: u32) -> u32 {
+    let mask = em_of(flags & FE_ALL_EXCEPT, 0);
+    if mask == 0 {
+        return 0;
+    }
+    let encoded_mask = pack_env_flags(if mem::x64() { 0 } else { mask }, mask);
+    let status = (get_env_status(c, 0x3f) & !encoded_mask) | (bits & encoded_mask);
+    let (x, s) = unpack_env_flags(status);
+    if pack_env_flags(x, s) != status {
+        return 1;
+    }
+    put_env_status(c, x, s);
+    0
+}
+
+fn fesetexceptflag(c: &mut Ctx) -> u32 {
+    let (p, flags) = (c.a(0), c.a(1));
+    if flags & FE_ALL_EXCEPT == 0 {
+        return 0;
+    }
+    if p == 0 {
+        return 1;
+    }
+    set_except_flags(c, r32(p), flags)
+}
+
+fn feclearexcept(c: &mut Ctx) -> u32 {
+    let flags = c.a(0);
+    set_except_flags(c, 0, flags)
+}
+
+fn feholdexcept(c: &mut Ctx) -> u32 {
+    let result = fegetenv(c);
+    if result != 0 {
+        return result;
+    }
+    // On x64 the UCRT reports failure when non-stop mode cannot be established.
+    if mem::x64() && c.cpu.mxcsr & 0x1f80 != 0x1f80 {
+        return 1;
+    }
+    set_except_flags(c, 0, FE_ALL_EXCEPT)
+}
+
 fn _statusfp(c: &mut Ctx) -> u32 {
     fp_status(c)
 }
@@ -806,7 +978,7 @@ fn _aligned_realloc(c: &mut Ctx) -> u32 {
 fn _aligned_offset_realloc(c: &mut Ctx) -> u32 {
     aligned_realloc(c.a(0), c.a(1), c.a(2), c.a(3), false)
 }
-fn _aligned_recalloc(c: &mut Ctx) -> u32 {
+fn aligned_recalloc(c: &mut Ctx, with_offset: bool) -> u32 {
     let p = c.a(0);
     let size_arg = |n| if mem::x64() { c.a64(n) } else { u64::from(c.a(n)) };
     let Some(n) = size_arg(1).checked_mul(size_arg(2)).filter(|&n| n <= u64::from(mem::HI - mem::LO)) else {
@@ -817,7 +989,8 @@ fn _aligned_recalloc(c: &mut Ctx) -> u32 {
         return aligned_realloc(p, 0, 0, 0, true);
     }
     let align = size_arg(3);
-    if !align.is_power_of_two() {
+    let offset = if with_offset { size_arg(4) } else { 0 };
+    if !align.is_power_of_two() || (offset != 0 && offset >= n) {
         errno_s(c, 22);
         return 0;
     }
@@ -825,7 +998,13 @@ fn _aligned_recalloc(c: &mut Ctx) -> u32 {
         set_errno(12);
         return 0;
     };
-    aligned_realloc(p, n as u32, align, 0, true)
+    aligned_realloc(p, n as u32, align, offset as u32, true)
+}
+fn _aligned_recalloc(c: &mut Ctx) -> u32 {
+    aligned_recalloc(c, false)
+}
+fn _aligned_offset_recalloc(c: &mut Ctx) -> u32 {
+    aligned_recalloc(c, true)
 }
 fn _aligned_msize(c: &mut Ctx) -> u32 {
     r32(c.a(0) - 4)
@@ -4706,6 +4885,19 @@ pub fn init() {
     ] {
         implement("msvcrt", alias, f);
     }
+    for (name, f) in [
+        ("fegetenv", fegetenv as crate::api::Handler),
+        ("fesetenv", fesetenv),
+        ("fegetround", fegetround),
+        ("fesetround", fesetround),
+        ("fetestexcept", fetestexcept),
+        ("fegetexceptflag", fegetexceptflag),
+        ("fesetexceptflag", fesetexceptflag),
+        ("feclearexcept", feclearexcept),
+        ("feholdexcept", feholdexcept),
+    ] {
+        implement("ucrtbase", name, f);
+    }
     implement("ucrtbase", "_Strftime", ucrt_strftime);
     implement("ucrtbase", "_Wcsftime", ucrt_wcsftime);
     implement("msvcrt", "_strtod_l", strtod);
@@ -4759,7 +4951,7 @@ pub fn init() {
     // (msvcrt.dll's _swprintf is its swprintf: no count, ISO swprintf came with msvcr80)
     implement("msvcrt", "_swprintf", swprintf);
     implement("msvcrt", "_wfsopen", _wfopen);
-    reg!(_aligned_malloc, _aligned_free, _aligned_realloc, _aligned_recalloc, _aligned_msize, _aligned_offset_malloc, _aligned_offset_realloc, _get_heap_handle, _mkdir, _wmkdir);
+    reg!(_aligned_malloc, _aligned_free, _aligned_realloc, _aligned_recalloc, _aligned_offset_recalloc, _aligned_msize, _aligned_offset_malloc, _aligned_offset_realloc, _get_heap_handle, _mkdir, _wmkdir);
     reg!(fread_s, _time64, _splitpath, _wsplitpath, _splitpath_s, _wsplitpath_s);
     reg!(_get_narrow_winmain_command_line, _get_wide_winmain_command_line);
     implement("msvcrt", "_time32", _time32);
