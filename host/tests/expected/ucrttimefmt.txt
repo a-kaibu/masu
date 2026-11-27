@@ -1,0 +1,11 @@
+%a/%A/%b/%h/%B/%p 26 [wk/weekday/mo/mo/month/eve]
+%x 7 [04.3.24]
+%#x 24 [dweekday Mmonth y2024 gg]
+%X 30 [h01:1305 m05 s07 e/eve/eve/eve]
+%r 30 [h01:1305 m05 s07 e/eve/eve/eve]
+%c 38 [04.3.24 h01:1305 m05 s07 e/eve/eve/eve]
+%#c 55 [dweekday Mmonth y2024 gg h01:1305 m05 s07 e/eve/eve/eve]
+%Y/%d 7 [2024/04]
+quoted 28 [literal Y M d  ab 2024 y y24]
+short 0 []
+wide 7 matches 1

@@ -4098,7 +4098,7 @@ pub(crate) fn strftime_w(fmt: &[u16], tm: u32) -> Option<Vec<u16>> {
 }
 /// strftime / wcsftime (buf, max, fmt, tm): crt::time's C locale output and its length, or 0
 /// with an empty buffer when it does not fit (an invalid field or conversion: EINVAL too)
-fn strftime_into(c: &mut Ctx, wide: bool) -> u32 {
+fn strftime_into(c: &mut Ctx, wide: bool, time_names: u32) -> u32 {
     let (buf, max, fmt, tm) = (c.a(0), size(c, 1), c.a(2), c.a(3));
     if buf == 0 || max == 0 || fmt == 0 || tm == 0 {
         if buf != 0 && max != 0 {
@@ -4110,7 +4110,29 @@ fn strftime_into(c: &mut Ctx, wide: bool) -> u32 {
     let f = if wide { wstr(fmt) } else { crate::text::a2w(&cstr(fmt)) };
     let bias = crate::k32::tz_bias();
     let name = if bias == 9 * 3600 { "Tokyo Standard Time" } else { "Coordinated Universal Time" };
-    let Some(out) = crt::time::strftime(&f, &read_tm(tm), (bias, name)) else {
+    let tm = read_tm(tm);
+    let out = if time_names == 0 {
+        crt::time::strftime(&f, &tm, (bias, name))
+    } else {
+        use crt::time::TimeName;
+        let slot = ps();
+        let first_wide = (43 * slot + 8 + slot - 1) & !(slot - 1);
+        let at = |entry| {
+            let index = match entry {
+                TimeName::ShortDay(i) => i,
+                TimeName::Day(i) => 7 + i,
+                TimeName::ShortMonth(i) => 14 + i,
+                TimeName::Month(i) => 26 + i,
+                TimeName::AmPm(i) => 38 + i,
+                TimeName::ShortDate => 40,
+                TimeName::LongDate => 41,
+                TimeName::Time => 42,
+            };
+            String::from_utf16_lossy(&wstr(rp(time_names + first_wide + slot * index as u32)))
+        };
+        crt::time::strftime_localized(&f, &tm, (bias, name), &at)
+    };
+    let Some(out) = out else {
         if wide { w16(buf, 0) } else { w8(buf, 0) }
         set_errno(22);
         return 0;
@@ -4136,10 +4158,18 @@ fn strftime_into(c: &mut Ctx, wide: bool) -> u32 {
     }
 }
 fn strftime(c: &mut Ctx) -> u32 {
-    strftime_into(c, false)
+    strftime_into(c, false, 0)
 }
 fn wcsftime(c: &mut Ctx) -> u32 {
-    strftime_into(c, true)
+    strftime_into(c, true, 0)
+}
+fn ucrt_strftime(c: &mut Ctx) -> u32 {
+    let names = c.a(4);
+    strftime_into(c, false, names)
+}
+fn ucrt_wcsftime(c: &mut Ctx) -> u32 {
+    let names = c.a(4);
+    strftime_into(c, true, names)
 }
 /// _Getdays / _Getmonths: ":Sun:Sunday:Mon:Monday..." in a malloc'd string
 fn names(list: &[&str]) -> String {
@@ -4676,6 +4706,8 @@ pub fn init() {
     ] {
         implement("msvcrt", alias, f);
     }
+    implement("ucrtbase", "_Strftime", ucrt_strftime);
+    implement("ucrtbase", "_Wcsftime", ucrt_wcsftime);
     implement("msvcrt", "_strtod_l", strtod);
     reg!(_wcsicmp, _wcsnicmp, wcschr, wcsrchr, wcscat, wcsncat, wcsncpy, wcsstr, wcsspn, wcscspn, wcspbrk);
     reg!(towlower, towupper, _tolower, _toupper, iswspace, iswdigit, iswalpha, wcstol, wcstoul, _wtoi, wcstod);
