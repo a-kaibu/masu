@@ -20,9 +20,12 @@ use crate::text::{a2s, a2w, mb2w};
 use crate::gdi_geom;
 use crate::user::{self, GuestRect, Rect};
 
+
 macro_rules! reg {
     ($dll:literal; $($f:ident),* $(,)?) => { $( implement($dll, stringify!($f), $f); )* };
 }
+
+mod buffered_paint;
 
 // ---------------------------------------------------------------------------------------------
 // objects
@@ -401,6 +404,7 @@ pub fn init() {
             t.m.insert(DEFAULT_BITMAP, G::Bitmap(b));
         }
     });
+    buffered_paint::register();
     register();
 }
 
@@ -2778,7 +2782,10 @@ fn CreateICW(_: &mut Ctx) -> u32 {
     screen_dc()
 }
 fn DeleteDC(c: &mut Ctx) -> u32 {
-    let h = c.a(0);
+    delete_dc(c.a(0))
+}
+
+fn delete_dc(h: u32) -> u32 {
     u32::from(with(|t| {
         let valid = matches!(t.m.get(&h), Some(G::Dc(_)))
             || matches!(t.m.get(&h), Some(G::MetaDc(d)) if d.kind == MetafileKind::Emf);
@@ -3665,12 +3672,17 @@ fn CreateCompatibleBitmap(c: &mut Ctx) -> u32 {
     if w <= 0 || h <= 0 {
         return DEFAULT_BITMAP;
     }
+    new_bitmap_raw(w, h, compatible_bitmap_depth(dc), 0).map_or(0, |b| add(G::Bitmap(b)))
+}
+
+fn compatible_bitmap_depth(dc: u32) -> u16 {
     let mono = with(|t| {
         let Some(G::Dc(d)) = t.m.get(&dc) else { return false };
         d.kind == Kind::Mem && matches!(t.m.get(&d.s.bitmap), Some(G::Bitmap(b)) if b.bpp == 1)
     });
-    new_bitmap_raw(w, h, if mono { 1 } else { 32 }, 0).map_or(0, |b| add(G::Bitmap(b)))
+    if mono { 1 } else { 32 }
 }
+
 fn CreateDiscardableBitmap(c: &mut Ctx) -> u32 {
     CreateCompatibleBitmap(c)
 }
@@ -4080,6 +4092,10 @@ fn AlphaBlend(c: &mut Ctx) -> u32 {
     let (dst, src, bf) = (c.a(0), c.a(5), c.a(10));
     let d = (c.i(1), c.i(2), c.i(3), c.i(4));
     let s = (c.i(6), c.i(7), c.i(8), c.i(9));
+    alpha_blend(dst, d, src, s, bf)
+}
+
+fn alpha_blend(dst: u32, d: (i32, i32, i32, i32), src: u32, s: (i32, i32, i32, i32), bf: u32) -> u32 {
     let (k, per_pixel) = (bf >> 16 & 255, bf >> 24 & 1 != 0);
     // One DC's rectangles that overlap: FALSE, ERROR_INVALID_PARAMETER, nothing drawn (Wine's
     // gdi32 bitmap test_GdiAlphaBlend, which Windows passes; one DC maps both alike, so its

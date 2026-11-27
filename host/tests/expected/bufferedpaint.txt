@@ -1,0 +1,14 @@
+init 00000000
+empty buffer 0 dc 0
+format 0 buffer 1 dc 1 target 1 region 00000000 1 origin 7 9 bits 80004005 0 width 0 bpp 32
+clear 00000000 end 00000000
+format 1 buffer 1 dc 1 target 1 region 00000000 1 origin 7 9 bits 00000000 1 width 1 bpp 32
+clear 00000000 end 00000000
+format 2 buffer 1 dc 1 target 1 region 00000000 1 origin 7 9 bits 00000000 1 width 1 bpp 32
+clear 00000000 end 00000000
+format 3 buffer 1 dc 1 target 1 region 00000000 1 origin 7 9 bits 00000000 1 width 1 bpp 1
+clear 00000000 end 00000000
+discard 00000000 1
+commit 00000000 1
+invalid bits 80004005 unchanged 1 1
+uninit 00000000

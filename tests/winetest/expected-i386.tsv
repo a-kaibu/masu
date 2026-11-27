@@ -362,7 +362,7 @@ user32:win	timeout	4	10
 user32:winstation	fail	98	192
 user32:wsprintf	fail	29	107
 usp10:usp10	crash	2235	0
-uxtheme:system	fail	79	158
+uxtheme:system	fail	47	158
 vcomp:vcomp	crash	9924	0
 version:info	fail	22	196
 version:install	fail	35	39
