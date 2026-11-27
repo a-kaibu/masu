@@ -4286,7 +4286,7 @@ fn shader_load_views(d: &D11, st: &State, stage: usize, shader: u32) -> Vec<dxwg
 #[allow(clippy::too_many_arguments)]
 /// `samplers`: a pixel shader's addressing and mip filtering modes.
 /// `setup`: a pixel shader drawn from a setup store over targets of that many samples per pixel.
-fn shader_for(d: &mut D11, sh: u32, ps: u32, sprite: Option<f32>, samplers: &[u32], logic: &[dxwgsl::logic::Logic], setup: Option<u32>, views: &[dxwgsl::TextureLoadView]) -> Option<(u32, Vec<(u32, dxwgsl::Binding)>)> {
+fn shader_for(d: &mut D11, sh: u32, ps: u32, sprite: Option<f32>, samplers: &[u32], logic: &[dxwgsl::logic::Logic], setup: Option<u32>, views: &[dxwgsl::TextureLoadView], has_depth: bool) -> Option<(u32, Vec<(u32, dxwgsl::Binding)>)> {
     let mut addr = Vec::new();
     if matches!(d.objs.get(&sh).map(|o| &o.data), Some(Data::Shader(s)) if s.pixel) {
         for (n, &id) in samplers.iter().enumerate() {
@@ -4303,7 +4303,15 @@ fn shader_for(d: &mut D11, sh: u32, ps: u32, sprite: Option<f32>, samplers: &[u3
     }
     // (point sprite variants of a vertex shader: the pixel shader's id with the top bit set)
     let Some(Data::Shader(s)) = d.objs.get(&sh).map(|o| &o.data) else { return None };
-    let key = (if s.pixel { setup.unwrap_or(0) } else if sprite.is_some() { ps | 0x8000_0000 } else { ps }, addr, if s.pixel { logic.to_vec() } else { Vec::new() }, views.to_vec());
+    let variant = if s.pixel {
+        // (depthless pipelines also need a separate variant of a shader with SV_Depth.)
+        setup.unwrap_or(0) | (u32::from(!has_depth) << 31)
+    } else if sprite.is_some() {
+        ps | 0x8000_0000
+    } else {
+        ps
+    };
+    let key = (variant, addr, if s.pixel { logic.to_vec() } else { Vec::new() }, views.to_vec());
     if let Some(r) = s.wgsl.get(&key) {
         return r.clone();
     }
@@ -4317,9 +4325,9 @@ fn shader_for(d: &mut D11, sh: u32, ps: u32, sprite: Option<f32>, samplers: &[u3
     // (a vertex shader: the pixel shader it feeds, a point sprite's size; a pixel shader: its
     // targets' logic and setup samples)
     let w = if s.pixel {
-        dxwgsl::translate_views(&s.code, true, None, None, &key.1, &key.2, setup, &key.3)
+        dxwgsl::translate_views(&s.code, true, None, None, &key.1, &key.2, setup, &key.3, has_depth)
     } else {
-        dxwgsl::translate_views(&s.code, false, ps_code.as_deref(), sprite, &key.1, &[], None, &key.3)
+        dxwgsl::translate_views(&s.code, false, ps_code.as_deref(), sprite, &key.1, &[], None, &key.3, false)
     };
     let r = match w {
         Ok(w) => {
@@ -4694,7 +4702,7 @@ unsafe fn draw_with(d: &mut D11, st: &State, indexed: bool, count: u32, instance
         Some(sd) => Some(sd.vs.clone()),
         None => {
             let views = shader_load_views(d, st, 0, st.vs);
-            shader_for(d, st.vs, st.ps, sprite, &[], &[], None, &views)
+            shader_for(d, st.vs, st.ps, sprite, &[], &[], None, &views, false)
         }
     };
     let Some((vs, vb)) = shaders else { return };
@@ -4750,8 +4758,9 @@ unsafe fn draw_with(d: &mut D11, st: &State, indexed: bool, count: u32, instance
     // (a setup store's draw: the pixel shader evaluates its inputs from the store's planes,
     // at the samples of its targets)
     let setup = store.and_then(|sd| sd.setup).map(|_| if multisampled.iter().any(|&m| m) || target_texture(d, st.dsv).is_some_and(|t| t.3 && crate::render::d3d::page_multisamples(t.6)) { 4 } else { 1 });
+    let depth = view_target(d, st.dsv);
     let ps_views = shader_load_views(d, st, 1, st.ps);
-    let ps = if st.ps != 0 { shader_for(d, st.ps, 0, None, &st.samplers[1], &logic_ops, setup, &ps_views) } else { None };
+    let ps = if st.ps != 0 { shader_for(d, st.ps, 0, None, &st.samplers[1], &logic_ops, setup, &ps_views, depth.is_some()) } else { None };
     // SNORM targets: drawn as their SINT twins, the target's texels copied in before and back
     // after (none for a multisampled one on its twin: logic::snorm_ms_page)
     let twins: Vec<logic::Twin> = logic_ops
@@ -4768,7 +4777,6 @@ unsafe fn draw_with(d: &mut D11, st: &State, indexed: bool, count: u32, instance
             *f = t.page;
         }
     }
-    let depth = view_target(d, st.dsv);
     let depth_fmt = depth.and_then(|_| match d.objs.get(&st.dsv).map(|o| &o.data) {
         Some(Data::View(v)) => match d.objs.get(&v.res).map(|o| &o.data) {
             Some(Data::Texture(t)) => Some(t.page),

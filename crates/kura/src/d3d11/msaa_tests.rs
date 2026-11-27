@@ -284,7 +284,7 @@ fn unorm8_loads_use_the_warp_values() {
     assert_eq!(dxwgsl::texture_load_slots(&code), [2, 3, 4]);
 
     let views = [dxwgsl::TextureLoadView::Unorm8(2), dxwgsl::TextureLoadView::Unorm8(3)];
-    let shader = dxwgsl::translate_views(&code, true, None, None, &[], &[], None, &views).expect("WGSL");
+    let shader = dxwgsl::translate_views(&code, true, None, None, &[], &[], None, &views, true).expect("WGSL");
     assert!(shader.code.contains("unorm8_load(textureLoad(tl2,"));
     assert!(shader.code.contains("unorm8_load(textureLoad(t3,"));
     assert!(!shader.code.contains("unorm8_load(textureLoad(tl4,"));
