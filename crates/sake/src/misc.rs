@@ -691,23 +691,50 @@ pub(crate) fn registry_value(path: &str, name: &str) -> Option<(u32, Vec<u8>)> {
     })
 }
 pub(crate) fn registry_values(path: &str, values: Vec<(String, u32, Vec<u8>)>) -> bool {
+    registry_write_keys([(path, values)])
+}
+
+pub(crate) fn registry_write_keys<'a>(
+    keys: impl IntoIterator<Item = (&'a str, Vec<(String, u32, Vec<u8>)>)>,
+) -> bool {
     with_reg(|m| {
-        let k = m.entry(path.to_lowercase()).or_default();
-        for (name, ty, value) in values {
-            k.values.retain(|v| !v.0.eq_ignore_ascii_case(&name));
-            k.values.push((name, ty, value));
+        for (path, values) in keys {
+            let k = m.entry(path.to_lowercase()).or_default();
+            for (name, ty, value) in values {
+                k.values.retain(|v| !v.0.eq_ignore_ascii_case(&name));
+                k.values.push((name, ty, value));
+            }
+            k.ours = true;
         }
-        k.ours = true;
         save_reg(m)
     })
 }
+
 pub(crate) fn registry_remove_tree(path: &str) -> bool {
+    registry_remove_matching(path, |_| false)
+}
+
+/// Also removes a named membership under each child of the given group.
+pub(crate) fn registry_remove_tree_and_memberships(path: &str, group: &str, member: &str) -> bool {
+    let group = format!("{}\\", group.to_lowercase());
+    let member = member.to_lowercase();
+    registry_remove_matching(path, |key| {
+        let membership = key.strip_prefix(&group)
+            .and_then(|p| p.split_once('\\'))
+            .map(|(_, p)| p.split('\\').next().unwrap_or_default());
+        membership == Some(member.as_str())
+    })
+}
+
+fn registry_remove_matching(path: &str, other: impl Fn(&str) -> bool) -> bool {
     let path = path.to_lowercase();
+    let prefix = format!("{path}\\");
     with_reg(|m| {
-        m.retain(|k, _| k != &path && !k.starts_with(&(path.clone() + "\\")));
+        m.retain(|k, _| k != &path && !k.starts_with(&prefix) && !other(k));
         save_reg(m)
     })
 }
+
 pub(crate) fn registry_string(path: &str, name: &str) -> Option<String> {
     let (ty, bytes) = registry_value(path, name)?;
     if !matches!(ty, 1 | 2) { return None; }
