@@ -15,8 +15,10 @@
 // Retries are announced on the BroadcastChannel "masu-net" (the page shows that it waits).
 //
 // What the page does the same way (BLAKE3, the retry rule, the request budget's steps, the
-// server's answers checked) is host/net-core.mjs's, one source for both: crates/sake/build.sh
-// puts it before this file, and the page imports it (review 22bb061 §7).
+// server's answers checked) is shared via host/net-core.mjs. The browser's module worker
+// imports this file; build.sh also includes it in Emscripten's pre-js for the caller.
+import { MASU_RETRY_STATUS, masuIsChunk, masuBlake3, masuBackoff, MASU_CLASS, masuBudgetShare, masuDirectValid, MASU_PACK_SPAN, MASU_PACK_MAX, masuPackValid, masuBudgetFresh, masuBudgetTakeStep, masuBudgetDrainStep, MASU_BUDGET_BYTES } from './net-core.mjs';
+
 var MASU_STALL_MS = 20000;
 var MASU_GIVE_UP_MS = 15 * 60000;
 var MASU_BAD_CHUNK = 3;
@@ -1020,23 +1022,6 @@ function masuFetchWorker(event) {
   })();
 }
 
-/** The network worker's script: the functions above (and `more`), `main` its message handler. */
-function masuFetchWorkerSource(main, more = []) {
-  const vars = { MASU_STALL_MS, MASU_GIVE_UP_MS, MASU_RETRY_STATUS, MASU_BAD_CHUNK, MASU_CACHE_MS, MASU_BRIDGE_HEADER, MASU_BRIDGE_BYTES, MASU_RECENT_BYTES, MASU_DIRECT_KEEP_MS, MASU_DIRECT_ASK_MS, MASU_DIRECT_MANY, MASU_CLASS, MASU_RATE, MASU_BURST, MASU_RESERVE, MASU_HINT_WIDTH, MASU_HINT_MAX, MASU_PACK_SPAN, MASU_PACK_MAX, MASU_CHUNK_DIR, MASU_HANDLE_MS, MASU_HANDLES, MASU_BUDGET_BYTES, MASU_BUDGET_SPIN, MASU_SAVING_BYTES, MASU_LOCK_WAIT_MS, MASU_FOLLOW, MASU_PUT_MS };
-  const fns = [masuIsChunk, masuBlake3, masuBlake3Js, masuBlake3Simd, masuChunkOk, masuBackoff, masuPause, masuFetchOnce, masuNetReport, masuCacheStep, masuCache, masuChunkFile, masuOpfsStore, masuRange, masuKeepRecent, masuKeep, masuHeld, masuBudgetInit, masuBudgetWith, masuBudgetShare, masuBudgetFresh, masuBudgetTakeStep, masuBudgetDrainStep, masuTake, masuDrain, masuGate, masuWhole, masuStartWhole, masuHint, masuHintPump, masuNextAdd, masuFollow, masuReadStart, masuReadEnd, masuDirectFresh, masuDirectValid, masuDirectMany, masuPackValid, masuPackNote, masuPackRun, masuDirect, masuDirectAsk, masuPagesInit, masuPagesChunk, masuHex, masuOpen, masuZstdSize, masuUnzstd, masuFetchPart, masuFetchRobust, masuWarmRun, masuFetchWorker];
-  return [
-    ...Object.entries(vars).map(([k, v]) => `var ${k} = ${JSON.stringify(v)};`),
-    'var masuNet = { retrying: new Map(), channel: undefined, id: Math.random().toString(36).slice(2) };',
-    'var masuCacheOpen, masuRecent = new Map(), masuDirectInfo = new Map(), masuZstd, masuPages = new Map();',
-    'var masuDirectAsking = new Map(), masuBudgetBuf, masuBudgetTag = 1, masuGameWaiting = 0, masuInflight = new Map(), masuKeys = new Map();',
-    'var masuHints = [], masuHintsSeen = new Set(), masuHintsGoing = 0, masuPacks = new Map(), masuSaving = new Map(), masuSavingBytes = 0;',
-    "var masuNext = new Map(), masuReadSeen = new Set(), masuReads = { device: [0, 0], saving: [0, 0], coming: [0, 0], none: [0, 0], followed: 0, hinted: 0 };",
-    'masuWhole.LATE = {};',
-    ...[...fns, ...more].map(String),
-    main,
-  ].join('\n');
-}
-
 /**
  * The game's store chunks fetched onto the device while it plays (masuWarm): `urls` in order,
  * `width` at a time, each the device lacks fetched as the game's reads would (from the bucket)
@@ -1105,12 +1090,13 @@ if (typeof Module !== 'undefined') Module.masuWarm = masuWarm;
 
 var masuFetchWorkerInstance;
 var masuFetchPort;
+function masuCreateFetchWorker() {
+  const url = typeof Module !== 'undefined' ? Module.masuNetWorkerUrl : undefined;
+  return new Worker(url ?? './sake/net-worker.mjs', {type: 'module'});
+}
 function masuFetchConnect() {
   if (!masuFetchWorkerInstance) {
-    const blob = new Blob([masuFetchWorkerSource('self.onmessage = e => { if (e.data.port) e.data.port.onmessage = masuFetchWorker; else masuFetchWorker(e); };')], {type:'text/javascript'});
-    const url = URL.createObjectURL(blob);
-    masuFetchWorkerInstance = new Worker(url);
-    URL.revokeObjectURL(url);
+    masuFetchWorkerInstance = masuCreateFetchWorker();
     // (the page's budget of bucket requests: its own save takes from it too, web/src/net.ts)
     // (each worker its own tag in the budget's lock word: the page frees only a terminated one's)
     const budget = typeof Module !== 'undefined' ? Module.masuNetBudget : undefined;
@@ -1139,10 +1125,7 @@ var masuBridgeBuffer;
 function masuFetchSync(url, from, len, block, cls) {
   if (typeof document !== 'undefined') throw new Error('synchronous reads on the page must be preloaded');
   if (!masuFetchPort && !masuFetchWorkerInstance) {
-    const blob = new Blob([masuFetchWorkerSource('self.onmessage = masuFetchWorker;')], {type: 'text/javascript'});
-    const location = URL.createObjectURL(blob);
-    masuFetchWorkerInstance = new Worker(location);
-    URL.revokeObjectURL(location);
+    masuFetchWorkerInstance = masuCreateFetchWorker();
     const pages = typeof Module !== 'undefined' ? Module.masuPages : undefined;
     if (pages) masuFetchWorkerInstance.postMessage({ pages });
   }
@@ -1188,3 +1171,5 @@ function masuFetchHint(urls) {
   const to = masuFetchPort || masuFetchWorkerInstance;
   to?.postMessage({ hint: urls });
 }
+
+export { masuFetchWorker };

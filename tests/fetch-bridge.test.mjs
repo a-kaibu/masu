@@ -22,91 +22,95 @@ const input = (kind, n) => {
     return (x >>> 16) & 255;
   });
 };
-const harness = `
-const {parentPort, workerData, Worker: NodeWorker} = require('node:worker_threads');
-globalThis.Worker = class {
-  constructor() {
-    this.w = new NodeWorker(workerData.source + '\\n' + \`
-      const {parentPort} = require('node:worker_threads');
-      MASU_STALL_MS = 200;
-      MASU_GIVE_UP_MS = 1500;
-      const tries = new Map();
-      const body = (length) => Uint8Array.from({length}, (_, i) => i % 251).buffer;
-      const NAMES = ${JSON.stringify(names)};
-      // the device's chunk store (OPFS in the browser): kept bodies, reads of parts counted
-      MASU_RECENT_BYTES = 1;
-      const kept = new Map();
-      let fetches = 0, slices = 0, fromPages = 0;
-      masuCacheOpen = Promise.resolve({
-        match: async (u) => { const d = kept.get(u); return d && {arrayBuffer: async () => d.slice().buffer}; },
-        putBytes: async (u, d) => void kept.set(u, d.slice()),
-        read: async (u, a, n) => { const d = kept.get(u); return d ? (slices++, d.slice(a, a + n)) : null; },
-        delete: async (u) => kept.delete(u),
-      });
-      // (the stand-in bucket's objects are the chunks themselves: no key, no zstd)
-      masuOpen = async (info, c) => c;
-      masuUnzstd = async (base, f) => f;
-      globalThis.fetch = async (url, init) => {
-        const n = (tries.get(url) ?? 0) + 1;
-        tries.set(url, n);
-        // (how many bucket fetches and device reads of parts so far, as a body's length)
-        if (url === 'count' || url === 'slices' || url === 'pages') return {ok: true, status: 200, arrayBuffer: async () => new ArrayBuffer(url === 'count' ? fetches : url === 'pages' ? fromPages : slices)};
-        // the server says where in the bucket; it never has a chunk itself
-        const ask = /[/]store-direct[/]chunks[/][0-9a-f]{2}[/]([0-9a-f]{32})$/.exec(url);
-        if (ask) return {ok: true, status: 200, json: async () => ({url: 'https://bucket/' + ask[1], key: '0'.repeat(64), object: '00000000-0000-4000-8000-000000000000'})};
-        // the release's Pages (release-trees.ts): plain chunks by their names, the first try
-        // of the 262144-byte one damaged; asked of the bucket they are not there
-        const page = /^https:[/][/]pages[/]store[/]chunks[/][0-9a-f]{2}[/]([0-9a-f]{32})$/.exec(url);
-        if (page) {
-          fetches++;
-          fromPages++;
-          const length = NAMES[page[1]] ?? 1000;
-          const data = new Uint8Array(body(length));
-          if (length === 262144 && n === 1) data[7] ^= 1;
-          return {ok: true, status: 200, arrayBuffer: async () => data.buffer};
-        }
-        if (url.includes('/store/chunks/')) throw new Error('a chunk asked of the server: ' + url);
-        // the bucket's objects: the bytes their name says (the 262144-byte one damaged the
-        // first time), any other name 1000 bytes that never match
-        const chunk = /^https:[/][/]bucket[/]([0-9a-f]{32})$/.exec(url);
-        if (chunk) {
-          fetches++;
-          const length = NAMES[chunk[1]] ?? 1000;
-          const data = new Uint8Array(body(length));
-          if (length === 262144 && n === 1) data[1000] ^= 1;
-          return {ok: true, status: 200, arrayBuffer: async () => data.buffer};
-        }
-        await new Promise(r => setTimeout(r, url === 'slow' ? 30 : 1));
-        // a link that drops twice, a server that is restarting, then both fine
-        if (url === 'fail' || (url === 'flaky' && n <= 2)) throw new TypeError('Failed to fetch');
-        if (url === 'restart' && n <= 2) return {ok: false, status: 503};
-        // a body that stops halfway the first time (the stall watch aborts it)
-        if (url === 'stall' && n === 1) return {ok: true, status: 200, body: {getReader: () => ({
-          read: () => new Promise((_, reject) => init.signal.addEventListener('abort', () => reject(init.signal.reason))),
-        })}};
-        return {ok: url !== '404', status: 404, arrayBuffer: async () => body(url === 'empty' ? 0 : url === 'big' ? 700001 : url === 'exact' ? 262144 * 2 : 150000)};
-      };
-      parentPort.on('message', data => masuFetchWorker({data}));
-    \`, {eval:true});
+// Keep the mocked broker on a separate worker, as the page does for its pthreads.
+const broker = `
+const { workerData } = require('node:worker_threads');
+MASU_STALL_MS = 200;
+MASU_GIVE_UP_MS = 1500;
+const tries = new Map();
+const body = (length) => Uint8Array.from({length}, (_, i) => i % 251).buffer;
+const NAMES = ${JSON.stringify(names)};
+// the device's chunk store (OPFS in the browser): kept bodies, reads of parts counted
+MASU_RECENT_BYTES = 1;
+const kept = new Map();
+let fetches = 0, slices = 0, fromPages = 0;
+masuCacheOpen = Promise.resolve({
+  match: async (u) => { const d = kept.get(u); return d && {arrayBuffer: async () => d.slice().buffer}; },
+  putBytes: async (u, d) => void kept.set(u, d.slice()),
+  read: async (u, a, n) => { const d = kept.get(u); return d ? (slices++, d.slice(a, a + n)) : null; },
+  delete: async (u) => kept.delete(u),
+});
+// (the stand-in bucket's objects are the chunks themselves: no key, no zstd)
+masuOpen = async (info, c) => c;
+masuUnzstd = async (base, f) => f;
+globalThis.fetch = async (url, init) => {
+  const n = (tries.get(url) ?? 0) + 1;
+  tries.set(url, n);
+  // (how many bucket fetches and device reads of parts so far, as a body's length)
+  if (url === 'count' || url === 'slices' || url === 'pages') return {ok: true, status: 200, arrayBuffer: async () => new ArrayBuffer(url === 'count' ? fetches : url === 'pages' ? fromPages : slices)};
+  // the server says where in the bucket; it never has a chunk itself
+  const ask = /[/]store-direct[/]chunks[/][0-9a-f]{2}[/]([0-9a-f]{32})$/.exec(url);
+  if (ask) return {ok: true, status: 200, json: async () => ({url: 'https://bucket/' + ask[1], key: '0'.repeat(64), object: '00000000-0000-4000-8000-000000000000'})};
+  // the release's Pages (release-trees.ts): plain chunks by their names, the first try
+  // of the 262144-byte one damaged; asked of the bucket they are not there
+  const page = /^https:[/][/]pages[/]store[/]chunks[/][0-9a-f]{2}[/]([0-9a-f]{32})$/.exec(url);
+  if (page) {
+    fetches++;
+    fromPages++;
+    const length = NAMES[page[1]] ?? 1000;
+    const data = new Uint8Array(body(length));
+    if (length === 262144 && n === 1) data[7] ^= 1;
+    return {ok: true, status: 200, arrayBuffer: async () => data.buffer};
   }
-  postMessage(m) { this.w.postMessage(m); }
-  terminate() { this.w.terminate(); }
+  if (url.includes('/store/chunks/')) throw new Error('a chunk asked of the server: ' + url);
+  // the bucket's objects: the bytes their name says (the 262144-byte one damaged the
+  // first time), any other name 1000 bytes that never match
+  const chunk = /^https:[/][/]bucket[/]([0-9a-f]{32})$/.exec(url);
+  if (chunk) {
+    fetches++;
+    const length = NAMES[chunk[1]] ?? 1000;
+    const data = new Uint8Array(body(length));
+    if (length === 262144 && n === 1) data[1000] ^= 1;
+    return {ok: true, status: 200, arrayBuffer: async () => data.buffer};
+  }
+  await new Promise(r => setTimeout(r, url === 'slow' ? 30 : 1));
+  // a link that drops twice, a server that is restarting, then both fine
+  if (url === 'fail' || (url === 'flaky' && n <= 2)) throw new TypeError('Failed to fetch');
+  if (url === 'restart' && n <= 2) return {ok: false, status: 503};
+  // a body that stops halfway the first time (the stall watch aborts it)
+  if (url === 'stall' && n === 1) return {ok: true, status: 200, body: {getReader: () => ({
+    read: () => new Promise((_, reject) => init.signal.addEventListener('abort', () => reject(init.signal.reason))),
+  })}};
+  return {ok: url !== '404', status: 404, arrayBuffer: async () => body(url === 'empty' ? 0 : url === 'big' ? 700001 : url === 'exact' ? 262144 * 2 : 150000)};
 };
-globalThis.Blob = class {};
-globalThis.URL = {createObjectURL: () => '', revokeObjectURL: () => {}};
-if (workerData.pages) globalThis.Module = {masuPages: workerData.pages};
-eval(workerData.source);
-try { const all = workerData.url.split('|').map((u) => Array.from(masuFetchSync(...masuRange(u)))); parentPort.postMessage({data: all.length === 1 ? all[0] : all}); }
-catch(e) { parentPort.postMessage({error: e.message}); }
-finally { masuFetchDispose(); }
+if (workerData.pages) masuPagesInit(workerData.pages);
+workerData.port.on('message', data => masuFetchWorker({data}));
 `;
 
-function request(url, pages) {
-  return new Promise((resolve, reject) => {
-    const worker = new Worker(harness, {eval: true, workerData: {url, source, pages}});
-    worker.once('message', resolve);
-    worker.once('error', reject);
-  });
+const client = `
+const { parentPort, workerData } = require('node:worker_threads');
+masuFetchPort = workerData.port;
+try {
+  const all = workerData.url.split('|').map((u) => Array.from(masuFetchSync(...masuRange(u))));
+  parentPort.postMessage({data: all.length === 1 ? all[0] : all});
+} catch (e) {
+  parentPort.postMessage({error: e.message});
+}
+`;
+
+async function request(url, pages) {
+  const { port1, port2 } = new MessageChannel();
+  const net = new Worker(source + '\n' + broker, { eval: true, workerData: { port: port1, pages }, transferList: [port1] });
+  const reader = new Worker(source + '\n' + client, { eval: true, workerData: { port: port2, url }, transferList: [port2] });
+  try {
+    return await new Promise((resolve, reject) => {
+      net.once('error', reject);
+      reader.once('error', reject);
+      reader.once('message', resolve);
+    });
+  } finally {
+    await Promise.all([net.terminate(), reader.terminate()]);
+  }
 }
 
 test('parallel reverse-order requests preserve every byte across buffer boundaries', async () => {
@@ -162,11 +166,39 @@ test('BLAKE3 both ways (wasm SIMD and plain JS) as the crate, and equal for rand
     assert.equal(fast(d), js(d), `length ${n}`);
   }
 });
-test('the network worker has the SIMD BLAKE3 too (its source is the functions, by name)', () => {
-  const src = new Function(`${source}; return masuFetchWorkerSource('');`)();
-  const { b3 } = new Function(`${src}; return { b3: masuBlake3 };`)();
-  const [, n, h] = vectors.find((v) => v[0] === 'r' && v[1] === '250000');
-  assert.equal(b3(input('r', +n)), h);
+test('the module worker sends bytes through a transferred port', async () => {
+  const entry = new URL('../host/net-worker.mjs', import.meta.url).href;
+  const n = 200000;
+  const source = `
+    import { parentPort } from 'node:worker_threads';
+    globalThis.self = globalThis;
+    globalThis.fetch = async () => new Response(Uint8Array.from({length: ${n}}, (_, i) => i % 251));
+    await import(${JSON.stringify(entry)});
+    parentPort.on('message', data => self.onmessage({data}));
+  `;
+  const worker = new Worker(new URL(`data:text/javascript,${encodeURIComponent(source)}`));
+  const failure = new Promise((_, reject) => worker.once('error', reject));
+  const { port1, port2 } = new MessageChannel();
+  try {
+    const url = "https://server.test/data";
+    worker.postMessage({ port: port1 }, [port1]);
+    const shared = new SharedArrayBuffer(32 + 262144);
+    const state = new Int32Array(shared, 0, 8);
+    port2.postMessage({ url, shared });
+    const pending = Atomics.waitAsync(state, 0, 0, 5000);
+    if (pending.async) await Promise.race([failure, pending.value]);
+    assert.equal(Atomics.load(state, 0), 1);
+    assert.equal(Atomics.load(state, 1), +n);
+    assert.deepEqual(new Uint8Array(shared, 32, +n), input('p', +n));
+    Atomics.store(state, 0, 0);
+    Atomics.notify(state, 0);
+    const finish = Atomics.waitAsync(state, 0, 0, 5000);
+    if (finish.async) await Promise.race([failure, finish.value]);
+    assert.equal(Atomics.load(state, 0), 2);
+  } finally {
+    port2.close();
+    await worker.terminate();
+  }
 });
 test('a chunk is checked against its name: fetched again when damaged, a failure when it never matches', async () => {
   const name = (n) => vectors.find((v) => v[0] === 'p' && +v[1] === n)[2];
@@ -303,13 +335,7 @@ test('waiters of one chunk share one download from the bucket; a failed one fail
   assert.equal(s.direct(), 3);
 });
 
-test('the network worker\'s script has every function and variable the bridge uses', () => {
-  const src = scope('', 'masuFetchWorkerSource("")');
-  for (const name of ['masuDirectAsk', 'masuZstdSize', 'MASU_PUT_MS', 'masuDirectAsking', 'masuKeys']) assert.ok(src.includes(name), name);
-  // (it runs: every name it mentions is defined in it)
-  assert.doesNotThrow(() => new Function(`${src}; masuZstdSize(new Uint8Array(8)); masuDirectAsk;`)());
-  for (const gone of ['MASU_CHUNKS', 'masuRobustOnce', 'masuBlockKey', 'masuDirectOff', 'caches.open']) assert.ok(!src.includes(gone), gone);
-});
+
 
 test("the release's trees' chunks come from its Pages, checked, never asked of the server or the bucket", async () => {
   const pages = (...ns) => Object.fromEntries(ns.map((n) => [nameOf(n), `https://pages/store/chunks/ab/${nameOf(n)}`]));

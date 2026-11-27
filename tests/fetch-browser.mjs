@@ -3,16 +3,22 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
-import { bridgeScript } from '../host/bridge-source.mjs';
+import { bridgeScript, workerModules } from '../host/bridge-source.mjs';
 const pw = await import(process.env.PLAYWRIGHT ?? 'playwright');
 const { chromium } = pw.default ?? pw;
 const source = bridgeScript(
   await readFile(new URL('../host/net-core.mjs', import.meta.url), 'utf8'),
   await readFile(new URL('../host/fetch-bridge.js', import.meta.url), 'utf8'),
 );
+const modules = await workerModules(readFile);
 const server = createServer((req, res) => {
   res.setHeader('Cross-Origin-Opener-Policy', 'same-origin');
   res.setHeader('Cross-Origin-Embedder-Policy', 'require-corp');
+  if (modules.has(req.url)) {
+    res.setHeader('Content-Type', 'text/javascript');
+    res.end(modules.get(req.url));
+    return;
+  }
   if (req.url === '/') {res.setHeader('Content-Type','text/html');res.end('<!doctype html><title>fetch test</title>');return;}
   if (req.url === '/missing') {res.writeHead(404);res.end();return;}
   setTimeout(() => res.end(Buffer.from(Array.from({length:150000},(_,i)=>i%251))), req.url === '/slow' ? 40 : 1);

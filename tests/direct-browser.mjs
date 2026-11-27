@@ -8,7 +8,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { createCipheriv, randomBytes, randomUUID } from 'node:crypto';
-import { bridgeScript } from '../host/bridge-source.mjs';
+import { bridgeScript, workerModules } from '../host/bridge-source.mjs';
 const pw = await import(process.env.PLAYWRIGHT ?? 'playwright');
 const { chromium } = pw.default ?? pw;
 const root = new URL('..', import.meta.url);
@@ -69,9 +69,15 @@ const big = make('big', 6 << 20, 6);
 
 const hits = { store: 0, direct: 0, bucket: 0, redirect: 0 };
 let bucketOrigin;
+const modules = await workerModules(readFile, (s) => s.replace('var MASU_DIRECT_ASK_MS = 10000;', 'var MASU_DIRECT_ASK_MS = 1000;'));
 const app = createServer(async (req, res) => {
   res.setHeader('Cross-Origin-Opener-Policy', 'same-origin');
   res.setHeader('Cross-Origin-Embedder-Policy', 'require-corp');
+  if (modules.has(req.url)) {
+    res.setHeader('Content-Type', 'text/javascript');
+    res.end(modules.get(req.url));
+    return;
+  }
   const url = new URL(req.url, 'http://x');
   if (url.pathname === '/') return res.setHeader('Content-Type', 'text/html'), res.end('<!doctype html><title>direct</title>');
   if (url.pathname.startsWith('/sake/snapz.')) {

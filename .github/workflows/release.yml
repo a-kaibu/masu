@@ -346,6 +346,7 @@ jobs:
             [[ "$id" =~ ^[0-9a-f]{16}$ ]] || { echo "bad build id line: $name $id" >&2; exit 1; }
             [ "$(sha256sum "web/sake/$name.wasm" | cut -c1-16)" = "$id" ] || { echo "$name.wasm is not build $id" >&2; exit 1; }
             mkdir -p "site/sake/$id"
+            cp web/sake/net-worker.mjs "site/sake/$id/net-worker.mjs"
             zstd -q -19 "web/sake/$name.wasm" -o "site/sake/$id/$name.wasm.zst"
           done < web/sake/build-id.txt
           mkdir -p site/store
