@@ -182,12 +182,22 @@ export function StorageOverview({ games }: { games: GameEntry[] }) {
     return <Loader2 className="size-4 animate-spin text-muted-foreground" aria-label="読み込み中" />;
   if (use === null)
     return <p className="text-sm text-muted-foreground">このブラウザでは端末にデータを保存できません。</p>;
-  const savedBytes = [...states.values()].reduce(
-    (a, s) => a + (s ? (s.bytes * s.have) / Math.max(1, s.total) : 0),
-    0,
-  );
+  const rows = shown.map((g) => {
+    const s = states.get(g.id);
+    const bytes = s ? (s.bytes * s.have) / Math.max(1, s.total) : 0;
+    return { g, s, bytes };
+  });
+  const savedBytes = rows.reduce((total, row) => total + row.bytes, 0);
+  const deviceBytes = Math.min(savedBytes, use.chunks);
+  const cachedBytes = use.chunks - deviceBytes;
   return (
-    <div className="grid gap-4 text-sm">
+    <div
+      className="grid gap-4 text-sm"
+      data-testid="storage-overview"
+      data-chunk-bytes={use.chunks}
+      data-device-bytes={deviceBytes}
+      data-cached-bytes={cachedBytes}
+    >
       <div className="grid gap-1.5">
         {use.quota ? (
           <>
@@ -200,9 +210,9 @@ export function StorageOverview({ games }: { games: GameEntry[] }) {
           </>
         ) : null}
         <p className="text-xs text-muted-foreground">
-          ゲームのデータ: {size(use.chunks)}（{use.count} 個）。うち端末に保存した作品 約{" "}
-          {size(Math.min(savedBytes, use.chunks))}、プレイ中に読んだ分・先読みした分 約{" "}
-          {size(Math.max(0, use.chunks - savedBytes))}（こちらは 2 GB を超えると古いものから消えます）
+          ゲームのデータ: {size(use.chunks)}（{use.count} 個）。うち端末に保存した作品 約 {size(deviceBytes)}
+          、プレイ中に読んだ分・先読みした分 約 {size(cachedBytes)}（こちらは 2 GB
+          を超えると古いものから消えます）
         </p>
       </div>
       {shown.length === 0 ? (
@@ -211,17 +221,16 @@ export function StorageOverview({ games }: { games: GameEntry[] }) {
         </p>
       ) : (
         <ul className="grid gap-3" aria-label="端末に保存した作品">
-          {shown.map((g) => {
-            const s = states.get(g.id);
+          {rows.map(({ g, s, bytes }) => {
             const p = saves.get(g.id);
             return (
-              <li key={g.id} className="grid gap-1.5 rounded-lg border p-3">
+              <li key={g.id} data-storage-bytes={bytes} className="grid gap-1.5 rounded-lg border p-3">
                 <p className="flex items-center gap-2 font-medium">
                   <HardDrive className="size-4 shrink-0 text-muted-foreground" />
                   <span className="min-w-0 flex-1 truncate">{g.title}</span>
                   {s && !p && (
                     <span className="shrink-0 text-xs font-normal text-muted-foreground">
-                      {size((s.bytes * s.have) / Math.max(1, s.total))} / {size(s.bytes)}
+                      {size(bytes)} / {size(s.bytes)}
                       {s.complete ? "（保存済み）" : `（${percent(s.have, s.total)}%）`}
                     </span>
                   )}
