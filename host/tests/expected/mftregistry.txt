@@ -1,0 +1,13 @@
+register 00000000
+info 00000000 name 1 inputs 1 outputs 1 types 1 1 attrs 1 value 57
+attribute types 1 1 1 1 1
+counts without arrays 00000000 0 0
+enum 0 00000000 count 1 registered 1
+enum 1 00000000 count 0 registered 0
+register async 00000000
+reregister without flags 00000000
+enum sync only 00000000 count 0 pointer 0
+unregister 00000000
+unregister again 00000000
+enum after unregister 00000000 count 0 pointer 0
+missing 80070002

@@ -2203,6 +2203,7 @@ pub fn init() {
     mft::init();
     reader::init();
     plat::init();
+    mft_registry::init();
     source::init();
 }
 
@@ -2215,6 +2216,7 @@ mod mft;
 mod source;
 mod vstream;
 mod plat;
+mod mft_registry;
 mod reader;
 
 #[cfg(test)]
