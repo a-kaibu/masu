@@ -29,7 +29,7 @@ comctl32:monthcal	fail	290	485
 comctl32:mru	fail	16	32
 comctl32:pager	fail	549	708
 comctl32:progress	fail	219	308
-comctl32:propsheet	timeout	1	0
+comctl32:propsheet	fail	64	1096
 comctl32:rebar	fail	15	21
 comctl32:static	crash	75	0
 comctl32:status	fail	340	519

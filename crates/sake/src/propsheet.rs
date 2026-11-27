@@ -577,7 +577,7 @@ fn set_cur_sel(c: &mut Ctx, key: u32, index: usize, step: isize) {
         n,
         |i| {
             let h = ensure_page(c, key, i);
-            notify(c, sh, h, PSN_SETACTIVE, 0) as i32
+            if h == 0 { -1 } else { notify(c, sh, h, PSN_SETACTIVE, 0) as i32 }
         },
         |id| ids.iter().position(|&r| r == id as u32 && r != 0),
     );
@@ -586,13 +586,12 @@ fn set_cur_sel(c: &mut Ctx, key: u32, index: usize, step: isize) {
 
 fn show_page(c: &mut Ctx, key: u32, i: usize) {
     let h = ensure_page(c, key, i);
+    if h == 0 { return; }
     let Some((old, tab)) = sheet(key, |s| (s.active.and_then(|a| s.pages.get(a)).map_or(0, |p| p.hwnd), s.tab)) else { return };
     if old != 0 && old != h {
         g(c, "user32", "ShowWindow", &[old, 0]);
     }
-    if h != 0 {
-        g(c, "user32", "ShowWindow", &[h, 5]);
-    }
+    g(c, "user32", "ShowWindow", &[h, 5]);
     if tab != 0 {
         g(c, "user32", "SendMessageW", &[tab, 0x130c, i as u32, 0]);
     }
@@ -804,6 +803,9 @@ fn init_sheet(c: &mut Ctx, sh: u32, key: u32) {
     }
     if callback != 0 {
         c.call(callback, &[sh, PSCB_INITIALIZED, 0]);
+    }
+    if flags & PSH_MODELESS == 0 && sheet(key, |s| s.active.is_none() && !s.ended) == Some(true) {
+        end(c, key, 0);
     }
 }
 
