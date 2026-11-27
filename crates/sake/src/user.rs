@@ -121,6 +121,7 @@ pub struct Window {
     pub visible: bool,
     pub enabled: bool,
     pub tid: u32,
+    is_dialog: bool,
     pub extra: Vec<u8>,
     pub props: Vec<(String, u32)>,
     pub update: Rect,
@@ -2504,6 +2505,7 @@ fn create_window(c: &mut Ctx, wide: bool) -> u32 {
             visible: false,
             enabled: style & 0x0800_0000 == 0,
             tid,
+            is_dialog: k.name == "#32770",
             extra: vec![0; k.wnd_extra as usize],
             props: Vec::new(),
             update: Rect::default(),
@@ -8092,6 +8094,10 @@ fn dwlp_dlgproc() -> usize {
     mem::ps() as usize
 }
 
+pub(crate) fn is_dialog(hwnd: u32) -> bool {
+    with(|s| s.wins.get(&hwnd).is_some_and(|w| w.is_dialog))
+}
+
 /// Return values of ended modal dialogs (EndDialog).
 /// EndDialog's nResult (an INT_PTR) by dialog
 static DLG_END: Mutex<Option<HashMap<u32, LongPtr>>> = Mutex::new(None);
@@ -8336,6 +8342,11 @@ fn create_dialog(c: &mut Ctx, inst: u32, t: u32, owner: u32, proc_: u32, param: 
         let s = wstr(t);
         with(|st| st.wins.get_mut(&dlg).map(|w| w.text = s));
     }
+    with(|s| {
+        if let Some(w) = s.wins.get_mut(&dlg) {
+            w.is_dialog = true;
+        }
+    });
     set_extra32(dlg, dwlp_dlgproc(), proc_);
     if font != 0 {
         send(c, dlg, 0x30, Wparam::handle(font), Lparam::ZERO);

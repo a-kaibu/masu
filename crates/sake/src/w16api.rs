@@ -570,15 +570,17 @@ pub fn init() {
     });
     reg("USER.SetWindowWord", |c| call32(c.cpu, "user32!SetWindowLongA", &[c.h(0), c.s(1) as u32, c.w(2) as u32]));
     reg("USER.GetWindowLong", |c| {
-        let i = c.s(1);
-        let r = call32(c.cpu, "user32!GetWindowLongA", &[c.h(0), i as u32]);
-        if i == -4 { proc_back(r) } else { r }
+        let (hwnd, i) = (c.h(0), c.s(1));
+        let kind = window_long_proc(hwnd, i);
+        let r = call32(c.cpu, "user32!GetWindowLongA", &[hwnd, i as u32]);
+        if kind.is_some() { proc_back(r) } else { r }
     });
     reg("USER.SetWindowLong", |c| {
-        let i = c.s(1);
-        let v = if i == -4 { proc_thunk(c.a(2), Kind::Wnd) } else { c.a(2) };
-        let r = call32(c.cpu, "user32!SetWindowLongA", &[c.h(0), i as u32, v]);
-        if i == -4 { proc_back(r) } else { r }
+        let (hwnd, i, v) = (c.h(0), c.s(1), c.a(2));
+        let kind = window_long_proc(hwnd, i);
+        let v = kind.map_or(v, |k| proc_thunk(v, k));
+        let r = call32(c.cpu, "user32!SetWindowLongA", &[hwnd, i as u32, v]);
+        if kind.is_some() { proc_back(r) } else { r }
     });
     reg("USER.GetClassWord", |c| call32(c.cpu, "user32!GetClassLongA", &[c.h(0), c.s(1) as u32]) & 0xffff);
     reg("USER.GetClassLong", |c| {
@@ -958,6 +960,14 @@ pub enum Kind {
     Timer,
 }
 
+fn window_long_proc(hwnd: u32, index: i32) -> Option<Kind> {
+    match index {
+        -4 => Some(Kind::Wnd), // GWL_WNDPROC
+        4 if crate::user::is_dialog(hwnd) => Some(Kind::Dlg), // DWL_DLGPROC
+        _ => None,
+    }
+}
+
 struct Procs {
     /// 32-bit thunk -> (16-bit procedure, kind)
     by_trap: HashMap<u32, (u32, Kind)>,
@@ -988,6 +998,9 @@ pub fn proc_thunk(fp: u32, kind: Kind) -> u32 {
 /// The 16-bit procedure behind a 32-bit one (GetWindowLong(GWL_WNDPROC)): our thunk's, or
 /// one that calls the 32-bit procedure.
 pub fn proc_back(p32: u32) -> u32 {
+    if p32 == 0 {
+        return 0;
+    }
     if let Some(&(fp, _)) = PROCS.locked().as_ref().and_then(|p| p.by_trap.get(&p32)) {
         return fp;
     }
