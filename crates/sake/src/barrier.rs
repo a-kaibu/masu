@@ -8,12 +8,12 @@
 //!   the barrier usable;
 //! - initializing a barrier again lets the threads waiting on it go;
 //! - a flag other than SPIN_ONLY, BLOCK_ONLY, NO_DELETE raises STATUS_INVALID_PARAMETER.
-//! The state is the host's, by the barrier's address (nothing reads the guest's bytes).
+//! Waiters live in a host table keyed by address. The opaque guest object keeps the participant count.
 
 #![allow(non_snake_case)]
 
 use crate::api::{implement, Ctx};
-use crate::HashMap;
+use crate::{HashMap, mem};
 use std::sync::{Condvar, Mutex};
 use std::time::Duration;
 
@@ -60,16 +60,15 @@ impl Bars {
         self.epochs += 1;
         self.map.insert(b, Bar { total, epoch: self.epochs, ..Default::default() });
     }
-    fn bar(&mut self, b: u32) -> &mut Bar {
+    fn bar(&mut self, b: u32, restore: impl FnOnce() -> u32) -> &mut Bar {
         let epochs = &mut self.epochs;
         self.map.entry(b).or_insert_with(|| {
-            // (never initialized: a barrier of one)
             *epochs += 1;
-            Bar { total: 1, epoch: *epochs, ..Default::default() }
+            Bar { total: restore(), epoch: *epochs, ..Default::default() }
         })
     }
-    pub fn enter(&mut self, b: u32, no_delete: bool) -> Enter {
-        let bar = self.bar(b);
+    pub fn enter(&mut self, b: u32, no_delete: bool, restore: impl FnOnce() -> u32) -> Enter {
+        let bar = self.bar(b, restore);
         bar.count += 1;
         if bar.count >= bar.total {
             bar.count = 0;
@@ -95,11 +94,9 @@ impl Bars {
     pub fn deletable(&self, b: u32) -> bool {
         self.map.get(&b).is_none_or(|bar| bar.deletable == 0)
     }
-    /// DeleteSynchronizationBarrier returns: the barrier goes when nobody is inside its phase
-    /// (an entry per barrier address stayed for good; waiters of finished phases are released
-    /// either way, a missing barrier releasing everyone)
+    /// The host entry can go when no one needs it. A subsequent Enter restores the total.
     pub fn delete(&mut self, b: u32) {
-        if self.map.get(&b).is_some_and(|bar| bar.count == 0) {
+        if self.map.get(&b).is_some_and(|bar| bar.count == 0 && bar.deletable == 0) {
             self.map.remove(&b);
         }
     }
@@ -125,13 +122,32 @@ fn wait_until(done: impl Fn(&Bars) -> bool) {
     }
 }
 
+/// Unused barriers may drop their host entry on Delete. Keep the configured participant
+/// count in the opaque guest object so a later Enter can recreate it.
+const BARRIER_SIGNATURE: u32 = 0x5342_4152;
+const STORED_SIZE: u32 = 8;
+
+fn load_participants(b: u32) -> u32 {
+    if mem::range(b, STORED_SIZE).is_some() && mem::r32(b) == BARRIER_SIGNATURE {
+        let count = mem::r32(b + 4);
+        if (1..=i32::MAX as u32).contains(&count) {
+            return count;
+        }
+    }
+    1
+}
+
 fn InitializeSynchronizationBarrier(c: &mut Ctx) -> u32 {
     let (b, total, spin) = (c.a(0), c.a(1) as i32, c.a(2) as i32);
-    if b == 0 || total < 1 || spin < -1 {
+    if b == 0 || total < 1 || spin < -1 || mem::range(b, STORED_SIZE).is_none() {
         crate::k32::last_error(87);
         return 0;
     }
-    with(|s| s.init(b, total as u32));
+    with(|s| {
+        mem::w32(b, BARRIER_SIGNATURE);
+        mem::w32(b + 4, total as u32);
+        s.init(b, total as u32);
+    });
     CV.notify_all();
     1
 }
@@ -142,7 +158,7 @@ fn EnterSynchronizationBarrier(c: &mut Ctx) -> u32 {
         crate::k32::raise_from_api(c, 0xC000_000D, 1, 2);
         return 0;
     }
-    match with(|s| s.enter(b, flags & NO_DELETE != 0)) {
+    match with(|s| s.enter(b, flags & NO_DELETE != 0, || load_participants(b))) {
         Enter::Last => {
             CV.notify_all();
             1
@@ -180,10 +196,10 @@ mod tests {
     fn the_last_of_a_phase_gets_true_and_lets_the_others_go() {
         let mut s = Bars::default();
         s.init(0x100, 3);
-        let Enter::Wait(a) = s.enter(0x100, false) else { panic!() };
-        let Enter::Wait(b) = s.enter(0x100, true) else { panic!() };
+        let Enter::Wait(a) = s.enter(0x100, false, || 1) else { panic!() };
+        let Enter::Wait(b) = s.enter(0x100, true, || 1) else { panic!() };
         assert!(!s.released(0x100, a) && !s.deletable(0x100));
-        assert_eq!(s.enter(0x100, false), Enter::Last);
+        assert_eq!(s.enter(0x100, false, || 1), Enter::Last);
         assert!(s.released(0x100, a) && s.released(0x100, b));
         assert!(!s.deletable(0x100), "until the waiter without NO_DELETE left");
         s.leave(0x100, b);
@@ -191,7 +207,7 @@ mod tests {
         s.leave(0x100, a);
         assert!(s.deletable(0x100));
         // the next phase starts over
-        assert!(matches!(s.enter(0x100, false), Enter::Wait(_)));
+        assert!(matches!(s.enter(0x100, false, || 1), Enter::Wait(_)));
     }
 
     #[test]
@@ -199,8 +215,8 @@ mod tests {
         let mut s = Bars::default();
         s.init(0x10, 1);
         for _ in 0..3 {
-            assert_eq!(s.enter(0x10, false), Enter::Last);
-            assert_eq!(s.enter(0x20, true), Enter::Last);
+            assert_eq!(s.enter(0x10, false, || 1), Enter::Last);
+            assert_eq!(s.enter(0x20, true, || 1), Enter::Last);
         }
     }
 
@@ -208,7 +224,7 @@ mod tests {
     fn initializing_again_releases_the_waiters() {
         let mut s = Bars::default();
         s.init(0x10, 5);
-        let Enter::Wait(t) = s.enter(0x10, false) else { panic!() };
+        let Enter::Wait(t) = s.enter(0x10, false, || 1) else { panic!() };
         s.init(0x10, 5);
         assert!(s.released(0x10, t));
         s.leave(0x10, t);
@@ -225,7 +241,7 @@ mod tests {
             let mut waiting = vec![];
             let mut trues = 0;
             for i in 0..n * phases {
-                match s.enter(0x40, no_delete[i as usize % 48]) {
+                match s.enter(0x40, no_delete[i as usize % 48], || 1) {
                     Enter::Last => {
                         trues += 1;
                         for t in waiting.drain(..) {
@@ -253,11 +269,12 @@ mod tests {
             let mut s = Bars::default();
             for &a in &addrs {
                 s.init(a, n);
-                let Enter::Wait(t) = s.enter(a, true) else { panic!() };
+                s.delete(a);
+                let Enter::Wait(t) = s.enter(a, true, || n) else { panic!() };
                 s.delete(a);
                 prop_assert!(!s.released(a, t), "a waiter inside is not let out");
                 for _ in 1..n {
-                    s.enter(a, true);
+                    s.enter(a, true, || 1);
                 }
                 prop_assert!(s.released(a, t));
                 s.leave(a, t);
