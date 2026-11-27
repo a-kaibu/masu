@@ -1,4 +1,4 @@
-//! The programs measured: 32-bit code made with iced's assembler at CODE, data at DATA, each
+//! The programs measured: 32- and 64-bit code made with iced's assembler at CODE, data at DATA, each
 //! returning to END (the return address on the stack) after `scale` times its fixed work.
 //! Shapes of what the games' code spends its time in (docs/bench.md's cpu-game): table-driven
 //! loops, carry chains, small calls, a bytecode VM's jump table, integer SSE2, x87, sorting,
@@ -8,9 +8,10 @@ use iced_x86::code_asm::*;
 use iced_x86::{BlockEncoderOptions, IcedError};
 use koji::Gpr;
 
-pub const NAMES: &[&str] = &["crc32", "bigadd", "calls", "vm", "sse_int", "x87_dot", "sort", "flags_mem"];
+pub const NAMES: &[&str] = &["crc32", "bigadd", "calls", "vm", "sse_int", "x87_dot", "sort", "flags_mem", "avx2_int"];
 
 pub struct Prog {
+    pub long: bool,
     pub code: Vec<u8>,
     pub data: Vec<u8>,
     pub regs: Vec<(Gpr, u32)>,
@@ -40,7 +41,7 @@ fn put32(d: &mut [u8], at: u32, v: u32) {
 }
 
 /// Times each program's work is repeated at scale 1: ~20-60 ms of translated code in node 24
-const REPEAT: [u32; 8] = [200, 500, 200, 50, 500, 1000, 100, 1000];
+const REPEAT: [u32; 9] = [200, 500, 200, 50, 500, 1000, 100, 1000, 500];
 
 pub fn build(i: usize, scale: u32) -> Option<Prog> {
     let scale = scale * REPEAT.get(i)?;
@@ -53,6 +54,7 @@ pub fn build(i: usize, scale: u32) -> Option<Prog> {
         5 => x87_dot(scale),
         6 => sort(scale),
         7 => flags_mem(scale),
+        8 => avx2_int(scale),
         _ => return None,
     };
     r.ok()
@@ -91,7 +93,7 @@ fn crc32(scale: u32) -> Result<Prog, IcedError> {
     a.dec(ebp)?;
     a.jne(outer)?;
     a.ret()?;
-    Ok(Prog { code: assemble(&mut a)?, data: d, regs: vec![(koji::EBP, scale), (koji::EDI, 0)] })
+    Ok(Prog { long: false, code: assemble(&mut a)?, data: d, regs: vec![(koji::EBP, scale), (koji::EDI, 0)] })
 }
 
 /// 4096-word additions with carry (ADC chained through INC/DEC, which keep CF)
@@ -116,7 +118,7 @@ fn bigadd(scale: u32) -> Result<Prog, IcedError> {
     a.dec(ebp)?;
     a.jne(outer)?;
     a.ret()?;
-    Ok(Prog { code: assemble(&mut a)?, data: d, regs: vec![(koji::EBP, scale), (koji::EDI, 0)] })
+    Ok(Prog { long: false, code: assemble(&mut a)?, data: d, regs: vec![(koji::EBP, scale), (koji::EDI, 0)] })
 }
 
 /// Small calls: a loop calling a leaf through a middle function (cdecl, a stack argument)
@@ -153,7 +155,7 @@ fn calls(scale: u32) -> Result<Prog, IcedError> {
     a.ret()?;
     a.set_label(&mut done)?;
     a.ret()?;
-    Ok(Prog { code: assemble(&mut a)?, data: data(0x1000), regs: vec![(koji::EBP, scale), (koji::EDI, 0)] })
+    Ok(Prog { long: false, code: assemble(&mut a)?, data: data(0x1000), regs: vec![(koji::EBP, scale), (koji::EDI, 0)] })
 }
 
 /// A bytecode VM (a script engine's shape): a byte opcode, a jump table, a value stack in
@@ -242,7 +244,7 @@ fn vm(scale: u32) -> Result<Prog, IcedError> {
         put32(&mut d, table + 4 * k as u32, r.label_ip(l)? as u32);
     }
     let code = r.inner.code_buffer;
-    Ok(Prog { code, data: d, regs: vec![(koji::EBP, scale * 40), (koji::EDI, 0)] })
+    Ok(Prog { long: false, code, data: d, regs: vec![(koji::EBP, scale * 40), (koji::EDI, 0)] })
 }
 
 /// Integer SSE2 over 64 KiB: loads, PADDD, PMULLW, PXOR, shifts, stores
@@ -273,7 +275,7 @@ fn sse_int(scale: u32) -> Result<Prog, IcedError> {
     a.dec(ebp)?;
     a.jne(outer)?;
     a.ret()?;
-    Ok(Prog { code: assemble(&mut a)?, data: d, regs: vec![(koji::EBP, scale)] })
+    Ok(Prog { long: false, code: assemble(&mut a)?, data: d, regs: vec![(koji::EBP, scale)] })
 }
 
 /// x87 dot product of 4096 doubles
@@ -302,7 +304,7 @@ fn x87_dot(scale: u32) -> Result<Prog, IcedError> {
     a.dec(ebp)?;
     a.jne(outer)?;
     a.ret()?;
-    Ok(Prog { code: assemble(&mut a)?, data: d, regs: vec![(koji::EBP, scale)] })
+    Ok(Prog { long: false, code: assemble(&mut a)?, data: d, regs: vec![(koji::EBP, scale)] })
 }
 
 /// Insertion sort of 1024 ints, copied from the source first
@@ -344,7 +346,7 @@ fn sort(scale: u32) -> Result<Prog, IcedError> {
     a.dec(ebp)?;
     a.jne(outer)?;
     a.ret()?;
-    Ok(Prog { code: assemble(&mut a)?, data: d, regs: vec![(koji::EBP, scale)] })
+    Ok(Prog { long: false, code: assemble(&mut a)?, data: d, regs: vec![(koji::EBP, scale)] })
 }
 
 /// Memory operands between flag writers whose flags nothing reads (each access could fault:
@@ -371,5 +373,36 @@ fn flags_mem(scale: u32) -> Result<Prog, IcedError> {
     a.dec(ebp)?;
     a.jne(outer)?;
     a.ret()?;
-    Ok(Prog { code: assemble(&mut a)?, data: d, regs: vec![(koji::EBP, scale)] })
+    Ok(Prog { long: false, code: assemble(&mut a)?, data: d, regs: vec![(koji::EBP, scale)] })
+}
+
+/// An AVX2 integer transform over 64 KiB, keeping independent data in each half of a YMM.
+fn avx2_int(scale: u32) -> Result<Prog, IcedError> {
+    let source = DATA;
+    let dest = DATA + BUF_LEN;
+    let mut a = CodeAssembler::new(64)?;
+    let mut outer = a.create_label();
+    let mut inner = a.create_label();
+    a.set_label(&mut outer)?;
+    a.mov(esi, source)?;
+    a.mov(edi, dest)?;
+    a.mov(ecx, BUF_LEN / 32)?;
+    a.set_label(&mut inner)?;
+    a.vmovdqu(ymm0, ymmword_ptr(rsi))?;
+    a.vmovdqu(ymm1, ymmword_ptr(rdi))?;
+    a.vpaddd(ymm2, ymm0, ymm1)?;
+    a.vpmullw(ymm3, ymm2, ymm0)?;
+    a.vpxor(ymm4, ymm3, ymm1)?;
+    a.vpsrld(ymm5, ymm4, 5)?;
+    a.vpand(ymm6, ymm5, ymm2)?;
+    a.vpsubd(ymm7, ymm6, ymm3)?;
+    a.vmovdqu(ymmword_ptr(rdi), ymm7)?;
+    a.add(esi, 32)?;
+    a.add(edi, 32)?;
+    a.dec(ecx)?;
+    a.jne(inner)?;
+    a.dec(ebp)?;
+    a.jne(outer)?;
+    a.ret()?;
+    Ok(Prog { long: true, code: assemble(&mut a)?, data: data(2 * BUF_LEN as usize), regs: vec![(koji::EBP, scale)] })
 }

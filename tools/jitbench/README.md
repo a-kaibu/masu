@@ -16,6 +16,7 @@ programs (src/progs.rs) run from their entry to their end, translated when a blo
 | x87_dot | an x87 dot product |
 | sort | insertion sort (loads, stores and compares in a nested loop) |
 | flags_mem | memory operands between a flag writer and its reader (exits that must keep the flags) |
+| avx2_int | 64-bit integer AVX2 over both halves of YMM registers (add, multiply, logic, shift and subtract) |
 
 ## Running
 
@@ -47,4 +48,5 @@ over the rounds (the tail a scene change sees), translate ms (koji's own time), 
 (WebAssembly.Module + Instance of the translations), wasm B (their bytes), interp steps (the
 instructions the interpreter ran in the cold run), step calls and exits per hot run (the ways
 back to the interpreter and to the dispatcher), the checksums (A and B must agree), the peak
-RSS (node) or JS heap (Chromium).
+RSS (node) or JS heap (Chromium). The per-round JSON also reports the dynamic memory
+access counts (per run, classified by the emitter as Cpu or other addresses) when `memcount=1`.
