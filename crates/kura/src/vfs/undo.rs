@@ -14,17 +14,17 @@ use super::*;
 use kome::num::us;
 
 /// A node's counts, times and mode.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 struct Meta {
     mode: u32,
     mtime: i64,
     nlink: u32,
-    open_refs: u32,
+    open_refs: OpenRefs,
 }
 
 impl Meta {
     fn of(n: &Node) -> Meta {
-        Meta { mode: n.mode, mtime: n.mtime, nlink: n.nlink, open_refs: n.open_refs }
+        Meta { mode: n.mode, mtime: n.mtime, nlink: n.nlink, open_refs: n.open_refs.clone() }
     }
     fn put(self, n: &mut Node) {
         (n.mode, n.mtime, n.nlink, n.open_refs) = (self.mode, self.mtime, self.nlink, self.open_refs);
