@@ -569,6 +569,8 @@ enum Flags {
     Entry,
     /// lazy operation `op` with operands in L_FA/L_FB/L_FR/L_FC
     Known(Op),
+    /// A 32-bit shift by CL wrote `op` unless the masked count was zero.
+    MaybeShift(Op),
 }
 
 struct Gen<'a> {
@@ -2274,7 +2276,7 @@ impl<'a> Gen<'a> {
     /// Pushes EFLAGS (exact status flags).
     fn eflags(&mut self) {
         match self.flags {
-            Flags::Entry => {
+            Flags::Entry | Flags::MaybeShift(_) => {
                 lazy_to_cpu(&mut self.c);
                 self.c.i32c(-1).set(L_OP);
                 self.c.end();
@@ -2299,6 +2301,20 @@ impl<'a> Gen<'a> {
                 }
                 return;
             }
+        } else if let Flags::MaybeShift(op) = self.flags
+            && cc.test == Test::B
+        {
+            // A zero count preserves the previous flags. For a nonzero count the current
+            // lazy record already provides CF, with no need to write it back or call Rust.
+            self.c.get(L_OP).u32c(op.raw()).eq().if_i32();
+            self.cond_known(op, Test::B);
+            self.c.else_();
+            self.cond_eflags(cc);
+            self.c.end();
+            if neg {
+                self.c.eqz();
+            }
+            return;
         } else if let Some(op) = self.predict(cc) {
             // flags from before the block: most likely those a block leading here left (a
             // second jcc after a cmp), checked
@@ -2312,7 +2328,7 @@ impl<'a> Gen<'a> {
             }
             return;
         }
-        if self.flags == Flags::Entry {
+        if !matches!(self.flags, Flags::Known(_)) {
             self.cond_entry(cc);
         } else {
             self.cond_eflags(cc);
@@ -2576,7 +2592,7 @@ impl<'a> Gen<'a> {
         if self.tc.measure.layout {
             let k = match self.flags {
                 Flags::Known(op) => alloc::format!("CONDFB_k{}_b{}_cc{}", op.kind.code(), op.size.bits(), cc.code()),
-                Flags::Entry => alloc::format!("CONDFB_entry_cc{}", cc.code()),
+                Flags::Entry | Flags::MaybeShift(_) => alloc::format!("CONDFB_entry_cc{}", cc.code()),
             };
             self.sizes.entry(k).or_insert((0, 0)).0 += 1;
         }
@@ -2687,7 +2703,7 @@ impl<'a> Gen<'a> {
                 self.c.u32c(op.raw()).set(L_OP);
                 lazy_store(&mut self.c);
             }
-            Flags::Entry => {
+            Flags::Entry | Flags::MaybeShift(_) => {
                 lazy_to_cpu(&mut self.c);
                 self.c.end();
             }
@@ -2707,7 +2723,7 @@ impl<'a> Gen<'a> {
                 self.c.u32c(op.raw()).set(L_OP);
                 lazy_store(&mut self.c);
             }
-            Flags::Entry => {
+            Flags::Entry | Flags::MaybeShift(_) => {
                 lazy_to_cpu(&mut self.c);
                 self.c.end();
             }
@@ -3432,7 +3448,11 @@ impl<'a> Gen<'a> {
                             self.c.get(n).if_();
                             self.set_lazy(kind, bits, Some(a), Some(n), r, None);
                             self.c.end();
-                            self.flags = Flags::Entry;
+                            self.flags = if bits == 32 {
+                                Flags::MaybeShift(Op::new(kind, Size::of_bits32(bits)))
+                            } else {
+                                Flags::Entry
+                            };
                         }
                     }
                 }
@@ -5631,7 +5651,7 @@ fn emit_block<'a>(g: &mut Gen<'a>, blocks: &'a [(u32, Insns)], k: usize, count: 
     if let Some(o) = g.flags_out.get_mut(k) {
         *o = match g.flags {
             Flags::Known(op) => Some(op),
-            Flags::Entry => None,
+            Flags::Entry | Flags::MaybeShift(_) => None,
         };
     }
 }
