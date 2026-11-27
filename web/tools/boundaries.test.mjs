@@ -1,5 +1,5 @@
 import ts from "typescript";
-import { expect, test } from "vitest";
+import { expect, test } from "vite-plus/test";
 import { check, checkNetCore } from "./boundaries.mjs";
 
 test("save metadata writes and unchecked runtime bytes stay with their callers", () => {
