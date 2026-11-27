@@ -5282,6 +5282,12 @@ pub fn init() {
     implement("shell32", "SHGetPathFromIDList", SHGetPathFromIDListA);
     reg!("shlwapi"; IsOS, SHAutoComplete);
     reg!("shlwapi"; FDSA_Initialize, FDSA_Destroy, FDSA_InsertItem, FDSA_DeleteItem, SHSearchMapInt);
+    for dll in ["shlwapi", "shell32"] {
+        implement(dll, "SHAllocShared", crate::k32::SHAllocShared);
+        implement(dll, "SHLockShared", crate::k32::SHLockShared);
+        implement(dll, "SHUnlockShared", crate::k32::SHUnlockShared);
+        implement(dll, "SHFreeShared", crate::k32::SHFreeShared);
+    }
     implement("shlwapi", "DllGetVersion", |c| dll_get_version(c.a(0), SHLWAPI_VERSION));
     implement("shell32", "DllGetVersion", |c| dll_get_version(c.a(0), SHELL32_VERSION));
     implement("comctl32", "DllGetVersion", |c| dll_get_version(c.a(0), COMCTL32_VERSION));
