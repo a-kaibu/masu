@@ -32,6 +32,8 @@ pub enum Stop {
     /// A save state is being taken and the thread is at the top level of its run loop
     /// (crates/kura/src/snap.rs): EIP at the next instruction, nothing done.
     Pause,
+    /// The owner has an asynchronous callback to run at the next instruction.
+    Interrupted,
 }
 
 /// The linear memory as the guest sees it.
@@ -392,9 +394,14 @@ fn trace_eip() {
 
 /// Runs until the guest reaches a trap address or stops otherwise (fault, INT...).
 pub fn run(cpu: &mut Cpu) -> Stop {
+    run_until(cpu, || false)
+}
+
+/// A run that can also return between guest instruction batches when `interrupt` is ready.
+pub fn run_until(cpu: &mut Cpu, interrupt: impl Fn() -> bool) -> Stop {
     trace_eip();
     crate::crashlog::in_guest(true);
-    let r = cpu_run(cpu);
+    let r = cpu_run(cpu, interrupt);
     crate::crashlog::shown(cpu);
     crate::crashlog::in_guest(false);
     r
@@ -451,7 +458,7 @@ fn progressed() {
     }
 }
 
-fn cpu_run(cpu: &mut Cpu) -> Stop {
+fn cpu_run(cpu: &mut Cpu, interrupt: impl Fn() -> bool) -> Stop {
     let mut mem = Linear;
     let mut stepped = 0u32;
     // long mode: MASU_JIT64=0 leaves it to the interpreter
@@ -460,6 +467,9 @@ fn cpu_run(cpu: &mut Cpu) -> Stop {
     loop {
         if crate::snap::pausing() && crate::snap::parkable() {
             return Stop::Pause;
+        }
+        if interrupt() {
+            return Stop::Interrupted;
         }
         // (a thread another one suspended: SuspendThread, sake's suspend.rs)
         if let Some(park) = PARK.get() {

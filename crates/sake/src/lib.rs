@@ -478,8 +478,13 @@ fn run_loop(cpu: &mut Cpu, until: u32, depth: u32) {
     use kura::cpu::Stop;
     loop {
         snap::before_guest(cpu, depth);
-        let stop = kura::cpu::run(cpu);
+        let stop = if cpu.mode16 != 0 {
+            kura::cpu::run_until(cpu, w16api::wave_callbacks_ready)
+        } else {
+            kura::cpu::run(cpu)
+        };
         match stop {
+            Stop::Interrupted => w16api::run_wave_callbacks(cpu),
             Stop::Pause => {
                 // (standing still: the others may run meanwhile)
                 let held = uni::leave();

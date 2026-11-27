@@ -605,16 +605,19 @@ enum WaveCb {
     Thread(u32),
     /// waveOutProc and its instance data
     Function(u32, u32),
+    /// Far procedure, instance data and the Win16 task's thread.
+    Function16(u32, u32, u32),
     Event(u32),
 }
 impl WaveCb {
-    fn of(flags: u32, cb: u32, inst: u32) -> WaveCb {
+    fn of(flags: u32, cb: u32, inst: u32, mode16: bool) -> WaveCb {
         if cb == 0 {
             return WaveCb::Null;
         }
         match flags & 0x70000 {
             0x10000 => WaveCb::Window(cb),
             0x20000 => WaveCb::Thread(cb),
+            0x30000 if mode16 => WaveCb::Function16(cb, inst, crate::cur().tid),
             0x30000 => WaveCb::Function(cb, inst),
             0x50000 => WaveCb::Event(cb),
             _ => WaveCb::Null,
@@ -626,6 +629,10 @@ fn wave_notify(c: &mut Ctx, hwo: u32, cb: WaveCb, msg: u32, p1: u32) {
         WaveCb::Function(f, inst) => {
             c.call(f, &[hwo, msg, inst, p1, 0]);
         }
+        WaveCb::Function16(f, inst, tid) => {
+            crate::w16api::queue_wave_callback(tid, f, hwo, msg, inst, p1);
+            crate::w16api::run_wave_callbacks(c.cpu);
+        }
         WaveCb::Window(w) => {
             crate::user::post(w, msg, crate::abi::Wparam::handle(hwo), crate::abi::Lparam::addr(p1));
         }
@@ -635,14 +642,28 @@ fn wave_notify(c: &mut Ctx, hwo: u32, cb: WaveCb, msg: u32, p1: u32) {
     }
 }
 
+/// This runs under the device lock. Move completed 16-bit headers to the task's queue
+/// before a racing Close can append WOM_CLOSE, and call the guest only after unlocking.
+fn queue_wave16_done(hwo: u32, wave: &mut Wave) -> bool {
+    let WaveCb::Function16(f, inst, tid) = wave.cb else { return false };
+    let pending = !wave.done.is_empty();
+    for h in wave.done.drain(..) {
+        let far = wave.w16.as_ref().and_then(|m| m.get(&h)).copied().unwrap_or(h);
+        crate::w16api::queue_wave_callback(tid, f, hwo, WOM_DONE, inst, far);
+    }
+    pending
+}
+
 /// The waveOut devices' thread (one for all of them, as winmm has it; each device used to have
 /// one, polling every 20 ms): delivers WOM_DONE for finished headers, drops closed devices.
 fn wave_thread(c: &mut Ctx) -> u32 {
     loop {
-        let (work, gone) = with(|d| {
+        let (work, gone, wake16) = with(|d| {
             let mut work = Vec::new();
             let mut gone = Vec::new();
+            let mut wake16 = false;
             for (&hwo, w) in d.waves.iter_mut() {
+                wake16 |= queue_wave16_done(hwo, w);
                 let mut done = std::mem::take(&mut w.done);
                 if let Some(m) = &w.w16 {
                     done.iter_mut().for_each(|h| *h = m.get(h).copied().unwrap_or(*h));
@@ -654,8 +675,11 @@ fn wave_thread(c: &mut Ctx) -> u32 {
                     gone.push(hwo);
                 }
             }
-            (work, gone)
+            (work, gone, wake16)
         });
+        if wake16 {
+            crate::obj::signal();
+        }
         for (hwo, cb, done) in &work {
             for h in done {
                 wave_notify(c, *hwo, *cb, WOM_DONE, *h);
@@ -821,7 +845,8 @@ fn waveOutGetDevCapsW(c: &mut Ctx) -> u32 {
 fn waveOutOpen(c: &mut Ctx) -> u32 {
     let c = &mut c.args::<crate::api::outs::waveOutOpen>();
     let (ph, device, fmtp, cb, inst, flags) = (c.out::<0>(), c.a::<1>(), c.a::<2>(), c.a::<3>(), c.a::<4>(), c.a::<5>());
-    mm(wave_open(c.ctx(), ph, device, fmtp, WaveCb::of(flags, cb, inst), flags))
+    let mode16 = c.ctx().cpu.mode16 != 0;
+    mm(wave_open(c.ctx(), ph, device, fmtp, WaveCb::of(flags, cb, inst, mode16), flags))
 }
 fn wave_open(c: &mut Ctx, ph: crate::api::Out, device: u32, fmtp: u32, cbk: WaveCb, flags: u32) -> Result<(), WaveErr> {
     // a device id (not an open handle)
@@ -875,6 +900,7 @@ fn waveOutClose(c: &mut Ctx) -> u32 {
             return Err(WaveErr::StillPlaying);
         }
         w.closing = true;
+        queue_wave16_done(hwo, w);
         Ok(w.cb)
     });
     let cb = match closed {
@@ -946,9 +972,11 @@ fn waveOutReset(c: &mut Ctx) -> u32 {
             w.pos = 0.0;
             w.played = 0;
             w.paused = false;
+            queue_wave16_done(hwo, w);
         }
     });
     wave_wake();
+    crate::w16api::run_wave_callbacks(c.cpu);
     0
 }
 fn waveOutPause(c: &mut Ctx) -> u32 {

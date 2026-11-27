@@ -2228,6 +2228,9 @@ thread_local! {
 
 /// Runs messages other threads sent to this one.
 fn process_sent(cpu: &mut koji::Cpu) {
+    if cpu.mode16 != 0 {
+        crate::w16api::run_wave_callbacks(cpu);
+    }
     let me = crate::cur().tid;
     loop {
         let s = with(|s| s.queues.get_mut(&me).and_then(|q| q.sent.pop_front()));
@@ -4596,6 +4599,7 @@ fn wait_msgs_of(handles: &[u32], all: bool, ms: u32, mask: u32, apc: bool, new: 
         // (called with the object table locked: the USER lock is taken inside, never the other way)
         let s = STATE.try_lock();
         apc && crate::apc::pending(me)
+            || crate::w16api::wave_callbacks_waiting(me)
             || match s {
                 Ok(g) => g.as_ref().is_some_and(|s| if new { queued_new(s, me, mask) } else { queued(s, me, mask) }),
                 Err(_) => true,
