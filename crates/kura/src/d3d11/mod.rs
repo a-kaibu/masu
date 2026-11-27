@@ -4836,9 +4836,15 @@ unsafe fn draw_with(d: &mut D11, st: &State, indexed: bool, count: u32, instance
     let ds = state_desc(d, st.depth).cloned();
     let rs = state_desc(d, st.raster).cloned();
     let mut r = rs.unwrap_or_else(|| vec![3, 3, 0, 0, 0, 0, 1, 0, 0, 0]);
-    // (a setup's squares: CullMode NONE, no bias, DepthClipEnable off; expand::SetupStore)
-    if store.and_then(|sd| sd.setup).is_some_and(expand::SetupStore::squares) {
-        for (k, v) in [(1, 1), (3, 0), (4, 0), (5, 0), (6, 0)] {
+    // The single-sample fragment stage supplies the depth plane from the setup,
+    // including bias. MSAA solid triangles still use the hardware depth path.
+    let squares = store.and_then(|sd| sd.setup).is_some_and(expand::SetupStore::squares);
+    if squares || (setup == Some(1) && ps.is_some()) {
+        r[3..6].fill(0);
+    }
+    if squares {
+        // (setup bounds for lines and points: CullMode NONE, DepthClipEnable off)
+        for (k, v) in [(1, 1), (6, 0)] {
             if let Some(w) = r.get_mut(k) {
                 *w = v;
             }
@@ -4854,7 +4860,6 @@ unsafe fn draw_with(d: &mut D11, st: &State, indexed: bool, count: u32, instance
         (None, None) => PageTopo::of_d3d(st.topology),
     };
     let fill = Fill::of(r.first().copied().unwrap_or(3));
-    let squares = store.and_then(|sd| sd.setup).is_some_and(expand::SetupStore::squares);
     let Some(plan) = DrawPlan::of(assembled, adjacent, fill, sprite.is_some(), squares) else {
         if fill == Fill::Wireframe && !squares {
             // (wireframe triangles the setup did not take: its pass could not be made)
