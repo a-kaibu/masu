@@ -5,6 +5,7 @@ import { bridgeScript } from "../../host/bridge-source.mjs";
 import { isDirectInfo, isPackSpan } from "./direct";
 
 // (the network worker's functions, as its source has them: the same text as the page's import)
+// oxlint-disable-next-line typescript/no-implied-eval -- (the test runs the assembled worker script)
 const worker = new Function(
   `${bridgeScript(core, bridgeJs)}\nreturn { masuDirectValid, masuPackValid, masuBackoff, MASU_RETRY_STATUS };`,
 )() as {
