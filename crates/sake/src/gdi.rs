@@ -2405,31 +2405,35 @@ pub fn default_logfont(p: u32, wide: bool) {
     write_logfont(p, &lf, wide);
 }
 
-/// TEXTMETRIC (A: 56 bytes, W: 60).
-fn write_tm(p: u32, r: &Real, lf: &LogFont, wide: bool) {
+/// The populated fields in a TEXTMETRIC (the trailing alignment padding is left alone).
+fn text_metrics(r: &Real, lf: &LogFont, wide: bool) -> [u8; 57] {
+    let mut data = [0; 57];
     let f = FACES.get(r.face);
     let height = r.ascent + r.descent;
     let full = r.em.round() as i32;
     let vals = [height, r.ascent, r.descent, (height - full).max(0), r.ext_leading, r.ave, r.max_w, if r.bold { 700 } else { 400 }, 0, 96, 96];
-    for (i, v) in vals.iter().enumerate() {
-        w32(p + 4 * i as u32, *v as u32);
+    for (field, val) in data.chunks_exact_mut(4).zip(vals) {
+        field.copy_from_slice(&val.to_le_bytes());
     }
     let fixed = f.is_some_and(|f| f.fixed);
     let family = if f.is_some_and(|f| f.roman) { 0x10 } else { 0x30 };
     let pitch = family | 6 | u8::from(!fixed);
+    let flags = [lf.italic, lf.underline, lf.strike, pitch, 128];
     if wide {
-        w16(p + 44, 0x20);
-        w16(p + 46, 0xfffc);
-        w16(p + 48, 0x1f);
-        w16(p + 50, 0x20);
-        for (i, v) in [lf.italic, lf.underline, lf.strike, pitch, 128].iter().enumerate() {
-            w8(p + 52 + i as u32, *v);
+        for (field, ch) in data[44..52].chunks_exact_mut(2).zip([0x20u16, 0xfffc, 0x1f, 0x20]) {
+            field.copy_from_slice(&ch.to_le_bytes());
         }
+        data[52..].copy_from_slice(&flags);
     } else {
-        for (i, v) in [0x20u8, 0xfc, 0x1f, 0x20, lf.italic, lf.underline, lf.strike, pitch, 128].iter().enumerate() {
-            w8(p + 44 + i as u32, *v);
-        }
+        data[44..48].copy_from_slice(&[0x20, 0xfc, 0x1f, 0x20]);
+        data[48..53].copy_from_slice(&flags);
     }
+    data
+}
+
+fn write_tm(p: u32, r: &Real, lf: &LogFont, wide: bool) {
+    let data = text_metrics(r, lf, wide);
+    mem::write(p, &data[..if wide { 57 } else { 53 }]);
 }
 
 fn text_width(r: &Real, s: &[u16], extra: i32) -> i32 {
@@ -5702,10 +5706,16 @@ fn outline_metrics(c: &mut Ctx, wide: bool) -> u32 {
     let x64 = mem::x64();
     let base = if x64 { 232 } else { 216 - d };
     let size = base + names.iter().map(|n| n.len() as u32).sum::<u32>();
-    if p == 0 {
+    if p == 0 || (wide && cap == 0) {
         return size;
     }
-    if cap < base {
+    if cap == 0 {
+        return 0;
+    }
+    // Windows copies a prefix of the fixed structure, with zero name offsets.
+    // A buffer that extends into the variable names must fit the whole result.
+    let incomplete_names = cap > base && cap < size;
+    if wide && incomplete_names {
         return 0;
     }
     let mut buf = vec![0u8; size as usize];
@@ -5734,7 +5744,7 @@ fn outline_metrics(c: &mut Ctx, wide: bool) -> u32 {
     put(&mut buf, 192, -(em / 20).max(1));
     put(&mut buf, 196, -(desc / 2).max(1));
     let mut off = base;
-    for (i, n) in names.iter().enumerate() {
+    for (i, n) in names.iter().enumerate().filter(|_| cap >= size) {
         if x64 {
             let at = 200 + 8 * i;
             buf[at..at + 8].copy_from_slice(&u64::from(off).to_le_bytes());
@@ -5744,10 +5754,12 @@ fn outline_metrics(c: &mut Ctx, wide: bool) -> u32 {
         buf[off as usize..off as usize + n.len()].copy_from_slice(n);
         off += n.len() as u32;
     }
-    let n = size.min(cap);
+    let n = if incomplete_names { base } else { size.min(cap) };
+    let tm = text_metrics(&r, &lf, wide);
+    let field_bytes = if wide { 57 } else { 53 };
+    buf[4..4 + field_bytes].copy_from_slice(&tm[..field_bytes]);
     mem::write(p, &buf[..n as usize]);
-    write_tm(p + 4, &r, &lf, wide);
-    n
+    if incomplete_names { 0 } else { n }
 }
 fn GetOutlineTextMetricsA(c: &mut Ctx) -> u32 {
     outline_metrics(c, false)

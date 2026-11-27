@@ -31,6 +31,7 @@ pub(crate) struct Family {
     pub name: String,
     /// gdi.rs's face that has its glyphs and metrics
     pub face: usize,
+    pub private: bool,
 }
 
 #[derive(Default)]
@@ -79,7 +80,7 @@ fn face_family(s: &mut State, face: usize) -> u32 {
         return h;
     }
     let name = crate::gdi::face_names(face).into_iter().next().unwrap_or_default();
-    let h = new_family(s, Family { name, face });
+    let h = new_family(s, Family { name, face, private: false });
     s.by_face.insert(face, h);
     h
 }
@@ -94,7 +95,7 @@ fn installed_family(name: &str) -> Option<u32> {
         if let Some(&h) = s.by_name.get(n) {
             return h;
         }
-        let h = new_family(s, Family { name: n.to_string(), face });
+        let h = new_family(s, Family { name: n.to_string(), face, private: false });
         s.by_name.insert(n.to_string(), h);
         h
     }))
@@ -307,14 +308,12 @@ fn GdipDeletePrivateFontCollection(c: &mut Ctx) -> u32 {
 fn add_private(coll: u32, data: Vec<u8>) -> u32 {
     let Some(face) = crate::gdi::add_font_data(data) else { return FILE_NOT_FOUND };
     with(|s| {
-        let fam = match s.by_face.get(&face) {
-            Some(&h) => h,
-            None => face_family(s, face),
-        };
-        // (the collection deleted by another thread meanwhile: InvalidParameter, not an abort)
-        let Some(list) = s.private.get_mut(&coll) else { return INVALID_PARAMETER };
-        if !list.contains(&fam) {
-            list.push(fam);
+        // The collection may have been deleted while GDI loaded the face.
+        let Some(list) = s.private.get(&coll) else { return INVALID_PARAMETER };
+        if !list.iter().any(|h| s.families[h].face == face) {
+            let name = crate::gdi::face_names(face).into_iter().next().unwrap_or_default();
+            let h = new_family(s, Family { name, face, private: true });
+            s.private.get_mut(&coll).unwrap().push(h);
         }
         OK
     })
