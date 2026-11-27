@@ -50,18 +50,11 @@ int main(void)
     }
     Env invalid = { initial.control, 1 };
     printf("invalid %d\n", put_env(&invalid));
-    _mm_setcsr(0x1f04);
+    _mm_setcsr(0x1f84);
     Env held;
     int held_ok = hold(&held);
-#if defined(__i386__)
-    const int expected_hold = 0;
-    const unsigned expected_control = 0x1f00;
-#else
-    const int expected_hold = 1;
-    const unsigned expected_control = 0x1f04;
-#endif
     printf("hold matches %d status %08x\n",
-           held_ok == expected_hold && _mm_getcsr() == expected_control, held.status);
+           held_ok == 0 && _mm_getcsr() == 0x1f80, held.status);
     put_env(&initial);
     printf("restored %03x\n", get_round());
     _mm_setcsr(0x1f80 | 0x06);
