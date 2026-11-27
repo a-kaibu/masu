@@ -6,6 +6,7 @@ use kome::locks::Lock as _;
 use crate::mem::{cstr, r16, r32, w16, w32, w8};
 use crate::w16::{self, call16, call32, h16, h32, lin, task, C16, A};
 use crate::HashMap;
+use std::cell::Cell;
 use std::sync::{Mutex, OnceLock};
 use koji::{Cpu, EAX, ECX, EDX, ESP};
 
@@ -773,15 +774,15 @@ thread_local! {
 }
 
 /// waveOutOpen(&hwo, device, format, callback, instance, flags) on winmm's: WAVE_MAPPER is
-/// 0xffff here, a window callback a 16-bit window, a task's the program's thread; function
-/// callbacks (called at interrupt time on Windows 3.1) are not delivered.
+/// 0xffff here, a window callback a 16-bit window, a task's the program's thread.
+/// Function callbacks run on the Win16 task that owns the device.
 fn wave_open(c: &mut C16) -> u32 {
     let (ph, dev, fmt, cb, inst, flags) = (c.a(0), c.w(1), c.a(2), c.a(3), c.a(4), c.a(5));
     let dev = if dev == 0xffff { u32::MAX } else { dev as u32 };
     let (flags, cb) = match flags & 0x70000 {
         0x10000 => (flags, h32(cb as u16)),
         0x20000 => (flags, call32(c.cpu, "kernel32!GetCurrentThreadId", &[])),
-        0 => (flags, cb),
+        0 | 0x30000 => (flags, cb),
         k => {
             eprintln!("sake w16: waveOutOpen callback kind {k:x} not delivered");
             (flags & !0x70000, 0)
@@ -799,6 +800,50 @@ fn wave_open(c: &mut C16) -> u32 {
         w16(ph, h as u16);
     }
     r
+}
+
+/// The wave thread queues callbacks for the single Win16 task. Keep the notification
+/// separate from posted messages so it can run while the task waits or executes guest code.
+static WAVE_CALLBACKS: Mutex<std::collections::VecDeque<(u32, [A; 5])>> = Mutex::new(std::collections::VecDeque::new());
+static WAVE_RECIPIENT: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+thread_local! {
+    static IN_WAVE_CALLBACK: Cell<bool> = const { Cell::new(false) };
+}
+
+pub(crate) fn queue_wave_callback(tid: u32, proc_: u32, hwo: u32, msg: u32, instance: u32, header: u32) {
+    use std::sync::atomic::Ordering;
+    let mut pending = WAVE_CALLBACKS.locked();
+    pending.push_back((proc_, [A::W(hwo as u16), A::W(msg as u16), A::L(instance), A::L(header), A::L(0)]));
+    WAVE_RECIPIENT.store(tid, Ordering::Release);
+}
+
+pub(crate) fn wave_callbacks_waiting(tid: u32) -> bool {
+    tid != 0 && WAVE_RECIPIENT.load(std::sync::atomic::Ordering::Acquire) == tid && !IN_WAVE_CALLBACK.get()
+}
+
+pub(crate) fn wave_callbacks_ready() -> bool {
+    let tid = WAVE_RECIPIENT.load(std::sync::atomic::Ordering::Acquire);
+    tid != 0 && !IN_WAVE_CALLBACK.get() && crate::cur().tid == tid
+}
+
+pub(crate) fn run_wave_callbacks(cpu: &mut Cpu) {
+    if cpu.mode16 == 0 || !wave_callbacks_ready() {
+        return;
+    }
+    IN_WAVE_CALLBACK.set(true);
+    loop {
+        let next = {
+            let mut pending = WAVE_CALLBACKS.locked();
+            let next = pending.pop_front();
+            if pending.is_empty() {
+                WAVE_RECIPIENT.store(0, std::sync::atomic::Ordering::Release);
+            }
+            next
+        };
+        let Some((proc_, args)) = next else { break };
+        call16(cpu, proc_, &args);
+    }
+    IN_WAVE_CALLBACK.set(false);
 }
 
 /// waveOutPrepareHeader / UnprepareHeader / Write(hwo, WAVEHDR far*, size): the 16-bit
