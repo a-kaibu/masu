@@ -5281,12 +5281,146 @@ pub fn init() {
     // (shell32 exports the ANSI one under its plain name too: matsuba_trial_1_setup.exe imports it)
     implement("shell32", "SHGetPathFromIDList", SHGetPathFromIDListA);
     reg!("shlwapi"; IsOS, SHAutoComplete);
+    reg!("shlwapi"; FDSA_Initialize, FDSA_Destroy, FDSA_InsertItem, FDSA_DeleteItem, SHSearchMapInt);
     implement("shlwapi", "DllGetVersion", |c| dll_get_version(c.a(0), SHLWAPI_VERSION));
     implement("shell32", "DllGetVersion", |c| dll_get_version(c.a(0), SHELL32_VERSION));
     implement("comctl32", "DllGetVersion", |c| dll_get_version(c.a(0), COMCTL32_VERSION));
     reg!("sensapi"; IsNetworkAlive);
     // ws2_32 lives in ws2.rs
 }
+
+/// SHLWAPI's fixed-size dynamic array starts on caller storage and grows onto the heap.
+struct Fdsa {
+    at: mem::Ga,
+    buffer: u32,
+    count: u32,
+    capacity: u32,
+    growth: u32,
+    size: u32,
+    flags: u8,
+}
+
+impl Fdsa {
+    const OWNED: u8 = 1;
+
+    fn read(p: u32) -> Option<Self> {
+        let width = mem::ps();
+        mem::range(p, 2 * width + 7)?;
+        let at = mem::ga(p);
+        Some(Self {
+            at,
+            buffer: mem::rp(at + width),
+            count: r32(at),
+            capacity: r32(at + 2 * width),
+            growth: u32::from(r8(at + 2 * width + 4)),
+            size: u32::from(r8(at + 2 * width + 5)),
+            flags: r8(at + 2 * width + 6),
+        })
+    }
+
+    fn reserve_item(&mut self) -> Option<()> {
+        let len = self.capacity.checked_mul(self.size)?;
+        if self.count > self.capacity || (self.buffer != 0 && mem::range(self.buffer, len).is_none()) {
+            return None;
+        }
+        if self.count < self.capacity && self.buffer != 0 {
+            return Some(());
+        }
+        let capacity = if self.count == self.capacity {
+            self.capacity.checked_add(self.growth.max(1))?
+        } else {
+            self.capacity
+        };
+        let bytes = capacity.checked_mul(self.size)?;
+        let buffer = if self.flags & Self::OWNED != 0 {
+            mem::heap_realloc(self.buffer, bytes, true)
+        } else {
+            let new = mem::heap_alloc_small(bytes, true);
+            if new != 0 && self.buffer != 0 {
+                mem::copy(new, self.buffer, len);
+            }
+            new
+        };
+        if buffer == 0 {
+            return None;
+        }
+        self.buffer = buffer;
+        let width = mem::ps();
+        mem::wp(self.at + width, buffer);
+        w32(self.at + 2 * width, capacity);
+        mem::w8(self.at + 2 * width + 6, self.flags | Self::OWNED);
+        Some(())
+    }
+}
+
+fn FDSA_Initialize(c: &mut Ctx) -> u32 {
+    let (size, grow, info, buffer, capacity) = (c.a(0), c.a(1), c.a(2), c.a(3), c.a(4));
+    let Some(array) = Fdsa::read(info) else { return 0 };
+    if buffer != 0 {
+        let Some(len) = size.checked_mul(capacity) else { return 0 };
+        if mem::range(buffer, len).is_none() { return 0; }
+        mem::zero(buffer, len);
+    }
+    let width = mem::ps();
+    w32(array.at, 0);
+    mem::wp(array.at + width, buffer);
+    w32(array.at + 2 * width, capacity);
+    mem::w8(array.at + 2 * width + 4, kome::num::lo8(grow.max(1)));
+    mem::w8(array.at + 2 * width + 5, kome::num::lo8(size));
+    mem::w8(array.at + 2 * width + 6, array.flags & !Fdsa::OWNED);
+    1
+}
+
+fn FDSA_Destroy(c: &mut Ctx) -> u32 {
+    let Some(array) = Fdsa::read(c.a(0)) else { return 0 };
+    if array.flags & Fdsa::OWNED == 0 {
+        return 1;
+    }
+    mem::heap_free_small(array.buffer);
+    0
+}
+
+fn FDSA_InsertItem(c: &mut Ctx) -> u32 {
+    let Some(mut array) = Fdsa::read(c.a(0)) else { return u32::MAX };
+    let index = c.a(1).min(array.count);
+    let data = mem::bytes(c.a(2), array.size);
+    if data.len() != array.size as usize || array.reserve_item().is_none() {
+        return u32::MAX;
+    }
+    let item = mem::ga(array.buffer).at(index, array.size);
+    mem::copy((item + array.size).get(), item.get(), (array.count - index) * array.size);
+    mem::write(item.get(), &data);
+    w32(array.at, array.count + 1);
+    index
+}
+
+fn FDSA_DeleteItem(c: &mut Ctx) -> u32 {
+    let Some(array) = Fdsa::read(c.a(0)) else { return 0 };
+    let index = c.a(1);
+    let Some(len) = array.count.checked_mul(array.size) else { return 0 };
+    if index >= array.count || array.count > array.capacity || mem::range(array.buffer, len).is_none() {
+        return 0;
+    }
+    let item = mem::ga(array.buffer).at(index, array.size);
+    mem::copy(item.get(), (item + array.size).get(), (array.count - index - 1) * array.size);
+    w32(array.at, array.count - 1);
+    1
+}
+
+fn SHSearchMapInt(c: &mut Ctx) -> u32 {
+    let (keys, values, count, key) = (c.a(0), c.a(1), c.a(2).cast_signed(), c.a(3));
+    let len = (count.max(0) as u32).saturating_mul(4);
+    if mem::range(keys, len).is_none() || mem::range(values, len).is_none() {
+        return u32::MAX;
+    }
+    for index in 0..(count.max(0) as u32) {
+        if r32(mem::ga(keys).at(index, 4)) == key {
+            return r32(mem::ga(values).at(index, 4));
+        }
+    }
+    u32::MAX
+}
+
 
 /// StrStr(I)A/W(haystack, needle): the first match (by UTF-16 unit, case folded for I), or 0
 fn str_str(c: &mut Ctx, wide: bool, fold: bool) -> u32 {
