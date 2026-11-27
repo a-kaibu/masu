@@ -1,0 +1,6 @@
+window extra 12345678
+initial procedure 1
+old procedure 1, new procedure 1
+replacement gets 7 200
+messages 208 207, restored 1
+dialog result 23
