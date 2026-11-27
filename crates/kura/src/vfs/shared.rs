@@ -11,7 +11,7 @@
 //! (review P1-3: 64 KiB writes to a 64 MiB file took about 0.1 s each, the whole namespace with
 //! the file's bytes written and read back).
 //!
-//! Buffer layout: "VFS2", the snapshot's number (a new one makes the readers read it whole), its
+//! Buffer layout: "VFS3", the snapshot's number (a new one makes the readers read it whole), its
 //! length, the snapshot (`Fs::shared_snapshot`), then entries: length, items.
 #![cfg_attr(not(any(target_arch = "wasm32", test)), allow(dead_code))]
 use super::*;
@@ -28,10 +28,38 @@ impl<'a> Read<'a> {
     fn string(&mut self) -> Option<String> { String::from_utf8(self.bytes()?).ok() }
 }
 
+fn put_refs(out: &mut Vec<u8>, refs: &OpenRefs) {
+    let Some(owners) = &refs.0 else { u32put(out, 0); return };
+    u32put(out, owners.len() as u32);
+    for (&pid, &count) in owners.iter() {
+        u32put(out, pid);
+        u32put(out, count);
+    }
+}
+
+fn get_refs(r: &mut Read) -> Option<OpenRefs> {
+    let count = r.u32()? as usize;
+    if count == 0 {
+        return Some(OpenRefs::default());
+    }
+    if count > r.0.len() / 8 {
+        return None;
+    }
+    let mut owners = BTreeMap::new();
+    for _ in 0..count {
+        let pid = r.u32()?;
+        let refs = r.u32()?;
+        if refs == 0 || owners.insert(pid, refs).is_some() {
+            return None;
+        }
+    }
+    Some(OpenRefs(Some(Box::new(owners))))
+}
+
 fn put_node(out: &mut Vec<u8>, node: Option<&Node>) {
     let Some(n) = node else { u32put(out, 0); return };
     let tag = match &n.data { Data::Dir(_) => 1, Data::Link(_) => 2, Data::File(Content::Upper(_)) => 3, Data::File(Content::Lower { .. }) => 4, Data::File(Content::Over(_)) => 5 };
-    u32put(out, tag); u32put(out, n.mode); out.extend(n.mtime.to_le_bytes()); u32put(out, n.nlink); u32put(out, n.open_refs);
+    u32put(out, tag); u32put(out, n.mode); out.extend(n.mtime.to_le_bytes()); u32put(out, n.nlink); put_refs(out, &n.open_refs);
     match &n.data {
         Data::Dir(children) => { u32put(out, children.len() as u32); for (name, ino) in children { bytes(out, name.as_bytes()); u32put(out, *ino); } }
         Data::Link(path) => bytes(out, path.as_bytes()),
@@ -57,7 +85,7 @@ fn get_store(r: &mut Read) -> Option<over::Store> {
 fn get_node(r: &mut Read) -> Option<Option<Node>> {
     let tag = r.u32()?;
     if tag == 0 { return Some(None); }
-    let mode = r.u32()?; let mtime = r.u64()? as i64; let nlink = r.u32()?; let open_refs = r.u32()?;
+    let mode = r.u32()?; let mtime = r.u64()? as i64; let nlink = r.u32()?; let open_refs = get_refs(r)?;
     let data = match tag {
         1 => { let n = r.u32()?; if n as usize > r.0.len() / 8 { return None; } let mut children = BTreeMap::new(); for _ in 0..n { children.insert(r.string()?, r.u32()?); } Data::Dir(children) }
         2 => Data::Link(r.string()?),
@@ -207,9 +235,9 @@ enum Item {
     /// all of it (or the slot free)
     Node(Ino, Option<Node>),
     /// a file in memory's counts, size, and the bytes that changed
-    Upper { ino: Ino, mode: u32, mtime: i64, nlink: u32, open_refs: u32, size: u64, ranges: Vec<(u64, Vec<u8>)>, over: Option<(u64, BTreeSet<u64>)> },
+    Upper { ino: Ino, mode: u32, mtime: i64, nlink: u32, open_refs: OpenRefs, size: u64, ranges: Vec<(u64, Vec<u8>)>, over: Option<(u64, BTreeSet<u64>)> },
     /// the count of open handles
-    Refs(Ino, u32),
+    Refs(Ino, OpenRefs),
 }
 const I_NODE: u8 = 1;
 const I_UPPER: u8 = 2;
@@ -278,11 +306,11 @@ impl Fs {
             if node.is_none() && ino as usize >= self.nodes.len() { continue; }
             count += 1;
             match (node, mark.level) {
-                (Some(n), Level::Refs) => { out.push(I_REFS); u32put(&mut out, ino); u32put(&mut out, n.open_refs); }
+                (Some(n), Level::Refs) => { out.push(I_REFS); u32put(&mut out, ino); put_refs(&mut out, &n.open_refs); }
                 (Some(n @ Node { data: Data::File(c @ (Content::Upper(_) | Content::Over(_))), .. }), Level::Meta) => {
                     let (v, over) = match c { Content::Over(o) => (o.pages(), Some(o)), Content::Upper(v) => (v, None), Content::Lower { .. } => { out.push(I_NODE); u32put(&mut out, ino); put_node(&mut out, Some(n)); continue } };
                     out.push(if over.is_some() { I_OVER } else { I_UPPER }); u32put(&mut out, ino);
-                    u32put(&mut out, n.mode); out.extend(n.mtime.to_le_bytes()); u32put(&mut out, n.nlink); u32put(&mut out, n.open_refs);
+                    u32put(&mut out, n.mode); out.extend(n.mtime.to_le_bytes()); u32put(&mut out, n.nlink); put_refs(&mut out, &n.open_refs);
                     out.extend(v.len().to_le_bytes());
                     let len = v.len() as usize;
                     let ranges: Vec<_> = mark.bytes.iter().map(|&(a, b)| (a.min(len), b.min(len))).filter(|r| r.0 < r.1).collect();
@@ -315,9 +343,9 @@ impl Fs {
             let ino = r.u32()?;
             items.push(match kind {
                 I_NODE => Item::Node(ino, get_node(&mut r)?),
-                I_REFS => Item::Refs(ino, r.u32()?),
+                I_REFS => Item::Refs(ino, get_refs(&mut r)?),
                 I_UPPER | I_OVER => {
-                    let (mode, mtime, nlink, open_refs, size) = (r.u32()?, r.u64()? as i64, r.u32()?, r.u32()?, r.u64()?);
+                    let (mode, mtime, nlink, open_refs, size) = (r.u32()?, r.u64()? as i64, r.u32()?, get_refs(&mut r)?, r.u64()?);
                     let k = r.u32()? as usize;
                     if k > r.0.len() / 12 { return None; }
                     let mut ranges = Vec::with_capacity(k);
@@ -400,7 +428,7 @@ impl Fs {
         if len < HEAD { return Err(Corrupt::Head); }
         let mut head = [0u8; HEAD];
         r.read(0, &mut head);
-        if head[..4] != *b"VFS2" { return Err(Corrupt::Head); }
+        if head[..4] != *b"VFS3" { return Err(Corrupt::Head); }
         let base = kome::le::u32::<4, HEAD>(&head);
         let snap = kome::le::u32::<8, HEAD>(&head) as usize;
         if self.shared.off == 0 || self.shared.base != base {
@@ -451,7 +479,7 @@ impl Fs {
         let snap = self.shared_snapshot();
         let base = if r.len() == 0 { 1 } else { self.shared.base.wrapping_add(1) };
         let mut out = Vec::with_capacity(HEAD + snap.len());
-        out.extend(b"VFS2"); u32put(&mut out, base); u32put(&mut out, snap.len() as u32); out.extend(&snap);
+        out.extend(b"VFS3"); u32put(&mut out, base); u32put(&mut out, snap.len() as u32); out.extend(&snap);
         if !r.write(0, &out) { return false; }
         let generation = r.commit(out.len());
         self.shared = Synced { generation, base, off: out.len(), snap: snap.len(), mounts: self.mounts.len() };
@@ -469,6 +497,9 @@ unsafe extern "C" {
     fn vnhost_vfs_shared_write(src: *const u8, off: usize, len: usize) -> i32;
     fn vnhost_vfs_shared_commit(len: usize) -> u32;
     fn vnhost_vfs_shared_enable() -> i32;
+    fn vnhost_vfs_owner() -> u32;
+    fn vnhost_vfs_shared_deaths() -> u32;
+    fn vnhost_vfs_shared_exited(owner: u32) -> i32;
 }
 /// host/vnfs.js's buffer (taken by Guard::enter)
 #[cfg(target_arch = "wasm32")]
@@ -490,6 +521,14 @@ pub(super) fn enable() -> bool {
     #[cfg(not(target_arch = "wasm32"))]
     false
 }
+/// Owner of handles made in this process.
+pub(super) fn owner() -> u32 {
+    #[cfg(target_arch = "wasm32")]
+    { unsafe { vnhost_vfs_owner() } }
+    #[cfg(not(target_arch = "wasm32"))]
+    { 0x10 }
+}
+
 pub(super) fn generation() -> u32 {
     #[cfg(target_arch = "wasm32")]
     { unsafe { vnhost_vfs_shared_generation() } }
@@ -499,7 +538,7 @@ pub(super) fn generation() -> u32 {
 /// What [`Fs::sync_in`] found wrong in the shared buffer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum Corrupt {
-    /// shorter than its head, or not "VFS2"
+    /// shorter than its head, or not "VFS3"
     Head,
     /// the whole namespace's snapshot
     Snapshot,
@@ -527,6 +566,14 @@ impl Guard {
                 return Self { enabled: false };
             }
             fs.undo = Some(super::undo::Undo::begin(fs));
+            let deaths = vnhost_vfs_shared_deaths();
+            if deaths != fs.owner_deaths {
+                fs.reap_open_refs(|pid| vnhost_vfs_shared_exited(pid) != 0);
+                if publish_or_undo(fs, &mut Host) {
+                    fs.owner_deaths = deaths;
+                }
+                fs.undo = Some(super::undo::Undo::begin(fs));
+            }
             return Self { enabled: true };
         }
         #[cfg(not(target_arch = "wasm32"))]

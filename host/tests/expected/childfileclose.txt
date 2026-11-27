@@ -1,0 +1,4 @@
+child held file 1 deleted while open 1
+child exited 1 code 0
+name gone after exit 1
+recreated 1

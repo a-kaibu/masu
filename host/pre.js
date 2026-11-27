@@ -26,6 +26,8 @@ var vnvmTlsRelay = null;
 var vnvmAccount = null;
 var vnvmSensitive = null;
 var vnvmFs = null;
+// Eight header words and one bit for each process slot (PID_STEP is 1 << 16).
+var vnvmFsDataOffset = (8 + 2048) * 4;
 // this process's id (SAKE_PID: a process another one started; the first is 0x10), what the
 // shared locks' words hold while one of its threads has them (host/vnfs.js, host/vnkern.js)
 var vnvmPid = 0x10;
@@ -159,7 +161,11 @@ if (!ENVIRONMENT_IS_PTHREAD) {
     // else every other process would wait for it for good, the page's thread spinning)
     if (vnvmFs) {
       const f = new Int32Array(vnvmFs, 0, 8);
-      if (Atomics.compareExchange(f, 0, pid, 0) === pid) Atomics.notify(f, 0);
+      const exitedOwners = new Uint32Array(vnvmFs, 32, 2048);
+      const index = pid >>> 16;
+      const bit = 1 << (index & 31);
+      if ((Atomics.or(exitedOwners, index >>> 5, bit) & bit) === 0) Atomics.add(f, 4, 1);
+      if (Atomics.compareExchange(f, 0, pid, 0) === (pid | 0)) Atomics.notify(f, 0);
     }
     if (!vnvmKernel) return;
     const h = new Int32Array(vnvmKernel, 0, 256);

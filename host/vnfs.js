@@ -27,32 +27,40 @@ addToLibrary({
     }
     return 1;
   },
+  vnhost_vfs_owner: () => vnvmPid || 0x10,
+  vnhost_vfs_shared_deaths__deps: ['$vnfsSharedH'],
+  vnhost_vfs_shared_deaths: () => Atomics.load(vnfsSharedH(), 4),
+  vnhost_vfs_shared_exited: (pid) => {
+    const owners = new Uint32Array(vnvmFs, 32, 2048);
+    const index = pid >>> 16;
+    return (Atomics.load(owners, index >>> 5) >>> (index & 31)) & 1;
+  },
   vnhost_vfs_shared_unlock__deps: ['$vnfsSharedH'],
   vnhost_vfs_shared_unlock: () => { const h = vnfsSharedH(); Atomics.store(h, 0, 0); Atomics.notify(h, 0); },
   vnhost_vfs_shared_enable__deps: ['$vnfsSharedH'],
   vnhost_vfs_shared_enable: () => { const h = vnfsSharedH(); if (!h) return 0; Atomics.store(h, 3, 1); return 1; },
   vnhost_vfs_shared_generation__deps: ['$vnfsSharedH'],
   vnhost_vfs_shared_generation: () => { const h = vnfsSharedH(); return h ? Atomics.load(h, 1) : 0; },
-  // (the buffer's bytes from 32 on: kura/src/vfs/shared.rs's snapshot and journal; [2] how
+  // (after the header and owner bitmap: the snapshot and journal; [2] how
   // many are in use, [1] their generation)
   vnhost_vfs_shared_len__deps: ['$vnfsSharedH'],
   vnhost_vfs_shared_len__sig: 'p',
   vnhost_vfs_shared_len: () => Atomics.load(vnfsSharedH(), 2),
   vnhost_vfs_shared_read__sig: 'vppp',
   vnhost_vfs_shared_read: (dst, off, len) => {
-    HEAPU8.set(new Uint8Array(vnvmFs, 32 + (off >>> 0), len >>> 0), dst >>> 0);
+    HEAPU8.set(new Uint8Array(vnvmFs, vnvmFsDataOffset + (off >>> 0), len >>> 0), dst >>> 0);
   },
   vnhost_vfs_shared_write__sig: 'ippp',
   vnhost_vfs_shared_write: (src, off, len) => {
     off >>>= 0; len >>>= 0;
-    const need = 32 + off + len;
+    const need = vnvmFsDataOffset + off + len;
     if (need > vnvmFs.byteLength) {
       // a growable buffer takes what the namespace needs (up to its maximum)
       const want = Math.min(need + (need >>> 2), vnvmFs.maxByteLength ?? 0);
       if (!vnvmFs.growable || want < need) return 0;
       try { vnvmFs.grow(want); } catch { return 0; }
     }
-    new Uint8Array(vnvmFs, 32 + off, len).set(HEAPU8.subarray(src >>> 0, (src >>> 0) + len));
+    new Uint8Array(vnvmFs, vnvmFsDataOffset + off, len).set(HEAPU8.subarray(src >>> 0, (src >>> 0) + len));
     return 1;
   },
   vnhost_vfs_shared_commit__deps: ['$vnfsSharedH'],

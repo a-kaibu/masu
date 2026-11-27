@@ -73,12 +73,52 @@ struct Node {
     mode: u32,
     mtime: i64,
     nlink: u32,
-    open_refs: u32,
+    open_refs: OpenRefs,
+}
+
+/// The processes with open handles to a node. Most nodes have no open handles.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+struct OpenRefs(Option<Box<BTreeMap<u32, u32>>>);
+
+impl OpenRefs {
+    fn is_empty(&self) -> bool {
+        self.0.is_none()
+    }
+
+    fn add(&mut self, owner: u32) {
+        let owners = self.0.get_or_insert_with(|| Box::new(BTreeMap::new()));
+        *owners.entry(owner).or_default() += 1;
+    }
+
+    fn release(&mut self, owner: u32) {
+        let Some(owners) = self.0.as_mut() else { return };
+        if let std::collections::btree_map::Entry::Occupied(mut entry) = owners.entry(owner) {
+            if *entry.get() > 1 {
+                *entry.get_mut() -= 1;
+            } else {
+                entry.remove();
+            }
+        }
+        if owners.is_empty() { self.0 = None; }
+    }
+
+    #[cfg(any(target_arch = "wasm32", test))]
+    fn reap(&mut self, exited: &impl Fn(u32) -> bool) {
+        let Some(owners) = self.0.as_mut() else { return };
+        owners.retain(|&pid, _| !exited(pid));
+        if owners.is_empty() { self.0 = None; }
+    }
+
+    #[cfg(test)]
+    fn count(&self) -> u32 {
+        self.0.as_ref().map_or(0, |owners| owners.values().sum())
+    }
 }
 
 #[derive(Clone)]
 struct Handle {
     ino: Ino,
+    owner: u32,
     pos: u64,
     flags: c_int,
 }
@@ -122,6 +162,9 @@ struct Fs {
     /// what this process has of the processes' shared namespace (vfs/shared.rs)
     #[allow(dead_code)]
     shared: shared::Synced,
+    /// The latest set of process exits applied to the shared namespace.
+    #[cfg(target_arch = "wasm32")]
+    owner_deaths: u32,
     /// the nodes changed since it was last published there
     dirt: shared::Dirt,
     /// what the operation under way changed, while the namespace is shared (vfs/undo.rs)
@@ -627,7 +670,7 @@ impl Fs {
 
     fn add(&mut self, data: Data, mode: u32, mtime: i64) -> Ino {
         CHANGES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        let n = Node { nlink: if matches!(data, Data::Dir(_)) { 2 } else { 1 }, data, mode, mtime, open_refs: 0 };
+        let n = Node { nlink: if matches!(data, Data::Dir(_)) { 2 } else { 1 }, data, mode, mtime, open_refs: OpenRefs::default() };
         self.keep_free();
         let i = match self.free.pop() {
             Some(i) => {
@@ -758,12 +801,16 @@ impl Fs {
     }
 
     fn new_handle(&mut self, ino: Ino, flags: c_int) -> u32 {
+        self.new_handle_for(ino, flags, shared::owner())
+    }
+
+    fn new_handle_for(&mut self, ino: Ino, flags: c_int, owner: u32) -> u32 {
         let id = self.next_handle;
         self.next_handle += 1;
         self.keep_handle(id);
-        self.handles.insert(id, Handle { ino, pos: 0, flags });
+        self.handles.insert(id, Handle { ino, owner, pos: 0, flags });
         if self.node(ino).is_some() && let Some(n) = self.refs_mut(ino) {
-            n.open_refs += 1;
+            n.open_refs.add(owner);
         }
         id
     }
@@ -794,7 +841,7 @@ impl Fs {
     /// Frees a node once no name or open handle refers to it.
     fn gc(&mut self, ino: Ino) {
         let linked = self.node(ino).is_some_and(|n| n.nlink > 0 && !(matches!(n.data, Data::Dir(_)) && n.nlink < 2));
-        if !linked && self.node(ino).is_none_or(|n| n.open_refs == 0) && let Some(slot @ Some(_)) = self.nodes.get_mut(ino as usize) {
+        if !linked && self.node(ino).is_none_or(|n| n.open_refs.is_empty()) && let Some(slot @ Some(_)) = self.nodes.get_mut(ino as usize) {
             let n = slot.take();
             self.keep_taken(ino, n);
             self.keep_free();
@@ -2338,11 +2385,27 @@ pub(crate) fn release(h: u32) -> Result<(), c_int> {
     r
 }
 impl Fs {
+    /// Drop only the references owned by processes the launcher has observed exiting.
+    #[cfg(any(target_arch = "wasm32", test))]
+    fn reap_open_refs(&mut self, exited: impl Fn(u32) -> bool) {
+        let affected: Vec<Ino> = self.nodes.iter().enumerate()
+            .filter_map(|(i, slot)| {
+                let node = slot.as_ref()?;
+                node.open_refs.0.as_ref()?.keys().any(|&pid| exited(pid)).then_some(i as Ino)
+            }).collect();
+        for ino in affected {
+            if let Some(node) = self.refs_mut(ino) {
+                node.open_refs.reap(&exited);
+            }
+            self.gc(ino);
+        }
+    }
+
     fn close_handle(&mut self, h: u32) {
         self.keep_handle(h);
         if let Some(handle) = self.handles.remove(&h) {
             if self.node(handle.ino).is_some() && let Some(n) = self.refs_mut(handle.ino) {
-                n.open_refs = n.open_refs.saturating_sub(1);
+                n.open_refs.release(handle.owner);
             }
             self.gc(handle.ino);
         }
@@ -4095,7 +4158,7 @@ mod proptests {
                 }
             }
             for (i, n) in fs.nodes.iter().enumerate() {
-                if let Some(n) = n && !seen.contains(&(i as Ino)) && n.open_refs == 0 && !roots.contains(&(i as Ino)) {
+                if let Some(n) = n && !seen.contains(&(i as Ino)) && n.open_refs.is_empty() && !roots.contains(&(i as Ino)) {
                     return Err(format!("inode {i} is live, unnamed and not open"));
                 }
             }

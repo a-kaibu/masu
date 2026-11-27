@@ -21,11 +21,11 @@ fn snapshots_preserve_remote_open_inodes_and_local_offsets() {
     child.put_file("/next", b"second".to_vec(), 2);
     assert_ne!(child.walk(root, "next"), Some(ino));
     parent.apply_shared_snapshot(&child.shared_snapshot()).unwrap(); assert_eq!(parent.handles[&h].pos, 3);
-    let handle = parent.handles.remove(&h).unwrap(); parent.node_mut(handle.ino).unwrap().open_refs -= 1; parent.gc(handle.ino); assert!(parent.node(ino).is_none());
+    let handle = parent.handles.remove(&h).unwrap(); parent.node_mut(handle.ino).unwrap().open_refs.release(handle.owner); parent.gc(handle.ino); assert!(parent.node(ino).is_none());
 }
 
 #[test]
-fn opening_counts_the_node_and_sends_only_the_count() {
+fn opening_records_the_owner_without_sending_the_file() {
     let (mut fs, root) = rooted();
     fs.put_file("/save.dat", vec![5; 1000], 1);
     let ino = fs.walk(root, "save.dat").unwrap();
@@ -33,15 +33,61 @@ fn opening_counts_the_node_and_sends_only_the_count() {
     op(&mut fs, &mut m, |_| ());
     let before = m.written;
     let h = op(&mut fs, &mut m, |fs| fs.new_handle(ino, 0));
-    assert_eq!(fs.node(ino).unwrap().open_refs, 1);
-    // (length, count, kind, inode, open handles)
-    assert_eq!(m.written - before, 4 + 4 + 1 + 4 + 4);
+    assert_eq!(fs.node(ino).unwrap().open_refs.count(), 1);
+    // (length, item count, kind, inode, owner count, owner PID, open handles)
+    assert_eq!(m.written - before, 4 + 4 + 1 + 4 + 4 + 4 + 4);
     let mut other = Fs::default();
     other.sync_in(&m).unwrap();
-    assert_eq!(other.node(ino).unwrap().open_refs, 1);
+    assert_eq!(other.node(ino).unwrap().open_refs.count(), 1);
     op(&mut fs, &mut m, |fs| fs.close_handle(h));
     other.sync_in(&m).unwrap();
-    assert_eq!(other.node(ino).unwrap().open_refs, 0);
+    assert_eq!(other.node(ino).unwrap().open_refs.count(), 0);
+}
+
+// A child and its parent both have a handle to the original file. Dropping the child
+// without its CloseHandle calls publishes only its references, even after a path is reused.
+#[test]
+fn an_exited_process_cannot_keep_unlinked_inodes_alive() {
+    let (mut parent, root) = rooted();
+    let mut child = Fs::default();
+    let mut reader = Fs::default();
+    let mut shared = Mem::new(1 << 20);
+    let parent_pid = 0x10;
+    let child_pid = 0x1_0010;
+    op(&mut parent, &mut shared, |fs| {
+        fs.put_file("/same", b"old".to_vec(), 0);
+        fs.put_file("/child-only", b"delete".to_vec(), 0);
+    });
+    let held = parent.walk(root, "same").unwrap();
+    let left = parent.walk(root, "child-only").unwrap();
+    let parent_handle = op(&mut parent, &mut shared, |fs| fs.new_handle_for(held, 0, parent_pid));
+    op(&mut child, &mut shared, |fs| {
+        fs.new_handle_for(held, 0, child_pid);
+        fs.new_handle_for(held, 0, child_pid);
+        fs.new_handle_for(left, 0, child_pid);
+    });
+    reader.sync_in(&shared).unwrap();
+    assert_eq!(reader.node(held).unwrap().open_refs.count(), 3);
+    assert_eq!(reader.node(left).unwrap().open_refs.count(), 1);
+    op(&mut parent, &mut shared, |fs| {
+        fs.unlink_name(root, "same");
+        fs.unlink_name(root, "child-only");
+        fs.put_file("/same", b"replacement".to_vec(), 0);
+    });
+    let replacement = parent.walk(root, "same").unwrap();
+    assert_ne!(held, replacement);
+    drop(child); // No CloseHandle calls.
+
+    op(&mut parent, &mut shared, |fs| fs.reap_open_refs(|pid| pid == child_pid));
+    reader.sync_in(&shared).unwrap();
+    assert_eq!(reader.node(held).unwrap().open_refs.count(), 1);
+    assert_eq!(parent.handles[&parent_handle].ino, held);
+    assert!(reader.node(left).is_none());
+    assert_eq!(reader.walk(root, "same"), Some(replacement));
+    op(&mut parent, &mut shared, |fs| fs.close_handle(parent_handle));
+    reader.sync_in(&shared).unwrap();
+    assert!(reader.node(held).is_none());
+    assert_eq!(reader.file_size(replacement), 11);
 }
 
 #[test]
@@ -73,7 +119,7 @@ fn cut_or_broken_entries_change_nothing() {
     let mut bad = Vec::new();
     u32put(&mut bad, 1); bad.push(I_NODE); u32put(&mut bad, root);
     let mut dir = BTreeMap::new(); dir.insert("ghost".to_string(), 999);
-    put_node(&mut bad, Some(&Node { data: Data::Dir(dir), mode: 0o755, mtime: 0, nlink: 2, open_refs: 0 }));
+    put_node(&mut bad, Some(&Node { data: Data::Dir(dir), mode: 0o755, mtime: 0, nlink: 2, open_refs: OpenRefs::default() }));
     assert!(b.apply_items(&bad).is_none());
     assert_eq!(b.shared_snapshot(), before);
     b.apply_items(&items).unwrap();
@@ -267,7 +313,7 @@ proptest! {
     #[test]
     fn any_buffer_bytes(snap in 0u32..400, b in prop::collection::vec(any::<u8>(), 0..400)) {
         let mut m = Mem::new(1 << 16);
-        let mut head = b"VFS2".to_vec();
+        let mut head = b"VFS3".to_vec();
         head.extend_from_slice(&7u32.to_le_bytes());
         head.extend_from_slice(&snap.to_le_bytes());
         head.extend_from_slice(&b);
@@ -282,7 +328,7 @@ proptest! {
 #[test]
 fn bad_buffers_are_refused() {
     let buf = |b: &[u8]| { let mut m = Mem::new(1 << 16); assert!(m.write(0, b)); m.commit(b.len()); m };
-    let head = |snap: u32| { let mut h = b"VFS2".to_vec(); h.extend_from_slice(&1u32.to_le_bytes()); h.extend_from_slice(&snap.to_le_bytes()); h };
+    let head = |snap: u32| { let mut h = b"VFS3".to_vec(); h.extend_from_slice(&1u32.to_le_bytes()); h.extend_from_slice(&snap.to_le_bytes()); h };
     assert_eq!(Fs::default().sync_in(&buf(b"VFS")), Err(super::Corrupt::Head));
     assert_eq!(Fs::default().sync_in(&buf(b"VFS1\0\0\0\0\0\0\0\0")), Err(super::Corrupt::Head));
     assert_eq!(Fs::default().sync_in(&buf(&head(1000))), Err(super::Corrupt::Snapshot));
