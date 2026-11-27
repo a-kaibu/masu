@@ -5,7 +5,7 @@
 //! - SetThreadAffinityMask takes a mask within the process's (all bits: the process's), not 0;
 //! - SetThreadGroupAffinity takes any mask of the processors there are (group 0), 0 for the
 //!   process's; one beyond the process's widens the process's to it;
-//! - the ideal processor is below MAXIMUM_PROCESSORS (that value asks for it).
+//! - the ideal processor is below the native maximum, including under WOW64.
 //! The host schedules the threads, except that a process that pins itself to a single
 //! processor runs them one at a time (crate::uni).
 
@@ -155,8 +155,8 @@ fn SetThreadIdealProcessor(c: &mut Ctx) -> u32 {
         crate::k32::last_error(6);
         return u32::MAX;
     };
-    let max = if crate::mem::x64() { 64 } else { 32 };
-    with(|m| m.set_ideal(tid, c.a(1), max)).unwrap_or_else(|e| {
+    // The guest runs on a 64-bit system, including when the executable is x86.
+    with(|m| m.set_ideal(tid, c.a(1), 64)).unwrap_or_else(|e| {
         crate::k32::last_error(e);
         u32::MAX
     })

@@ -1,0 +1,7 @@
+ideal 0 success 1 error 0
+ideal 31 success 1 error 0
+ideal 32 success 1 error 0
+ideal 33 success 1 error 0
+ideal 63 success 1 error 0
+ideal 64 success 1 error 0
+ideal 65 success 0 error 87
