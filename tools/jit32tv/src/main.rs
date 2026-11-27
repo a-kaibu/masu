@@ -20,7 +20,7 @@
 //! Exits 1 on a difference (and, with --strict, on an undecided case).
 #![cfg_attr(not(test), warn(dead_code_pub_in_binary))]
 use iced_x86::code_asm::*;
-use iced_x86::{Decoder, DecoderOptions, Instruction, Mnemonic};
+use iced_x86::{Decoder, DecoderOptions, Instruction, Mnemonic, OpKind, Register};
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
 use std::sync::atomic::Ordering::Relaxed;
@@ -34,6 +34,7 @@ use expr::{self as x, E};
 const CPU: u32 = 0x2000;
 const CODE: u32 = 0x10_0000;
 const END: u32 = 0x18_0000;
+const SIDE_EXIT: u32 = END + 0x100;
 const MEM: usize = 0x40_0000;
 const BUDGET: u64 = 1000;
 
@@ -132,6 +133,24 @@ fn cases() -> Vec<(String, Result<Vec<Instruction>, String>)> {
     for (n, e) in seq {
         push(n.into(), &e);
     }
+    push("test eax, eax; jz side; xor edx, edx".into(), &|a| {
+        a.test(eax, eax)?;
+        a.jz(u64::from(SIDE_EXIT))?;
+        a.xor(edx, edx)
+    });
+    push("cmp eax, ebx; jb side; add ax, dx".into(), &|a| {
+        a.cmp(eax, ebx)?;
+        a.jb(u64::from(SIDE_EXIT))?;
+        a.add(ax, dx)
+    });
+    push("cmp eax, ebx; mov ecx, [0] (before)".into(), &|a| {
+        a.cmp(eax, ebx)?;
+        a.mov(ecx, dword_ptr(0))
+    });
+    push("xor esp, esp; xor edx, edx (after)".into(), &|a| {
+        a.xor(esp, esp)?;
+        a.xor(edx, edx)
+    });
     out
 }
 
@@ -141,14 +160,15 @@ enum Verdict {
     Undecided(String),
 }
 
-fn translate(code: &[u8]) -> Result<Vec<u8>, String> {
+fn translate(code: &[u8]) -> Result<(Vec<u8>, u32), String> {
     let mut mem = Mem(vec![0; MEM]);
     let at = CODE as usize;
     mem.0[at..at + code.len()].copy_from_slice(code);
     koji::jit::FN.store(false, Relaxed);
     let mut m = koji::jit::wasm::Module::default();
-    koji::jit::translate_region(&mut m, &mut mem, &[CODE], 1, |a| a != END).ok_or("koji refused the region")?;
-    Ok(m.finish())
+    let region = koji::jit::translate_region(&mut m, &mut mem, &[CODE], 2, |a| !matches!(a, END | SIDE_EXIT)).ok_or("koji refused the region")?;
+    let &(_, block) = region.starts.iter().find(|&&(at, _)| at == CODE).ok_or("missing region entry")?;
+    Ok((m.finish(), block << koji::jit::ENTRY_SHIFT))
 }
 
 /// the bytes of a 4- or 8-byte field of the Cpu in memory
@@ -278,6 +298,47 @@ fn sat(smt: &mut x::Smt, assert: &E) -> Result<Option<String>, String> {
     }
 }
 
+struct ReferenceExit {
+    at: u32,
+    status: i32,
+    when: E,
+    state: x86::State,
+}
+
+/// Follow a case's fallthrough symbolically, recording each taken side exit and the final END.
+fn reference_exits(seq: &[Instruction], mut state: x86::State) -> Result<Vec<ReferenceExit>, String> {
+    let mut exits = Vec::new();
+    let mut when = x::c(1, 1);
+    for ins in seq {
+        let flag = match ins.mnemonic() {
+            Mnemonic::Je => &state.zf,
+            Mnemonic::Jb => &state.cf,
+            Mnemonic::Mov if ins.op1_kind() == OpKind::Memory && ins.memory_base() == Register::None
+                && ins.memory_index() == Register::None && ins.memory_displacement64() == 0 => {
+                // Address zero is below the guest range. The load has not executed.
+                exits.push(ReferenceExit { at: ins.ip32(), status: koji::jit::RET_INTERP, when, state });
+                return Ok(exits);
+            }
+            _ => {
+                x86::step(&mut state, ins).ok_or_else(|| format!("no reference for {ins}"))?;
+                if ins.mnemonic() == Mnemonic::Xor && ins.op0_register() == Register::ESP && ins.op1_register() == Register::ESP {
+                    // The stack is now zero, so the JIT returns to the dispatcher immediately.
+                    exits.push(ReferenceExit { at: ins.next_ip32(), status: koji::jit::RET_INTERP, when, state });
+                    return Ok(exits);
+                }
+                continue;
+            }
+        };
+        if ins.near_branch32() != SIDE_EXIT || x::konst(&flag.defined) != Some(1) {
+            return Err(format!("no reference for the target or condition of {ins}"));
+        }
+        exits.push(ReferenceExit { at: SIDE_EXIT, status: koji::jit::RET_CONTINUE, when: x::band(&when, &flag.v), state: state.clone() });
+        when = x::band(&when, &x::bnot(&flag.v));
+    }
+    exits.push(ReferenceExit { at: END, status: koji::jit::RET_CONTINUE, when, state });
+    Ok(exits)
+}
+
 fn check(seq: &[Instruction]) -> Verdict {
     let mut code = Vec::new();
     let mut a = match CodeAssembler::new(32) {
@@ -296,8 +357,8 @@ fn check(seq: &[Instruction]) -> Verdict {
         Ok(b) => code.extend(b),
         Err(e) => return Verdict::Undecided(e.to_string()),
     }
-    let bytes = match translate(&code) {
-        Ok(b) => b,
+    let (bytes, entry) = match translate(&code) {
+        Ok(translation) => translation,
         Err(e) => return Verdict::Undecided(e),
     };
     let f = match wasm::parse(&bytes) {
@@ -306,8 +367,8 @@ fn check(seq: &[Instruction]) -> Verdict {
     };
     let regs: Vec<E> = REGS.iter().map(|r| x::var(&r.to_lowercase(), 32)).collect();
     let eflags = x::var("eflags", 32);
-    // the region's arguments: the Cpu, EIP, the 8 registers, then the lazy record and budget
-    let mut params = vec![x::c(32, u64::from(CPU)), x::c(32, u64::from(CODE))];
+    // the region's arguments: the Cpu, encoded entry, the 8 registers, the lazy record and budget
+    let mut params = vec![x::c(32, u64::from(CPU)), x::c(32, u64::from(entry))];
     params.extend(regs.iter().cloned());
     while params.len() < f.nparams {
         params.push(x::c(32, 0));
@@ -327,12 +388,10 @@ fn check(seq: &[Instruction]) -> Verdict {
         mem.insert(budget_at + i, x::c(8, BUDGET >> (8 * i)));
     }
     // the reference
-    let mut r = x86::State::new(regs.clone(), &eflags);
-    for i in seq {
-        if x86::step(&mut r, i).is_none() {
-            return Verdict::Undecided(format!("no reference for {i}"));
-        }
-    }
+    let references = match reference_exits(seq, x86::State::new(regs, &eflags)) {
+        Ok(exits) => exits,
+        Err(e) => return Verdict::Undecided(e),
+    };
     let paths = f.run(params, mem, 64);
     let mut proven = 0;
     let mut undecided = Vec::new();
@@ -350,30 +409,37 @@ fn check(seq: &[Instruction]) -> Verdict {
                         continue;
                     }
                 };
-                // (each output that may differ, by name: the report says which ones do)
-                let mut outs: Vec<(String, E)> = vec![("EIP".into(), x::bnot(&x::eq(&got(eip_at), &x::c(32, u64::from(END)))))];
-                // (the region's status: RET_CONTINUE, its state complete at END; any other (the
-                // interpreter to run an instruction, a function-mode exit) is a difference here)
-                let ret = match results.as_slice() {
-                    [r] => x::bnot(&x::eq(r, &x::c(32, koji::jit::RET_CONTINUE as u32 as u64))),
-                    _ => x::c(1, 1),
-                };
-                outs.push(("status".into(), ret));
-                for ((at, want), name) in (0u32..).map(|i| regs_at + 4 * i).zip(&r.regs).zip(REGS) {
-                    outs.push((name.into(), x::bnot(&x::eq(&got(at), want))));
-                }
-                for ((want, have), name) in flags(&r).iter().zip(flags(&w)).zip(FLAGS) {
-                    outs.push((name.into(), x::band(&want.defined, &x::bnot(&x::eq(&want.v, &have.v)))));
-                }
-                let differ = outs.iter().fold(x::c(1, 0), |a, (_, d)| x::bor(&a, d));
-                match sat(&mut smt, &x::band(&all(&cond), &differ)) {
-                    Ok(None) => proven += 1,
-                    Ok(Some(model)) => {
-                        let which: Vec<&str> = outs.iter().filter(|(_, d)| matches!(sat(&mut x::Smt::new(), &x::band(&all(&cond), d)), Ok(Some(_)))).map(|(n, _)| n.as_str()).collect();
-                        return Verdict::Differs(format!("{} at {model}", which.join(" ")));
+                let wasm_when = all(&cond);
+                let mut complete = true;
+                for expected in &references {
+                    let when = x::band(&wasm_when, &expected.when);
+                    // The dispatcher sees the target EIP, return status, and guest state.
+                    let ret = match results.as_slice() {
+                        [r] => x::bnot(&x::eq(r, &x::c(32, expected.status as u32 as u64))),
+                        _ => x::c(1, 1),
+                    };
+                    let mut outs = vec![("EIP", x::bnot(&x::eq(&got(eip_at), &x::c(32, u64::from(expected.at))))), ("status", ret)];
+                    for ((at, want), name) in (0u32..).map(|i| regs_at + 4 * i).zip(&expected.state.regs).zip(REGS) {
+                        outs.push((name, x::bnot(&x::eq(&got(at), want))));
                     }
-                    Err(e) => undecided.push(e),
+                    for ((want, have), name) in flags(&expected.state).iter().zip(flags(&w)).zip(FLAGS) {
+                        outs.push((name, x::band(&want.defined, &x::bnot(&x::eq(&want.v, &have.v)))));
+                    }
+                    let differ = outs.iter().fold(x::c(1, 0), |a, (_, d)| x::bor(&a, d));
+                    match sat(&mut x::Smt::new(), &x::band(&when, &differ)) {
+                        Ok(None) => {}
+                        Ok(Some(model)) => {
+                            let which: Vec<&str> = outs.iter().filter(|(_, d)| matches!(sat(&mut x::Smt::new(), &x::band(&when, d)), Ok(Some(_)))).map(|(n, _)| *n).collect();
+                            let actual = x::konst(&got(eip_at)).map_or_else(|| "symbolic EIP".into(), |at| format!("{at:#x}"));
+                            return Verdict::Differs(format!("exit {:#x} (JIT {actual}): {} at {model}", expected.at, which.join(" ")));
+                        }
+                        Err(e) => {
+                            undecided.push(e);
+                            complete = false;
+                        }
+                    }
                 }
+                proven += usize::from(complete);
             }
             wasm::End::Trap { cond, why } => match sat(&mut smt, &all(&cond)) {
                 Ok(None) => proven += 1,
