@@ -1,9 +1,5 @@
-// What the page (web/src) and the game's network worker (host/fetch-bridge.js) do the same way,
-// from one source (review 22bb061 §7: two copies of the hash, the retry rule, the budget and the
-// answers' checks drifted apart unseen). An ES module for the page; crates/sake/build.sh puts it,
-// its `export`s taken off, before fetch-bridge.js in sake.js, whose network worker gets the
-// functions as source (masuFetchWorkerSource): so each stays self-contained, naming only what is
-// here or in the worker.
+// The page and game network worker share these routines for fetching and checking chunks and
+// coordinating the request budget. build.sh also includes them in Emscripten's pre-js.
 
 export var MASU_RETRY_STATUS = [0, 408, 425, 429, 500, 502, 503, 504];
 

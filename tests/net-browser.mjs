@@ -5,7 +5,7 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
-import { bridgeScript } from '../host/bridge-source.mjs';
+import { bridgeScript, workerModules } from '../host/bridge-source.mjs';
 const pw = await import(process.env.PLAYWRIGHT ?? 'playwright');
 const { chromium } = pw.default ?? pw;
 // (as sake.js has it: host/net-core.mjs before it)
@@ -15,11 +15,17 @@ const source = bridgeScript(
 );
 const body = Buffer.from(Array.from({ length: 300000 }, (_, i) => i % 251));
 const hits = new Map();
+const modules = await workerModules(readFile, (s) => s.replace('var MASU_STALL_MS = 20000;', 'var MASU_STALL_MS = 1000;'));
 const server = createServer((req, res) => {
   const n = (hits.get(req.url) ?? 0) + 1;
   hits.set(req.url, n);
   res.setHeader('Cross-Origin-Opener-Policy', 'same-origin');
   res.setHeader('Cross-Origin-Embedder-Policy', 'require-corp');
+  if (modules.has(req.url)) {
+    res.setHeader('Content-Type', 'text/javascript');
+    res.end(modules.get(req.url));
+    return;
+  }
   if (req.url === '/') {
     res.setHeader('Content-Type', 'text/html');
     res.end('<!doctype html><title>net test</title>');

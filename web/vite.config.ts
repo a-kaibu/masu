@@ -50,7 +50,8 @@ const serviceWorker = (): Plugin => {
     apply: "build",
     generateBundle(_, bundle) {
       for (const [name, out] of Object.entries(bundle))
-        if (!/^(bench|game)\.html$/.test(name)) shell.set(name, out.type === "chunk" ? out.code : out.source);
+        if (!name.startsWith("sake/") && !/^(bench|game)\.html$/.test(name))
+          shell.set(name, out.type === "chunk" ? out.code : out.source);
     },
     async closeBundle() {
       const files = [...PUBLIC_SHELL, ...[...shell.keys()].sort()];
@@ -82,6 +83,15 @@ const serviceWorker = (): Plugin => {
 // Tailwind CSS and shadcn/ui (src/components/ui); sake's files (public/sake/) are copied as-is.
 export default defineConfig({
   base: "./",
+  worker: {
+    format: "es",
+    rollupOptions: {
+      output: {
+        entryFileNames: ({ name }) =>
+          name === "net-worker" ? "sake/net-worker.mjs" : "assets/[name]-[hash].js",
+      },
+    },
+  },
   plugins: [react(), tailwindcss(), frame(), serviceWorker()],
   resolve: { alias: { "@": new URL("./src", import.meta.url).pathname } },
   build: {

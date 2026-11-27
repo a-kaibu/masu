@@ -36,16 +36,17 @@ WEB_EXPORTS=$( (grep -rhoE '_(vnhost|sake)_[a-z0-9_]+' "$ROOT/web/src" "$ROOT/te
 FIXED="-sINITIAL_MEMORY=4294901760 -sALLOW_MEMORY_GROWTH=0"
 GROW_PAGES=$(grep -oP 'GROW_MIN_PAGES: u32 = \K[0-9]+' "$ROOT/crates/koji/src/jit/wasm.rs")
 GROW="-sINITIAL_MEMORY=$((GROW_PAGES * 65536)) -sALLOW_MEMORY_GROWTH=1 -sMAXIMUM_MEMORY=4294901760"
-# what the page and the network worker do the same way (host/net-core.mjs, an ES module for the
-# page): as a plain script before fetch-bridge.js
+# The broker and page import these modules. emcc also needs the synchronous caller's names in
+# the scope shared by its pre-js and vnfs.js.
 sed 's/^export //' "$HO/net-core.mjs" > "$OUT/net-core.js"
+sed '/^import /d; /^export {/d' "$HO/fetch-bridge.js" > "$OUT/fetch-bridge.js"
 link() {  # <output .js> <memory flags> <emcc flags...>
   local out=$1 memory=$2
   shift 2
   local log
   log="$OUT/link-$(basename "$(dirname "$out")")-$(basename "$out").log"
   emcc -O2 ${SAKE_LDEXTRA:-} -pthread -fwasm-exceptions -sSUPPORT_LONGJMP=wasm -Wno-undefined -o "$out" "$OUT/main.o" "$OUT/shim.o" "$LIB" \
-    $WRAPFLAGS --pre-js "$OUT/net-core.js" --pre-js "$HO/fetch-bridge.js" --pre-js "$HO/outrecords.js" --pre-js "$HO/pre.js" --pre-js "$HO/tls-worker.js" --js-library "$HO/vnfs.js" --js-library "$HO/vnjit.js" --js-library "$HO/vnkern.js" --js-library "$HO/tls-bridge.js" --js-library "$HO/account-bridge.js" \
+    $WRAPFLAGS --pre-js "$OUT/net-core.js" --pre-js "$OUT/fetch-bridge.js" --pre-js "$HO/outrecords.js" --pre-js "$HO/pre.js" --pre-js "$HO/tls-worker.js" --js-library "$HO/vnfs.js" --js-library "$HO/vnjit.js" --js-library "$HO/vnkern.js" --js-library "$HO/tls-bridge.js" --js-library "$HO/account-bridge.js" \
     -sPROXY_TO_PTHREAD -sEXIT_RUNTIME \
     -sGLOBAL_BASE=2147483648 $memory \
     -sSTACK_SIZE=1MB -sDEFAULT_PTHREAD_STACK_SIZE=1MB -sPTHREAD_POOL_SIZE=16 -sPTHREAD_POOL_SIZE_STRICT=0 \

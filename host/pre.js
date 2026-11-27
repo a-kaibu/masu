@@ -88,7 +88,7 @@ if (!ENVIRONMENT_IS_PTHREAD) {
   if (W) {
     const host = {
       memory: () => (typeof wasmMemory == 'undefined' ? undefined : wasmMemory),
-      load: () => ({ vnvmJit: vnvmJitBundle, vnvmSaves, vnvmTrees, vnvmKernel, vnvmCanSpawn, vnvmTlsRelay, vnvmAccount, vnvmSensitive, vnvmFs, vnvmPid, vnvmPrint: Module.vnvmPrint || null }),
+      load: () => ({ masuNetWorkerUrl: Module.masuNetWorkerUrl, vnvmJit: vnvmJitBundle, vnvmSaves, vnvmTrees, vnvmKernel, vnvmCanSpawn, vnvmTlsRelay, vnvmAccount, vnvmSensitive, vnvmFs, vnvmPid, vnvmPrint: Module.vnvmPrint || null }),
       // (what the thread asks of the host: to start a process)
       ask: (d) => d && d.vnvmSpawn && Module.vnvmSpawn?.(d.vnvmSpawn, vnvmKernel, vnvmFs),
       ports: () => [masuFetchConnect(), masuTlsConnect()],
@@ -130,6 +130,7 @@ if (!ENVIRONMENT_IS_PTHREAD) {
       vnvmPid = d.vnvmPid || 0x10;
       if (d.vnvmTrees) Module.vnvmFiles = d.vnvmTrees;
       if (d.vnvmPrint && !ENVIRONMENT_IS_NODE && !vnvmPrintChannel) vnvmPrintChannel = new BroadcastChannel(d.vnvmPrint);
+      if (d.masuNetWorkerUrl) Module.masuNetWorkerUrl = d.masuNetWorkerUrl;
       if (d.vnvmFetchPort) masuFetchPort = d.vnvmFetchPort;
       if (d.vnvmTlsPort) masuTlsPort = d.vnvmTlsPort;
     }

@@ -2,6 +2,8 @@
 // with offline.ts, which fetches the same URLs ahead so that a game saved to the device starts
 // offline (sw.ts keeps them).
 
+import netWorker from "../../host/net-worker.mjs?worker&url";
+
 /** sake's files (crates/sake/build.sh → public/sake/) */
 // (a worker of the page: the page's URL, which the paths are relative to; its own is elsewhere)
 let pageHref: string | undefined;
@@ -113,7 +115,7 @@ export const translatorUrl = () => `${sakeBase()}jit-version.txt`;
 /**
  * The runtime's files a start of `build` reads before the game's own (review 22bb061 §4): the
  * builds' ids (runtimeWasm refuses to start without its id), the translator's version, sake.js
- * and sake.wasm at their versioned URLs. play.ts starts from these and offline.ts saveApp saves
+ * and sake.wasm at their versioned URLs, plus the bundled network worker. play.ts starts from these and offline.ts saveApp saves
  * these, so what 端末に保存 keeps is what a start offline asks for.
  */
 export interface RuntimeManifest {
@@ -122,15 +124,18 @@ export interface RuntimeManifest {
   readonly translator: string;
   readonly script: string;
   readonly wasm: string;
+  readonly netWorker: string;
   /** sake.wasm's version (fileVersion): the saved regions' names follow it without a translator version */
   readonly wasmVersion: string;
 }
 
 export async function runtimeManifest(build: SakeBuild): Promise<RuntimeManifest> {
   const base = sakeBase();
-  const [scriptVersion, wasmVersion] = await Promise.all([
+  const worker = new URL(netWorker, pageHref ?? location.href).href;
+  const [scriptVersion, wasmVersion, workerVersion] = await Promise.all([
     fileVersion(`${base}${build.name}.js`),
     fileVersion(`${base}${build.name}.wasm`),
+    fileVersion(worker),
   ]);
   return {
     build,
@@ -138,12 +143,19 @@ export async function runtimeManifest(build: SakeBuild): Promise<RuntimeManifest
     translator: translatorUrl(),
     script: new URL(versioned(`${base}${build.name}.js`, scriptVersion), location.href).href,
     wasm: new URL(versioned(`${base}${build.name}.wasm`, wasmVersion), location.href).href,
+    netWorker: versioned(worker, workerVersion),
     wasmVersion,
   };
 }
 
 /** Every file of `m`. */
-export const manifestFiles = (m: RuntimeManifest): string[] => [m.buildIds, m.translator, m.script, m.wasm];
+export const manifestFiles = (m: RuntimeManifest): string[] => [
+  m.buildIds,
+  m.translator,
+  m.script,
+  m.wasm,
+  m.netWorker,
+];
 
 /** The build a start of `build` goes on with when it fails (growRetry): sake-grow for sake. */
 export const fallbackBuild = (build: Pick<SakeBuild, "name">): SakeBuild | null =>
@@ -168,7 +180,7 @@ export async function offlineRuntime(
 
 /** `url` with its version: the browser keeps it for good (and sw.ts on the device). */
 export const versioned = (url: string, version: string) =>
-  version ? `${url}?v=${encodeURIComponent(version)}` : url;
+  version ? `${url}${url.includes("?") ? "&" : "?"}v=${encodeURIComponent(version)}` : url;
 
 /**
  * The translator's version: jit-version.txt (a hash of its sources, which crates/sake/build.sh

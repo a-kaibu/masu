@@ -509,6 +509,7 @@ async function boot(audio: Promise<AudioOut>): Promise<void> {
     vnvmFiles,
     // (the bucket's budget of requests: the network worker and the page's save take from one, budget.ts)
     masuNetBudget: netBudget(),
+    masuNetWorkerUrl: (await manifest).netWorker,
     // (the release's trees' chunks on its Pages, for the network worker: release-trees.ts)
     masuPages: pagesChunks(),
     // (sake takes the host path: Z:\\x\\y.exe is /x/y.exe)

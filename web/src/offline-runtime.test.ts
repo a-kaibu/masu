@@ -8,6 +8,8 @@ import { offlineRuntime, runtimeManifest, sakeBuild, setPageHref, type SakeBuild
 import { builds } from "./savestate";
 import type { GameEntry } from "./launcher";
 
+vi.mock("../../host/net-worker.mjs?worker&url", () => ({ default: "./assets/net-worker-fixture.js" }));
+
 const PAGE = "https://masu.test/play.html";
 const bytes = (n: number) => new Uint8Array(Array.from({ length: 256 }, (_, i) => (i * 7 + n) & 255));
 const served = new Map<string, Uint8Array<ArrayBuffer>>();
@@ -48,6 +50,7 @@ beforeEach(async () => {
   served.set(`${sake}sake-grow.js`, bytes(4));
   served.set(`${sake}sake-grow.wasm`, grow);
   served.set(`${sake}snapz.mjs`, bytes(5));
+  served.set("https://masu.test/assets/net-worker-fixture.js", bytes(6));
   served.set(`${sake}jit-version.txt`, new TextEncoder().encode("0123abcd"));
   served.set(
     `${sake}build-id.txt`,
@@ -65,6 +68,7 @@ const game: GameEntry = { id: "g", title: "g", run: "Z:\\masu\\game\\g.exe", arg
 /** The start's runtime part as play.ts does it: its manifest, the build's id, its wasm. */
 async function start(build: SakeBuild) {
   const m = await runtimeManifest(build);
+  expect((await fake(m.netWorker)).ok).toBe(true);
   const name = `${build.name}.wasm`;
   return runtimeWasm(name, m.wasm, "https://masu.test/store/", (await builds()).get(build.name), true, {
     request: fake,
