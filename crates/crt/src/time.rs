@@ -93,9 +93,33 @@ pub fn mktime(tm: &mut Tm, bits: u32, bias: i64) -> Option<i64> {
     Some(t)
 }
 
+/// A string in the UCRT's LC_TIME data (full and abbreviated names are independent).
+pub enum TimeName {
+    ShortDay(usize),
+    Day(usize),
+    ShortMonth(usize),
+    Month(usize),
+    AmPm(usize),
+    ShortDate,
+    LongDate,
+    Time,
+}
+
 /// strftime's output for `fmt`; None when a field it needs is out of range or a conversion is
 /// unknown (the UCRT returns 0 with EINVAL). `zone`: (offset east of UTC in seconds, name).
 pub fn strftime(fmt: &[u16], tm: &Tm, zone: (i64, &str)) -> Option<Vec<u16>> {
+    strftime_impl(fmt, tm, zone, None)
+}
+
+pub fn strftime_localized(
+    fmt: &[u16], tm: &Tm, zone: (i64, &str), name: &dyn Fn(TimeName) -> String,
+) -> Option<Vec<u16>> {
+    strftime_impl(fmt, tm, zone, Some(name))
+}
+
+fn strftime_impl(
+    fmt: &[u16], tm: &Tm, zone: (i64, &str), locale: Option<&dyn Fn(TimeName) -> String>,
+) -> Option<Vec<u16>> {
     let mut o = String::new();
     let mut i = 0;
     let field = |k: usize, lo: i32, hi: i32| -> Option<i32> { (lo..=hi).contains(&tm[k]).then_some(tm[k]) };
@@ -129,6 +153,30 @@ pub fn strftime(fmt: &[u16], tm: &Tm, zone: (i64, &str)) -> Option<Vec<u16>> {
         let yday = || field(7, 0, 365);
         if f >= 0x80 {
             return None;
+        }
+        if let Some(name) = locale
+            && matches!(f as u8, b'a' | b'A' | b'b' | b'h' | b'B' | b'p' | b'x' | b'c' | b'X' | b'r')
+        {
+            let text = match f as u8 {
+                b'a' => name(TimeName::ShortDay(wday()? as usize)),
+                b'A' => name(TimeName::Day(wday()? as usize)),
+                b'b' | b'h' => name(TimeName::ShortMonth(mon()? as usize)),
+                b'B' => name(TimeName::Month(mon()? as usize)),
+                b'p' => name(TimeName::AmPm(usize::from(hour()? >= 12))),
+                b'x' | b'c' => {
+                    let picture = name(if alt { TimeName::LongDate } else { TimeName::ShortDate });
+                    let mut text = time_picture(&picture, tm, name)?;
+                    if f == b'c' as u16 {
+                        text.push(' ');
+                        text += &time_picture(&name(TimeName::Time), tm, name)?;
+                    }
+                    text
+                }
+                b'X' | b'r' => time_picture(&name(TimeName::Time), tm, name)?,
+                _ => unreachable!(),
+            };
+            o += &text;
+            continue;
         }
         match f as u8 {
             b'a' => o += &DAYS[wday()? as usize][..3],
@@ -200,6 +248,63 @@ pub fn strftime(fmt: &[u16], tm: &Tm, zone: (i64, &str)) -> Option<Vec<u16>> {
         }
     }
     Some(o.encode_utf16().collect())
+}
+
+/// Interpret a date/time picture from LC_TIME. Each field takes a suffix of the run,
+/// so, for example, ddddd is a literal d followed by the full weekday.
+fn time_picture(picture: &str, tm: &Tm, name: &dyn Fn(TimeName) -> String) -> Option<String> {
+    let mut chars = picture.chars().peekable();
+    let mut quoted = false;
+    let mut text = String::new();
+    let field = |k: usize, low, high| (low..=high).contains(&tm[k]).then_some(tm[k]);
+    while let Some(ch) = chars.next() {
+        if ch == '\'' {
+            quoted = !quoted;
+            continue;
+        }
+        if quoted {
+            text.push(ch);
+            continue;
+        }
+        let mut width = 1;
+        while chars.next_if_eq(&ch).is_some() {
+            width += 1;
+        }
+        let number_width = width.min(2);
+        let (used, value) = match ch {
+            'd' if width >= 4 => (4, name(TimeName::Day(field(6, 0, 6)? as usize))),
+            'd' if width == 3 => (3, name(TimeName::ShortDay(field(6, 0, 6)? as usize))),
+            'M' if width >= 4 => (4, name(TimeName::Month(field(4, 0, 11)? as usize))),
+            'M' if width == 3 => (3, name(TimeName::ShortMonth(field(4, 0, 11)? as usize))),
+            'y' if width >= 4 => (4, format!("{:04}", field(5, -1900, 8099)? + 1900)),
+            'y' if width >= 2 => (2, format!("{:02}", field(5, -1900, 8099)?.rem_euclid(100))),
+            't' | 'a' | 'A' => {
+                let mut value = name(TimeName::AmPm(usize::from(field(2, 0, 23)? >= 12)));
+                if ch == 't' && width == 1 {
+                    value.truncate(value.chars().next().map_or(0, char::len_utf8));
+                }
+                (width, value)
+            }
+            _ => {
+                let number = match ch {
+                    'd' => field(3, 1, 31)?,
+                    'M' => field(4, 0, 11)? + 1,
+                    'h' => (field(2, 0, 23)? + 11) % 12 + 1,
+                    'H' => field(2, 0, 23)?,
+                    'm' => field(1, 0, 59)?,
+                    's' => field(0, 0, 60)?,
+                    _ => {
+                        text.extend(std::iter::repeat_n(ch, width));
+                        continue;
+                    }
+                };
+                (number_width, format!("{number:0number_width$}"))
+            }
+        };
+        text.extend(std::iter::repeat_n(ch, width - used));
+        text += &value;
+    }
+    Some(text)
 }
 
 /// ISO 8601 week-based (year, week) of a date (tm_year, tm_yday, tm_wday).
