@@ -161,7 +161,7 @@ kernel32:power	fail	2	3
 kernel32:process	timeout	745	279
 kernel32:profile	fail	149	570
 kernel32:resource	crash	26	0
-kernel32:sync	crash	0	0
+kernel32:sync	ok	0	359673
 kernel32:thread	fail	1	1026
 kernel32:time	fail	99	2249
 kernel32:timer	ok	0	4

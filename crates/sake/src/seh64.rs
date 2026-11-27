@@ -1017,6 +1017,7 @@ pub fn register() {
     implement("kernel32", "RaiseException", raise_exception);
     implement("ntdll", "_setjmp", setjmp);
     implement("ntdll", "_setjmpex", setjmp);
+    implement("msvcrt", "_setjmpex", setjmp);
     implement("ntdll", "longjmp", longjmp);
     // (what MSVC calls for setjmp: the same jump buffer, vcruntime140's longjmp)
     for d in ["vcruntime140", "msvcrt"] {
