@@ -491,5 +491,52 @@ pass; `Lane::Hi` answering the lower half fails 78 of 1000. golden: Region64/5 a
 changed (their VEX.256 forms), the rest the same bytes.
 
 MASU_JIT_MEMCOUNT counts the SIMD loads and stores too: each goes through
-`Code::simd_access` with a `wasm::SimdMem`. masu-lint jit-simd-access fails a raw SIMD memory
-opcode or `swap_hi`. Not measured in V8 yet: jitbench has no long-mode program (issue).
+`Code::simd_access` with a `wasm::SimdMem`. The masu-lint `jit-simd-access` rule
+rejects raw SIMD memory opcodes and `swap_hi`.
+
+### AVX2 startup and hot loop in V8 (2026-11-27)
+
+`tools/jitbench` runs a 64-bit integer transform on 64 KiB using full YMM vectors.
+The checksum covers the low and high SIMD lanes, all integer registers and guest
+data. The interpreter, both JIT modes and both builds all gave `28c4b3a8`.
+
+Five alternating rounds on a Core i7-11700 under Ubuntu 24.04 (WSL2). A was
+`d4740c1^`. B was the tree at `0c4ba260`. Node 26.13.1 and headless Chromium
+159.0.8154.6 were used. Chromium ran with explicit Wasm bounds checks, Pixel 7
+emulation and 4× CPU throttling. Each cell gives A / B. Hot is the median of
+seven runs per round, then the median over rounds.
+
+| V8 and JIT mode | Hot (ms) | Cold (ms) | Cold p95 (ms) | Translate (ms) | V8 load (ms) | Module bytes | Peak memory (MiB) |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| Node, function | 32.27 / 7.20 | 61.44 / 34.06 | 72.43 / 41.35 | 8.37 / 8.59 | 0.54 / 0.39 | 7428 / 4868 | 364 / 364 RSS |
+| Node, region | 32.44 / 7.04 | 59.82 / 34.61 | 62.62 / 36.11 | 6.33 / 6.24 | 0.45 / 0.40 | 8280 / 4440 | 364 / 364 RSS |
+| Chromium, function | 221 / 55.13 | 367 / 206 | 374 / 234 | 57.06 / 56.88 | 2.09 / 2.02 | 7428 / 4868 | 10 / 10 JS heap |
+| Chromium, region | 204 / 52.53 | 367 / 199 | 388 / 201 | 45.94 / 42.18 | 2.27 / 2.14 | 8280 / 4440 | 10 / 10 JS heap |
+
+Each cold run executed 1,520 instructions in the interpreter. Each hot run had
+one interpreter dispatch (the first instruction) and 16 exits in total. The
+generated code made zero interpreter step calls in either mode.
+
+```sh
+BASE=d4740c1^ tools/jitbench/ab.sh 5 avx2_int fn=1
+BASE=d4740c1^ tools/jitbench/ab.sh 5 avx2_int fn=0
+JB_BROWSER=1 BASE=d4740c1^ tools/jitbench/ab.sh 5 avx2_int fn=1
+JB_BROWSER=1 BASE=d4740c1^ tools/jitbench/ab.sh 5 avx2_int fn=0
+```
+
+### Dynamic SIMD memory accesses
+
+A single hot run handles 1,024,000 vectors at scale 1. Counts below include
+only Wasm SIMD memory operations, with the same totals in function and region
+mode. The separate counting build used `memcount=1`. It enabled SIMD counting
+in A's vector load and store emitters and disabled scalar counting in both
+builds. Each counting run produced checksum `28c4b3a8`.
+
+| Operations per hot run | A | B |
+|---|---:|---:|
+| SIMD loads | 110,592,000 | 28,672,000 |
+| SIMD stores | 100,352,000 | 18,432,000 |
+| Total | 210,944,000 | 47,104,000 |
+| Per vector | 206 | 46 |
+
+The emitted hot path executed 77.7% fewer SIMD memory operations.

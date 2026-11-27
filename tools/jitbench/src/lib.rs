@@ -1,4 +1,4 @@
-//! koji's 32-bit JIT measured in V8 (see README.md): this crate is koji built to wasm32 the way
+//! koji's 32- and 64-bit JIT measured in V8 (see README.md): this crate is koji built to wasm32 the way
 //! kura is, in the one memory every module shares; bench.mjs loads the modules it makes as
 //! host/vnjit.js does and calls `jb_*`. The guest's memory is the wasm memory itself (addresses
 //! [GUEST_LO, LIMIT)); this crate's own data and heap are above 2 GiB (`--global-base`, see
@@ -140,7 +140,10 @@ pub extern "C" fn jb_set(knob: u32, v: u32) {
     let on = v != 0;
     match knob {
         4 => NOJIT.store(on, Relaxed),
-        0 => jit::FN.store(on, Relaxed),
+        0 => {
+            jit::FN.store(on, Relaxed);
+            jit::long::FN64.store(on, Relaxed);
+        }
         1 => jit::HOIST.store(on, Relaxed),
         2 => jit::wasm::MEMCOUNT.store(on, Relaxed),
         3 => jit::MX_EXACT.store(on, Relaxed),
@@ -178,14 +181,24 @@ pub extern "C" fn jb_setup(i: u32, scale: u32, keep: u32) -> u32 {
         std::ptr::copy_nonoverlapping(p.data.as_ptr(), DATA as usize as *mut u8, p.data.len());
     }
     let c = cpu();
-    *c = Cpu { eip: CODE, ..Cpu::default() };
+    *c = Cpu { eip: CODE, mode64: u32::from(p.long), ..Cpu::default() };
     for (r, v) in p.regs {
         c.regs[r] = v;
+    }
+    if p.long {
+        c.trap_lo = END;
+        c.trap_hi = END + 16;
     }
     c.regs[koji::ESP] = STACK - 0x100;
     // the guest's return address: END
     // SAFETY: the stack's top, in the guest's range
-    unsafe { *((STACK - 0x100) as usize as *mut u32) = END };
+    unsafe {
+        if p.long {
+            *((STACK - 0x100) as usize as *mut u64) = u64::from(END);
+        } else {
+            *((STACK - 0x100) as usize as *mut u32) = END;
+        }
+    }
     c.eflags = 0x202;
     if keep == 0 {
         // SAFETY: the hash table, the call cache and page bits: this crate's (below the guest)
@@ -197,6 +210,11 @@ pub extern "C" fn jb_setup(i: u32, scale: u32, keep: u32) -> u32 {
         ST.with(|s| *s.borrow_mut() = State::default());
     }
     ST.with(|s| s.borrow_mut().stats = Stats::default());
+    if jit::wasm::MEMCOUNT.load(Relaxed) {
+        for count in &jit::wasm::MEM_COUNTS {
+            count.store(0, Relaxed);
+        }
+    }
     STEP_CALLS.store(0, Relaxed);
     p.code.len() as u32
 }
@@ -211,6 +229,23 @@ pub extern "C" fn jb_stat(k: u32) -> f64 {
     })
 }
 
+/// Dynamic access counts when memcount is on, summed across translation sites and offsets.
+#[unsafe(no_mangle)]
+pub extern "C" fn jb_memory_accesses(kind: u32) -> f64 {
+    use jit::wasm::{MEM_COUNTS, MEM_CPU_SLOTS, MEM_SITE_SLOTS};
+    let range = match kind {
+        0 => 0..MEM_CPU_SLOTS,
+        1 => MEM_CPU_SLOTS..2 * MEM_CPU_SLOTS,
+        2 => 2 * MEM_CPU_SLOTS..2 * MEM_CPU_SLOTS + 1,
+        3 => 2 * MEM_CPU_SLOTS + 1..MEM_SITE_SLOTS,
+        _ => return -1.0,
+    };
+    MEM_COUNTS.chunks_exact(MEM_SITE_SLOTS)
+        .flat_map(|site| &site[range.clone()])
+        .map(|n| f64::from(n.load(Relaxed)))
+        .sum()
+}
+
 /// A checksum of the guest's state at the end: registers, flags, the data
 #[unsafe(no_mangle)]
 pub extern "C" fn jb_checksum() -> u32 {
@@ -223,11 +258,21 @@ pub extern "C" fn jb_checksum() -> u32 {
         mix(c2.regs[koji::Gpr::ALL[i]]);
     }
     mix(c2.eflags & 0x8d5);
-    for x in c2.xmm.iter().take(8) {
-        mix(*x as u32);
-        mix((*x >> 32) as u32);
-        mix((*x >> 64) as u32);
-        mix((*x >> 96) as u32);
+    if c2.mode64 != 0 {
+        for reg in koji::Gpr::ALL {
+            mix(c2.hi[reg]);
+        }
+        for reg in c2.r8 {
+            mix(reg as u32);
+            mix((reg >> 32) as u32);
+        }
+    }
+    let extra = if c2.mode64 != 0 { 8 } else { 0 };
+    for &x in c2.xmm[..8].iter().chain(&c2.xmm8[..extra]).chain(&c2.ymmh[..2 * extra]) {
+        mix(x as u32);
+        mix((x >> 32) as u32);
+        mix((x >> 64) as u32);
+        mix((x >> 96) as u32);
     }
     // SAFETY: the data's 1 MiB, in the guest's range
     let d = unsafe { std::slice::from_raw_parts(DATA as usize as *const u32, 0x4_0000) };
@@ -326,12 +371,22 @@ fn hash_insert(a: u32, v: u32) -> bool {
 
 fn translate(st: &mut State, eip: u32) -> bool {
     st.known.insert(eip);
+    let long = cpu().mode64 != 0;
     let fns = jit::FN.load(Relaxed);
     let t0 = unsafe { jb_now() };
     let ran = st.ran.clone();
     let accept = |a: u32| a != END;
-    let built = if fns {
-        jit::translate_function_fit(None, &mut Linear, eip, jit::MAX_BLOCKS, 1000, 250, (END, END + 16), &|_| None, &|a| ran.contains(&a), accept)
+    let trap = (END, END + 16);
+    let built = if long {
+        let accept64 = |a, sure| accept(a) && (a == eip || sure || ran.contains(&a));
+        if fns {
+            jit::long::translate_function64_fit(None, &mut Linear, u64::from(eip), &[], trap, 1000, 250, &|_| None, accept64)
+        } else {
+            let mut m = Module::default();
+            jit::long::translate_region64(&mut m, &mut Linear, &[u64::from(eip)], trap, accept64).map(|r| (m, r))
+        }
+    } else if fns {
+        jit::translate_function_fit(None, &mut Linear, eip, jit::MAX_BLOCKS, 1000, 250, trap, &|_| None, &|a| ran.contains(&a), accept)
     } else {
         let mut m = Module::default();
         jit::translate_region(&mut m, &mut Linear, &[eip], jit::MAX_BLOCKS, accept).map(|r| (m, r))
@@ -359,7 +414,8 @@ fn translate(st: &mut State, eip: u32) -> bool {
     let idx = base as u32;
     for (i, &(a, k)) in region.starts.iter().enumerate() {
         st.known.insert(a);
-        let v = if fns { idx | (i as u32) << jit::ENTRY_SHIFT | jit::FN_TAG } else { idx | k << jit::ENTRY_SHIFT };
+        let block = if fns && !long { i as u32 } else { k };
+        let v = idx | block << jit::ENTRY_SHIFT | if fns { jit::FN_TAG } else { 0 };
         if !hash_insert(a, v) {
             return false;
         }

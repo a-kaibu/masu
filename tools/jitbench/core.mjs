@@ -45,10 +45,12 @@ export function run(rtBytes, { only = '', knobs = '', hot: HOT = 7, scale: SCALE
   }
   const knob = { fn: 0, hoist: 1, memcount: 2, mxexact: 3, nojit: 4, ssa: 5 };
   ex.jb_set(0, 1); // function mode, as kura
+  let countMemory = false;
   for (const kv of knobs.split(',').filter(Boolean)) {
     const [k, v] = kv.split('=');
     if (!(k in knob)) throw new Error(`no knob ${k} (${Object.keys(knob).join(', ')})`);
     ex.jb_set(knob[k], Number(v));
+    if (k === 'memcount') countMemory = Boolean(Number(v));
   }
   const STATS = ['translate_ms', 'translations', 'wasm_bytes', 'guest_ins', 'interp_steps', 'step_calls', 'exit_interp', 'exit_continue', 'dispatches', 'load_fail'];
   const names = [];
@@ -58,6 +60,10 @@ export function run(rtBytes, { only = '', knobs = '', hot: HOT = 7, scale: SCALE
   }
   const want = only ? only.split(',') : names;
   const stats = () => Object.fromEntries(STATS.map((s, k) => [s, ex.jb_stat(k)]));
+  const accessKinds = ['cpu_loads', 'cpu_stores', 'other_loads', 'other_stores'];
+  const accesses = () => countMemory && ex.jb_memory_accesses
+    ? Object.fromEntries(accessKinds.map((kind, i) => [kind, ex.jb_memory_accesses(i)]))
+    : undefined;
   const out = [];
   for (const [i, name] of names.entries()) {
     if (!want.includes(name)) continue;
@@ -67,20 +73,23 @@ export function run(rtBytes, { only = '', knobs = '', hot: HOT = 7, scale: SCALE
     const r = ex.jb_run();
     const cold = performance.now() - t0;
     const coldStats = stats();
+    const coldAccesses = accesses();
     const coldLoad = loadMs;
     const sum = ex.jb_checksum() >>> 0;
     const hot = [];
     let hotStats = null;
+    let hotAccesses;
     for (let k = 0; k < HOT; k++) {
       ex.jb_setup(i, SCALE, 1);
       t0 = performance.now();
       const r2 = ex.jb_run();
       hot.push(performance.now() - t0);
       hotStats = stats();
+      hotAccesses = accesses();
       if (r2 !== r || (ex.jb_checksum() >>> 0) !== sum) throw new Error(`${name}: hot run ${k} differs`);
     }
     hot.sort((a, b) => a - b);
-    out.push({ name, status: r, sum: sum.toString(16), cold, hot_min: hot[0], hot_med: hot[hot.length >> 1], load_ms: coldLoad, cold_stats: coldStats, hot_stats: hotStats, rss_mb: memoryMb() });
+    out.push({ name, status: r, sum: sum.toString(16), cold, hot_min: hot[0], hot_med: hot[hot.length >> 1], load_ms: coldLoad, cold_stats: coldStats, hot_stats: hotStats, cold_accesses: coldAccesses, hot_accesses: hotAccesses, rss_mb: memoryMb() });
   }
   if (failed.length) throw new Error(`${failed.length} translations failed to load: ${failed[0]}`);
   return out;
