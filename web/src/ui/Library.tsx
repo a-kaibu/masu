@@ -70,7 +70,7 @@ import {
 import { dropOffline, offlineState, saveOf, savedDone, startSave, type OfflineState } from "../offline";
 import { useApp } from "../pwa";
 import { fetchBuild } from "../version";
-import { Backup, Note, useProfile } from "./Personal";
+import { Backup, Note, useProfile, type ProfileState } from "./Personal";
 import { Sidebar, type SideTab } from "./Sidebar";
 import { SaveFirst } from "./SaveFirst";
 import { GameParts, SaveProgress, useSaves } from "./Storage";
@@ -598,19 +598,18 @@ function Candidates({
 function GameInfo({
   game,
   onPick,
-  onFavorite,
+  record,
   onUpdated,
   onBrand,
 }: {
   game: GameEntry;
   onPick: () => void;
-  onFavorite: (on: boolean) => void;
+  record: ProfileState;
   onBrand: (b: string) => void;
   onUpdated: () => Promise<void>;
 }) {
   const m = game.meta ?? { source: "", title: game.title };
   const url = coverUrl(game);
-  const record = useProfile(game.id, onFavorite);
   const favorite = !!record.profile?.favorite;
   const facts: [string, ReactNode][] = [
     ["ブランド", brandOf(game) && <BrandLink game={game} onBrand={onBrand} className="font-medium" />],
@@ -842,6 +841,7 @@ export function Library({
   const brandCard = useCallback((b: string) => latest.current.pickBrand(b), []);
   const setFavorite = (id: string, on: boolean) =>
     setFavorites((f) => (on ? [...new Set([...f, id])] : f.filter((x) => x !== id)));
+  const record = useProfile(side === "info" ? info?.id : undefined, setFavorite);
   return (
     <main className={cn("fixed inset-0 z-40 overflow-y-auto bg-background", side && "lg:pr-96")}>
       <header className="sticky top-0 z-10 border-b bg-background/80 backdrop-blur-md">
@@ -1045,7 +1045,7 @@ export function Library({
               key={info.id}
               game={info}
               onPick={() => onPick(info)}
-              onFavorite={(on) => setFavorite(info.id, on)}
+              record={record}
               onBrand={pickBrand}
               onUpdated={async () => {
                 // (the list again: the server's entry now carries what it fetched)

@@ -277,6 +277,28 @@ try {
       const save = page.getByRole("button", { name: /メモを保存/ });
       assert.ok(await save.isDisabled(), "nothing to save yet");
       await note.fill("第2章まで");
+      await page.keyboard.press("Escape");
+      await page.getByRole("tab", { name: /すべて/ }).click();
+      await page.getByRole("button", { name: "さくらの詩 の情報" }).click();
+      await note.waitFor();
+      assert.equal(await note.inputValue(), "", "another game has its own draft");
+      await page.getByRole("button", { name: "月の光 の情報" }).click();
+      await note.waitFor();
+      assert.equal(await note.inputValue(), "第2章まで", "draft survives closing and switching");
+      for (const favorited of [false, true]) {
+        await Promise.all([
+          page.waitForResponse(
+            (r) => r.url().endsWith("/api/library/tsuki") && r.request().method() === "PUT" && r.ok(),
+          ),
+          page.getByRole("dialog", { name: "詳細" }).locator("button[aria-pressed]").click(),
+        ]);
+        await page.locator(`[data-testid="game-info"] button[aria-pressed="${favorited}"]:enabled`).waitFor();
+        assert.equal(await note.inputValue(), "第2章まで", "favoriting preserves the draft");
+        assert.deepEqual(await (await fetch(`${base}api/library/tsuki`)).json(), {
+          favorite: favorited,
+          note: "",
+        });
+      }
       await save.click();
       await page.getByText("メモを保存しました").waitFor();
       const saved = await (await fetch(`${base}api/library/tsuki`)).json();
