@@ -24,6 +24,7 @@ int main(void){
  printf("set with a block %lu\n",mciSendCommandA(id,MCI_SET,MCI_SET_TIME_FORMAT,(DWORD_PTR)&sp));
  MCI_STATUS_PARMS st={0};st.dwItem=MCI_STATUS_LENGTH;
  printf("status with a block %lu\n",mciSendCommandA(id,MCI_STATUS,MCI_STATUS_ITEM,(DWORD_PTR)&st));
+ printf("wave length in ms %lu\n",(unsigned long)st.dwReturn);
  mciSendStringA("close w",NULL,0,NULL);
  DeleteFileA(path);
  return 0;
