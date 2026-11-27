@@ -2397,6 +2397,34 @@ fn ucrt_pow(c: &mut Ctx) -> u32 {
     ret(c, value)
 }
 
+fn ucrt_scale(c: &mut Ctx, name: &str) -> u32 {
+    let mut a = Args(0);
+    let (x, exponent) = (a.f64(c), a.p(c) as i32);
+    let r = scale(x, exponent);
+    let error = if x.is_finite() && r.is_infinite() {
+        Some(MathError::Overflow)
+    } else if name == "ldexp" && x.is_finite() && x != 0.0 && r == 0.0 {
+        Some(MathError::Underflow)
+    } else {
+        None
+    };
+    let value = if let Some(kind) = error {
+        report_math_error(c, name, kind, [x, f64::from(exponent)], r, true)
+    } else {
+        r
+    };
+    ret(c, value)
+}
+
+fn ucrt_ldexp(c: &mut Ctx) -> u32 {
+    ucrt_scale(c, "ldexp")
+}
+fn ucrt_scalb(c: &mut Ctx) -> u32 {
+    ucrt_scale(c, if mem::x64() { "_scalb" } else { "ldexp" })
+}
+
+math1e!(ucrt_acosh = f64::acosh, ucrt_exp2 = f64::exp2, ucrt_log1p = f64::ln_1p);
+
 fn round_to_int(c: &mut Ctx, x: f64) -> f64 {
     let rounded = match sse_control(c.cpu.mxcsr) & FE_ROUND {
         0x100 => x.floor(),
@@ -4446,11 +4474,12 @@ pub(crate) fn strftime_w(fmt: &[u16], tm: u32) -> Option<Vec<u16>> {
 /// with an empty buffer when it does not fit (an invalid field or conversion: EINVAL too)
 fn strftime_into(c: &mut Ctx, wide: bool, time_names: u32) -> u32 {
     let (buf, max, fmt, tm) = (c.a(0), size(c, 1), c.a(2), c.a(3));
+    let modern = crate::api::dll_of(c.trap).as_deref() == Some("ucrtbase");
     if buf == 0 || max == 0 || fmt == 0 || tm == 0 {
         if buf != 0 && max != 0 {
             if wide { w16(buf, 0) } else { w8(buf, 0) }
         }
-        set_errno(22);
+        if modern { io::invalid_parameter(c); } else { set_errno(22); }
         return 0;
     }
     let f = if wide { wstr(fmt) } else { crate::text::a2w(&cstr(fmt)) };
@@ -4458,7 +4487,11 @@ fn strftime_into(c: &mut Ctx, wide: bool, time_names: u32) -> u32 {
     let name = if bias == 9 * 3600 { "Tokyo Standard Time" } else { "Coordinated Universal Time" };
     let tm = read_tm(tm);
     let out = if time_names == 0 {
-        crt::time::strftime(&f, &tm, (bias, name))
+        if modern {
+            crt::time::strftime_ucrt(&f, &tm, (bias, name), None)
+        } else {
+            crt::time::strftime(&f, &tm, (bias, name))
+        }
     } else {
         use crt::time::TimeName;
         let slot = ps();
@@ -4476,11 +4509,11 @@ fn strftime_into(c: &mut Ctx, wide: bool, time_names: u32) -> u32 {
             };
             String::from_utf16_lossy(&wstr(rp(time_names + first_wide + slot * index as u32)))
         };
-        crt::time::strftime_localized(&f, &tm, (bias, name), &at)
+        crt::time::strftime_ucrt(&f, &tm, (bias, name), Some(&at))
     };
     let Some(out) = out else {
         if wide { w16(buf, 0) } else { w8(buf, 0) }
-        set_errno(22);
+        if modern { io::invalid_parameter(c); } else { set_errno(22); }
         return 0;
     };
     let fits = |n: usize| n < max as usize;
@@ -5077,6 +5110,11 @@ pub fn init() {
         ("log10", ucrt_log10),
         ("_logb", ucrt_logb),
         ("pow", ucrt_pow),
+        ("ldexp", ucrt_ldexp),
+        ("_scalb", ucrt_scalb),
+        ("acosh", ucrt_acosh),
+        ("exp2", ucrt_exp2),
+        ("log1p", ucrt_log1p),
     ] {
         implement("ucrtbase", name, f);
     }

@@ -108,17 +108,18 @@ pub enum TimeName {
 /// strftime's output for `fmt`; None when a field it needs is out of range or a conversion is
 /// unknown (the UCRT returns 0 with EINVAL). `zone`: (offset east of UTC in seconds, name).
 pub fn strftime(fmt: &[u16], tm: &Tm, zone: (i64, &str)) -> Option<Vec<u16>> {
-    strftime_impl(fmt, tm, zone, None)
+    strftime_impl(fmt, tm, zone, None, false)
 }
 
-pub fn strftime_localized(
-    fmt: &[u16], tm: &Tm, zone: (i64, &str), name: &dyn Fn(TimeName) -> String,
+/// UCRT formatting with an optional caller-supplied LC_TIME block.
+pub fn strftime_ucrt(
+    fmt: &[u16], tm: &Tm, zone: (i64, &str), names: Option<&dyn Fn(TimeName) -> String>,
 ) -> Option<Vec<u16>> {
-    strftime_impl(fmt, tm, zone, Some(name))
+    strftime_impl(fmt, tm, zone, names, true)
 }
 
 fn strftime_impl(
-    fmt: &[u16], tm: &Tm, zone: (i64, &str), locale: Option<&dyn Fn(TimeName) -> String>,
+    fmt: &[u16], tm: &Tm, zone: (i64, &str), locale: Option<&dyn Fn(TimeName) -> String>, modern: bool,
 ) -> Option<Vec<u16>> {
     let mut o = String::new();
     let mut i = 0;
@@ -143,6 +144,7 @@ fn strftime_impl(
         }
         i += 1;
         let n2 = |v: i32| if alt { format!("{v}") } else { format!("{v:02}") };
+        let ucrt_num = |v: i32| if modern { n2(v) } else { format!("{v:02}") };
         let sec = || field(0, 0, 60);
         let min = || field(1, 0, 59);
         let hour = || field(2, 0, 23);
@@ -183,6 +185,20 @@ fn strftime_impl(
             b'A' => o += DAYS[wday()? as usize],
             b'b' | b'h' => o += &MONTHS[mon()? as usize][..3],
             b'B' => o += MONTHS[mon()? as usize],
+            b'c' if modern && alt => {
+                o += &format!(
+                    "{}, {} {:02}, {} {:02}:{:02}:{:02}",
+                    DAYS[wday()? as usize], MONTHS[mon()? as usize], mday()?, year()? + 1900,
+                    hour()?, min()?, sec()?
+                )
+            }
+            b'c' if modern => {
+                o += &format!(
+                    "{} {} {:2} {:02}:{:02}:{:02} {}",
+                    &DAYS[wday()? as usize][..3], &MONTHS[mon()? as usize][..3], mday()?,
+                    hour()?, min()?, sec()?, year()? + 1900
+                )
+            }
             b'c' if alt => {
                 o += &format!(
                     "{}, {} {}, {}, {}:{}:{}",
@@ -208,9 +224,9 @@ fn strftime_impl(
             }
             b'C' => o += &n2((year()? + 1900).div_euclid(100)),
             b'd' => o += &n2(mday()?),
-            b'D' => o += &format!("{:02}/{:02}/{:02}", mon()? + 1, mday()?, (year()? + 1900).rem_euclid(100)),
+            b'D' => o += &format!("{}/{}/{}", ucrt_num(mon()? + 1), ucrt_num(mday()?), ucrt_num((year()? + 1900).rem_euclid(100))),
             b'e' => o += &if alt { format!("{}", mday()?) } else { format!("{:2}", mday()?) },
-            b'F' => o += &format!("{}-{:02}-{:02}", year()? + 1900, mon()? + 1, mday()?),
+            b'F' => o += &format!("{}-{}-{}", year()? + 1900, ucrt_num(mon()? + 1), ucrt_num(mday()?)),
             b'g' => o += &n2(iso_week(year()?, yday()?, wday()?).0.rem_euclid(100) as i32),
             b'G' => o += &format!("{}", iso_week(year()?, yday()?, wday()?).0),
             b'H' => o += &n2(hour()?),
@@ -222,17 +238,18 @@ fn strftime_impl(
             b'p' => o += if hour()? < 12 { "AM" } else { "PM" },
             b'r' => {
                 let h = hour()?;
-                o += &format!("{:02}:{:02}:{:02} {}", if h % 12 == 0 { 12 } else { h % 12 }, min()?, sec()?, if h < 12 { "AM" } else { "PM" })
+                o += &format!("{}:{}:{} {}", ucrt_num(if h % 12 == 0 { 12 } else { h % 12 }), ucrt_num(min()?), ucrt_num(sec()?), if h < 12 { "AM" } else { "PM" })
             }
-            b'R' => o += &format!("{:02}:{:02}", hour()?, min()?),
+            b'R' => o += &format!("{}:{}", ucrt_num(hour()?), ucrt_num(min()?)),
             b'S' => o += &n2(sec()?),
             b't' => o.push('\t'),
-            b'T' => o += &format!("{:02}:{:02}:{:02}", hour()?, min()?, sec()?),
+            b'T' => o += &format!("{}:{}:{}", ucrt_num(hour()?), ucrt_num(min()?), ucrt_num(sec()?)),
             b'u' => o += &format!("{}", if wday()? == 0 { 7 } else { wday()? }),
             b'U' => o += &n2((yday()? + 7 - wday()?) / 7),
             b'V' => o += &n2(iso_week(year()?, yday()?, wday()?).1),
             b'w' => o += &format!("{}", wday()?),
             b'W' => o += &n2((yday()? + 7 - (wday()? + 6) % 7) / 7),
+            b'x' if alt && modern => o += &format!("{}, {} {:02}, {}", DAYS[wday()? as usize], MONTHS[mon()? as usize], mday()?, year()? + 1900),
             b'x' if alt => o += &format!("{}, {} {}, {}", DAYS[wday()? as usize], MONTHS[mon()? as usize], mday()?, year()? + 1900),
             b'x' => o += &format!("{:02}/{:02}/{:02}", mon()? + 1, mday()?, (year()? + 1900).rem_euclid(100)),
             b'X' => o += &format!("{:02}:{:02}:{:02}", hour()?, min()?, sec()?),

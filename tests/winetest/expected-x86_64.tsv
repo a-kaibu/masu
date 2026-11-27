@@ -332,7 +332,7 @@ shlwapi:url	fail	13188	93379
 ucrtbase:cpp	crash	8	0
 ucrtbase:environ	fail	19	89
 ucrtbase:file	fail	32	59
-ucrtbase:misc	fail	242	199058
+ucrtbase:misc	fail	190	199085
 ucrtbase:printf	fail	228	1942
 ucrtbase:scanf	fail	19	381
 ucrtbase:string	crash	24	0
