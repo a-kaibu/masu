@@ -9121,7 +9121,10 @@ fn OpenFileMappingW(c: &mut Ctx) -> u32 {
     open_file_mapping(c, true)
 }
 fn MapViewOfFile(c: &mut Ctx) -> u32 {
-    let (h, access, off_hi, off_lo, n) = (c.a(0), c.a(1), c.a(2), c.a(3), c.a(4));
+    map_file_view(c.a(0), c.a(1), c.a(2), c.a(3), c.a(4))
+}
+
+fn map_file_view(h: u32, access: u32, off_hi: u32, off_lo: u32, n: u32) -> u32 {
     let info = obj::with(|t| match t.objs.get(&h) {
         Some((Obj::Mapping { file, size, view, write }, _)) => Some((file.clone(), *size, *view, *write)),
         _ => None,
@@ -9240,12 +9243,16 @@ pub(crate) fn section_closed(view: u32) {
 fn MapViewOfFileEx(c: &mut Ctx) -> u32 {
     MapViewOfFile(c)
 }
-fn UnmapViewOfFile(c: &mut Ctx) -> u32 {
-    let a = c.a(0);
+fn unmap_pagefile_view(a: u32, exact: bool) -> bool {
     // a view of a pagefile section: one view fewer; the block goes with the last view of a
     // section no handle holds
     let section = section_views(|m| {
-        let (&b, s) = m.iter_mut().find(|&(&b, ref s)| a >= b && mem::ga(a).since(mem::ga(b)) < s.size)?;
+        let (b, s) = if exact {
+            (a, m.get_mut(&a).filter(|s| s.views != 0)?)
+        } else {
+            let (&b, s) = m.iter_mut().find(|&(&b, ref s)| a >= b && mem::ga(a).since(mem::ga(b)) < s.size)?;
+            (b, s)
+        };
         s.views = s.views.saturating_sub(1);
         let last = s.views == 0 && !s.open;
         if last {
@@ -9258,6 +9265,78 @@ fn UnmapViewOfFile(c: &mut Ctx) -> u32 {
             VIEWS.locked().retain(|v| v.0 != b);
             mem::release(b);
         }
+        return true;
+    }
+    false
+}
+
+
+const SHARED_DATA_OFFSET: u32 = 4;
+
+pub(crate) fn SHAllocShared(c: &mut Ctx) -> u32 {
+    let (src, bytes, process) = (c.a(0), c.a(1), c.a(2));
+    let Some(size) = bytes.checked_add(SHARED_DATA_OFFSET) else {
+        last_error(87);
+        return 0;
+    };
+    if process != crate::pid() || (src != 0 && mem::range(src, bytes).is_none()) {
+        last_error(87);
+        return 0;
+    }
+    let mapping = obj::add(Obj::Mapping { file: None, size, view: 0, write: true });
+    let base = map_file_view(mapping, 6, 0, 0, 0);
+    if base == 0 {
+        obj::close(mapping);
+        return 0;
+    }
+    mem::w32(base, bytes);
+    if src != 0 {
+        mem::copy(base + SHARED_DATA_OFFSET, src, bytes);
+    }
+    unmap_pagefile_view(base, true);
+    mapping
+}
+
+pub(crate) fn SHLockShared(c: &mut Ctx) -> u32 {
+    let (h, process) = (c.a(0), c.a(1));
+    if h == 0 || process != crate::pid() {
+        return 0;
+    }
+    // Pin the section until the view owns a reference, even if another thread closes h.
+    let held = obj::dup(h);
+    if held == 0 {
+        return 0;
+    }
+    let mapping = obj::with(|table| matches!(table.objs.get(&held), Some((Obj::Mapping { file: None, size, .. }, _)) if *size >= SHARED_DATA_OFFSET));
+    let base = if mapping { map_file_view(held, 6, 0, 0, 0) } else { 0 };
+    obj::close(held);
+    if base == 0 { 0 } else { base + SHARED_DATA_OFFSET }
+}
+
+pub(crate) fn SHUnlockShared(c: &mut Ctx) -> u32 {
+    u32::from(c.a(0).checked_sub(SHARED_DATA_OFFSET).is_some_and(|base| unmap_pagefile_view(base, true)))
+}
+
+pub(crate) fn SHFreeShared(c: &mut Ctx) -> u32 {
+    let (h, process) = (c.a(0), c.a(1));
+    if h == 0 {
+        return 1;
+    }
+    if process != crate::pid() {
+        last_error(87);
+        return 0;
+    }
+    if !obj::close(h) {
+        last_error(6);
+        return 0;
+    }
+    1
+}
+
+
+fn UnmapViewOfFile(c: &mut Ctx) -> u32 {
+    let a = c.a(0);
+    if unmap_pagefile_view(a, false) {
         return 1;
     }
     // (an address that is no view's base: nothing to do, as before)

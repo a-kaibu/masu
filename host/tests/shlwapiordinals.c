@@ -8,6 +8,39 @@ typedef struct {
     DWORD capacity;
     BYTE growth, size, flags;
 } Fdsa;
+typedef HANDLE (WINAPI *AllocShared)(LPCVOID, DWORD, DWORD);
+typedef void *(WINAPI *LockShared)(HANDLE, DWORD);
+typedef BOOL (WINAPI *UnlockShared)(void *);
+typedef BOOL (WINAPI *FreeShared)(HANDLE, DWORD);
+
+static int shared_memory(HMODULE dll)
+{
+    AllocShared alloc = (void *)GetProcAddress(dll, MAKEINTRESOURCEA(7));
+    LockShared lock = (void *)GetProcAddress(dll, MAKEINTRESOURCEA(8));
+    UnlockShared unlock = (void *)GetProcAddress(dll, MAKEINTRESOURCEA(9));
+    FreeShared free_shared = (void *)GetProcAddress(dll, MAKEINTRESOURCEA(10));
+    if (!alloc || !lock || !unlock || !free_shared) return 0;
+    DWORD pid = GetCurrentProcessId();
+    SetLastError(111);
+    if (!free_shared(NULL, pid) || GetLastError() != 111) return 0;
+
+    DWORD initial = 29;
+    HANDLE h = alloc(&initial, sizeof initial, pid);
+    if (!h) return 0;
+    DWORD *p = lock(h, pid), *q = lock(h, pid);
+    if (!p || !q || *p != initial || *q != initial) return 0;
+    *p = 109;
+    if (*q != 109 || !unlock(q) || !free_shared(h, pid)) return 0;
+    if (*p != 109 || !unlock(p)) return 0;
+
+    h = alloc(NULL, 0, pid);
+    if (!h) return 0;
+    void *empty = lock(h, pid);
+    if (!empty || !unlock(empty) || !free_shared(h, pid)) return 0;
+    return 1;
+}
+
+
 int main(void) {
     HMODULE dll = LoadLibraryA("shlwapi.dll");
     BOOL (WINAPI *init)(DWORD,DWORD,Fdsa*,void*,DWORD) = (void *)GetProcAddress(dll, MAKEINTRESOURCEA(208));
@@ -48,5 +81,7 @@ int main(void) {
     destroy(&a);
     int keys[] = {3, -123, -123}, values[] = {4, 99, 80};
     printf("search %d %d %d %d %d\n", search(keys, values, 3, -123), search(keys, values, 1, 3), search(keys, values, 3, 5), search(keys, values, 0, 3), search(keys, values, -1, 3));
+    if (!shared_memory(dll)) return 1;
+    puts("shlwapi shared memory: ok");
     return 0;
 }
