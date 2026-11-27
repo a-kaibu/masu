@@ -14,6 +14,14 @@ typedef size_t (__cdecl *Format)(char *, size_t, const char *, const struct tm *
 
 typedef size_t (__cdecl *FormatWide)(WCHAR *, size_t, const WCHAR *, const struct tm *, const TimeData *);
 
+static int rejected_count;
+static void __cdecl rejected(const WCHAR *expression, const WCHAR *function, const WCHAR *file,
+                             unsigned line, uintptr_t reserved)
+{
+    (void)expression; (void)function; (void)file; (void)line; (void)reserved;
+    ++rejected_count;
+}
+
 int main(void)
 {
     HMODULE ucrt = LoadLibraryA("ucrtbase.dll");
@@ -48,5 +56,20 @@ int main(void)
     WCHAR wide[128];
     len = format_wide(wide, sizeof(wide) / sizeof(*wide), L"%a, %p", &tm, &locale);
     printf("wide %zu matches %d\n", len, wcscmp(wide, L"wk, eve") == 0);
+    typedef size_t (__cdecl *DefaultFormat)(char *, size_t, const char *, const struct tm *);
+    typedef void (__cdecl *InvalidHandler)(const WCHAR *, const WCHAR *, const WCHAR *, unsigned, uintptr_t);
+    typedef InvalidHandler (__cdecl *Install)(InvalidHandler);
+    DefaultFormat primary = (DefaultFormat)(uintptr_t)GetProcAddress(ucrt, "strftime");
+    Install install = (Install)(uintptr_t)GetProcAddress(ucrt, "_set_invalid_parameter_handler");
+    if (!primary || !install) return 1;
+    static const char *builtins[] = { "%c", "%#c", "%#D", "%#F", "%#R", "%#T", "%#x", "%#X", "%#r", 0 };
+    for (const char **it = builtins; *it; it++) {
+        len = primary(buf, sizeof(buf), *it, &tm);
+        printf("default %s %zu [%s]\n", *it, len, buf);
+    }
+    InvalidHandler old = install(rejected);
+    len = primary(buf, sizeof(buf), "%Q", &tm);
+    printf("invalid %zu [%s] handler %d\n", len, buf, rejected_count);
+    install(old);
     return 0;
 }

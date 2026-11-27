@@ -25,7 +25,7 @@ static int __cdecl report(MathException *e)
 {
     type = e->type;
     x_arg = e->x;
-    y_arg = strcmp(e->name, "pow") == 0 ? e->y : 0;
+    y_arg = strcmp(e->name, "pow") == 0 || strcmp(e->name, "ldexp") == 0 || strcmp(e->name, "_scalb") == 0 ? e->y : 0;
     snprintf(name, sizeof(name), "%s", e->name);
     e->result = 42.5;
     return handled;
@@ -90,6 +90,20 @@ int main(void)
             failed = 1;
         }
     }
+
+    typedef double (__cdecl *Scale)(double, int);
+    Scale ldexp_fn = LOAD(Scale, "ldexp"), scalb_fn = LOAD(Scale, "_scalb");
+    if (!ldexp_fn || !scalb_fn) return 1;
+    handled = 1;
+    *error = -1;
+    r = ldexp_fn(1.0, -1000000000);
+    CHECK("ldexp underflow", r == 42.5 && *error == -1 && type == 4 &&
+          strcmp(name, "ldexp") == 0 && x_arg == 1 && y_arg == -1000000000);
+    handled = 0;
+    *error = -1;
+    r = scalb_fn(1.0, 1000000000);
+    CHECK("scalb overflow", r == 42.5 && *error == 34 && type == 3 &&
+          strcmp(name, x64 ? "_scalb" : "ldexp") == 0 && x_arg == 1 && y_arg == 1000000000);
 
     install(NULL);
     *error = -1;

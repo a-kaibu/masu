@@ -3,5 +3,7 @@ log singularity: ok
 exp overflow: ok
 exp underflow: ok
 pow singularity: ok
+ldexp underflow: ok
+scalb overflow: ok
 handler removed: ok
 rint rounding and inexact flag: ok

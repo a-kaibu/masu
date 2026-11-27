@@ -9,3 +9,13 @@
 quoted 28 [literal Y M d  ab 2024 y y24]
 short 0 []
 wide 7 matches 1
+default %c 24 [Tue Mar  4 13:05:07 2024]
+default %#c 32 [Tuesday, March 04, 2024 13:05:07]
+default %#D 6 [3/4/24]
+default %#F 8 [2024-3-4]
+default %#R 4 [13:5]
+default %#T 6 [13:5:7]
+default %#x 23 [Tuesday, March 04, 2024]
+default %#X 8 [13:05:07]
+default %#r 8 [1:5:7 PM]
+invalid 0 [] handler 1
