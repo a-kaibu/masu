@@ -325,7 +325,7 @@ fn dev_activate(c: &mut Ctx) -> u32 {
         return Hr::Pointer.code();
     }
     if guid_is(iid, IID_PROPERTY_STORE) {
-        out.put(store());
+        out.put(store(false));
         return S_OK;
     }
     // IDirectSound(8) {279afa83-4981-11ce-a521-0020af0be560}, {c50a7e93-f395-4834-9ef6-7fa99de50966}:
@@ -370,7 +370,7 @@ fn dev_store(c: &mut Ctx) -> u32 {
     if c.out::<2>().is_null() {
         return Hr::Pointer.code();
     }
-    c.out::<2>().put(store());
+    c.out::<2>().put(store(c.a::<1>() != 0));
     S_OK
 }
 /// GetId(LPWSTR*)
@@ -535,9 +535,16 @@ fn ps_get(c: &mut Ctx) -> u32 {
 fn ps_denied(_: &mut Ctx) -> u32 {
     hr(Err(Hr::AccessDenied))
 }
-fn store() -> u32 {
-    static O: OnceLock<u32> = OnceLock::new();
-    singleton("IPropertyStore", &[(ps_qi, b(3)), (one, b(1)), (one, b(1)), (ps_count, b(2)), (ps_at, b(3)), (ps_get, b(3)), (ps_denied, b(3)), (ps_denied, b(1))], &O)
+fn ps_protected(_: &mut Ctx) -> u32 {
+    0x8007_0005 // E_ACCESSDENIED
+}
+
+fn store(requested_write: bool) -> u32 {
+    static READ: OnceLock<u32> = OnceLock::new();
+    static WRITE: OnceLock<u32> = OnceLock::new();
+    // A writable store request still cannot change this device's protected properties.
+    let (set, cache) = if requested_write { (ps_protected as Handler, &WRITE) } else { (ps_denied as Handler, &READ) };
+    singleton("IPropertyStore", &[(ps_qi, b(3)), (one, b(1)), (one, b(1)), (ps_count, b(2)), (ps_at, b(3)), (ps_get, b(3)), (set, b(3)), (ps_denied, b(1))], cache)
 }
 
 /// CoCreateInstance of CLSID_MMDeviceEnumerator {bcde0395-e52f-467c-8e3d-c4579291692e}

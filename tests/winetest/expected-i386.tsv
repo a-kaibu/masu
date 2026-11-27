@@ -179,13 +179,13 @@ mfplat:mfplat	timeout	8	9
 mmdevapi:capture	ok	0	1
 mmdevapi:dependency	fail	1	7
 mmdevapi:mmdevenum	ok	0	42
-mmdevapi:propstore	fail	1	43
+mmdevapi:propstore	ok	0	43
 mmdevapi:render	ok	0	4996
 mmdevapi:spatialaudio	ok	0	3
 mpr:mpr	fail	32	327
 msacm32:msacm	fail	137	397
 msdmo:msdmo	ok	0	46
-msvcp140:msvcp140	fail	1	1622
+msvcp140:msvcp140	ok	0	1622
 msvcp60:ios	crash	132	0
 msvcp60:string	crash	2	0
 msvcp90:ios	crash	68	0
