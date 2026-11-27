@@ -1,0 +1,16 @@
+audio create 00000000
+audio lookup In 00000000 id In name XForm In direction 0 same owner 1
+audio lookup Out 00000000 id Out name XForm Out direction 1 same owner 1
+audio lookup XForm In 80040216
+audio lookup XForm Out 80040216
+audio lookup Input 80040216
+audio lookup Output 80040216
+audio lookup in 80040216
+video create 00000000
+video lookup In 00000000 id In name Input direction 0 same owner 1
+video lookup Out 00000000 id Out name Output direction 1 same owner 1
+video lookup XForm In 80040216
+video lookup XForm Out 80040216
+video lookup Input 80040216
+video lookup Output 80040216
+video lookup in 80040216

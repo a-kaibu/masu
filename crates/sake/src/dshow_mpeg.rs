@@ -350,7 +350,8 @@ fn new_filter(k: Kind) -> u32 {
     let p = |out: bool, name: &'static str, on: bool| Pin { out, name, on, ..Pin::default() };
     let pins = match k {
         Kind::Split => [p(false, "Input", true), p(true, "Video", false), p(true, "Audio", false)],
-        Kind::VDec | Kind::ADec => [p(false, "Input", true), p(true, "Output", true), Pin::default()],
+        Kind::VDec => [p(false, "Input", true), p(true, "Output", true), Pin::default()],
+        Kind::ADec => [p(false, "XForm In", true), p(true, "XForm Out", true), Pin::default()],
         Kind::Sound => [p(false, "Audio Input pin (rendered)", true), Pin::default(), Pin::default()],
         // (a source's pins are there once it has its file)
         Kind::File | Kind::Asf => Default::default(),
@@ -526,6 +527,15 @@ fn f_enum_pins(c: &mut Ctx) -> u32 {
     out.put(enum_new(pins));
     0
 }
+/// A transform's stable pin ID is independent of the displayed pin name.
+fn pin_id(f: &Filter, k: PinNo) -> &'static str {
+    let pin = f.pins.at(k);
+    match f.kind {
+        Kind::VDec | Kind::ADec if pin.out => "Out",
+        Kind::VDec | Kind::ADec => "In",
+        _ => pin.name,
+    }
+}
 fn f_find_pin(c: &mut Ctx) -> u32 {
     let c = &mut c.args::<crate::api::outs::iface::IUnknown::QueryInterface>();
     let (b, id, out) = (c.a::<0>(), c.a::<1>(), c.out::<2>());
@@ -534,7 +544,7 @@ fn f_find_pin(c: &mut Ctx) -> u32 {
     }
     out.put(0);
     let want = if id == 0 { Vec::new() } else { mem::wstr(id) };
-    let found = fwith(b, |f| PinNo::ALL.into_iter().find(|&k| f.pins.at(k).on && f.pins.at(k).name.encode_utf16().eq(want.iter().copied()))).flatten();
+    let found = fwith(b, |f| PinNo::ALL.into_iter().find(|&k| f.pins.at(k).on && pin_id(f, k).encode_utf16().eq(want.iter().copied()))).flatten();
     match found {
         Some(k) => {
             add_ref(b);
@@ -1138,7 +1148,7 @@ fn p_id(c: &mut Ctx) -> u32 {
     if out.is_null() {
         return Hr::Pointer.code();
     }
-    let name = pin_of(p).map_or("", |(b, k)| pin(b, k).name);
+    let name = pin_of(p).and_then(|(b, k)| fwith(b, |f| pin_id(f, k))).unwrap_or_default();
     let w: Vec<u16> = name.encode_utf16().chain([0]).collect();
     let s = mem::heap_alloc(2 * lo32(w.len()), false);
     for (i, v) in w.iter().enumerate() {
