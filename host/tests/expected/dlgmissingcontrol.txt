@@ -1,0 +1,4 @@
+dialog nofail 0 window 0 initialized 0 error 0
+dialog nofail 1 window 1 initialized 1 error 0
+sheet modeless 0 result 0 window 0 page initialized 0 sheet initialized 1
+sheet modeless 1 result 1 window 1 page initialized 0 sheet initialized 1

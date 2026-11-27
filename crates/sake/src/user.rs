@@ -8369,7 +8369,12 @@ fn create_dialog(c: &mut Ctx, inst: u32, t: u32, owner: u32, proc_: u32, param: 
         let name = ts.filter(|&t| r16(t) != 0).unwrap_or(0);
         let ctl = gcall(c, "user32", "CreateWindowExW", &[ex2, cls, name, st | 0x4000_0000, ix as u32, iy as u32, iw as u32, ih as u32, dlg, id, inst, if extra != 0 { r3 + 2 } else { 0 }]);
         if ctl == 0 {
-            continue;
+            if style & 0x10 != 0 { // DS_NOFAILCREATE
+                continue;
+            }
+            destroy(c, dlg);
+            crate::k32::last_error(0);
+            return 0;
         }
         if let Some(t) = ts {
             let s = wstr(t);
