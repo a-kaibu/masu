@@ -1,0 +1,9 @@
+noinfo c0000409
+noreturn c0000409
+handler 0 0 0 0 0
+handler 0 0 0 0 0
+handler 00000016
+handler 0 0 0 0 0
+noreturn-handler c0000409
+legacy 00000016
+secure c0000409

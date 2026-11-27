@@ -2088,21 +2088,43 @@ fn _popen(_: &mut Ctx) -> u32 {
 // handler (_set_thread_local_invalid_parameter_handler), else the process's, with
 // (NULL, NULL, NULL, 0, 0) as the release CRTs do, then answers its error (ucrtbase's tests
 // check the call, errno and the answer). With neither set it answers the error and goes on
-// (msvcrt.dll's way; ucrtbase would end the process there).
+// in msvcrt. In UCRT the default handler terminates the process.
 static IPH: Mutex<u32> = Mutex::new(0);
 thread_local!(static IPH_THREAD: std::cell::Cell<u32> = const { std::cell::Cell::new(0) });
 
-/// A refused argument: the handler is called, errno is EINVAL
-pub(super) fn invalid_parameter(c: &mut Ctx) {
-    let h = match IPH_THREAD.with(std::cell::Cell::get) {
+fn report_invalid_parameter(c: &mut Ctx) {
+    let handler = match IPH_THREAD.with(std::cell::Cell::get) {
         0 => *IPH.locked(),
         h => h,
     };
-    if h != 0 {
+    if handler != 0 {
         // (wide expression, function, file, line, reserved)
-        c.call(h, &[0, 0, 0, 0, 0]);
+        c.call(handler, &[0, 0, 0, 0, 0]);
+    } else if crate::api::dll_of(c.trap).as_deref() == Some("ucrtbase") {
+        ucrt_invalid_argument();
     }
+}
+
+fn ucrt_invalid_argument() -> ! {
+    // STATUS_STACK_BUFFER_OVERRUN is the process status for FAST_FAIL_INVALID_ARG.
+    eprintln!("sake: UCRT invalid argument (fast fail)");
+    unsafe { libc::exit(0xc000_0409u32.cast_signed()) }
+}
+
+/// A refused argument: the handler is called, then errno is EINVAL if it returns.
+pub(super) fn invalid_parameter(c: &mut Ctx) {
+    report_invalid_parameter(c);
     set_errno(22);
+}
+
+fn ucrt_invalid_parameter_noinfo(c: &mut Ctx) -> u32 {
+    report_invalid_parameter(c);
+    0
+}
+
+fn ucrt_invalid_parameter_noinfo_noreturn(c: &mut Ctx) -> ! {
+    report_invalid_parameter(c);
+    ucrt_invalid_argument();
 }
 fn _set_invalid_parameter_handler(c: &mut Ctx) -> u32 {
     std::mem::replace(&mut *IPH.locked(), c.a(0))
@@ -2857,6 +2879,8 @@ pub(super) fn init() {
         _isctype
     );
     reg!(_set_thread_local_invalid_parameter_handler, _get_thread_local_invalid_parameter_handler);
+    implement("ucrtbase", "_invalid_parameter_noinfo", ucrt_invalid_parameter_noinfo);
+    crate::noreturn!("ucrtbase", "_invalid_parameter_noinfo_noreturn", ucrt_invalid_parameter_noinfo_noreturn);
     implement("msvcrt", "_isblank_l", isblank);
     implement("msvcrt", "_iswblank_l", iswblank);
     implement("msvcrt", "_iswctype_l", iswctype);
