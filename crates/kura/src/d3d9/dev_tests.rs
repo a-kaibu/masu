@@ -254,14 +254,19 @@ fn d3d9_answers_as_the_golden() {
     };
     let hr = |v: &str| u32::from_str_radix(v.trim_start_matches("0x"), 16).expect("an HRESULT");
     let (mut conversions, mut matches) = (0, 0);
+    let mut measured_sources = std::collections::HashSet::new();
     for line in golden.lines().map(str::trim) {
         if let Some(v) = line.strip_prefix("RegisterSoftwareDevice(NULL) ") {
             assert_eq!(call(IF_D3D9, 3, &[d3d, 0]), hr(v));
         } else if let Some(rest) = line.strip_prefix("CheckDeviceFormatConversion ") {
             let (src, pairs) = rest.split_once(" ->").expect("a source");
+            let source_format = named(src);
             let w: Vec<&str> = pairs.split_whitespace().collect();
             for p in w.chunks(2) {
-                assert_eq!(call(IF_D3D9, 13, &[d3d, 0, 1, named(src), named(p[0])]), hr(p[1]), "{src} -> {}", p[0]);
+                assert_eq!(call(IF_D3D9, 13, &[d3d, 0, 1, source_format, named(p[0])]), hr(p[1]), "{src} -> {}", p[0]);
+                if p[0] == "X8R8G8B8" {
+                    measured_sources.insert(source_format);
+                }
                 conversions += 1;
             }
         } else if let Some(rest) = line.strip_prefix("CheckDeviceFormat(DEPTHSTENCIL, SURFACE):") {
@@ -282,6 +287,13 @@ fn d3d9_answers_as_the_golden() {
         }
     }
     assert!(conversions >= 72 && matches >= 32, "{conversions} {matches}");
+    for &format in f::Format::ALL {
+        assert_eq!(
+            format.measured_conversion().is_some(),
+            measured_sources.contains(&format.raw()),
+            "{format:?}: measured conversion cases must match the d3d9dev golden",
+        );
+    }
     call(IF_DEVICE, 2, &[dev]);
     gpu::set_pump(None);
 }
