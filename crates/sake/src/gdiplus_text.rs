@@ -177,6 +177,7 @@ fn logfont_of(family: u32, em: f32, style: u32, charset: u8) -> LogFont {
 /// The charset of a family's LOGFONT: SHIFTJIS for the built-in Japanese faces
 fn charset_of(family: u32) -> u8 {
     match crate::gdiplus_font::family(family) {
+        Some(f) if f.private => 1, // DEFAULT_CHARSET for a GDI+ private family
         Some(f) if crate::gdi::find_face(&f.name).is_some() && crate::gdi::face_names(f.face).first().is_some_and(|n| !n.is_ascii()) => 128,
         _ => 0,
     }

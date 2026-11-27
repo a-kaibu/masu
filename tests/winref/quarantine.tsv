@@ -5,8 +5,6 @@
 # fixed line may disappear; a new or changed line fails. A probe glob alone allows nothing.
 # compare.py prints the failing quarantined probes' line hashes as "quarantine candidates"
 # (and --quarantine-observed FILE writes them): CI never approves or updates them itself.
-gdipfont-32	https://github.com/a-kaibu/masu/issues/108	IPA substitute fonts and Japanese locale differ from the Windows runner.
-gdipfont-64	https://github.com/a-kaibu/masu/issues/108	IPA substitute fonts and Japanese locale differ from the Windows runner.
 rgnshape-32	https://github.com/a-kaibu/masu/issues/55	Ellipse and round-rectangle region scan conversion differs.
 rgnshape-64	https://github.com/a-kaibu/masu/issues/55	Ellipse and round-rectangle region scan conversion differs.
 versions-32	https://github.com/a-kaibu/masu/issues/105	Remaining composite version comparisons and SSPI table entries differ.
