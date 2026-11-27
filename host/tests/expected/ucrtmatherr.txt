@@ -1,0 +1,7 @@
+sqrt domain: ok
+log singularity: ok
+exp overflow: ok
+exp underflow: ok
+pow singularity: ok
+handler removed: ok
+rint rounding and inexact flag: ok

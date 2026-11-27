@@ -2253,6 +2253,173 @@ macro_rules! math1e {
 }
 math1e!(sqrt = f64::sqrt, sin = f64::sin, cos = f64::cos, tan = f64::tan, asin = f64::asin, acos = f64::acos,
     atan = f64::atan, exp = f64::exp, log = f64::ln, log10 = f64::log10, sinh = f64::sinh, cosh = f64::cosh, tanh = f64::tanh);
+static UCRT_MATHERR: Mutex<u32> = Mutex::new(0);
+
+fn set_ucrt_matherr(c: &mut Ctx) -> u32 {
+    *UCRT_MATHERR.locked() = c.a(0);
+    0
+}
+
+#[derive(Clone, Copy)]
+enum MathError {
+    Domain = 1,
+    Singularity = 2,
+    Overflow = 3,
+    Underflow = 4,
+}
+
+fn report_math_error(
+    c: &mut Ctx,
+    name: &str,
+    kind: MathError,
+    args: [f64; 2],
+    mut value: f64,
+    replace_result: bool,
+) -> f64 {
+    let (flags, error) = match kind {
+        MathError::Domain => (1, 33),
+        MathError::Singularity => (4, 34),
+        MathError::Overflow => (0x28, 34),
+        MathError::Underflow => (0x30, 0),
+    };
+    c.cpu.mxcsr |= flags;
+    let callback = *UCRT_MATHERR.locked();
+    let mut handled = false;
+    if callback != 0 {
+        // struct _exception: int, char *, and three doubles. The name follows the struct.
+        let slot = ps();
+        let doubles = 2 * slot;
+        let size = doubles + 24;
+        let entry = mem::heap_alloc(size + name.len() as u32 + 1, true);
+        if entry != 0 {
+            w32(entry, kind as u32);
+            wp(entry + slot, entry + size);
+            mem::w64(entry + doubles, args[0].to_bits());
+            mem::w64(entry + doubles + 8, args[1].to_bits());
+            mem::w64(entry + doubles + 16, value.to_bits());
+            mem::write(entry + size, name.as_bytes());
+            handled = c.call(callback, &[entry]) != 0;
+            if replace_result {
+                value = f64::from_bits(mem::r64(entry + doubles + 16));
+            }
+            mem::heap_free(entry);
+        }
+    }
+    if !handled && error != 0 {
+        set_errno(error);
+    }
+    value
+}
+
+fn ucrt_math_unary(c: &mut Ctx, name: &str, f: fn(f64) -> f64) -> u32 {
+    let x = c.f64(0);
+    let r = f(x);
+    let legacy_x86 = !mem::x64();
+    let error = if r.is_nan() && !x.is_nan() {
+        Some(MathError::Domain)
+    } else if r.is_infinite() && x.is_finite() {
+        Some(if matches!(name, "log" | "log10" | "_logb") { MathError::Singularity } else { MathError::Overflow })
+    } else if name == "exp" && x.is_finite() && (r == 0.0 || (legacy_x86 && r.is_subnormal())) {
+        Some(MathError::Underflow)
+    } else {
+        None
+    };
+    let value = if let Some(kind) = error {
+        let y = if legacy_x86 && matches!(name, "exp" | "log" | "log10") { x } else { 0.0 };
+        let replace = legacy_x86 || matches!(name, "sqrt" | "acos" | "asin");
+        report_math_error(c, name, kind, [x, y], r, replace)
+    } else {
+        r
+    };
+    ret(c, value)
+}
+
+macro_rules! ucrt_math1 {
+    ($($name:ident, $exported:literal => $f:expr);* $(;)?) => {
+        $(fn $name(c: &mut Ctx) -> u32 { ucrt_math_unary(c, $exported, $f) })*
+    };
+}
+ucrt_math1! {
+    ucrt_sqrt, "sqrt" => f64::sqrt;
+    ucrt_acos, "acos" => f64::acos;
+    ucrt_asin, "asin" => f64::asin;
+    ucrt_cos, "cos" => f64::cos;
+    ucrt_sin, "sin" => f64::sin;
+    ucrt_tan, "tan" => f64::tan;
+    ucrt_exp, "exp" => f64::exp;
+    ucrt_log, "log" => f64::ln;
+    ucrt_log10, "log10" => f64::log10;
+    ucrt_logb, "_logb" => logb_of;
+}
+
+fn ucrt_expf(c: &mut Ctx) -> u32 {
+    let x = Args(0).f32(c);
+    let r = x.exp();
+    let error = if x.is_finite() && r.is_infinite() {
+        Some(MathError::Overflow)
+    } else if x.is_finite() && r == 0.0 {
+        Some(MathError::Underflow)
+    } else {
+        None
+    };
+    if let Some(kind) = error {
+        report_math_error(c, "expf", kind, [f64::from(x), 0.0], f64::from(r), false);
+    }
+    ret_f32(c, r)
+}
+
+fn ucrt_pow(c: &mut Ctx) -> u32 {
+    let mut a = Args(0);
+    let (x, y) = (a.f64(c), a.f64(c));
+    let r = x.powf(y);
+    let error = if !x.is_finite() || !y.is_finite() {
+        None
+    } else if r.is_nan() {
+        Some(MathError::Domain)
+    } else if r.is_infinite() {
+        Some(if x == 0.0 { MathError::Singularity } else { MathError::Overflow })
+    } else if x != 0.0 && r == 0.0 {
+        Some(MathError::Underflow)
+    } else {
+        None
+    };
+    let value = if let Some(kind) = error {
+        if mem::x64() {
+            // The x64 implementation reports errno without calling the user's hook.
+            set_errno(if matches!(kind, MathError::Domain) { 33 } else { 34 });
+            r
+        } else {
+            report_math_error(c, "pow", kind, [x, y], r, true)
+        }
+    } else {
+        r
+    };
+    ret(c, value)
+}
+
+fn round_to_int(c: &mut Ctx, x: f64) -> f64 {
+    let rounded = match sse_control(c.cpu.mxcsr) & FE_ROUND {
+        0x100 => x.floor(),
+        0x200 => x.ceil(),
+        0x300 => x.trunc(),
+        _ => x.round_ties_even(),
+    };
+    if x.is_finite() && rounded != x {
+        c.cpu.mxcsr |= 0x20;
+    }
+    rounded
+}
+fn rint(c: &mut Ctx) -> u32 {
+    let x = c.f64(0);
+    let r = round_to_int(c, x);
+    ret(c, r)
+}
+fn rintf(c: &mut Ctx) -> u32 {
+    let x = Args(0).f32(c);
+    let r = round_to_int(c, f64::from(x));
+    ret_f32(c, r as f32)
+}
+
 /// _logb(x): x's unbiased exponent as a double (logb: -inf and ERANGE for 0, |x| for an
 /// infinity)
 fn _logb(c: &mut Ctx) -> u32 {
@@ -4895,6 +5062,21 @@ pub fn init() {
         ("fesetexceptflag", fesetexceptflag),
         ("feclearexcept", feclearexcept),
         ("feholdexcept", feholdexcept),
+        ("rint", rint),
+        ("rintf", rintf),
+        ("__setusermatherr", set_ucrt_matherr),
+        ("sqrt", ucrt_sqrt),
+        ("acos", ucrt_acos),
+        ("asin", ucrt_asin),
+        ("cos", ucrt_cos),
+        ("sin", ucrt_sin),
+        ("tan", ucrt_tan),
+        ("exp", ucrt_exp),
+        ("expf", ucrt_expf),
+        ("log", ucrt_log),
+        ("log10", ucrt_log10),
+        ("_logb", ucrt_logb),
+        ("pow", ucrt_pow),
     ] {
         implement("ucrtbase", name, f);
     }
