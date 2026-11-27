@@ -1,0 +1,9 @@
+decoder 00000000
+identity 00000000 same object 1
+option 0 read 00000000 1 accepted 00000000 invalid 80070057 reread 00000000 1
+option 1 read 00000000 0 accepted 00000000 invalid 80070057 reread 00000000 0
+option 2 read 00000000 2 accepted 00000000 invalid 80070057 reread 00000000 2
+option 3 read 00000000 16 accepted 00000000 invalid 80070057 reread 00000000 16
+option 4 read 00000000 0 accepted 00000000 invalid 80070057 reread 00000000 0
+option 5 read 80040209 999 accepted 80040209 invalid 80070057 reread 80040209 999
+release 1 0

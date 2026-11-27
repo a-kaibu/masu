@@ -30,6 +30,7 @@
 
 mod dmo;
 mod media_enum;
+mod audio_config;
 pub use dmo::in_graph as dmo_in_graph;
 
 use kome::guid::IID_IUNKNOWN;
@@ -195,11 +196,12 @@ enum Word {
     DmoWrapper,
     /// the DMO wrapper's input pin's IMemInputPin (dmo.rs)
     MemInput,
+    AudioConfig,
 }
 impl Word {
-    const ALL: [Word; 9] = [Word::Filter, Word::Pin(PinNo::P1), Word::Pin(PinNo::P2), Word::Pin(PinNo::P3), Word::StreamSelect, Word::FileSource, Word::AsyncReader, Word::DmoWrapper, Word::MemInput];
+    const ALL: [Word; 10] = [Word::Filter, Word::Pin(PinNo::P1), Word::Pin(PinNo::P2), Word::Pin(PinNo::P3), Word::StreamSelect, Word::FileSource, Word::AsyncReader, Word::DmoWrapper, Word::MemInput, Word::AudioConfig];
     /// how many words a block has
-    const N: u32 = 9;
+    const N: u32 = 10;
     const fn index(self) -> u32 {
         match self {
             Word::Filter => 0,
@@ -211,6 +213,7 @@ impl Word {
             Word::AsyncReader => 6,
             Word::DmoWrapper => 7,
             Word::MemInput => 8,
+            Word::AudioConfig => 9,
         }
     }
     /// its interface pointer in filter block `b`
@@ -301,7 +304,7 @@ fn ours(p: u32) -> Option<(u32, Word)> {
 fn pin_of(p: u32) -> Option<(u32, PinNo)> {
     match ours(p)? {
         (b, Word::Pin(k)) => Some((b, k)),
-        (_, Word::Filter | Word::StreamSelect | Word::FileSource | Word::AsyncReader | Word::DmoWrapper | Word::MemInput) => None,
+        (_, Word::Filter | Word::StreamSelect | Word::FileSource | Word::AsyncReader | Word::DmoWrapper | Word::MemInput | Word::AudioConfig) => None,
     }
 }
 fn kind(b: u32) -> Option<Kind> {
@@ -345,6 +348,7 @@ fn new_filter(k: Kind) -> u32 {
             Word::AsyncReader => v.async_reader,
             Word::DmoWrapper => dmo::vt().wrapper,
             Word::MemInput => dmo::vt().mem_input,
+            Word::AudioConfig => audio_config::vtable(),
         };
         wp(w.of(b), vt);
     }
@@ -419,6 +423,11 @@ fn f_qi(c: &mut Ctx) -> u32 {
     if filter_iid(iid) {
         add_ref(b);
         out.put(b);
+        return 0;
+    }
+    if is(iid, &audio_config::IID) && kind(b) == Some(Kind::ADec) {
+        add_ref(b);
+        out.put_addr(Word::AudioConfig.of(b));
         return 0;
     }
     if is(iid, &IID_IAMSTREAMSELECT) && kind(b) == Some(Kind::Split) {
