@@ -346,7 +346,8 @@ export function checkNetCore(core, bridge) {
   else {
     const given = new Set(list.split(",").map((x) => x.trim()));
     for (const f of fns)
-      if (!given.has(f)) errors.push(`host/fetch-bridge.js: the network worker's source lacks ${f} (masuFetchWorkerSource)`);
+      if (!given.has(f))
+        errors.push(`host/fetch-bridge.js: the network worker's source lacks ${f} (masuFetchWorkerSource)`);
   }
   return errors;
 }

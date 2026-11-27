@@ -8,11 +8,15 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { createCipheriv, randomBytes, randomUUID } from 'node:crypto';
+import { bridgeScript } from '../host/bridge-source.mjs';
 const pw = await import(process.env.PLAYWRIGHT ?? 'playwright');
 const { chromium } = pw.default ?? pw;
 const root = new URL('..', import.meta.url);
 // (the server's answer to /store-direct waited for 1 s, not 10: the test of a stuck server)
-const source = (await readFile(new URL('host/fetch-bridge.js', root), 'utf8')).replace('var MASU_DIRECT_ASK_MS = 10000;', 'var MASU_DIRECT_ASK_MS = 1000;');
+const source = bridgeScript(
+  await readFile(new URL('host/net-core.mjs', root), 'utf8'),
+  await readFile(new URL('host/fetch-bridge.js', root), 'utf8'),
+).replace('var MASU_DIRECT_ASK_MS = 10000;', 'var MASU_DIRECT_ASK_MS = 1000;');
 assert.ok(source.includes('MASU_DIRECT_ASK_MS = 1000;'));
 const sakeDir = new URL(process.env.SAKE_WEB ?? 'web/public/sake/', root);
 const blake3 = new Function(`${source}; return masuBlake3;`)();
