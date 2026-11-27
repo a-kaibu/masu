@@ -623,7 +623,7 @@ function GameInfo({
     ["エンジン", game.engine],
   ];
   return (
-    <div data-testid="game-info">
+    <div data-testid="game-info" data-game-id={game.id}>
       {url && (
         <div className="relative bg-black">
           <img src={url} alt="" className="max-h-80 w-full object-contain" />
