@@ -734,7 +734,9 @@ fn mh_supported(c: &mut Ctx) -> u32 {
     }
     let (Some(s), Some(want)) = (side(c.a::<0>()), store_of(t)) else { return Hr::Pointer.code() };
     let native = native_of(&s.media.tracks[s.stream]);
-    if reader::equal_flags(&native, &want) & 3 == 3 {
+    if matches!(native.get(&reader::k_subtype()), Some(Val::Guid(_)))
+        && reader::equal_flags(&native, &want).is_ok_and(|flags| flags & 3 == 3)
+    {
         0
     } else {
         Hr::InvalidMediaType.code()

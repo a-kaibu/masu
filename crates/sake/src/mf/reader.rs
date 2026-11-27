@@ -716,36 +716,44 @@ fn mt_equal(c: &mut Ctx) -> u32 {
     if other == 0 || out == 0 {
         return Hr::Pointer.code();
     }
-    let (Some(a), Some(b)) = (store_of(c.a(0)), store_of(other)) else { return Hr::InvalidArg.code() };
-    let f = equal_flags(&a, &b);
-    w32(out, f);
-    if f == 0xf {
-        0
-    } else {
-        Hr::False.code()
+    let flags = store_of(c.a(0)).zip(store_of(other))
+        .ok_or(Hr::InvalidArg)
+        .and_then(|(a, b)| equal_flags(&a, &b));
+    match flags {
+        Ok(f) => {
+            w32(out, f);
+            if f == 0xf { 0 } else { Hr::False.code() }
+        }
+        Err(hr) => {
+            w32(out, 0);
+            hr.code()
+        }
     }
 }
-pub fn equal_flags(a: &Store, b: &Store) -> u32 {
-    let mut f = 0;
-    let major = guid_of(a, &k_major());
-    if major.is_some() && major == guid_of(b, &k_major()) {
-        f |= 1;
+
+pub fn equal_flags(a: &Store, b: &Store) -> Result<u32, Hr> {
+    let major_a = guid_of(a, &k_major()).ok_or(Hr::InvalidArg)?;
+    let major_b = guid_of(b, &k_major()).ok_or(Hr::InvalidArg)?;
+    let mut flags = u32::from(major_a == major_b);
+    if guid_of(a, &k_subtype()) == guid_of(b, &k_subtype()) {
+        flags |= 2;
     }
-    let sub = guid_of(a, &k_subtype());
-    if sub.is_some() && sub == guid_of(b, &k_subtype()) {
-        f |= 2;
+    // The smaller store's format attributes must be present in the larger store.
+    // User data has its own bit and frame rate ranges do not affect format equality.
+    let (smaller, larger) = if a.items.len() <= b.items.len() { (a, b) } else { (b, a) };
+    let user_data = k_user_data();
+    let ignored = [
+        user_data,
+        guid(0xd2e7_558c, 0xdc1f, 0x403f, [0x9a, 0x72, 0xd2, 0x8b, 0xb1, 0xeb, 0x3b, 0x5e]),
+        guid(0xe337_1d41, 0xb4cf, 0x4a05, [0xbd, 0x4e, 0x20, 0xb8, 0x8b, 0xb2, 0xc4, 0xd6]),
+    ];
+    if smaller.items.iter().all(|(key, value)| ignored.contains(key) || larger.get(key) == Some(value)) {
+        flags |= 4;
     }
-    let ud = k_user_data();
-    let strip = |s: &Store| Store {
-        items: s.items.iter().filter(|i| i.0 != ud).cloned().collect(),
-    };
-    if strip(a).matches(&strip(b), Match::All) {
-        f |= 4;
+    if a.get(&user_data) == b.get(&user_data) {
+        flags |= 8;
     }
-    if a.get(&ud) == b.get(&ud) {
-        f |= 8;
-    }
-    f
+    Ok(flags)
 }
 
 fn type_vtable() -> u32 {
@@ -2286,8 +2294,8 @@ mod tests {
         assert_eq!(from_wave_format(&w).unwrap().matches(&pcm_type(&t, 16, false), Match::All), true);
         let x = wave_format(&pcm_type(&t, 32, true), true).unwrap();
         assert_eq!((x.len(), u16::from_le_bytes([x[0], x[1]]), x[24]), (40, 0xfffe, 3));
-        assert_eq!(equal_flags(&pcm_type(&t, 16, false), &pcm_type(&t, 16, false)), 0xf);
-        assert_eq!(equal_flags(&pcm_type(&t, 16, false), &pcm_type(&t, 32, true)), 1 | 8);
+        assert_eq!(equal_flags(&pcm_type(&t, 16, false), &pcm_type(&t, 16, false)), Ok(0xf));
+        assert_eq!(equal_flags(&pcm_type(&t, 16, false), &pcm_type(&t, 32, true)), Ok(1 | 8));
         // AAC's native type carries HEAACWAVEINFO's tail and the config
         let aac = Track {
             codec: Codec::Page {
