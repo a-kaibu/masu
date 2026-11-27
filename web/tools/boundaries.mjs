@@ -1,6 +1,6 @@
 // Restrict references as well as calls. Taking an alias would otherwise bypass the caller check.
 import ts from "typescript";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 /** @type {[string, string, string[]][]} */
 const rules = [
@@ -346,7 +346,8 @@ export function checkNetCore(core, bridge) {
   else {
     const given = new Set(list.split(",").map((x) => x.trim()));
     for (const f of fns)
-      if (!given.has(f)) errors.push(`host/fetch-bridge.js: the network worker's source lacks ${f} (masuFetchWorkerSource)`);
+      if (!given.has(f))
+        errors.push(`host/fetch-bridge.js: the network worker's source lacks ${f} (masuFetchWorkerSource)`);
   }
   return errors;
 }
@@ -356,7 +357,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   if (config.error) throw new Error(ts.flattenDiagnosticMessageText(config.error.messageText, "\n"));
   const parsed = ts.parseJsonConfigFileContent(config.config, ts.sys, process.cwd());
   const errors = check(ts.createProgram(parsed.fileNames, parsed.options));
-  const host = (f) => ts.sys.readFile(new URL(`../../host/${f}`, import.meta.url).pathname) ?? "";
+  const host = (f) => ts.sys.readFile(fileURLToPath(new URL(`../../host/${f}`, import.meta.url))) ?? "";
   errors.push(...checkNetCore(host("net-core.mjs"), host("fetch-bridge.js")));
   for (const message of errors) console.error(message);
   if (errors.length) process.exitCode = 1;

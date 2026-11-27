@@ -3,9 +3,13 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
+import { bridgeScript } from '../host/bridge-source.mjs';
 const pw = await import(process.env.PLAYWRIGHT ?? 'playwright');
 const { chromium } = pw.default ?? pw;
-const source = await readFile(new URL('../host/fetch-bridge.js', import.meta.url), 'utf8');
+const source = bridgeScript(
+  await readFile(new URL('../host/net-core.mjs', import.meta.url), 'utf8'),
+  await readFile(new URL('../host/fetch-bridge.js', import.meta.url), 'utf8'),
+);
 const server = createServer((req, res) => {
   res.setHeader('Cross-Origin-Opener-Policy', 'same-origin');
   res.setHeader('Cross-Origin-Embedder-Policy', 'require-corp');
