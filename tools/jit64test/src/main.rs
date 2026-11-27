@@ -944,7 +944,7 @@ impl Jit {
     }
 
     /// Points the Cpu at the hash table and the ring (regions jump to each other through them).
-    fn chain(&self, base: usize) {
+    fn chain(&self, base: usize, budget: Option<i32>) {
         let m = base as *mut u8;
         let mut c = unsafe { get_cpu(m) };
         c.jit_hash = HASH;
@@ -952,6 +952,9 @@ impl Jit {
         c.jit_ring = RING;
         c.jit_code_pages = PAGES;
         c.jit_calls = CALLS;
+        if let Some(budget) = budget {
+            c.jit_budget = budget;
+        }
         unsafe { put_cpu(m, &c) };
     }
 
@@ -1029,7 +1032,14 @@ impl Jit {
     /// Runs from cpu.eip until END: regions, the interpreter for what they leave to it.
     fn run(&mut self, base: usize) -> Result<usize, String> {
         let m = base as *mut u8;
+        // Optional per-dispatch budget, as kura replenishes it between calls to the dispatcher.
+        static BUDGET: std::sync::LazyLock<Option<i32>> = std::sync::LazyLock::new(|| {
+            std::env::var("JIT64_BUDGET").ok().map(|value| {
+                value.parse::<i32>().ok().filter(|&n| n > 0).expect("JIT64_BUDGET must be positive")
+            })
+        });
         let mut regions = 0;
+        let mut exhausted = 0;
         // (a program's store can raise a loop count it runs once rewritten, one interpreter
         // step a round: 0x20001 iterations of a three-instruction loop fit)
         for _ in 0..1_000_000 {
@@ -1042,7 +1052,7 @@ impl Jit {
             }
             if c.eip == END {
                 if std::env::var("JRING").is_ok() {
-                    eprintln!("regions {regions} chained {}", unsafe { ((base + RING as usize) as *const u32).read() });
+                    eprintln!("regions {regions} exhausted {exhausted} chained {}", unsafe { ((base + RING as usize) as *const u32).read() });
                 }
                 return Ok(regions);
             }
@@ -1067,7 +1077,7 @@ impl Jit {
                 self.translate(base, c.eip, c.rip_hi)?;
             }
             let (f, k, idx) = self.entries[&c.eip];
-            self.chain(base);
+            self.chain(base, *BUDGET);
             let mut params = vec![Val::I32(0); 16];
             params[0] = Val::I32(CPU as i32);
             params[1] = Val::I32((idx | k << koji::jit::ENTRY_SHIFT | if self.fnm { koji::jit::FN_TAG } else { 0 }) as i32);
@@ -1076,6 +1086,9 @@ impl Jit {
             regions += 1;
             if std::env::var("JTRACE").is_ok() { let c = unsafe { get_cpu(m) }; eprintln!("entry {:#x} -> status {} at {:x}:{:#x} rsp {:#x} rbx {} rsi {}", params[1].unwrap_i32(), results[0].unwrap_i32(), c.rip_hi, c.eip, c.gpr(koji::Reg64::Rsp), c.gpr(koji::Reg64::Rbx), c.gpr(koji::Reg64::Rsi)); }
             let mut c = unsafe { get_cpu(m) };
+            if BUDGET.is_some() && c.jit_budget <= 0 {
+                exhausted += 1;
+            }
             if c.jit_stale != 0 {
                 // (as kura's stale_hit: the code changed since translated; the translations go,
                 // the interpreter runs the block's first instruction, then it is made again)

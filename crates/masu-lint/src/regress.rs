@@ -1426,6 +1426,38 @@ pub(super) fn jit_simd_access(tree: &Tree) -> Hits {
     out
 }
 
+
+pub(super) fn jit64_budget(tree: &Tree) -> Hits {
+    use syn::spanned::Spanned;
+    let mut out = Hits::new();
+    let root = Rel::new("crates/koji/src/jit/long.rs");
+    let mut files = tree.rs(&["crates/koji/src/jit/long/"]);
+    files.push(root.clone());
+    for f in files {
+        let ranges: Vec<_> = if f == root {
+            tree.syntax(&f).into_iter().flat_map(|file| file.items).filter_map(|item| {
+                let syn::Item::Fn(fun) = item else { return None };
+                if fun.sig.ident != "reload_budget" && fun.sig.ident != "spill_budget" {
+                    return None;
+                }
+                let span = fun.block.span();
+                Some(crate::syntax::line(span)..=span.end().line)
+            }).collect()
+        } else {
+            Vec::new()
+        };
+        for (i, text) in product_code(tree, &f).lines().enumerate() {
+            let line = i + 1;
+            if text.split(|c: char| c != '_' && !c.is_alphanumeric()).any(|word| word == "jit_budget")
+                && !ranges.iter().any(|range| range.contains(&line))
+            {
+                out.push((f.clone(), line, "Cpu::jit_budget accessed outside reload_budget and spill_budget".into()));
+            }
+        }
+    }
+    out
+}
+
 /// What jit32test must say: a module that does not load fails the test (Made, not a refusal),
 /// and a run in which no translation loaded fails
 pub const JIT_HARNESS_LOADED: [(&str, &str); 2] = [("tools/jit32test/src/main.rs", "fn translate(&mut self, base: usize, eip: u32) -> Result<Made, String>"), ("tools/jit32test/src/main.rs", "if loaded == 0 && count > 0")];
