@@ -1273,7 +1273,12 @@ pub fn setup_pass(store: &Store, osgn: &[SigElement], ps: Option<&[u8]>, prim: P
         frhw[nf] = vec3<f32>(r[0], r[1], r[2]);
         setup[o] = bitcast<vec4<u32>>(dp[0]); setup[o + 1u] = bitcast<vec4<u32>>(dp[1]); setup[o + 2u] = bitcast<vec4<u32>>(dp[2]);
         let pr = sx_plane(r[0], r[1], r[2]);
-        let pz = sx_plane(z[0], z[1], z[2]);
+        var pz = sx_plane(z[0], z[1], z[2]);
+        if (xw(XD_BIAS) != 0u || (xw(XD_BIAS_SLOPE) & 0x7fffffffu) != 0u) {
+            let zmax = max(abs(z[0]), max(abs(z[1]), abs(z[2])));
+            // WARP adds the bias to the plane's constant, retaining its derivatives.
+            pz.z += sx_bias(zmax, max(abs(pz.x), abs(pz.y)));
+        }
         setup[o + 3u] = vec4<u32>(bitcast<u32>(pr.x), bitcast<u32>(pr.y), bitcast<u32>(pr.z), 0u);
         setup[o + 4u] = vec4<u32>(bitcast<u32>(pz.x), bitcast<u32>(pz.y), bitcast<u32>(pz.z), 0u);
         nf += 1u;
