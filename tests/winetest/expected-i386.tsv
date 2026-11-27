@@ -112,11 +112,11 @@ gdi32:clipping	fail	28	129
 gdi32:dc	crash	16	0
 gdi32:dib	fail	5166	2369682
 gdi32:font	fail	828	69324
-gdi32:gdiobj	fail	12	156
+gdi32:gdiobj	ok	0	159
 gdi32:generated	ok	0	0
 gdi32:icm	fail	27	53
 gdi32:mapping	fail	200	422
-gdi32:metafile	fail	3575	4999
+gdi32:metafile	fail	1954	5031
 gdi32:palette	fail	1585	1618
 gdi32:path	fail	56	124
 gdi32:pen	fail	418	917

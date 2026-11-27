@@ -84,6 +84,9 @@ pub enum G {
     Font(LogFont),
     Palette(Vec<u32>),
     Region(Vec<Rect>),
+    ColorSpace(LogColorSpace),
+    MetaDc(MetafileDc),
+    MetaFile(Metafile),
     Dc(Box<Dc>),
 }
 
@@ -101,6 +104,7 @@ pub struct DcState {
     pub pen: u32,
     pub font: u32,
     pub palette: u32,
+    pub color_space: u32,
     pub text: u32,
     pub bk: u32,
     pub bk_mode: u32,
@@ -224,9 +228,11 @@ const ENTRY: u32 = 24;
 fn ext_type(o: &G) -> u8 {
     match o {
         G::Dc(_) => 0x01,
+        G::MetaDc(dc) => if dc.kind == MetafileKind::Emf { 0x21 } else { 0x66 },
+        G::MetaFile(m) => if m.kind == MetafileKind::Emf { 0x46 } else { 0x26 },
         G::Region(_) => 0x04,
         G::Palette(_) => 0x08,
-        G::Bitmap(_) => 0x09,
+        G::Bitmap(_) | G::ColorSpace(_) => 0x09,
         G::Font(_) => 0x0a,
         G::Brush(_) => 0x10,
         G::Pen(p) => if p.ext { 0x50 } else { 0x30 },
@@ -321,9 +327,10 @@ const fn stock(i: u32) -> u32 {
 }
 const STOCK: u32 = stock(0);
 const DEFAULT_BITMAP: u32 = stock(STOCK_N - 1);
+const DEFAULT_COLOR_SPACE: u32 = handle(STOCK_SLOT + STOCK_N as u16, 0x09, true, 0);
 
 fn is_stock(h: u32) -> bool {
-    stock_index(h).is_some()
+    h == DEFAULT_COLOR_SPACE || stock_index(h).is_some()
 }
 
 /// Which stock object `h` is
@@ -386,6 +393,7 @@ pub fn init() {
             solid(0xffffff),
             G::Pen(Pen { style: 0, width: 1, color: 0, ext: false }),
         ];
+        t.m.insert(DEFAULT_COLOR_SPACE, G::ColorSpace(LogColorSpace::srgb()));
         for (i, o) in objs.into_iter().enumerate() {
             t.m.insert(stock(i as u32), o);
         }
@@ -808,6 +816,7 @@ fn fresh_state() -> DcState {
         pen: stock(7),
         font: stock(13),
         palette: stock(15),
+        color_space: DEFAULT_COLOR_SPACE,
         text: 0,
         bk: 0xffffff,
         bk_mode: 2,
@@ -2766,16 +2775,21 @@ fn CreateICW(_: &mut Ctx) -> u32 {
 }
 fn DeleteDC(c: &mut Ctx) -> u32 {
     let h = c.a(0);
-    u32::from(with(|t| match t.m.get(&h).map(|g| matches!(g, G::Dc(_))).and_then(|dc| dc.then(|| t.take(h)).flatten()) {
-        Some(G::Dc(d)) => {
-            // (its GetDCEx region and its place among the window DCs go with it)
-            drop_region(t, d.rgn);
-            t.dce.cache.retain(|&x| x != h);
-            t.dce.own.retain(|_, x| *x != h);
-            t.dce.class.retain(|_, x| *x != h);
-            true
+    u32::from(with(|t| {
+        let valid = matches!(t.m.get(&h), Some(G::Dc(_)))
+            || matches!(t.m.get(&h), Some(G::MetaDc(d)) if d.kind == MetafileKind::Emf);
+        match valid.then(|| t.take(h)).flatten() {
+            Some(G::MetaDc(_)) => true,
+            Some(G::Dc(d)) => {
+                // (its GetDCEx region and its place among the window DCs go with it)
+                drop_region(t, d.rgn);
+                t.dce.cache.retain(|&x| x != h);
+                t.dce.own.retain(|_, x| *x != h);
+                t.dce.class.retain(|_, x| *x != h);
+                true
+            }
+            _ => false,
         }
-        _ => false,
     }))
 }
 
@@ -2800,6 +2814,9 @@ fn GetObjectType(c: &mut Ctx) -> u32 {
         Some(G::Font(_)) => 6,
         Some(G::Bitmap(_)) => 7,
         Some(G::Region(_)) => 8,
+        Some(G::ColorSpace(_)) => 14,
+        Some(G::MetaDc(d)) => if d.kind == MetafileKind::Emf { 12 } else { 4 },
+        Some(G::MetaFile(m)) => if m.kind == MetafileKind::Emf { 13 } else { 9 },
         // (GetObjectType sets the last error for a handle that is no object: gdi32:gdiobj)
         None => {
             crate::k32::last_error(6);
@@ -2820,6 +2837,7 @@ pub(crate) fn SelectObject(c: &mut Ctx) -> u32 {
             Some(G::Brush(_)) => 1,
             Some(G::Pen(_)) => 2,
             Some(G::Font(_)) => 3,
+            Some(G::ColorSpace(_)) => return select_color_space(t, dc, h).unwrap_or(0),
             _ => return 0,
         };
         let Some(G::Dc(d)) = t.m.get_mut(&dc) else { return 0 };
@@ -2845,7 +2863,8 @@ fn DeleteObject(c: &mut Ctx) -> u32 {
     }
     with(|t| {
         match t.m.get(&h) {
-            Some(G::Dc(_)) | None => return 0,
+            Some(G::Dc(_) | G::MetaDc(_) | G::MetaFile(_)) | None => return 0,
+            Some(G::ColorSpace(_)) => return u32::from(delete_color_space(t, h)),
             _ => {}
         }
         if t.solid_h.contains(&h) {
@@ -2967,9 +2986,364 @@ fn GetCurrentObject(c: &mut Ctx) -> u32 {
         5 => s.palette,
         6 => s.font,
         7 => s.bitmap,
+        14 => s.color_space,
         _ => 0,
     })
 }
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum MetafileKind {
+    Wmf,
+    Emf,
+}
+
+pub struct MetafileDc {
+    kind: MetafileKind,
+    file: Option<crate::files::File>,
+    frame: Option<Rect>,
+    description: Vec<u16>,
+    pos: (i32, i32),
+    bounds: Option<Rect>,
+    records: Vec<u8>,
+    count: u32,
+    largest: u32,
+}
+
+pub struct Metafile {
+    kind: MetafileKind,
+    bytes: Vec<u8>,
+}
+
+impl MetafileDc {
+    fn record(&mut self, emf: u32, wmf: u16, coords: &[i32]) {
+        let size = coords.len() as u32;
+        match self.kind {
+            MetafileKind::Wmf => {
+                let words = 3 + size;
+                self.records.extend(words.to_le_bytes());
+                self.records.extend(wmf.to_le_bytes());
+                self.records.extend(coords.iter().rev().flat_map(|&n| (n as i16).to_le_bytes()));
+                self.largest = self.largest.max(words);
+            }
+            MetafileKind::Emf => {
+                self.records.extend(emf.to_le_bytes());
+                self.records.extend((8 + 4 * size).to_le_bytes());
+                self.records.extend(coords.iter().flat_map(|n| n.to_le_bytes()));
+            }
+        }
+        self.count += 1;
+    }
+
+    fn enclose(&mut self, r: Rect) {
+        self.bounds = Some(self.bounds.map_or(r, |b| Rect {
+            l: b.l.min(r.l), t: b.t.min(r.t), r: b.r.max(r.r), b: b.b.max(r.b),
+        }));
+    }
+
+    fn finish(&self) -> Option<Vec<u8>> {
+        let records = u32::try_from(self.records.len()).ok()?;
+        let mut data = Vec::new();
+        match self.kind {
+            MetafileKind::Wmf => {
+                let kind = if self.file.is_some() { 2u16 } else { 1 };
+                data.extend([kind, 9, 0x300].into_iter().flat_map(u16::to_le_bytes));
+                data.extend((12 + records / 2).to_le_bytes());
+                data.extend(0u16.to_le_bytes());
+                data.extend(self.largest.max(3).to_le_bytes());
+                data.extend(0u16.to_le_bytes());
+                data.extend(&self.records);
+                data.extend([3, 0, 0, 0, 0, 0]);
+            }
+            MetafileKind::Emf => {
+                let (w, h) = user::screen();
+                let (mm_w, mm_h) = (w * 254 / 960, h * 254 / 960);
+                let bounds = self.bounds.unwrap_or(Rect { l: 0, t: 0, r: -1, b: -1 });
+                let scale = |v: i32, mm: i32, px: i32| (i64::from(v) * i64::from(mm) * 100 / i64::from(px.max(1))) as i32;
+                let frame = self.frame.unwrap_or(Rect {
+                    l: scale(bounds.l, mm_w, w), t: scale(bounds.t, mm_h, h),
+                    r: scale(bounds.r, mm_w, w), b: scale(bounds.b, mm_h, h),
+                });
+                let desc = u32::try_from(self.description.len()).ok()?;
+                let head = desc.checked_mul(2)?.next_multiple_of(4).checked_add(108)?;
+                let total = head.checked_add(records)?.checked_add(20)?;
+                let header = [
+                    1, head, bounds.l as u32, bounds.t as u32, bounds.r as u32, bounds.b as u32,
+                    frame.l as u32, frame.t as u32, frame.r as u32, frame.b as u32,
+                    0x464d_4520, 0x10000, total, self.count.checked_add(2)?, 1,
+                    desc, if desc == 0 { 0 } else { 108 }, 0, w as u32, h as u32,
+                    mm_w as u32, mm_h as u32, 0, 0, 0, mm_w as u32 * 1000, mm_h as u32 * 1000,
+                ];
+                data.extend(header.into_iter().flat_map(u32::to_le_bytes));
+                data.extend(self.description.iter().flat_map(|v| v.to_le_bytes()));
+                data.resize(head as usize, 0);
+                data.extend(&self.records);
+                data.extend([14u32, 20, 0, 16, 20].into_iter().flat_map(u32::to_le_bytes));
+            }
+        }
+        Some(data)
+    }
+}
+
+fn with_metafile<R>(hdc: u32, f: impl FnOnce(&mut MetafileDc) -> R) -> Option<R> {
+    if !matches!((hdc >> 16) & 0x7f, 0x21 | 0x66) {
+        return None;
+    }
+    with(|t| match t.m.get_mut(&hdc) {
+        Some(G::MetaDc(dc)) => Some(f(dc)),
+        _ => None,
+    })
+}
+
+fn metafile_description(p: u32, wide: bool) -> Vec<u16> {
+    if p == 0 { return Vec::new(); }
+    let (mut first, second) = if wide {
+        let first = mem::wstr(p);
+        let second = mem::wstr(p.saturating_add((first.len() as u32 + 1) * 2));
+        (first, second)
+    } else {
+        let first = mem::cstr(p);
+        let second = mem::cstr(p.saturating_add(first.len() as u32 + 1));
+        (crate::text::a2w(&first), crate::text::a2w(&second))
+    };
+    first.push(0);
+    first.extend(second);
+    first.extend([0, 0]);
+    first
+}
+
+fn create_metafile(c: &mut Ctx, kind: MetafileKind, wide: bool) -> u32 {
+    let (path, frame, description) = if kind == MetafileKind::Emf {
+        let reference = c.a(0);
+        if reference != 0 && dc_state(reference).is_none() {
+            crate::k32::last_error(6);
+            return 0;
+        }
+        let p = c.a(2);
+        let frame = (p != 0).then(|| Rect {
+            l: r32(p) as i32, t: r32(p + 4) as i32, r: r32(p + 8) as i32, b: r32(p + 12) as i32,
+        });
+        (c.a(1), frame, metafile_description(c.a(3), wide))
+    } else {
+        (c.a(0), None, Vec::new())
+    };
+    let file = if path != 0 {
+        match crate::files::open(&crate::k32::arg_str(path, wide), 0x4000_0000, 2) {
+            Ok(file) => Some(file),
+            Err(error) => {
+                crate::k32::last_error(error);
+                return 0;
+            }
+        }
+    } else {
+        None
+    };
+    add(G::MetaDc(MetafileDc {
+        kind, file, frame, description, pos: (0, 0), bounds: None,
+        records: Vec::new(), count: 0, largest: 0,
+    }))
+}
+
+fn close_metafile(c: &mut Ctx, kind: MetafileKind) -> u32 {
+    let h = c.a(0);
+    let dc = with(|t| {
+        if matches!(t.m.get(&h), Some(G::MetaDc(dc)) if dc.kind == kind) { t.take(h) } else { None }
+    });
+    let Some(G::MetaDc(dc)) = dc else {
+        crate::k32::last_error(6);
+        return 0;
+    };
+    let Some(bytes) = dc.finish() else { return 0 };
+    if let Some(file) = dc.file {
+        match file.write_at(None, false, &bytes) {
+            Ok(n) if n as usize == bytes.len() => {}
+            Ok(_) => { crate::k32::last_error(29); return 0; }
+            Err(err) => { crate::k32::last_error(err.code()); return 0; }
+        }
+    }
+    add(G::MetaFile(Metafile { kind, bytes }))
+}
+
+fn delete_metafile(c: &mut Ctx, kind: MetafileKind) -> u32 {
+    let h = c.a(0);
+    let removed = with(|t| matches!(t.m.get(&h), Some(G::MetaFile(m)) if m.kind == kind) && t.take(h).is_some());
+    if !removed { crate::k32::last_error(6); }
+    u32::from(removed)
+}
+
+fn metafile_bits(c: &mut Ctx, kind: MetafileKind, header: bool) -> u32 {
+    let (h, size, p) = (c.a(0), c.a(1), c.a(2));
+    with(|t| {
+        let Some(G::MetaFile(m)) = t.m.get(&h).filter(|o| matches!(o, G::MetaFile(m) if m.kind == kind)) else {
+            crate::k32::last_error(6);
+            return 0;
+        };
+        let n = if header { u32::from_le_bytes(m.bytes[4..8].try_into().unwrap_or_default()) } else { m.bytes.len() as u32 };
+        if p == 0 { return n; }
+        let copy = if header { n.min(size) } else if size < n { 0 } else { n };
+        if copy == 0 || mem::range(p, copy).is_none() { return 0; }
+        mem::write(p, &m.bytes[..copy as usize]);
+        copy
+    })
+}
+
+fn CreateMetaFileA(c: &mut Ctx) -> u32 { create_metafile(c, MetafileKind::Wmf, false) }
+fn CreateMetaFileW(c: &mut Ctx) -> u32 { create_metafile(c, MetafileKind::Wmf, true) }
+fn CreateEnhMetaFileA(c: &mut Ctx) -> u32 { create_metafile(c, MetafileKind::Emf, false) }
+fn CreateEnhMetaFileW(c: &mut Ctx) -> u32 { create_metafile(c, MetafileKind::Emf, true) }
+fn CloseMetaFile(c: &mut Ctx) -> u32 { close_metafile(c, MetafileKind::Wmf) }
+fn CloseEnhMetaFile(c: &mut Ctx) -> u32 { close_metafile(c, MetafileKind::Emf) }
+fn DeleteMetaFile(c: &mut Ctx) -> u32 { delete_metafile(c, MetafileKind::Wmf) }
+fn DeleteEnhMetaFile(c: &mut Ctx) -> u32 { delete_metafile(c, MetafileKind::Emf) }
+fn GetMetaFileBitsEx(c: &mut Ctx) -> u32 { metafile_bits(c, MetafileKind::Wmf, false) }
+fn GetEnhMetaFileBits(c: &mut Ctx) -> u32 { metafile_bits(c, MetafileKind::Emf, false) }
+fn GetEnhMetaFileHeader(c: &mut Ctx) -> u32 { metafile_bits(c, MetafileKind::Emf, true) }
+
+
+
+#[derive(Clone)]
+pub struct LogColorSpace {
+    header: [u32; 17],
+    filename: Vec<u16>,
+}
+
+impl LogColorSpace {
+    const HEADER_BYTES: u32 = 68;
+    const SIGNATURE: u32 = 0x5053_4f43;
+    const VERSION: u32 = 0x400;
+
+    fn srgb() -> Self {
+        Self {
+            header: [
+                Self::SIGNATURE, Self::VERSION, 0, 0x7352_4742, 4,
+                0x6b91, 0x3db8, 0x070e, 0x5793, 0xa9ba, 0x1bf4, 0x38aa, 0x188e,
+                0x1_2888, 0x2_3333, 0x2_3333, 0x2_3333,
+            ],
+            filename: r"C:\Windows\system32\spool\drivers\color\sRGB Color Space Profile.icm".encode_utf16().collect(),
+        }
+    }
+
+    fn size(wide: bool) -> u32 {
+        Self::HEADER_BYTES + if wide { 520 } else { 260 }
+    }
+
+    fn read(p: u32, wide: bool) -> Option<Self> {
+        mem::range(p, Self::size(wide))?;
+        let at = mem::ga(p);
+        let header = std::array::from_fn(|i| r32(at.at(i as u32, 4)));
+        if (header[0], header[1], header[2]) != (Self::SIGNATURE, Self::VERSION, Self::size(wide)) {
+            return None;
+        }
+        let name = at + Self::HEADER_BYTES;
+        let filename = if wide {
+            (0..260).map(|i| r16(name.at(i, 2))).take_while(|&v| v != 0).collect()
+        } else {
+            let bytes = mem::bytes(name.get(), 260);
+            crate::text::a2w(&bytes[..bytes.iter().position(|&v| v == 0).unwrap_or(bytes.len())])
+        };
+        Some(Self { header, filename })
+    }
+
+    fn write(&self, p: u32, wide: bool) {
+        let at = mem::ga(p);
+        for (i, &value) in self.header.iter().enumerate() {
+            w32(at.at(i as u32, 4), if i == 2 { Self::size(wide) } else { value });
+        }
+        let name = at + Self::HEADER_BYTES;
+        if wide {
+            for i in 0..260 {
+                w16(name.at(i, 2), self.filename.get(i as usize).copied().unwrap_or(0));
+            }
+        } else {
+            let bytes = crate::text::w2a(&self.filename);
+            mem::zero(name.get(), 260);
+            mem::write(name.get(), &bytes[..bytes.len().min(259)]);
+        }
+    }
+}
+
+fn GetColorSpace(c: &mut Ctx) -> u32 {
+    let Some(state) = dc_state(c.a(0)) else {
+        crate::k32::last_error(87);
+        return 0;
+    };
+    state.color_space
+}
+
+fn SetColorSpace(c: &mut Ctx) -> u32 {
+    let (dc, color) = (c.a(0), c.a(1));
+    with(|t| select_color_space(t, dc, color)).unwrap_or_else(|| {
+        crate::k32::last_error(87);
+        0
+    })
+}
+
+fn select_color_space(t: &mut Objs, dc: u32, color: u32) -> Option<u32> {
+    if !matches!(t.m.get(&color), Some(G::ColorSpace(_))) {
+        return None;
+    }
+    let Some(G::Dc(d)) = t.m.get_mut(&dc).filter(|g| matches!(g, G::Dc(d) if !d.disabled)) else {
+        return None;
+    };
+    Some(std::mem::replace(&mut d.s.color_space, color))
+}
+
+fn create_color_space(p: u32, wide: bool) -> u32 {
+    let Some(log) = LogColorSpace::read(p, wide) else {
+        crate::k32::last_error(87);
+        return 0;
+    };
+    add(G::ColorSpace(log))
+}
+
+fn CreateColorSpaceA(c: &mut Ctx) -> u32 {
+    create_color_space(c.a(0), false)
+}
+
+fn CreateColorSpaceW(c: &mut Ctx) -> u32 {
+    create_color_space(c.a(0), true)
+}
+
+fn get_log_color_space(c: &mut Ctx, wide: bool) -> u32 {
+    let (h, out, len) = (c.a(0), c.a(1), c.a(2));
+    let size = LogColorSpace::size(wide);
+    if len < size {
+        crate::k32::last_error(122);
+        return 0;
+    }
+    let log = with(|t| match t.m.get(&h) {
+        Some(G::ColorSpace(log)) => Some(log.clone()),
+        _ => None,
+    });
+    let Some(log) = log.filter(|_| mem::range(out, size).is_some()) else {
+        crate::k32::last_error(87);
+        return 0;
+    };
+    log.write(out, wide);
+    1
+}
+
+fn GetLogColorSpaceA(c: &mut Ctx) -> u32 {
+    get_log_color_space(c, false)
+}
+
+fn GetLogColorSpaceW(c: &mut Ctx) -> u32 {
+    get_log_color_space(c, true)
+}
+
+fn delete_color_space(t: &mut Objs, h: u32) -> bool {
+    if h == DEFAULT_COLOR_SPACE {
+        return true;
+    }
+    matches!(t.m.get(&h), Some(G::ColorSpace(_)))
+        && !t.m.values().any(|obj| matches!(obj, G::Dc(dc) if dc.s.color_space == h || dc.saved.iter().any(|s| s.color_space == h)))
+        && t.take(h).is_some()
+}
+
+fn DeleteColorSpace(c: &mut Ctx) -> u32 {
+    u32::from(with(|t| delete_color_space(t, c.a(0))))
+}
+
+
 
 // --- brushes, pens
 
@@ -3133,10 +3507,20 @@ fn GetBrushOrgEx(c: &mut Ctx) -> u32 {
     u32::from(dc_state(c.a(0)).map(|s| put_pt(c.a(1), s.brush_org)).is_some())
 }
 fn GetCurrentPositionEx(c: &mut Ctx) -> u32 {
-    u32::from(dc_state(c.a(0)).map(|s| put_pt(c.a(1), s.pos)).is_some())
+    let (dc, out) = (c.a(0), c.a(1));
+    let pos = dc_state(dc).map(|s| s.pos).or_else(|| with_metafile(dc, |d| d.pos));
+    u32::from(pos.map(|pos| put_pt(out, pos)).is_some())
 }
 fn MoveToEx(c: &mut Ctx) -> u32 {
     let (dc, x, y, p) = (c.a(0), c.i(1), c.i(2), c.a(3));
+    if let Some(pos) = with_metafile(dc, |d| {
+        d.record(27, 0x0214, &[x, y]);
+        let pos = std::mem::replace(&mut d.pos, (x, y));
+        (d.kind == MetafileKind::Emf).then_some(pos)
+    }) {
+        if let Some(pos) = pos { put_pt(p, pos); }
+        return 1;
+    }
     u32::from(with_dc(dc, |d| put_pt(p, std::mem::replace(&mut d.s.pos, (x, y)))).is_some())
 }
 fn GetDCOrgEx(c: &mut Ctx) -> u32 {
@@ -4150,6 +4534,13 @@ fn line(c: &mut Canvas, s: &DcState, pen: PenInfo, a: (i32, i32), b: (i32, i32))
 
 fn LineTo(c: &mut Ctx) -> u32 {
     let (dc, x, y) = (c.a(0), c.i(1), c.i(2));
+    if with_metafile(dc, |d| {
+        d.record(54, 0x0213, &[x, y]);
+        d.enclose(Rect { l: d.pos.0, t: d.pos.1, r: x, b: y }.ordered());
+        d.pos = (x, y);
+    }).is_some() {
+        return 1;
+    }
     draw(dc, |t, s, cv| match pen_of(t, s) {
         Some(pen) => line(cv, s, pen, s.pos, (x, y)),
         None => Rect::default(),
@@ -5654,6 +6045,9 @@ fn GetObjectTypeDummy(_: &mut Ctx) -> u32 {
 fn register() {
     let _ = (dc_of, GetObjectTypeDummy);
     reg!("gdi32";
+        CreateMetaFileA, CreateMetaFileW, CreateEnhMetaFileA, CreateEnhMetaFileW, CloseMetaFile, CloseEnhMetaFile,
+        DeleteMetaFile, DeleteEnhMetaFile, GetMetaFileBitsEx, GetEnhMetaFileBits, GetEnhMetaFileHeader,
+        GetColorSpace, SetColorSpace, GetLogColorSpaceA, GetLogColorSpaceW, CreateColorSpaceA, CreateColorSpaceW, DeleteColorSpace,
         GetStockObject, CreateCompatibleDC, CreateDCA, CreateDCW, CreateICA, CreateICW, DeleteDC, GetObjectType,
         SelectObject, DeleteObject, GetObjectA, GetObjectW, GetCurrentObject,
         CreateSolidBrush, CreateBrushIndirect, CreateHatchBrush, CreatePatternBrush, CreateDIBPatternBrushPt, CreateDIBPatternBrush, CreatePen, CreatePenIndirect,
