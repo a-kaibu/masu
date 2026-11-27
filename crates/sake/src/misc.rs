@@ -3682,6 +3682,7 @@ struct Browse {
     /// BROWSEINFO.lParam: the callback's lpData (an LPARAM)
     lparam: crate::abi::Lparam,
     sel: String,
+    selection_before_init: bool,
 }
 thread_local!(static BROWSE: std::cell::RefCell<Vec<Browse>> = const { std::cell::RefCell::new(Vec::new()) });
 fn browse<R>(f: impl FnOnce(&mut Browse) -> R) -> Option<R> {
@@ -3707,14 +3708,19 @@ fn browse_dlgproc(c: &mut Ctx) -> u32 {
         1
     };
     match m {
-        // WM_INITDIALOG: BFFM_INITIALIZED, then BFFM_SELCHANGED for the first selection (as
-        // Windows' dialog); OK comes after whatever the callback posted meanwhile
+        // Windows sends the initial BFFM_SELCHANGED before BFFM_INITIALIZED in the
+        // unrooted tree and the new-style dialog. The rooted classic tree sends it after.
         0x110 => {
-            let (f, l) = browse(|b| (b.lpfn, b.lparam)).unwrap_or((0, crate::abi::Lparam::ZERO));
+            let (f, l, before_init) = browse(|b| (b.lpfn, b.lparam, b.selection_before_init)).unwrap_or((0, crate::abi::Lparam::ZERO, false));
             if f != 0 {
                 use crate::abi::Arg;
+                if before_init {
+                    browse_selchanged(c, h);
+                }
                 crate::abi::call(c.cpu, f, &[Arg::handle(h), Arg::dword(1), Arg::ZERO, l.into()]);
-                browse_selchanged(c, h);
+                if !before_init {
+                    browse_selchanged(c, h);
+                }
             }
             crate::user::post(h, BROWSE_OK, crate::abi::Wparam::ZERO, crate::abi::Lparam::ZERO);
             1
@@ -3754,7 +3760,9 @@ fn sh_browse_for_folder(c: &mut Ctx, wide: bool) -> u32 {
     let arch = crate::abi::Arch::current();
     let lparam = crate::abi::Lparam::from_guest(crate::abi::read_slot(mem::ga(bi + 6 * ps), arch), arch);
     let sel = pidl_path(root).or_else(|| folder_path(0, false)).unwrap_or_default();
-    BROWSE.with(|b| b.borrow_mut().push(Browse { lpfn, lparam, sel }));
+    let new_style = mem::r32(bi + 4 * ps) & 0x40 != 0; // BIF_NEWDIALOGSTYLE
+    let selection_before_init = root == 0 || new_style;
+    BROWSE.with(|b| b.borrow_mut().push(Browse { lpfn, lparam, sel, selection_before_init }));
     static PROC: std::sync::OnceLock<u32> = std::sync::OnceLock::new();
     let proc_ = *PROC.get_or_init(|| crate::api::host_fn("browse_dlgproc", browse_dlgproc, 16));
     let r = crate::user::hidden_dialog(c, owner, proc_, lparam);
