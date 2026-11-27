@@ -74,6 +74,14 @@ struct Res {
     /// a multisampled texture whose SRV is SNORM and whose page texture holds other texels
     /// (crate::snorm::View); None for any other
     snorm: Option<crate::snorm::View>,
+    unorm8: bool,
+}
+
+/// A bound SRV that needs a format-specific conversion on a texel load.
+#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
+pub enum TextureLoadView {
+    Snorm(crate::snorm::View),
+    Unorm8(u32),
 }
 
 /// A raw or structured buffer view (dcl_resource_raw/structured, dcl_uav_raw/structured) or
@@ -327,6 +335,7 @@ struct W {
     addr_used: std::collections::BTreeSet<(u32, u32)>,
     /// whether a load reads one (the module then has crate::snorm::helpers)
     snorm_used: bool,
+    unorm8_used: bool,
 }
 
 type R<T> = Result<T, String>;
@@ -500,7 +509,7 @@ fn declarations(w: &mut W, p: &Program) -> R<()> {
                     Some(4) => K::U,
                     _ => K::F,
                 };
-                w.res.insert(i.ops[0].reg(), Res { dim: i.ctl & 0xf, ret, depth: false, snorm: None });
+                w.res.insert(i.ops[0].reg(), Res { dim: i.ctl & 0xf, ret, depth: false, snorm: None, unorm8: false });
             }
             Opcode::DclSampler => {
                 w.samplers.insert(i.ops[0].reg(), i.ctl & 0xf == 1);
@@ -1083,6 +1092,7 @@ impl W {
             split: false,
             addr: Vec::new(),
             snorm_used: false,
+            unorm8_used: false,
             addr_used: Default::default(),
             pixel,
             isgn,
@@ -1641,6 +1651,9 @@ impl W {
             // floats, a channel the format has not 0, alpha 1)
             self.snorm_used = true;
             self.vec4_result(i, format!("select(vec4<f32>(), {}, {ok})", v.load_wgsl(&format!("textureLoad({tv}, {args})"))), K::F, swz)
+        } else if self.res.get(&t).is_some_and(|r| r.unorm8) {
+            self.unorm8_used = true;
+            self.vec4_result(i, format!("select(vec4<f32>(), unorm8_load(textureLoad({tv}, {args})), {ok})"), K::F, swz)
         } else {
             self.vec4_result(i, format!("select(vec4<{}>(), textureLoad({tv}, {args}), {ok})", k.s()), k, swz)
         }
@@ -2500,6 +2513,18 @@ pub fn sample_rate(code: &[u8]) -> bool {
     w.inputs.values().any(|d| d.sysval == 10 || matches!(d.interp, 6 | 7))
 }
 
+/// SRV slots named by ld and ld2dms. A shader is specialized only for the slots it loads.
+pub fn texture_load_slots(code: &[u8]) -> Vec<u32> {
+    let Ok((_, program)) = parse(code) else { return Vec::new() };
+    let mut slots: Vec<_> = program.insts.iter()
+        .filter(|i| matches!(i.op, Opcode::Ld | Opcode::LdMs))
+        .filter_map(|i| i.op(2).ok().map(Operand::reg))
+        .collect();
+    slots.sort_unstable();
+    slots.dedup();
+    slots
+}
+
 /// Point sprites (what ANGLE's point sprite geometry shader does, for a page without geometry
 /// shaders): the vertex shader runs once per point as an instance and six times per instance,
 /// once per corner of two triangles, moving its position by the corner times the point size
@@ -2536,8 +2561,8 @@ pub fn translate_compute(code: &[u8], uav_formats: &[(u32, &str)]) -> R<Wgsl> {
     translate_compute_views(code, uav_formats, &[])
 }
 
-/// [`translate_compute`] with the SRVs `snorm_ms` on SNORM twins ([`translate_views`]).
-pub fn translate_compute_views(code: &[u8], uav_formats: &[(u32, &str)], snorm_ms: &[crate::snorm::View]) -> R<Wgsl> {
+/// [`translate_compute`] with format-specific SRV loads ([`translate_views`]).
+pub fn translate_compute_views(code: &[u8], uav_formats: &[(u32, &str)], views: &[TextureLoadView]) -> R<Wgsl> {
     let (c, p) = parse(code)?;
     if p.kind != tpf::COMPUTE {
         return Err(format!("program type {} for a compute shader", p.kind));
@@ -2548,7 +2573,7 @@ pub fn translate_compute_views(code: &[u8], uav_formats: &[(u32, &str)], snorm_m
         w.uav_formats.insert(n, f.to_string());
     }
     declarations(&mut w, &p)?;
-    mark_snorm_ms(&mut w, snorm_ms);
+    mark_load_views(&mut w, views);
     if !w.inputs.is_empty() || !w.outputs.is_empty() {
         return Err("a compute shader with input/output registers".into());
     }
@@ -2570,6 +2595,9 @@ pub fn translate_compute_views(code: &[u8], uav_formats: &[(u32, &str)], snorm_m
     module_decls(&mut w, &mut m, &mut bindings, 0, Some(&mut temps))?;
     if w.snorm_used {
         snorm_helpers(&mut m);
+    }
+    if w.unorm8_used {
+        unorm8_helpers(&mut m);
     }
     for &n in &w.used_u {
         let u = &w.uavs[&n];
@@ -2771,13 +2799,19 @@ fn module_decls(w: &mut W, m: &mut String, bindings: &mut Vec<(u32, Binding)>, g
     Ok(())
 }
 
-#[allow(clippy::too_many_arguments)]
-/// Marks the resources `snorm_ms` names that are float multisampled textures as SNORM ones the
-/// page holds as other texels ([`Res::snorm`]).
-fn mark_snorm_ms(w: &mut W, snorm_ms: &[crate::snorm::View]) {
-    for v in snorm_ms {
-        if let Some(r) = w.res.get_mut(&v.slot).filter(|r| matches!(r.dim, 4 | 9) && r.ret == K::F) {
-            r.snorm = Some(crate::snorm::View { channels: v.channels.clamp(1, 4), ..*v });
+fn mark_load_views(w: &mut W, views: &[TextureLoadView]) {
+    for &view in views {
+        match view {
+            TextureLoadView::Snorm(v) => {
+                if let Some(r) = w.res.get_mut(&v.slot).filter(|r| matches!(r.dim, 4 | 9) && r.ret == K::F) {
+                    r.snorm = Some(crate::snorm::View { channels: v.channels.clamp(1, 4), ..v });
+                }
+            }
+            TextureLoadView::Unorm8(slot) => {
+                if let Some(r) = w.res.get_mut(&slot).filter(|r| r.ret == K::F) {
+                    r.unorm8 = true;
+                }
+            }
         }
     }
 }
@@ -2786,11 +2820,9 @@ fn translate_with(code: &[u8], pixel: bool, ps: Option<&[u8]>, sprite: Option<f3
     translate_views(code, pixel, ps, sprite, addr, logic, setup, &[])
 }
 
-/// [`translate_with`] with the SRVs `snorm_ms` that are multisampled SNORM textures the page
-/// holds as other texels (crate::snorm::View): their loads give the format's floats
-/// (crate::snorm::load_in).
+/// Translates a vertex or pixel shader with format-specific SRV loads.
 #[allow(clippy::too_many_arguments)]
-pub fn translate_views(code: &[u8], pixel: bool, ps: Option<&[u8]>, sprite: Option<f32>, addr: &[crate::addr::Addr], logic: &[crate::logic::Logic], setup: Option<u32>, snorm_ms: &[crate::snorm::View]) -> R<Wgsl> {
+pub fn translate_views(code: &[u8], pixel: bool, ps: Option<&[u8]>, sprite: Option<f32>, addr: &[crate::addr::Addr], logic: &[crate::logic::Logic], setup: Option<u32>, views: &[TextureLoadView]) -> R<Wgsl> {
     let (c, p) = parse(code)?;
     if p.kind != if pixel { tpf::PIXEL } else { tpf::VERTEX } {
         return Err(format!("program type {} for a {} shader", p.kind, if pixel { "pixel" } else { "vertex" }));
@@ -2798,7 +2830,7 @@ pub fn translate_views(code: &[u8], pixel: bool, ps: Option<&[u8]>, sprite: Opti
     let mut w = W::new(pixel, c.signature(false), c.signature(true));
     w.addr = addr.to_vec();
     declarations(&mut w, &p)?;
-    mark_snorm_ms(&mut w, snorm_ms);
+    mark_load_views(&mut w, views);
     for i in &p.insts {
         w.inst(i)?;
     }
@@ -2811,6 +2843,9 @@ pub fn translate_views(code: &[u8], pixel: bool, ps: Option<&[u8]>, sprite: Opti
     module_decls(&mut w, &mut m, &mut bindings, group, None)?;
     if w.snorm_used {
         snorm_helpers(&mut m);
+    }
+    if w.unorm8_used {
+        unorm8_helpers(&mut m);
     }
     let _ = write!(m, "\nfn shader_main() {{\n{}}}\n\n", w.body);
     // the entry point
@@ -3114,6 +3149,17 @@ fn snorm_helpers(m: &mut String) {
     if !m.contains("fn sn_store(") {
         m.push_str(&crate::snorm::helpers());
     }
+}
+
+/// Recover the stored byte and look up WARP's rounded b / 255. A GPU may have returned
+/// b * f32(1 / 255), and WGSL division itself need not round exactly either.
+fn unorm8_helpers(m: &mut String) {
+    let table: Vec<String> = (0..=u8::MAX).map(|b| format!("0x{:08x}u", (f32::from(b) / 255.0).to_bits())).collect();
+    let _ = writeln!(m, "const UNORM8_LOAD = array<u32, 256>({});", table.join(", "));
+    m.push_str("fn unorm8_load(v: vec4<f32>) -> vec4<f32> {\n\
+                \x20 let i = vec4<u32>(round(v * 255.0f));\n\
+                \x20 return bitcast<vec4<f32>>(vec4<u32>(UNORM8_LOAD[i.x], UNORM8_LOAD[i.y], UNORM8_LOAD[i.z], UNORM8_LOAD[i.w]));\n\
+                }\n");
 }
 
 /// The WGSL expression of target `r`'s copy at the pixel (its sample, multisampled), the copy

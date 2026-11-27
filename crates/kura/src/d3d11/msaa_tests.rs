@@ -271,3 +271,27 @@ fn msaa() {
     let errors = model::with(|m| std::mem::take(&mut m.errors));
     assert!(errors.is_empty(), "WebGPU errors {:?}", &errors[..errors.len().min(10)]);
 }
+#[test]
+fn unorm8_loads_use_the_warp_values() {
+    let src = "
+        Texture2D<float4> single : register(t2);
+        Texture2DMS<float4, 4> multi : register(t3);
+        Texture2D<float4> other : register(t4);
+        float4 main() : SV_Target {
+            return single.Load(int3(0, 0, 0)) + multi.Load(int2(0, 0), 0) + other.Load(int3(0, 0, 0));
+        }";
+    let code = hlslc::compile(src, &[], &mut |_, _| None, "main", "ps_4_1", 0).expect("DXBC");
+    assert_eq!(dxwgsl::texture_load_slots(&code), [2, 3, 4]);
+
+    let views = [dxwgsl::TextureLoadView::Unorm8(2), dxwgsl::TextureLoadView::Unorm8(3)];
+    let shader = dxwgsl::translate_views(&code, true, None, None, &[], &[], None, &views).expect("WGSL");
+    assert!(shader.code.contains("unorm8_load(textureLoad(tl2,"));
+    assert!(shader.code.contains("unorm8_load(textureLoad(t3,"));
+    assert!(!shader.code.contains("unorm8_load(textureLoad(tl4,"));
+    assert!(shader.code.contains("0x3edadadbu")); // WARP's 109 / 255
+    assert!(shader.code.contains("0x3f45c5c6u")); // WARP's 197 / 255
+
+    let module = naga::front::wgsl::parse_str(&shader.code).expect("WGSL parses");
+    naga::valid::Validator::new(naga::valid::ValidationFlags::all(), naga::valid::Capabilities::all())
+        .validate(&module).expect("WGSL validates");
+}

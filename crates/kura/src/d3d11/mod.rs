@@ -344,9 +344,10 @@ pub struct Shader {
     /// by the pixel shader a vertex shader feeds (see shader_for) and the samplers addressing
     /// as WebGPU's don't (dxwgsl::addr)
     /// translations by variant: the pixel shader's setup samples (a vertex shader's pixel
-    /// shader, its point sprite bit), the samplers' addressing, the targets' logic, the SRVs on
-    /// SNORM twins (snorm_ms_srvs)
-    pub wgsl: HashMap<(u32, Vec<dxwgsl::addr::Addr>, Vec<dxwgsl::logic::Logic>, Vec<dxwgsl::snorm::View>), Option<(u32, Vec<(u32, dxwgsl::Binding)>)>>,
+    /// shader, its point sprite bit), the samplers' addressing, the targets' logic, and the
+    /// format-specific SRV loads.
+    pub wgsl: HashMap<(u32, Vec<dxwgsl::addr::Addr>, Vec<dxwgsl::logic::Logic>, Vec<dxwgsl::TextureLoadView>), Option<(u32, Vec<(u32, dxwgsl::Binding)>)>>,
+    load_slots: Vec<u32>,
     /// CreateGeometryShaderWithStreamOutput's (`code` a geometry or a vertex shader's)
     pub so: Option<expand::SoDesc>,
 }
@@ -2449,7 +2450,8 @@ unsafe fn device_call(d: &mut D11, m: u32, this: u32, a: &dyn Fn(usize) -> u32) 
             if a(4) == 0 {
                 return S_FALSE;
             }
-            let o = d.new_obj(iface, Data::Shader(Shader { code, pixel: iface == IF_PS, wgsl: HashMap::new(), so: None }));
+            let load_slots = dxwgsl::texture_load_slots(&code);
+            let o = d.new_obj(iface, Data::Shader(Shader { code, pixel: iface == IF_PS, wgsl: HashMap::new(), load_slots, so: None }));
             wrp(a(4), 0, o);
             S_OK
         }
@@ -2505,7 +2507,7 @@ unsafe fn device_call(d: &mut D11, m: u32, this: u32, a: &dyn Fn(usize) -> u32) 
             if a(9) == 0 {
                 return S_FALSE;
             }
-            let o = d.new_obj(IF_GS, Data::Shader(Shader { code, pixel: false, wgsl: HashMap::new(), so: Some(so) }));
+            let o = d.new_obj(IF_GS, Data::Shader(Shader { code, pixel: false, wgsl: HashMap::new(), load_slots: Vec::new(), so: Some(so) }));
             wrp(a(9), 0, o);
             S_OK
         }
@@ -4250,22 +4252,21 @@ unsafe fn source_bytes(d: &mut D11, id: u32, sub: u32, b: [u32; 6]) -> Option<u3
 // draws
 
 /// A shader's page shader and bindings (translated on first use; vertex shaders per pixel shader).
-/// `samplers`: a pixel shader's (those with BORDER or MIRROR_ONCE addressing: the shader does it;
-/// those with a point mip filter: the shader rounds explicit levels)
-/// `setup`: a pixel shader drawn from a setup store (expand.rs), over targets of that many
-/// samples a pixel.
-/// The SRVs of stage `stage` (0 VS, 1 PS, ...) that are SNORM views of multisampled textures
-/// the page holds as other texels (dxwgsl::snorm::View): on their SINT twins
-/// (logic::snorm_ms_page), or 8-bit ones of typeless textures on their UNORM pages; the shader
-/// loads their values as the format's floats (dxwgsl::translate_views).
-fn snorm_ms_srvs(d: &D11, st: &State, stage: usize) -> Vec<dxwgsl::snorm::View> {
+/// The bound SRVs of a stage that need format-specific conversions on ld or ld2dms.
+fn shader_load_views(d: &D11, st: &State, stage: usize, shader: u32) -> Vec<dxwgsl::TextureLoadView> {
     let Some(srvs) = st.srvs.get(stage) else { return Vec::new() };
-    srvs.iter()
-        .enumerate()
-        .filter(|&(_, &v)| v != 0)
-        .filter_map(|(n, &v)| {
+    let Some(Data::Shader(s)) = d.objs.get(&shader).map(|o| &o.data) else { return Vec::new() };
+    s.load_slots.iter()
+        .filter_map(|&slot| {
+            let &v = srvs.get(us(slot))?;
             let Some(Data::View(view)) = d.objs.get(&v).map(|o| &o.data) else { return None };
             let Some(Data::Texture(t)) = d.objs.get(&view.res).map(|o| &o.data) else { return None };
+            // Including BC and packed formats that expand to linear UNORM8 on upload.
+            if matches!(view.fmt, 28 | 49 | 61 | 65 | 68 | 69 | 71 | 74 | 77 | 87 | 88 | 98)
+                && (logic::unorm8_page(t.page) || t.page == format::P_BGRA8)
+            {
+                return Some(dxwgsl::TextureLoadView::Unorm8(slot));
+            }
             let (page, bits) = logic::snorm_twin(view.fmt)?;
             let width = dxwgsl::snorm::Width::of_bits(bits[0])?;
             let source = if t.page == page {
@@ -4276,13 +4277,16 @@ fn snorm_ms_srvs(d: &D11, st: &State, stage: usize) -> Vec<dxwgsl::snorm::View> 
                 return None;
             };
             let channels = lo32(bits.iter().filter(|&&b| b != 0).count());
-            (t.samples.0 > 1 && crate::render::d3d::page_multisamples(t.page)).then_some(dxwgsl::snorm::View { slot: lo32(n), channels, width, source })
+            (t.samples.0 > 1 && crate::render::d3d::page_multisamples(t.page))
+                .then_some(dxwgsl::TextureLoadView::Snorm(dxwgsl::snorm::View { slot, channels, width, source }))
         })
         .collect()
 }
 
 #[allow(clippy::too_many_arguments)]
-fn shader_for(d: &mut D11, sh: u32, ps: u32, sprite: Option<f32>, samplers: &[u32], logic: &[dxwgsl::logic::Logic], setup: Option<u32>, views: &[dxwgsl::snorm::View]) -> Option<(u32, Vec<(u32, dxwgsl::Binding)>)> {
+/// `samplers`: a pixel shader's addressing and mip filtering modes.
+/// `setup`: a pixel shader drawn from a setup store over targets of that many samples per pixel.
+fn shader_for(d: &mut D11, sh: u32, ps: u32, sprite: Option<f32>, samplers: &[u32], logic: &[dxwgsl::logic::Logic], setup: Option<u32>, views: &[dxwgsl::TextureLoadView]) -> Option<(u32, Vec<(u32, dxwgsl::Binding)>)> {
     let mut addr = Vec::new();
     if matches!(d.objs.get(&sh).map(|o| &o.data), Some(Data::Shader(s)) if s.pixel) {
         for (n, &id) in samplers.iter().enumerate() {
@@ -4689,7 +4693,7 @@ unsafe fn draw_with(d: &mut D11, st: &State, indexed: bool, count: u32, instance
     let shaders = match store {
         Some(sd) => Some(sd.vs.clone()),
         None => {
-            let views = snorm_ms_srvs(d, st, 0);
+            let views = shader_load_views(d, st, 0, st.vs);
             shader_for(d, st.vs, st.ps, sprite, &[], &[], None, &views)
         }
     };
@@ -4746,7 +4750,7 @@ unsafe fn draw_with(d: &mut D11, st: &State, indexed: bool, count: u32, instance
     // (a setup store's draw: the pixel shader evaluates its inputs from the store's planes,
     // at the samples of its targets)
     let setup = store.and_then(|sd| sd.setup).map(|_| if multisampled.iter().any(|&m| m) || target_texture(d, st.dsv).is_some_and(|t| t.3 && crate::render::d3d::page_multisamples(t.6)) { 4 } else { 1 });
-    let ps_views = snorm_ms_srvs(d, st, 1);
+    let ps_views = shader_load_views(d, st, 1, st.ps);
     let ps = if st.ps != 0 { shader_for(d, st.ps, 0, None, &st.samplers[1], &logic_ops, setup, &ps_views) } else { None };
     // SNORM targets: drawn as their SINT twins, the target's texels copied in before and back
     // after (none for a multisampled one on its twin: logic::snorm_ms_page)
@@ -5376,7 +5380,7 @@ fn ps_constant(d: &mut D11, st: &State) {
 }
 
 /// A compute shader's page shader and bindings for UAVs of these page formats (slot, format).
-fn compute_shader_for(d: &mut D11, cs: u32, fmts: &[(u32, u32)], views: &[dxwgsl::snorm::View]) -> Option<(u32, Vec<(u32, dxwgsl::Binding)>)> {
+fn compute_shader_for(d: &mut D11, cs: u32, fmts: &[(u32, u32)], views: &[dxwgsl::TextureLoadView]) -> Option<(u32, Vec<(u32, dxwgsl::Binding)>)> {
     let trace = d.trace;
     let Some(Data::Shader(s)) = d.objs.get_mut(&cs).map(|o| &mut o.data) else { return None };
     let key = fmts.iter().fold(0x811c_9dc5u32, |h, &(n, f)| (h ^ (n << 8 | f)).wrapping_mul(0x0100_0193));
@@ -5446,7 +5450,7 @@ unsafe fn dispatch(d: &mut D11, st: &State, x: u32, y: u32, z: u32) {
             fmts.push((n, page));
         }
     }
-    let views = snorm_ms_srvs(d, st, 5);
+    let views = shader_load_views(d, st, 5, cs);
     let Some((sh, binds)) = compute_shader_for(d, cs, &fmts, &views) else { return };
     let mut w = vec![gpu::DISPATCH, sh, x, y, z, lo32(binds.len())];
     for (bi, kind) in &binds {
