@@ -38,6 +38,7 @@ const screen = extract(({ document, window, lastAction }) => {
   const scroll = rect ? { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 } : null;
   const progress = (first ?? info)?.querySelector('[role="progressbar"][aria-label="保存の進み"]');
   const now = progress?.getAttribute("aria-valuenow");
+  const storage = document.querySelector<HTMLElement>('[data-testid="storage-overview"]');
   return {
     game: new URL(window.location.href).searchParams.get("game"),
     cards: document.querySelectorAll("li[data-game]").length,
@@ -49,6 +50,16 @@ const screen = extract(({ document, window, lastAction }) => {
       b.textContent?.includes("一覧に戻る"),
     ),
     saving: now === null || now === undefined ? null : Number(now),
+    storage: storage
+      ? {
+          chunks: Number(storage.dataset.chunkBytes),
+          device: Number(storage.dataset.deviceBytes),
+          cached: Number(storage.dataset.cachedBytes),
+          rows: Array.from(storage.querySelectorAll<HTMLElement>("[data-storage-bytes]"), (row) =>
+            Number(row.dataset.storageBytes),
+          ),
+        }
+      : null,
     info: info?.getAttribute("data-game-id") ?? null,
     first: first?.getAttribute("data-game-id") ?? null,
     serverErrors: window.performance
@@ -117,4 +128,15 @@ export const noteSurvivesSelection = always(() => {
   if (info === null || note === null) return true;
   if (typed || !notes.has(info)) notes.set(info, note);
   return notes.get(info) === note;
+});
+
+// Chunks are counted once on disk. Several games can refer to one chunk, so
+// the displayed estimate for saved games is capped by physical usage.
+export const storageTotalsAgree = always(() => {
+  const { storage } = screen.current;
+  if (!storage) return true;
+  const { chunks, device, cached, rows } = storage;
+  if (![chunks, device, cached, ...rows].every((value) => Number.isFinite(value) && value >= 0)) return false;
+  const estimated = rows.reduce((total, bytes) => total + bytes, 0);
+  return Math.abs(device - Math.min(estimated, chunks)) < 1 && Math.abs(device + cached - chunks) < 1;
 });
