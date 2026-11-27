@@ -1,3 +1,1 @@
 # Cases tools/jit32tv leaves undecided (formal/jit32tv.sh fails when this list is not exact).
-# sar by CL then sbb: CF of a shift by an unknown count is materialized by the eflags import (Rust).
-sar eax, cl; sbb ebx, ebx
