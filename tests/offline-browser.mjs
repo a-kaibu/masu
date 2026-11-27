@@ -7,6 +7,7 @@
 // With EXE (a Windows console program) and FONTS (a drive_c/windows/Fonts folder) and sake built
 // into web/dist/sake: the game is saved to the device from its dialog, then started offline,
 // and must print a line matching EXPECT (default: one starting with the program's name).
+// OFFLINE_ROUNDS repeats the navigation-to-output measurement in the saved browser profile.
 //
 //   node tests/offline-browser.mjs [path to masu]   (web/dist built; PLAYWRIGHT as elsewhere)
 import assert from "node:assert/strict";
@@ -20,11 +21,19 @@ const { chromium } = pw.default ?? pw;
 
 const bin = resolve(process.argv[2] ?? "target/debug/masu");
 const work = mkdtempSync(join(tmpdir(), "masu-offline-"));
+const serverEnv = {
+  ...process.env,
+  XDG_DATA_HOME: join(work, "data"),
+  XDG_CACHE_HOME: join(work, "cache"),
+  XDG_CONFIG_HOME: join(work, "config"),
+  XDG_STATE_HOME: join(work, "state"),
+  MASU_RTP: "0",
+};
 // (a copy of web/dist: without a sake build, stand-ins for its files, which 端末に保存 fetches)
 const web = join(work, "web");
 cpSync(resolve("web/dist"), web, { recursive: true });
 const store = join(work, "store");
-const run = (...a) => execFileSync(bin, ["--store", store, ...a], { stdio: "pipe" });
+const run = (...a) => execFileSync(bin, ["--store", store, ...a], { stdio: "pipe", env: serverEnv });
 const exe = process.env.EXE && resolve(process.env.EXE);
 const full = !!(exe && process.env.FONTS && existsSync(join(web, "sake/sake.wasm")));
 if (!existsSync(join(web, "sake/sake.wasm"))) {
@@ -61,7 +70,7 @@ const port = 8700 + Math.floor(Math.random() * 200) * 2;
 const server = spawn(
   bin,
   ["serve", "--foreground", "--web", web, "--store", store, "--jit", join(work, "jit"), "--listen", `127.0.0.1:${port}`, "--no-prerun", "--dev-bucket", join(work, "bucket")],
-  { stdio: "inherit" },
+  { stdio: "inherit", env: serverEnv },
 );
 const base = `http://127.0.0.1:${port}/`;
 for (let i = 0; i < 100; i++) {
@@ -155,15 +164,25 @@ try {
   await neverFetched("offline");
 
   if (full) {
-    const t = Date.now();
     // the program's own output (EXPECT: a regular expression, by default any line starting with
     // the program's name; the page goes back to the list when the program exits)
     const expect = new RegExp(process.env.EXPECT ?? `^${basename(exe, ".exe")}`, "i");
-    const out = new Promise((resolve) => page.on("console", (m) => expect.test(m.text()) && resolve(m.text())));
-    await page.goto(`${base}play.html?game=g&autostart`);
-    const first = await Promise.race([out, new Promise((r) => setTimeout(() => r(null), 120000))]);
-    assert.ok(first, "no output from the program offline");
-    console.log(`offline: start to the program's output ${((Date.now() - t) / 1000).toFixed(1)} s: ${first}`);
+    const rounds = Number(process.env.OFFLINE_ROUNDS ?? 1);
+    assert.ok(Number.isSafeInteger(rounds) && rounds > 0, "OFFLINE_ROUNDS must be a positive integer");
+    const samples = [];
+    for (let i = 0; i < rounds; i++) {
+      const start = performance.now();
+      const output = page.waitForEvent("console", { predicate: (m) => expect.test(m.text()), timeout: 120000 })
+        .then((message) => ({ text: message.text(), ms: performance.now() - start }));
+      const [first] = await Promise.all([output, page.goto(`${base}play.html?game=g&autostart`)]);
+      samples.push(first.ms);
+      console.log(`offline startup: ${Math.round(first.ms)} ms (${first.text})`);
+    }
+    if (samples.length > 1) {
+      samples.sort((a, b) => a - b);
+      const median = (samples[Math.floor((samples.length - 1) / 2)] + samples[Math.floor(samples.length / 2)]) / 2;
+      console.log(`offline startup median: ${Math.round(median)} ms (${samples.length} runs)`);
+    }
   }
   // a network but the server out of reach (a phone away from home): the same, from the device
   await browser.setOffline(false);
