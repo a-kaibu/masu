@@ -626,6 +626,22 @@ pub(crate) fn q24(z: f32) -> f32 {
     (k / 16777215.0) as f32
 }
 
+/// Packs both aspects of D24S8 in the guest's order for a staging texture's Map.
+const PACK_D24_SHADER: &str = r#"
+@group(0) @binding(0) var z: texture_depth_2d;
+@group(0) @binding(1) var s: texture_2d<u32>;
+@vertex fn vs(@builtin(vertex_index) i: u32) -> @builtin(position) vec4f {
+  let p = vec2f(f32((i << 1u) & 2u), f32(i & 2u));
+  return vec4f(p * 2.0 - 1.0, 0.0, 1.0);
+}
+@fragment fn fs(@builtin(position) p: vec4f) -> @location(0) u32 {
+  let pos = vec2i(p.xy);
+  // WARP rounds the f32 product to nearest even.
+  let bits = u32(round(textureLoad(z, pos, 0) * 16777215.0));
+  return bits | (textureLoad(s, pos, 0).x << 24u);
+}
+"#;
+
 const RESOLVE_SHADER: &str = r#"
 @group(0) @binding(0) var tex: texture_multisampled_2d<f32>;
 @vertex fn vs(@builtin(vertex_index) i: u32) -> @builtin(position) vec4f {
@@ -1041,6 +1057,7 @@ pub struct D3d {
     /// the copy's pipeline and layout (0: not made yet)
     /// (pipeline, layout) of the depth twins: as floats, as 24-bit UNORM
     twin_pipe: [(Id, Id); 2],
+    pack_d24_pipe: Option<(Id, Id)>,
 }
 
 impl D3d {
@@ -1148,6 +1165,7 @@ impl D3d {
             twins: HashMap::new(),
             next_twin: TWIN_IDS,
             twin_pipe: [(0, 0); 2],
+            pack_d24_pipe: None,
         }
     }
 
@@ -3138,6 +3156,7 @@ impl D3d {
         // array layers; a 3D level is one)
         let apart = st != dt || sl != dl || (s.dim != Dim::D3 && sz.abs_diff(dz) >= depth);
         let (t_tex, t_fmt) = (t.tex, t.format);
+        let d24 = s.d24 && t.d24;
         // multisampled textures: copied whole into one of the same sample count and format
         // group (all Direct3D 11 copies of them; WebGPU neither samples nor partly copies them)
         if s.samples > 1 || t.samples > 1 {
@@ -3154,7 +3173,18 @@ impl D3d {
             return;
         }
         self.end_pass();
-        // (WebGPU copies no depth-stencil texture of depth24plus-stencil8)
+        // The combined depth-stencil aspects can be copied to the same format
+        // as whole subresources. The depth aspect alone is opaque to buffer copies.
+        if apart && s_fmt == DS && t_fmt == DS && d24 && [sx, sy, dx, dy] == [0; 4] && (sw, sh) == (slw, slh) && (dw, dh) == (dlw, dlh) && (sw, sh) == (dw, dh) {
+            self.preserve_d24(st, sl, sz);
+            self.textures.get_mut(&dt).unwrap().zused = 3;
+            self.open = true;
+            gpu::copy_texture(s_tex, sl, [0, 0, sz], t_tex, dl, [0, 0, dz], [sw, sh, depth]);
+            self.use_tex(st);
+            self.use_tex(dt);
+            self.touch(dt);
+            return;
+        }
         if sw == dw && sh == dh && s_fmt == t_fmt && apart && s_fmt != DS {
             self.open = true;
             gpu::copy_texture(s_tex, sl, [sx, sy, sz], t_tex, dl, [dx, dy, dz], [sw, sh, depth]);
@@ -3262,7 +3292,7 @@ impl D3d {
         // (a box inside the level: WebGPU's copy wants it so)
         let slices = |t: &Tex| if t.dim == Dim::D3 { (t.layers >> level).max(1) } else { t.layers.max(1) };
         let inside = |t: &Tex| level < t.levels && u64::from(x) + u64::from(w) <= u64::from((t.w >> level).max(1)) && u64::from(y) + u64::from(h) <= u64::from((t.h >> level).max(1)) && z < slices(t);
-        let Some(t) = self.textures.get(&id).filter(|t| (matches!(t.format, Tf::Depth16Unorm | Tf::Depth32Float) || !is_depth(t.format)) && t.samples == 1 && w > 0 && h > 0 && inside(t)) else {
+        let Some(t) = self.textures.get(&id).filter(|t| (matches!(t.format, Tf::Depth16Unorm | Tf::Depth32Float) || (t.format == DS && t.d24) || !is_depth(t.format)) && t.samples == 1 && w > 0 && h > 0 && inside(t)) else {
             vnhost_d3d9_readback_done(req);
             return;
         };
@@ -3272,13 +3302,65 @@ impl D3d {
         let bpr = (w * bpp).div_ceil(256) * 256;
         let buf = gpu::buffer(bpr * h, usage::COPY_DST | usage::MAP_READ);
         self.open = true;
-        gpu::copy_layer_to_buffer(tex, level, [x, y, z], buf, bpr, w, h);
+        if format == DS {
+            let packed = self.pack_d24(id, level, z, [x, y, w, h]);
+            gpu::copy_layer_to_buffer(packed, 0, [x, y, 0], buf, bpr, w, h);
+            gpu::drop(packed);
+        } else {
+            gpu::copy_layer_to_buffer(tex, level, [x, y, z], buf, bpr, w, h);
+        }
         self.submit();
         let mut data = vec![0u8; us(bpr * h)];
         let token = self.next_token;
         self.next_token = self.next_token.wrapping_add(1).max(1);
         gpu::read_buffer(buf, bpr * h, data.as_mut_ptr(), token);
         self.readbacks.insert(token, Readback { req, buf, data, bpr, row: w * bpp, h, dst, pitch, halved });
+    }
+
+    /// Materializes an unused aspect before copying or reading it. On a single subresource
+    /// passes may have discarded it, but its last clear still defines its contents.
+    fn preserve_d24(&mut self, id: u32, level: u32, layer: u32) {
+        let t = self.textures.get_mut(&id).unwrap();
+        let missing = 3 & !t.zused;
+        t.zused = 3;
+        if missing != 0 && !self.no_pass_opt && t.levels == 1 && t.layers == 1 {
+            let (depth, stencil) = t.zclear.unwrap_or((1.0, 0));
+            self.clear_now(id, level, layer, missing << 1, [0.0; 4], depth, stencil);
+        }
+    }
+
+    fn pack_d24(&mut self, id: u32, level: u32, layer: u32, rect: [u32; 4]) -> Id {
+        self.preserve_d24(id, level, layer);
+        let t = &self.textures[&id];
+        let (w, h) = ((t.w >> level).max(1), (t.h >> level).max(1));
+        let stencil = gpu::view(t.tex, &format!(r#"{{"dimension":"2d","baseMipLevel":{level},"mipLevelCount":1,"baseArrayLayer":{layer},"arrayLayerCount":1,"aspect":"stencil-only"}}"#));
+        let depth = self.view2(id, 1, level, 1, layer, 1, true);
+        let (pipe, layout) = *self.pack_d24_pipe.get_or_insert_with(|| {
+            let m = gpu::shader(PACK_D24_SHADER);
+            let layout = gpu::bind_group_layout(r#"{"entries":[{"binding":0,"visibility":2,"texture":{"sampleType":"depth"}},{"binding":1,"visibility":2,"texture":{"sampleType":"uint"}}]}"#);
+            let pl = gpu::pipeline_layout(&format!(r#"{{"bindGroupLayouts":[{layout}]}}"#));
+            let pipe = gpu::render_pipeline(&format!(
+                r#"{{"layout":{pl},"vertex":{{"module":{m},"entryPoint":"vs"}},"fragment":{{"module":{m},"entryPoint":"fs","targets":[{{"format":"r32uint"}}]}},"primitive":{{"topology":"triangle-list"}}}}"#
+            ));
+            gpu::drop(pl);
+            gpu::drop(m);
+            (pipe, layout)
+        });
+        let packed = gpu::texture(&format!(r#"{{"size":[{w},{h}],"format":"r32uint","usage":{}}}"#, usage::T_RENDER | usage::T_COPY_SRC));
+        let view = gpu::view(packed, "");
+        let group = gpu::bind_group(layout, &[(0, Res::Obj(depth)), (1, Res::Obj(stencil))]);
+        self.use_tex(id);
+        gpu::begin_pass(&format!(r#"{{"colorAttachments":[{{"view":{view},"loadOp":"clear","storeOp":"store"}}]}}"#));
+        gpu::set_pipeline(pipe);
+        gpu::set_bind_group(0, group, &[]);
+        gpu::set_scissor(rect[0], rect[1], rect[2], rect[3]);
+        gpu::draw(3, 1, 0, 0);
+        gpu::end_pass();
+        gpu::drop(group);
+        gpu::drop(view);
+        gpu::drop(stencil);
+        STATS[2].fetch_add(1, Relaxed);
+        packed
     }
 
     // ---- Direct3D 11 ----
@@ -3415,7 +3497,7 @@ impl D3d {
         let t = &self.textures[&id];
         // (depth no draw has used yet: what its last clear left, see `zused`; its passes may not
         // have stored it)
-        let cleared = (t.zused & 1 == 0 && !self.no_pass_opt).then(|| t.zclear.map_or(1.0, |z| z.0)).map(|z| if t.d24 { q24(z) } else { z });
+        let cleared = (t.zused & 1 == 0 && !self.no_pass_opt && t.levels == 1 && t.layers == 1).then(|| t.zclear.map_or(1.0, |z| z.0)).map(|z| if t.d24 { q24(z) } else { z });
         self.use_tex(id);
         self.use_tex(tid);
         self.open = true;
@@ -3987,7 +4069,9 @@ impl D3d {
             };
             let zt = &self.textures[&zid];
             let (zd, zs) = zt.zclear.unwrap_or((1.0, 0));
-            let fresh = |bit: u32| !self.no_pass_opt && zview.is_none() && zt.zused & bit == 0;
+            // zclear is per texture. Store multi-subresource textures even if an aspect
+            // is unused so a clear of another mip or slice cannot replace its value.
+            let fresh = |bit: u32| !self.no_pass_opt && zview.is_none() && zt.levels == 1 && zt.layers == 1 && zt.zused & bit == 0;
             let dclear = zc.is_some_and(|c| c.flags & 2 != 0) || fresh(1);
             let sclear = zc.is_some_and(|c| c.flags & 4 != 0) || fresh(2);
             let op = |b: bool, yes: &'static str, no: &'static str| q(if b { yes } else { no });
@@ -4660,9 +4744,9 @@ impl D3d {
             if new != 0 {
                 z.zused |= zuse;
                 let (zd, zs) = z.zclear.unwrap_or((1.0, 0));
-                let fits = !z.fits.is_empty();
+                let can_discard = z.fits.is_empty() && z.levels == 1 && z.layers == 1;
                 self.end_pass();
-                if !self.no_pass_opt && !fits && let Some(tg) = self.targets2.as_ref() {
+                if !self.no_pass_opt && can_discard && let Some(tg) = self.targets2.as_ref() {
                     let zi = 1 + us(tg[0]) * 3;
                     let c = Clear { level: tg[zi + 1], layer: tg[zi + 2], flags: new << 1, color: [0.0; 4], z: zd, stencil: zs };
                     match self.clears.get_mut(&zid) {

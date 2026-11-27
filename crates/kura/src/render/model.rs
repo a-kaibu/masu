@@ -1478,7 +1478,11 @@ impl Model {
                             self.err(format!("{what}: binding {binding}: texture without TEXTURE_BINDING usage"));
                         }
                         let (_, _, _, filterable, k) = format_info(&v.format).unwrap_or((4, false, false, false, '?'));
-                        let kind = if v.aspect == "depth-only" || k == 'd' { 'd' } else { k };
+                        let kind = match v.aspect.as_str() {
+                            "depth-only" => 'd',
+                            "stencil-only" => 'u',
+                            _ => k,
+                        };
                         let ok = match e.ty.as_str() {
                             "float" => kind == 'f' && filterable,
                             "unfilterable-float" => kind == 'f' || kind == 'd',
@@ -1684,8 +1688,8 @@ impl Model {
             self.err(format!("{what}: {so:?}+{size:?} of {sw}x{sh}x{sd} to {d:?} of {dw}x{dh}x{dd}"));
             return;
         }
-        if st.format.starts_with("depth") && (st.format == "depth24plus" || st.format == "depth24plus-stencil8" || size[0] != sw || size[1] != sh) {
-            self.err(format!("{what}: {} (depth formats: whole subresources of copyable ones)", st.format));
+        if st.format.starts_with("depth") && (size[0] != sw || size[1] != sh || size[0] != dw || size[1] != dh) {
+            self.err(format!("{what}: {} (depth formats: whole subresources)", st.format));
         }
         if s == t && smip == dmip && so[2] < d[2] + size[2] && d[2] < so[2] + size[2] {
             self.err(format!("{what}: source and destination are the same subresource"));
@@ -2699,10 +2703,15 @@ impl Model {
                     for z in 0..size[2] {
                         for y in 0..size[1] {
                             for x in 0..size[0] {
-                                let v = st.texels[st.sub(smip, so[2] + z)][us((so[1] + y) * sw + so[0] + x)];
+                                let src_sub = st.sub(smip, so[2] + z);
+                                let from = us((so[1] + y) * sw + so[0] + x);
                                 let Obj::Texture(tx) = &mut self.objs[t] else { continue };
-                                let si = tx.sub(dmip, d[2] + z);
-                                tx.texels[si][us((d[1] + y) * dw + d[0] + x)] = v;
+                                let dst_sub = tx.sub(dmip, d[2] + z);
+                                let to = us((d[1] + y) * dw + d[0] + x);
+                                tx.texels[dst_sub][to] = st.texels[src_sub][from];
+                                if !st.stencil.is_empty() && !tx.stencil.is_empty() {
+                                    tx.stencil[dst_sub][to] = st.stencil[src_sub][from];
+                                }
                             }
                         }
                     }
