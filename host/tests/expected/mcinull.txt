@@ -4,3 +4,4 @@ info 297
 status 297
 set with a block 0
 status with a block 0
+wave length in ms 1000
