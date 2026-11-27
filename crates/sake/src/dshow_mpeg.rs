@@ -29,6 +29,7 @@
 #![allow(non_snake_case)]
 
 mod dmo;
+mod media_enum;
 pub use dmo::in_graph as dmo_in_graph;
 
 use kome::guid::IID_IUNKNOWN;
@@ -2713,7 +2714,7 @@ fn vtables() -> &'static Vtables {
             (p_direction, 8),
             (p_id, 8),
             (p_accept, 8),
-            (notimpl, 8),  // EnumMediaTypes
+            (media_enum::enumerate, 8),
             (notimpl, 12), // QueryInternalConnections
             (p_eos, 4),
             (p_begin_flush, 4),

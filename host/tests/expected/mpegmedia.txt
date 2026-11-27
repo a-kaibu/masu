@@ -1,0 +1,26 @@
+decoder 0
+In enum 00000000
+next 00000001 count 0 returned 0
+next two without count 80070057
+clone 00000000
+skip 00000001
+reset 00000000
+Out enum 00000000
+next 00000001 count 0 returned 0
+next two without count 80070057
+clone 00000000
+skip 00000001
+reset 00000000
+decoder 1
+In enum 00000000
+next 00000001 count 0 returned 0
+next two without count 80070057
+clone 00000000
+skip 00000001
+reset 00000000
+Out enum 00000000
+next 00000001 count 0 returned 0
+next two without count 80070057
+clone 00000000
+skip 00000001
+reset 00000000
