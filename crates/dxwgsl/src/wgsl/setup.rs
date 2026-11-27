@@ -802,10 +802,9 @@ impl Bias {
 }
 
 /// A triangle drawn WIREFRAME as WARP draws it (winref d3d11wire): when one of the fan
-/// triangles of its clipped polygon is drawn (culled as a solid one's, of no area dropped: case
-/// "no area" under CullMode BACK, "on a line" under each), its three edges in the API's order, each an aliased line of its own (the clipper's new edges
-/// on the planes are none of them); each line's depth biased by `b` with the triangle's largest
-/// depth and the line's own slope along its major axis (its depth's change a pixel there).
+/// triangles of its clipped polygon survives culling, draw the three original edges as aliased
+/// lines in API order. A zero-area fan triangle is back-facing (the probe's "on a line" case).
+/// Each line's depth bias uses the triangle's largest depth and the line's own major-axis slope.
 pub fn wire(c: &[Corner; 3], modes: &[Mode], r: &Raster, b: &Bias) -> Vec<Line> {
     let Some((table, poly, _)) = clip(c, r.depth_clip) else { return Vec::new() };
     let scr: Vec<((i32, i32), f32, f32)> = table.iter().map(|p| screen(p, r)).collect();
@@ -813,7 +812,7 @@ pub fn wire(c: &[Corner; 3], modes: &[Mode], r: &Raster, b: &Bias) -> Vec<Line> 
     let at = |k: usize| scr.get(k).map_or((0, 0), |v| v.0);
     let drawn = (1..poly.len().saturating_sub(1)).any(|i| {
         let s = [at(first), at(poly.get(i).copied().unwrap_or(0)), at(poly.get(i.saturating_add(1)).copied().unwrap_or(0))];
-        geometry(s).is_some() && facing(s, r)
+        facing(s, r)
     });
     if !drawn {
         return Vec::new();
@@ -1003,21 +1002,27 @@ fn sx_i32_f32(v: i32) -> f32 {
 fn sx_det(a: i32, b: i32, c: i32, d: i32) -> vec2<u32> {
     return d_add(m64(a, b), d_neg(m64(c, d)));
 }
+fn sx_area(s0: vec2<i32>, s1: vec2<i32>, s2: vec2<i32>) -> vec2<u32> {
+    return sx_det(s2.y - s0.y, s1.x - s0.x, s0.y - s1.y, s0.x - s2.x);
+}
+fn sx_facing(det: vec2<u32>) -> bool {
+    let bits = xw(XD_RASTER);
+    let neg = (det.y >> 31u) != 0u;
+    let front = select(!neg && any(det != vec2<u32>(0u)), neg, (bits & 4u) != 0u);
+    let cull = bits & 3u;
+    return !((cull == 2u && front) || (cull == 3u && !front));
+}
 // the geometry of the fan triangle s0 s1 s2 (x0 y0 dx10 dx02, dy01 dy20 inv valid)
 var<private> sx_ga: vec4<f32>;
 var<private> sx_gb: vec4<f32>;
 fn sx_geometry(s0: vec2<i32>, s1: vec2<i32>, s2: vec2<i32>) -> bool {
-    let det = sx_det(s2.y - s0.y, s1.x - s0.x, s0.y - s1.y, s0.x - s2.x);
-    if (det.x == 0u && det.y == 0u) { return false; }
+    let det = sx_area(s0, s1, s2);
+    if (all(det == vec2<u32>(0u)) || !sx_facing(det)) { return false; }
     let e = 0.00390625f;
     let inv = ps_div(1.0f, sx_i64_f32(det) * 0.0000152587890625f);
     sx_ga = vec4<f32>(sx_i32_f32(s0.x) * e, sx_i32_f32(s0.y) * e, sx_i32_f32(s1.x - s0.x) * e, sx_i32_f32(s0.x - s2.x) * e);
     sx_gb = vec4<f32>(sx_i32_f32(s0.y - s1.y) * e, sx_i32_f32(s2.y - s0.y) * e, inv, 0.0f);
-    let bits = xw(XD_RASTER);
-    let neg = (det.y >> 31u) != 0u;
-    let front = select(!neg, neg, (bits & 4u) != 0u);
-    let cull = bits & 3u;
-    return !((cull == 2u && front) || (cull == 3u && !front));
+    return true;
 }
 fn sx_plane(a0: f32, a1: f32, a2: f32) -> vec3<f32> {
     let d10 = a1 - a0;
@@ -1303,8 +1308,8 @@ pub fn setup_pass(store: &Store, osgn: &[SigElement], ps: Option<&[u8]>, prim: P
             dp[c] = q;
             sx_wz = max(sx_wz, z[c]);
         }
-        if (!sx_geometry(s[0], s[1], s[2])) { continue; }
-        // (WIREFRAME: drawn when a fan triangle is, culling as solid)
+        // A zero-area fan triangle is back-facing and still contributes visible edges.
+        if (!sx_facing(sx_area(s[0], s[1], s[2]))) { continue; }
         nf += 1u;
     }
 ";
