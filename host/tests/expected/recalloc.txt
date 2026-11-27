@@ -5,3 +5,12 @@ zero extension: ok
 overflow preserves allocation: ok
 shrink: ok
 zero size frees: ok
+heap handle: ok
+aligned recalloc export: ok
+aligned initial zero: ok
+aligned growth preserves old bytes: ok
+aligned zero extension: ok
+aligned realignment: ok
+aligned overflow preserves allocation: ok
+aligned shrink: ok
+aligned zero size frees: ok
