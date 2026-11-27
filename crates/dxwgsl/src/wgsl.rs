@@ -2817,12 +2817,13 @@ fn mark_load_views(w: &mut W, views: &[TextureLoadView]) {
 }
 
 fn translate_with(code: &[u8], pixel: bool, ps: Option<&[u8]>, sprite: Option<f32>, addr: &[crate::addr::Addr], logic: &[crate::logic::Logic], setup: Option<u32>) -> R<Wgsl> {
-    translate_views(code, pixel, ps, sprite, addr, logic, setup, &[])
+    translate_views(code, pixel, ps, sprite, addr, logic, setup, &[], true)
 }
 
-/// Translates a vertex or pixel shader with format-specific SRV loads.
+/// Translates a vertex or pixel shader with format-specific SRV loads. A fragment stage with
+/// no depth attachment must omit its depth output, even if the guest shader computes one.
 #[allow(clippy::too_many_arguments)]
-pub fn translate_views(code: &[u8], pixel: bool, ps: Option<&[u8]>, sprite: Option<f32>, addr: &[crate::addr::Addr], logic: &[crate::logic::Logic], setup: Option<u32>, views: &[TextureLoadView]) -> R<Wgsl> {
+pub fn translate_views(code: &[u8], pixel: bool, ps: Option<&[u8]>, sprite: Option<f32>, addr: &[crate::addr::Addr], logic: &[crate::logic::Logic], setup: Option<u32>, views: &[TextureLoadView], has_depth: bool) -> R<Wgsl> {
     let (c, p) = parse(code)?;
     if p.kind != if pixel { tpf::PIXEL } else { tpf::VERTEX } {
         return Err(format!("program type {} for a {} shader", p.kind, if pixel { "pixel" } else { "vertex" }));
@@ -2935,10 +2936,10 @@ pub fn translate_views(code: &[u8], pixel: bool, ps: Option<&[u8]>, sprite: Opti
             }
             pre.push("vcov = vec4<u32>(in_cov);".into());
         }
-        if w.depth_out {
+        if has_depth && w.depth_out {
             fields.push("@builtin(frag_depth) depth: f32".into());
             post.push("out.depth = bitcast<f32>(oDepth);".into());
-        } else if setup == Some(1) {
+        } else if has_depth && setup == Some(1) {
             // (a setup's fragment: its depth plane's value, expand::setup::inputs)
             fields.push("@builtin(frag_depth) depth: f32".into());
             post.push("out.depth = sx_depth;".into());

@@ -235,7 +235,7 @@ fn fixture(r: Rule) -> Fixture {
         },
         Rule::LogicOps => Fixture {
             bad: &[("crates/kura/src/d3d11/mod.rs", "fn options() {\n    for k in 1..10 {}\n    // dxwgsl::translate_views(&s.code, true, None, None, &key.1, &key.2, named in a comment\n}\n")],
-            good: &[("crates/kura/src/d3d11/mod.rs", "fn options() {\n    for k in 0..10 {}\n    let s = dxwgsl::translate_views(&s.code, true, None, None, &key.1, &key.2, setup, &key.3);\n    let (o, k) = logic::targets(b, f, m, r);\n    let r = dxwgsl::sample_rate(c) && page_multisamples(p);\n    logic::split(&w, &copies, stash.as_ref(), topo, &cuts, flip);\n}\n")],
+            good: &[("crates/kura/src/d3d11/mod.rs", "fn options() {\n    for k in 0..10 {}\n    let s = dxwgsl::translate_views(&s.code, true, None, None, &key.1, &key.2, setup, &key.3, has_depth);\n    let (o, k) = logic::targets(b, f, m, r);\n    let r = dxwgsl::sample_rate(c) && page_multisamples(p);\n    logic::split(&w, &copies, stash.as_ref(), topo, &cuts, flip);\n}\n")],
             mutate: ("crates/kura/src/d3d11/mod.rs", |t| Some(t.replace("for k in 0..10 {", "for k in 1..10 {"))),
         },
         Rule::SnormTargets => Fixture {

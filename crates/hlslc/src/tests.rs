@@ -1709,6 +1709,31 @@ fn tessellation_passes_of_the_d3d11tess_probe() {
     assert!(expand::tess_decl(&vs).is_err());
 }
 
+/// An unattached depth output must not invalidate a fragment pipeline or its UAV writes.
+#[test]
+fn fragment_depth_requires_an_attachment() {
+    let src = r"
+        RWByteAddressBuffer u : register(u1);
+        float4 plain(float4 p : SV_Position) : SV_Target {
+            u.Store(0, asuint(p.z));
+            return p;
+        }
+        float4 explicit_depth(float4 p : SV_Position, out float depth : SV_Depth) : SV_Target {
+            depth = 0.25;
+            return plain(p);
+        }
+    ";
+    for (entry, setup) in [("plain", Some(1)), ("explicit_depth", None), ("explicit_depth", Some(4))] {
+        let code = compile(src, entry, "ps_5_0");
+        for has_depth in [false, true] {
+            let w = dxwgsl::translate_views(&code, true, None, None, &[], &[], setup, &[], has_depth).unwrap().code;
+            valid(&w);
+            assert_eq!(w.contains("@builtin(frag_depth)"), has_depth, "{entry}");
+            assert!(w.contains("@binding("), "{entry}: UAV binding lost");
+        }
+    }
+}
+
 /// The setup of winref d3d11interp's draws (dxwgsl::expand::setup): the setup pass of the
 /// vertex shader's store (triangles, wireframe, lines, points) and of the geometry shader's, the store's vertex shader and every pixel
 /// shader of the probe drawn from it, at 1 and 4 samples, are valid WGSL.
