@@ -22,6 +22,8 @@ tempfile = "3"
 opt-level = 2
 
 [lints.rust]
+# (Rust 1.99: `&x as *const T` makes a reference first, with its aliasing rules)
+raw_borrows_via_references = "warn"
 unsafe_code = "forbid"
 missing_docs = "deny"
 
