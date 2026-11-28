@@ -58,6 +58,7 @@ pub enum Rule {
     KnownDiffs,
     BooleanArg,
     TypedRegisters,
+    SakeSession,
     NtdllOwnCrt,
     CrtStartup,
     Utf8OneDecoder,
@@ -103,7 +104,7 @@ pub enum Rule {
 }
 
 impl Rule {
-    pub const ALL: [Rule; 83] = [
+    pub const ALL: [Rule; 84] = [
         Rule::BuildOutput,
         Rule::HresultCopy,
         Rule::KomeCopy,
@@ -145,6 +146,7 @@ impl Rule {
         Rule::KnownDiffs,
         Rule::BooleanArg,
         Rule::TypedRegisters,
+        Rule::SakeSession,
         Rule::NtdllOwnCrt,
         Rule::CrtStartup,
         Rule::Utf8OneDecoder,
@@ -233,6 +235,7 @@ impl Rule {
             Rule::KnownDiffs => "known-diffs",
             Rule::BooleanArg => "boolean-arg",
             Rule::TypedRegisters => "typed-registers",
+            Rule::SakeSession => "sake-session",
             Rule::NtdllOwnCrt => "ntdll-own-crt",
             Rule::CrtStartup => "crt-startup",
             Rule::Utf8OneDecoder => "utf8-one-decoder",
@@ -318,6 +321,7 @@ impl Rule {
             Rule::D3d9DevFormats => "every format the winref d3d9dev probe asks about is one kura's d3d9_answers_as_the_golden names (2026-11-22: the probe grew A8..X8B8G8R8, the nightly golden came back with them, and the test panicked on the first unnamed one instead of checking kura's answers): each \"NAME\" of the probe's fm[] table is a \"NAME\" => arm in dev_tests.rs",
             Rule::LoadEveryLevel => "ld by level reads a view of every level of the texture, the SRV's first level added in the shader (2026-11-21: SwiftShader's textureLoad of a level below a view's base level reads level 2 * base, winref d3d11minlod's load row): dxwgsl's load() reads tl<t> at bv.l<t>, kura binds it with load_texture_entry and fills it with load_texture_levels",
             Rule::ConsoleLines => "the program's console output goes through k32::console_write, a line at a time (2026-11-21: crt's printf wrote with eprint!, and a line split in two where the program waited for the GPU, winref d3d9tex): no eprint! in crates/sake/src",
+            Rule::SakeSession => "masu reaches the new sake (a-kaibu/sake) through its public connection only (2026-11-28, sake plan D1: masu does not touch sake's inner tables): crates/sake-adapter names sake::session, sake::host, sake::run and sake::end, one path each; a sake::{...} group or a renamed sake is refused too",
             Rule::KnownDiffs => "a difference from Windows is made right, not listed (2026-11-21: OutputMergerLogicOp 0 for WARP's 1 sat in tests/winref/known.txt because WebGPU has no logic ops, and the page could emulate them): every line of tests/winref/known.txt is a known site with its why, the list only goes down; a new line fails, and fixing the behavior is the way past it",
             Rule::BooleanArg => "a BOOLEAN parameter is its low byte (2026-11-20, RtlAnsiStringToUnicodeString read c.a(2) != 0): read it with c.boolean(i); win32.rs BOOLEAN_ARGS lists them",
             Rule::TypedRegisters => "koji's registers are named, not numbered (2026-11-20, Farcall comparison): Cpu::regs/hi are Gprs indexed by Gpr (EAX..EDI), sreg/sbase Segs indexed by Seg, Cpu::gpr takes a Reg64; write the register's name (koji::EBX, Seg::Ss, Reg64::R8), not Gpr::ALL[3] or values()[3], and give Gprs/Segs no index, conversion or public field that takes a number",
@@ -410,6 +414,7 @@ impl Rule {
             Rule::KnownDiffs => regress::known_diffs(tree),
             Rule::BooleanArg => crate::win32::boolean_arg(tree),
             Rule::TypedRegisters => typed_registers(tree),
+            Rule::SakeSession => regress::sake_session(tree),
             Rule::NtdllOwnCrt => crate::win32::ntdll_own_crt(tree),
             Rule::CrtStartup => crate::win32::crt_startup(tree),
             Rule::Utf8OneDecoder => crate::win32::utf8_one_decoder(tree),

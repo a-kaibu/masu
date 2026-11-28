@@ -206,6 +206,9 @@ jobs:
       - uses: actions/checkout@v7.0.1
       - run: tools/ci/rust-key.sh
       - run: rustup target add wasm32-unknown-unknown
+      # (crates/sake-adapter's dev-dependency sake-testkit builds the new sake's C guests with
+      # clang, lld-link and llvm-dlltool)
+      - run: tools/ci/apt.sh mingw-w64 clang lld llvm
       - id: cargo-cache
         uses: actions/cache/restore@v6.1.0
         with:
@@ -229,6 +232,42 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             target/own
+          key: ${{ steps.cargo-cache.outputs.cache-primary-key }}
+
+  # (masu's adapter to the new sake (a-kaibu/sake), a workspace of its own, crates/sake-adapter:
+  # its tests play the new sake's C guests on the real host, against their Windows goldens)
+  sake-adapter:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      CARGO_BUILD_WARNINGS: deny
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - run: tools/ci/rust-key.sh
+      - run: tools/ci/apt.sh mingw-w64 clang lld llvm
+      - id: cargo-cache
+        uses: actions/cache/restore@v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target/sake-adapter
+          key: sake-adapter-${{ runner.os }}-${{ env.RUST_KEY }}-${{ hashFiles('crates/sake-adapter/Cargo.lock') }}
+          restore-keys: |
+            sake-adapter-${{ runner.os }}-${{ env.RUST_KEY }}-
+      - name: The adapter's tests and clippy
+        env:
+          CARGO_TARGET_DIR: ${{ github.workspace }}/target/sake-adapter
+        run: cd crates/sake-adapter && cargo test --locked && cargo clippy --all-targets --locked -- -D warnings
+      - if: ${{ !cancelled() }}
+        run: python3 tools/ci/cache-prune.py target/sake-adapter
+      - if: ${{ !cancelled() && steps.cargo-cache.outputs.cache-primary-key != '' && steps.cargo-cache.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target/sake-adapter
           key: ${{ steps.cargo-cache.outputs.cache-primary-key }}
 
   test:

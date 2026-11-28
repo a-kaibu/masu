@@ -281,6 +281,18 @@ fn fixture(r: Rule) -> Fixture {
             good: &[("crates/sake/src/crt.rs", "fn puts(s: &str) { crate::k32::console_write(s); eprintln!(\"sake: puts\"); }\n// eprint!( in a comment\n")],
             mutate: ("crates/sake/src/crt.rs", |t| Some(t.replacen("crate::k32::console_write(&a2s(&s));", "eprint!(\"{}\", a2s(&s));", 1))),
         },
+        Rule::SakeSession => Fixture {
+            bad: &[
+                ("crates/sake-adapter/src/lib.rs", "use sake::win::Windows;\nfn f() -> sake::mem::Memory { todo() }\nuse sake::{session::Session, win::user::Hwnd};\n"),
+                ("crates/sake-adapter/tests/t.rs", "use sake as inner;\n"),
+                ("crates/sake-adapter/Cargo.toml", "[dependencies]\ninner = { package = \"sake\", git = \"https://github.com/a-kaibu/sake\" }\n"),
+            ],
+            good: &[
+                ("crates/sake-adapter/src/lib.rs", "use sake::session::Session;\nuse sake::host::native::NativeHost;\nuse sake::run::Options;\n// sake::win in a comment\nfn f(e: sake::end::End) {}\nuse sake_testkit::GUI;\n"),
+                ("crates/sake/src/x.rs", "use sake::win::Windows;\n"),
+            ],
+            mutate: ("crates/sake-adapter/src/lib.rs", |t| Some(t.replacen("use sake::session::", "use sake::win::", 1))),
+        },
         Rule::KnownDiffs => Fixture {
             bad: &[("tests/winref/known.txt", "# a gap\nd3d11copy-* ^(want|got) +options logic_op \n")],
             good: &[("tests/winref/known.txt", "# only comments\n\n   # and blanks\n")],

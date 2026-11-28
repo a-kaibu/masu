@@ -1505,3 +1505,40 @@ pub(super) fn jit_exit_contract(tree: &Tree) -> Hits {
     }
     out
 }
+
+// --- sake-session -----------------------------------------------------------------------------
+
+/// the new sake's modules masu may name: its public connection, the host boundary, the options
+/// and outcome, the ends (sake's plan D1: masu does not touch sake's inner tables)
+const SAKE_OPEN: [&str; 4] = ["session", "host", "run", "end"];
+const SAKE_ADAPTER: &str = "crates/sake-adapter/";
+static SAKE_PATH: LazyLock<Option<Regex>> = LazyLock::new(|| rx(r"(?:^|[^\w:])sake::(\{|\w+)"));
+static SAKE_RENAMED: LazyLock<Option<Regex>> = LazyLock::new(|| rx(r#"(?:^|[^\w:])sake\s+as\s|package\s*=\s*"sake""#));
+
+/// the adapter's paths into the new sake: only its open modules, one path each (a `sake::{...}`
+/// group or a renamed crate would hide what it names)
+pub(super) fn sake_session(tree: &Tree) -> Hits {
+    let mut out = Hits::new();
+    let files = tree.paths().iter().filter(|p| p.as_str().starts_with(SAKE_ADAPTER) && (p.is_rust() || p.as_str().ends_with("Cargo.toml"))).cloned().collect::<Vec<_>>();
+    for f in files {
+        let code = if f.is_rust() { tree.code(&f, false) } else { tree.text(&f).into() };
+        for (n, line) in code.lines().enumerate() {
+            let at = n.saturating_add(1);
+            if let Some(r) = SAKE_RENAMED.as_ref()
+                && r.is_match(line)
+            {
+                out.push((f.clone(), at, "sake renamed: name it `sake` so its paths stay checked".to_owned()));
+            }
+            let Some(r) = SAKE_PATH.as_ref() else { continue };
+            for m in r.captures_iter(line).filter_map(|c| c.get(1)) {
+                let module = m.as_str();
+                if module == "{" {
+                    out.push((f.clone(), at, "a `sake::{...}` group: one `use sake::<module>::...` per module".to_owned()));
+                } else if !SAKE_OPEN.contains(&module) {
+                    out.push((f.clone(), at, format!("sake::{module} is sake's inside: use sake::session (and sake::host, run, end)")));
+                }
+            }
+        }
+    }
+    out
+}

@@ -1,0 +1,36 @@
+[package]
+name = "sake-adapter"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "masu's adapter to the new sake (a-kaibu/sake): a game's directory and .exe in, its frames, sounds and console out, the player's input in, through sake's public connection (sake::session) only"
+
+# (its own workspace: the new sake brings its own kome (komodaru/kome), which the main workspace's
+# crates/kome is not; one revision of each, pinned here, raised together)
+[workspace]
+
+[dependencies]
+sake = { git = "https://github.com/a-kaibu/sake", rev = "e5730ba21fc9b7ce562a6b301b6a68ef12acdbda" }
+kome = { git = "https://github.com/komodaru/kome", rev = "4f193e4dd96108727437488d5eabdd942d81ac0e" }
+
+[dev-dependencies]
+# (the new sake's C guests built by clang and lld-link, with their Windows goldens)
+sake-testkit = { git = "https://github.com/a-kaibu/sake", rev = "e5730ba21fc9b7ce562a6b301b6a68ef12acdbda" }
+tempfile = "3"
+
+[profile.test]
+opt-level = 2
+
+[lints.rust]
+unsafe_code = "forbid"
+missing_docs = "deny"
+
+[lints.clippy]
+all = { level = "deny", priority = -1 }
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+as_conversions = "deny"
+indexing_slicing = "deny"
+arithmetic_side_effects = "deny"
+wildcard_enum_match_arm = "deny"
